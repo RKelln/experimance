@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3 uid="uid://c8dnjwbyggicb"]
+
+[ext_resource type="Texture2D" uid="uid://by57q2kirnphd" path="res://experimance_#2_example1_4k.jpg" id="2_0xm2m"]
+[ext_resource type="Script" uid="uid://b1kcwiwxaaska" path="res://zmq_receiver.gd" id="2_h2yge"]
+
+[node name="Node2D" type="Node2D"]
+
+[node name="image" type="Sprite2D" parent="."]
+position = Vector2(540, 540)
+scale = Vector2(0.5, 0.5)
+texture = ExtResource("2_0xm2m")
+
+[node name="ZMQReceiver" type="ZMQReceiver" parent="image"]
+script = ExtResource("2_h2yge")

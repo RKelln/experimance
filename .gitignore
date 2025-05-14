@@ -1,0 +1,43 @@
+# Top-level .gitignore for Experimance software
+# This catches common patterns across all projects
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime*
+.netrwhist
+*~
+
+# Data and cache files
+*.log
+logs/
+cache/
+tmp/
+.tmp/
+
+# Environment configuration
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.local
+
+# Ignore common build directories
+dist/
+build/
+
+# Specific to this project
+saved_data/
+images/

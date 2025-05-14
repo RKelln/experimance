@@ -1,0 +1,11 @@
+# Grafana-specific ignores
+*.env
+*.env.*
+grafana.ini
+grafana-override.ini
+provisioning/datasources/custom.yml
+
+# Generated files
+data/
+grafana-data/
+prometheus-data/

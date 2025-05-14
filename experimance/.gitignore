@@ -1,0 +1,85 @@
+# .gitignore for python project
+
+# Bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+.venv/
+.venv*/
+.env
+env/
+.python-version
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Pytest
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# Profiling data
+.prof
+
+# Ruff linter
+ruff_report.json
+ruff_report.html
+ruff_report.txt
+ruff_report.xml
+ruff.json
+ruff.yml
+ruff.toml
+ruff.toml.bk
+ruff.toml.swp
+ruff.toml.swo
+.ruff_cache/
+
+# project specific
+logs/
+images/
+saved_data/
+lunar_tools/
+
+# Rust code and artifacts
+*.rs.bk
+*.rs.swp
+*.rs.swo
+*.rs.swp
+# Rust build artifacts
+*.rlib
+*.rmeta
+*.rlib.bk
+*.rmeta.bk
+*.rlib.swp
+*.rmeta.swp
+# Rust test artifacts
+*.rmeta.swo
+*.rlib.swo
+# Rust project files
+benches/
+target/
+# Rust lock files
+Cargo.lock

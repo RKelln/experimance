@@ -1,0 +1,4 @@
+# Ignore all binary files in this directory
+# But keep the directory itself with this .gitignore
+*
+!.gitignore

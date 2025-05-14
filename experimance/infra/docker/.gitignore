@@ -1,0 +1,21 @@
+# Docker-specific ignores
+*.dockerfile.bak
+*.dockerfile.swp
+*.dockerfile.swo
+*.dockerfile.swp
+*.yaml.bak
+*.yaml.swp
+*.yaml.swo
+*.yml.bak
+*.yml.swp
+*.yml.swo
+*.env
+*.env.*
+docker-compose.override.yml
+
+# Container data
+data/
+postgres-data/
+mongo-data/
+redis-data/
+elasticsearch-data/

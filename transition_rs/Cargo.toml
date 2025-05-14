@@ -1,0 +1,49 @@
+[package]
+name = "image_transition"
+version = "0.1.0"
+edition = "2021"
+authors = [ "Ryan Kelln <ryan.kelln@gmail.com>" ]
+
+
+[dependencies]
+opencv = "0.93"
+ndarray = "0.16"
+linfa = "0.6"
+linfa-clustering = "0.6"
+rayon = "1.8"
+image = "0.24"
+imageproc = "0.23"
+ordered-float = "2.1.0"
+priority-queue = "2.1.1"
+clap = { version = "4.1.6", features = ["derive"] }
+log = "0.4.22"
+env_logger = "0.11.5"
+ndarray-stats = "0.6.0"
+rand = "0.8.5"
+
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8"
+
+
+[[bench]]
+name = "benchmark_flood_fill"
+harness = false
+
+[[bench]]
+name = "benchmark_flood_fill_compare"
+harness = false
+
+[[bench]]
+name = "benchmark_flood_fill_opt2"
+harness = false
+
+
+[features]
+timing = []
+
+
+[build]
+rustflags = ["-C", "target-feature=+crt-static"]
+target = "x86_64-unknown-linux-gnu"

@@ -1,0 +1,35 @@
+# Godot 4+ specific ignores
+.godot/
+.godot/imported/
+.godot/uid_cache.bin
+
+# Godot-specific ignores
+.import/
+export.cfg
+/android/
+/export/
+/exports/
+/build/
+*.translation
+*.import
+
+# Imported translations
+*.translation
+
+# Mono-specific ignores
+.mono/
+data_*/
+
+# Binary files that might be accidentally committed
+*.bin
+*.exe
+*.x86_64
+*.app
+*.dll
+*.so
+*.dylib
+
+# Generated output
+*.output/
+logs/
+*.pck
