@@ -18,18 +18,19 @@ classifiers = [
 ]
 dependencies = [
     "experimance-common>=0.1.0",
-    "numpy>=1.23",
-    "pyzmq>=25.1.1",
-    "pydantic>=2.5.0",
-    "toml>=0.10.2",
-    "python-dotenv>=1.0.0",
-    "asyncio>=3.4.3",
-    "aiohttp>=3.9.0",
-    "pillow>=9.5",
-    "opencv-python>=4.8",
-    "pyrealsense2>=2.54",
-    "screeninfo>=0.8",
-    "lunar-tools @ git+https://github.com/lunarring/lunar_tools"
+    "numpy",
+    "pyzmq",
+    "pydantic",
+    "toml",
+    "python-dotenv",
+    "asyncio",
+    "aiohttp",
+    "pillow",
+    "opencv-python",
+    "pyrealsense2",
+    "screeninfo",
+    "lunar-tools @ git+https://github.com/lunarring/lunar_tools",
+    "blessed",
 ]
 
 [project.optional-dependencies]

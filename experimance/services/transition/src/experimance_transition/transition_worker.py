@@ -4,7 +4,7 @@ from typing import Tuple, Generator, Any
 
 import numpy as np
 
-from transition import SimilarityTransition
+from experimance_transition.transition import SimilarityTransition
 
 class TransitionWorker:
     def __init__(self, transition_params: dict):

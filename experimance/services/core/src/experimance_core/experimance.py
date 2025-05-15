@@ -21,10 +21,10 @@ from screeninfo import get_monitors
 import lunar_tools as lt  # pip install git+https://github.com/lunarring/lunar_tools
 from blessed import Terminal
 
-from image_generation_client import ImageGenerationClient, image_pipeline
-from depth_finder import depth_generator, depth_pipeline, depth_to_contour_map
-from image_utils import cv2_img_to_base64url
-from pygame_display import OpenGLImageShaderDisplay
+from experimance_image_server.image_generation_client import ImageGenerationClient, image_pipeline
+from .depth_finder import depth_generator, depth_pipeline, depth_to_contour_map
+from experimance_common.image_utils import cv2_img_to_base64url
+from experimance_display.pygame_display import OpenGLImageShaderDisplay
 
 def fullscreen(image, resolution=(1920, 1080)):
     if image is None:

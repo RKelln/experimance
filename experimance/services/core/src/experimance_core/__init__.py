@@ -7,6 +7,6 @@ for the Experimance art installation.
 
 __version__ = '0.1.0'
 
-from .experimance import run_experimance_service
+# from .experimance import run_experimance_service
 
-__all__ = ['run_experimance_service']
+# __all__ = ['run_experimance_service']

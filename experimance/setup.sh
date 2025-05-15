@@ -1,25 +1,7 @@
 #!/bin/bash
 
 # Modern setup script for Experimance
-# This script installs all se# Install common library first
-echo -e "${BLUE}Installing experimance-common...${NC}"
-cd "${SCRIPT_DIR}/libs/common"
-uv pip install -e .
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Failed to install experimance-common${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Installed experimance-common${NC}"
-
-# Install transition library before display service
-echo -e "${BLUE}Installing experimance-transition...${NC}"
-cd "${SCRIPT_DIR}/services/transition"
-uv pip install -e .
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Failed to install experimance-transition${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Installed experimance-transition${NC}"kages in development mode
+# This script installs all services in development mode
 
 # Color definitions
 RED='\033[0;31m'
@@ -108,12 +90,12 @@ echo -e "${GREEN}Installed experimance-common${NC}"
 
 # Install all service packages
 SERVICES=(
-    "${SCRIPT_DIR}/services/core"
-    "${SCRIPT_DIR}/services/display"
+    "${SCRIPT_DIR}/services/transition"   # Install transition before display (dependency)
+    "${SCRIPT_DIR}/services/display"      # Install before core (dependency)
     "${SCRIPT_DIR}/services/audio"
     "${SCRIPT_DIR}/services/agent"
-    "${SCRIPT_DIR}/services/image_server"
-    "${SCRIPT_DIR}/services/transition"
+    "${SCRIPT_DIR}/services/image_server" # Install before core (dependency)
+    "${SCRIPT_DIR}/services/core"
 )
 
 for service in "${SERVICES[@]}"; do

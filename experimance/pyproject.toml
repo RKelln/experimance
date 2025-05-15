@@ -28,19 +28,31 @@ dependencies = [
     "experimance-transition>=0.1.0",
 ]
 
+[tool.uv.workspace]
+members = ["services/*", "libs/*"]
+
+[tool.uv.sources]
+experimance-common = { workspace = true }
+experimance-core = { workspace = true }
+experimance-display = { workspace = true }
+experimance-audio = { workspace = true }
+experimance-agent = { workspace = true }
+experimance-image-server = { workspace = true }
+experimance-transition = { workspace = true }
+
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4",
-    "pytest-asyncio>=0.23",
-    "pytest-mock>=3.12",
-    "pytest-cov>=4.1",
-    "mypy>=1.7",
-    "ruff>=0.1.6",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-mock",
+    "pytest-cov",
+    "mypy",
+    "ruff",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 select = ["E", "F", "I", "B"]
 ignore = []
 

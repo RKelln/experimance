@@ -7,6 +7,6 @@ projected onto the sand surface.
 
 __version__ = '0.1.0'
 
-from .display import run_display_service
+# from .display import run_display_service
 
-__all__ = ['run_display_service']
+# __all__ = ['run_display_service']

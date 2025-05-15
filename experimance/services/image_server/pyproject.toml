@@ -18,23 +18,23 @@ classifiers = [
 ]
 dependencies = [
     "experimance-common>=0.1.0",
-    "numpy>=1.23",
-    "pyzmq>=25.1.1",
-    "pillow>=9.5",
-    "opencv-python>=4.8",
-    "aiohttp>=3.9.0",
-    "requests>=2.28",
-    "fal-client>=1.0.0",
-    "openai>=1.0.0",
-    "python-dotenv>=1.0.0"
+    "numpy",
+    "pyzmq",
+    "pillow",
+    "opencv-python",
+    "aiohttp",
+    "requests",
+    "fal-client",
+    "openai",
+    "python-dotenv"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4",
-    "pytest-asyncio>=0.23",
-    "mypy>=1.7",
-    "ruff>=0.1.6",
+    "pytest",
+    "pytest-asyncio",
+    "mypy",
+    "ruff",
 ]
 
 [tool.setuptools]

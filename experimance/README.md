@@ -71,7 +71,7 @@ curl -sSf https://astral.sh/uv/install.sh | sh
 ### Quick Install
 
 ```bash
-./setup_new.sh
+./setup.sh
 ```
 
 This will:
@@ -88,25 +88,7 @@ If you prefer to install manually:
 sudo apt-get install libssl-dev libusb-1.0-0-dev libsdl2-dev ffmpeg libasound2-dev portaudio19-dev
 
 # Create and activate virtual environment
-uv venv --python=3.11 .venv
-source .venv/bin/activate
-
-# Install common library first
-cd libs/common
-uv pip install -e .
-cd ../..
-
-# Install each service
-for service in services/*/; do
-  if [ -f "${service}/pyproject.toml" ]; then
-    cd "${service}"
-    uv pip install -e .
-    cd ../..
-  fi
-done
-
-# Install special dependencies
-uv pip install pysdl2 pysdl2-dll pyrealsense2
+uv sync
 ```
 
 **Note about SDL2**: The system package `libsdl2-dev` is required for PySDL2 to work properly. The Python packages `pysdl2` and `pysdl2-dll` provide Python bindings to SDL2.
@@ -115,17 +97,14 @@ uv pip install pysdl2 pysdl2-dll pyrealsense2
 
 Each service can be run independently:
 
+# TODO:
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
+uv run experimance
+```
 
-# Run core service
-python -m experimance_core
-
-# Run display service
-python -m experimance_display
-
-# Run other services similarly
+Or run services separately:
+```bash
+uv run python -m experimance_[service_name] --arg
 ```
 
 ## Development
@@ -139,6 +118,21 @@ This structure makes development cleaner by:
 - Avoiding complex import hacks
 - Supporting proper editable installs
 - Making packages independently testable
+
+## Package management
+
+Use `uv` and see: https://docs.astral.sh/uv/concepts/projects/workspaces/ for reference.
+
+To update all packages to latest versions:
+```
+uv sync
+```
+
+To update a particular service (e.g. core):
+```
+uv sync --package experimance-core
+```
+
 
 ## Troubleshooting
 

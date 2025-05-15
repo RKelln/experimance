@@ -19,19 +19,20 @@ classifiers = [
 dependencies = [
     "experimance-common>=0.1.0",
     "experimance-transition>=0.1.0",
-    "numpy>=1.23",
-    "pyzmq>=25.1.1", 
-    "pillow>=9.5",
-    "opencv-python>=4.8",
-    "pyglet>=2.0",
-    "pyopengl>=3.1.7",
-    "pyopengl-accelerate>=3.1.7",
-    "pysdl2>=0.9.14",
-    "pysdl2-dll>=2.0.0",
-    "ffmpegcv>=0.3",
-    "screeninfo>=0.8",
-    "pygame>=2.5.0",
-    "lunar-tools @ git+https://github.com/lunarring/lunar_tools"
+    "numpy",
+    "pillow",
+    "opencv-python",
+    "pyglet",
+    "pyopengl",
+    "pyopengl-accelerate",
+    "pysdl2",
+    "pysdl2-dll",
+    "ffmpegcv",
+    "screeninfo",
+    "pygame",
+    "lunar-tools @ git+https://github.com/lunarring/lunar_tools",
+    "python-dotenv",
+    "torch",
 ]
 
 [project.optional-dependencies]
