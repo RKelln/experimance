@@ -1,0 +1,30 @@
+## Main experimance service configuration
+
+# General settings
+idle_timeout = 45           # seconds
+wilderness_reset = 300      # seconds to full reset
+sensor_gain = 1.8           # tweak for vibe sensors
+initial_state_path = "saved_data/default_state.json"  # Path to initial state JSON
+
+# ZeroMQ configuration
+[zmq]
+events_port = "tcp://*:5555"
+depth_port = "tcp://*:5556"
+images_port = "tcp://*:5558"
+agent_ctrl_port = "tcp://*:5559"
+transitions_port = "tcp://*:5561"
+loops_port = "tcp://*:5562"
+
+# Interaction settings
+[interaction]
+min_depth_threshold = 0.1    # Minimum depth change to trigger interaction
+max_depth_threshold = 5.0    # Maximum depth change (cap to this value)
+depth_smoothing = 0.8        # Smoothing factor for depth changes
+vibe_sensor_threshold = 0.5  # Threshold for vibe sensor activation
+accumulation_rate = 0.05     # Rate at which interaction score accumulates
+decay_rate = 0.01            # Rate at which interaction score decays when idle
+
+# Era progression settings
+[eras]
+progression_threshold = 0.75  # Threshold to progress to next era
+apocalypse_threshold = 0.95   # Threshold to trigger apocalypse path

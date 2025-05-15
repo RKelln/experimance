@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "experimance"
+version = "0.1.0"
+description = "Interactive sand-table art installation with AI-generated satellite imagery"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+authors = [
+    {name = "Ryan Kelln", email = "ryan.kelln@gmail.com"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.23",
+    "pyzmq>=25.1.1",
+    "pydantic>=2.5.0",
+    "toml>=0.10.2",
+    "python-dotenv>=1.0.0",
+    "asyncio>=3.4.3",
+    "aiohttp>=3.9.0",
+    "uuid>=1.30",
+    "Pillow>=9.5",
+    "opencv-python>=4.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "pytest-cov>=4.1",
+    "mypy>=1.7",
+    "ruff>=0.1.6",
+]
+display = [
+    "pyglet>=2.0",
+    "PyOpenGL>=3.1.7",
+    "PyOpenGL-accelerate>=3.1.7",
+    "pysdl2>=0.9.14",  # Using pysdl2 instead of sdl2
+    "pysdl2-dll>=2.0.0",  # Add SDL2 DLL package
+    "ffmpegcv>=0.3",
+]
+depth = [
+    "pyrealsense2>=2.54",
+]
+audio = [
+    "python-osc>=1.8",
+    "sounddevice>=0.4.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+
+# Removed explicit package configuration to use setup.py instead

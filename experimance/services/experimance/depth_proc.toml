@@ -1,0 +1,26 @@
+## Depth processing service configuration
+
+# Camera settings
+depth_min_cm = 40    # Minimum distance to detect (closest point)
+depth_max_cm = 55    # Maximum distance to detect (furthest point)
+camera_width = 640      # Camera width in pixels
+camera_height = 480     # Camera height in pixels
+fps = 30               # Target frame rate
+
+# Processing settings
+bilateral_radius = 5      # Bilateral filter radius
+spatial_sigma = 50.0      # Bilateral spatial sigma
+range_sigma = 50.0        # Bilateral range sigma
+hole_fill_level = 1       # Hole filling level (0-2)
+threshold = 0.02          # Change threshold for depth map publication
+
+# ZeroMQ configuration
+[zmq]
+depth_pub_address = "tcp://*:5556"  # Address to publish depth data on
+
+# Hand detection
+[hand_detection]
+enabled = true           # Whether to detect hands
+min_depth_cm = 30        # Minimum hand depth in cm
+max_depth_cm = 60        # Maximum hand depth in cm
+coverage_threshold = 0.4  # Coverage threshold for hand detection

@@ -98,7 +98,7 @@ The table defines a **star topology**: `experimance` sits at the center (`events
 
 ### 4.1 `experimance.py`
 
-*Language*: Python 3.12 — `asyncio`
+*Language*: Python 3.11 — `asyncio`
 *Responsibilities*
 
 * Holds global state: `era`, `biome`, `idle_timer`, `audience_present`, `user_interaction_score`.

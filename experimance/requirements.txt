@@ -1,0 +1,36 @@
+# Core dependencies
+numpy>=1.23
+pyzmq>=25.1.1
+pydantic>=2.5.0
+toml>=0.10.2
+python-dotenv>=1.0.0
+asyncio>=3.4.3
+aiohttp>=3.9.0
+uuid>=1.30
+
+# Image processing
+Pillow>=10.1
+opencv-python>=4.8
+opencv-contrib-python>=4.8
+# pyrealsense2 - install manually or through separate script
+
+# Audio
+python-osc>=1.8
+sounddevice>=0.4.6
+
+# Display
+pyglet>=2.0
+PyOpenGL>=3.1.7
+PyOpenGL-accelerate>=3.1.7
+# sdl2 - install from pip-sdl2
+ffmpegcv>=0.3
+
+# Testing and development
+pytest>=7.4
+pytest-asyncio>=0.23
+pytest-mock>=3.12
+pytest-cov>=4.1
+mypy>=1.7
+ruff>=0.1.6
+watchdog>=3.0.0
+# watchdog-cli package was removed as it's not in PyPI

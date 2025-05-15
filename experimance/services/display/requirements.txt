@@ -1,0 +1,15 @@
+# Display service requirements
+numpy>=1.26
+pyzmq>=25.1.1
+pydantic>=2.5.0
+toml>=0.10.2
+python-dotenv>=1.0.0
+asyncio>=3.4.3
+Pillow>=10.1
+opencv-python>=4.8
+pyglet>=2.0
+PyOpenGL>=3.1.7
+PyOpenGL-accelerate>=3.1.7
+sdl2>=0.9.14
+ffmpegcv>=0.3
+screeninfo>=0.8

@@ -1,0 +1,25 @@
+## Display service configuration
+
+# General settings
+fullscreen = true             # Whether to run in fullscreen mode
+monitor = 0                   # Monitor to display on (0 = primary)
+resolution = [1920, 1080]     # Resolution to use if not fullscreen
+fps_limit = 60                # Frame rate limit
+vsync = true                  # Whether to use vertical sync
+debug_overlay = false         # Whether to show debug overlay
+
+# ZeroMQ configuration
+[zmq]
+events_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
+images_sub_address = "tcp://localhost:5558"  # Address to subscribe to images on
+
+# Transitions
+[transitions]
+crossfade_duration = 1.0      # Duration of crossfade in seconds
+preload_frames = true         # Whether to preload transition frames
+max_preload_mb = 500          # Maximum memory to use for preloading in MB
+
+# Rendering
+[rendering]
+shader_path = "shaders/"      # Path to shader files
+backend = "opengl"            # Options: "opengl", "SDL", "godot"

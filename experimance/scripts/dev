@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Development script for Experimance
+# Usage: ./dev <service_name>
+
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Check if service name is provided
+if [ -z "$1" ]; then
+    echo -e "${RED}Error: Service name required${NC}"
+    echo -e "Usage: ${YELLOW}./dev <service_name>${NC}"
+    echo "Available services:"
+    echo "  - experimance"
+    echo "  - image_server"
+    echo "  - display"
+    echo "  - agent"
+    echo "  - audio"
+    echo "  - depth_proc"
+    exit 1
+fi
+
+SERVICE=$1
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+SERVICE_PATH="${SCRIPT_DIR}/experimance/services/${SERVICE}"
+
+# Check if service exists
+if [ ! -d "$SERVICE_PATH" ]; then
+    echo -e "${RED}Error: Service '${SERVICE}' not found${NC}"
+    exit 1
+fi
+
+# Activate or create virtual environment
+if [ ! -d "${SCRIPT_DIR}/.venv" ]; then
+    echo -e "${BLUE}Creating virtual environment...${NC}"
+    uv venv --python=3.11 "${SCRIPT_DIR}/.venv"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to create virtual environment${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Virtual environment created${NC}"
+fi
+
+source "${SCRIPT_DIR}/.venv/bin/activate"
+
+# Install dependencies
+if [ -f "${SERVICE_PATH}/requirements.txt" ]; then
+    echo -e "${BLUE}Installing dependencies for ${SERVICE}...${NC}"
+    uv pip install -r "${SERVICE_PATH}/requirements.txt"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to install dependencies${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Dependencies installed${NC}"
+fi
+
+# Install common library in development mode
+if [ ! -d "${SCRIPT_DIR}/experimance/libs/common" ]; then
+    echo -e "${RED}Error: Common library not found${NC}"
+    exit 1
+fi
+
+echo -e "${BLUE}Installing common library in development mode...${NC}"
+uv pip install -e "${SCRIPT_DIR}/experimance/libs/common"
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Failed to install common library${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Common library installed${NC}"
+
+# Start service with auto-reload
+echo -e "${BLUE}Starting ${SERVICE} service with auto-reload...${NC}"
+cd "${SCRIPT_DIR}/experimance"
+
+if [ -f "${SERVICE_PATH}/${SERVICE}.py" ]; then
+    python -m watchdog \
+        --patterns="*.py;*.toml;*.json" \
+        --ignore-patterns="__pycache__/*;*.pyc" \
+        --recursive \
+        --command="python -m services.${SERVICE}.${SERVICE}" \
+        services/${SERVICE}
+else
+    echo -e "${RED}Error: Main service file not found at ${SERVICE_PATH}/${SERVICE}.py${NC}"
+    exit 1
+fi
