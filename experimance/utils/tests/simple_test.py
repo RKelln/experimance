@@ -12,10 +12,16 @@ print(f"Site packages: {site.getsitepackages()}")
 # Try direct import first
 print("\nDirect imports:")
 try:
-    import experimance
-    print(f"✓ Successfully imported experimance")
+    import experimance_core
+    print(f"✓ Successfully imported experimance_core")
 except ImportError as e:
-    print(f"✗ Error importing experimance: {e}")
+    print(f"✗ Error importing experimance_core: {e}")
+
+try:
+    import experimance_display
+    print(f"✓ Successfully imported experimance_display")
+except ImportError as e:
+    print(f"✗ Error importing experimance_display: {e}")
 
 try:
     from experimance_common import constants
@@ -37,14 +43,22 @@ def get_installed_packages():
 
 pip_list = get_installed_packages()
 print("Checking for experimance packages...")
-if re.search(r"experimance\s+", pip_list):
-    print("✓ experimance is installed")
-else:
-    print("✗ experimance is NOT installed")
 
-if re.search(r"experimance-common\s+", pip_list):
-    print("✓ experimance-common is installed")
-else:
-    print("✗ experimance-common is NOT installed")
+packages = [
+    "experimance-project",
+    "experimance-common",
+    "experimance-core",
+    "experimance-display",
+    "experimance-audio",
+    "experimance-agent",
+    "experimance-image-server",
+    "experimance-transition"
+]
+
+for package in packages:
+    if re.search(rf"{package}\s+", pip_list):
+        print(f"✓ {package} is installed")
+    else:
+        print(f"✗ {package} is NOT installed")
 
 print("\nImport test complete")

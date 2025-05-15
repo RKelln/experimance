@@ -1,1 +1,0 @@
-"""Example service package."""

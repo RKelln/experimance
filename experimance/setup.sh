@@ -163,14 +163,14 @@ mkdir -p "${SCRIPT_DIR}/infra/grafana/data"
 echo -e "${GREEN}Directories created${NC}"
 
 # Fix Python imports
-echo -e "${BLUE}Fixing Python imports for experimance package...${NC}"
-python "${SCRIPT_DIR}/fix_imports.py"
-if [ $? -ne 0 ]; then
-    echo -e "${YELLOW}Warning: Could not automatically fix Python imports${NC}"
-    echo -e "${YELLOW}If you have import issues, run: python ${SCRIPT_DIR}/fix_imports.py${NC}"
-else
-    echo -e "${GREEN}Python imports fixed successfully${NC}"
-fi
+# echo -e "${BLUE}Fixing Python imports for experimance package...${NC}"
+# python "${SCRIPT_DIR}/fix_imports.py"
+# if [ $? -ne 0 ]; then
+#     echo -e "${YELLOW}Warning: Could not automatically fix Python imports${NC}"
+#     echo -e "${YELLOW}If you have import issues, run: python ${SCRIPT_DIR}/fix_imports.py${NC}"
+# else
+#     echo -e "${GREEN}Python imports fixed successfully${NC}"
+# fi
 
 echo -e "${GREEN}Setup complete!${NC}"
 echo -e "To activate the virtual environment, run: ${YELLOW}source ${SCRIPT_DIR}/.venv/bin/activate${NC}"

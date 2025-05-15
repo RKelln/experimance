@@ -4,32 +4,61 @@ This project is a Python-based distributed system for an interactive art install
 
 ## Project Architecture
 
-- **Main Package**: `experimance` - The primary package that includes common utilities, services, and infrastructure
-- **Common Library**: `experimance_common` - A shared library used by all services with communication utilities, constants, and schemas
-- **Services**: Individual components like display, audio, and agent services that communicate via ZMQ
+- **Main Meta-Package**: `experimance-project` - The primary project that includes dependencies on all services
+- **Common Library**: `experimance-common` - A shared library used by all services with communication utilities, constants, and schemas
+- **Services**: Individual components like core, display, audio, and agent services that communicate via ZMQ
+  - Each service is a standalone Python package with its own dependencies and src directory
 - **Infrastructure**: Configuration for deployment, monitoring, and management
 
 ## Package Structure
 
 ```
 experimance/
-├── __init__.py            # Main package init
+├── pyproject.toml       # Main project meta-package
+├── setup_new.sh         # Installation script
 ├── libs/
-│   ├── __init__.py
-│   └── common/            # Shared common libraries
-│       └── experimance_common/
-│           ├── __init__.py
-│           ├── constants.py
-│           ├── schemas.py
-│           └── zmq_utils.py
+│   └── common/          # Shared common libraries
+│       ├── pyproject.toml
+│       └── src/
+│           └── experimance_common/
+│               ├── __init__.py
+│               ├── constants.py
+│               ├── schemas.py
+│               └── zmq_utils.py
 ├── services/
-│   ├── __init__.py
-|   ├── experimance/       # Core service managing state machine
-│   ├── display/
-│   ├── audio/
-│   └── agent/
+│   ├── core/            # Core service managing state machine
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       └── experimance_core/
+│   │
+│   ├── display/         # Display service for sand table visualization
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       └── experimance_display/
+│   │
+│   ├── audio/           # Audio service for sound generation
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       └── experimance_audio/
+│   │
+│   ├── agent/           # Agent service for AI interaction
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       └── experimance_agent/
+│   │
+│   ├── image_server/    # Image generation service
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       └── experimance_image_server/
+│   │
+│   └── transition/      # Image transition service
+│       ├── pyproject.toml
+│       └── src/
+│           └── experimance_transition/
+├── utils/               # Utility modules for testing and other purposes
+│   └── tests/           # Testing utilities
+├── scripts/             # Utility scripts for setup and management
 └── infra/
-    ├── __init__.py
     ├── ansible/
     ├── docker/
     └── grafana/
@@ -70,12 +99,14 @@ experimance/
 
 ## Dependency Management
 
-- Always use `uv` for package mangagement and running scripts
-- Define dependencies in pyproject.toml and setup.py
+- Always use `uv` for package management and running scripts
+- Define dependencies in each service's pyproject.toml file
 - Use explicit version requirements for dependencies
-- Use extras_require for optional dependencies
+- Use optional-dependencies for features that aren't required
 - Target Python 3.11+ compatibility
+- Each service should specify its own dependencies with appropriate version constraints
 - Handle SDL2 dependencies with pysdl2 and pysdl2-dll instead of sdl2
+- Use src layout for all packages to ensure clean development installs
 
 ## Testing
 

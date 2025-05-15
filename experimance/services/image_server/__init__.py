@@ -1,1 +1,0 @@
-"""Image server service package."""

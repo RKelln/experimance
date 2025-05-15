@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "experimance-common"
+name = "experimance-display"
 version = "0.1.0"
-description = "Common utilities for Experimance services"
+description = "Display service for the Experimance interactive art installation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -17,18 +17,34 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "experimance-common>=0.1.0",
+    "experimance-transition>=0.1.0",
     "numpy>=1.23",
-    "pyzmq>=25.1.1",
-    "pydantic>=2.5.0",
-    "toml>=0.10.2"
+    "pyzmq>=25.1.1", 
+    "pillow>=9.5",
+    "opencv-python>=4.8",
+    "pyglet>=2.0",
+    "pyopengl>=3.1.7",
+    "pyopengl-accelerate>=3.1.7",
+    "pysdl2>=0.9.14",
+    "pysdl2-dll>=2.0.0",
+    "ffmpegcv>=0.3",
+    "screeninfo>=0.8",
+    "pygame>=2.5.0",
+    "lunar-tools @ git+https://github.com/lunarring/lunar_tools"
 ]
 
-[project.urls]
-"Homepage" = "https://github.com/RKelln/experimance"
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.7",
+    "ruff>=0.1.6",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["experimance_common"]
+packages = ["experimance_display"]
 
 [tool.ruff]
 line-length = 100
