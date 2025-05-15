@@ -7,6 +7,6 @@ with the installation visitors.
 
 __version__ = '0.1.0'
 
-from .agent import run_agent_service
+from .agent import entrypoint, prewarm
 
-__all__ = ['run_agent_service']
+__all__ = ['entrypoint', 'prewarm']

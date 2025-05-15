@@ -18,10 +18,9 @@ classifiers = [
 ]
 dependencies = [
     "experimance-common>=0.1.0",
-    "numpy>=1.23",
-    "pyzmq>=25.1.1",
-    "opencv-python>=4.8",
-    "aiohttp>=3.9.0"
+    "livekit-agents[openai,silero]>=1.0.19",
+    "livekit-plugins-noise-cancellation>=0.2.3",
+    "python-dotenv>=1.1.0",
 ]
 
 [project.optional-dependencies]

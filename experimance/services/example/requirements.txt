@@ -1,5 +1,0 @@
-# Example service requirements
-# These are specific to the example service
-
-# Additional dependencies beyond the core dependencies in the main requirements.txt
-aiohttp>=3.9.0
