@@ -805,7 +805,7 @@ provides-extras = ["dev"]
 [[package]]
 name = "experimance-project"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "experimance-agent" },
     { name = "experimance-audio" },
