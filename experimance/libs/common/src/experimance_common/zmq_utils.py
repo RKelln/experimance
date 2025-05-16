@@ -114,9 +114,6 @@ class ZmqPublisher(ZmqBase):
         if not use_asyncio:
             self.socket.setsockopt(zmq.SNDTIMEO, DEFAULT_TIMEOUT)
         
-        # Allow some time for the socket to bind
-        time.sleep(0.1)
-        
         logger.debug(f"Publisher bound to {address} on topic '{topic}'")
     
     def publish(self, message: Dict[str, Any]) -> bool:
@@ -197,9 +194,6 @@ class ZmqSubscriber(ZmqBase):
         # Subscribe to topics
         for topic in topics:
             self.socket.setsockopt_string(zmq.SUBSCRIBE, topic)
-        
-        # Allow some time for the connection to establish
-        time.sleep(0.1)
         
         logger.debug(f"Subscriber connected to {address} with topics {topics}")
     
@@ -297,9 +291,6 @@ class ZmqPushSocket(ZmqBase):
         if not use_asyncio:
             self.socket.setsockopt(zmq.SNDTIMEO, DEFAULT_TIMEOUT)
         
-        # Allow some time for the socket to bind
-        time.sleep(0.1)
-        
         logger.debug(f"Push socket bound to {address}")
     
     def push(self, message: Dict[str, Any]) -> bool:
@@ -374,9 +365,6 @@ class ZmqPullSocket(ZmqBase):
         # Set timeout for receive operations
         if not use_asyncio:
             self.socket.setsockopt(zmq.RCVTIMEO, DEFAULT_TIMEOUT)
-        
-        # Allow some time for the connection to establish
-        time.sleep(0.1)
         
         logger.debug(f"Pull socket connected to {address}")
     

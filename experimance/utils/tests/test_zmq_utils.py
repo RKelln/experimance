@@ -204,4 +204,4 @@ class TestZmqPushPull:
 
 
 if __name__ == "__main__":
-    pytest.main(["-v", "test_zmq_utils_nonhanging.py"])
+    pytest.main(["-v", "test_zmq_utils.py"])

@@ -16,27 +16,10 @@ Run the tests using `uv` from the project root:
 ```bash
 # Run specific test files
 uv run pytest -v utils/tests/test_zmq_utils.py
-uv run pytest -v utils/tests/test_connection_retry.py
-uv run pytest -v utils/tests/test_zmq_with_retry.py
-
-# Run all connection retry tests
-uv run pytest -v utils/tests/test_connection_retry.py utils/tests/test_zmq_with_retry.py
 
 # Run tests with coverage
 uv run pytest --cov=experimance_common utils/tests/test_zmq_utils.py
 ```
-
-## Connection Retry Tests
-
-The connection retry tests verify that our ZMQ components can robustly handle connection issues, delayed service startup, and network failures. The tests:
-
-1. **Simulated Failures**: Explicitly simulate connection failures to test retry mechanism
-2. **Delayed Services**: Test late-binding of publishers and push sockets
-3. **Timeout Handling**: Verify proper timeout behavior and error propagation
-
-There are two levels of connection retry tests:
-- `test_connection_retry.py`: Tests the retry mechanism using low-level ZMQ sockets
-- `test_zmq_with_retry.py`: Tests the retry mechanism with the higher-level ZMQ wrapper classes
 
 ## Known Issues and Solutions
 
