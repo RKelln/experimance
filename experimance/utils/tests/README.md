@@ -67,3 +67,30 @@ The `utils/examples` directory contains example implementations that demonstrate
   - Proper asyncio task management
   - Graceful shutdown with signal handling
   - Statistics tracking and reporting
+
+- **`zmq_service_example.py`**: Demonstrates how to use the base service classes
+  ```bash
+  # Run as controller
+  uv run -m utils.examples.zmq_service_example --controller
+  
+  # In another terminal, run as worker
+  uv run -m utils.examples.zmq_service_example --worker
+  ```
+
+  This example demonstrates:
+  - Using the ZMQ service base classes for quick implementation
+  - Handling message and task processing with handlers
+  - Standard service lifecycle management
+  - Proper error handling and recovery
+  - Implementing controller and worker patterns
+
+- **Basic Service Example**: A non-ZMQ service implementation
+  ```bash
+  uv run -m utils.examples.basic_service_example
+  ```
+  
+  This example demonstrates:
+  - Using the BaseService class for services that don't need ZMQ
+  - Implementing simple periodic tasks
+  - Standard service lifecycle management
+  - Error handling and recovery

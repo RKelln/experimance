@@ -37,6 +37,20 @@ from experimance_common.config import (
     ConfigError,
 )
 
+# Import service base classes
+from experimance_common.service import (
+    BaseService,
+    BaseZmqService,
+    ServiceState,
+    ZmqPublisherService,
+    ZmqSubscriberService,
+    ZmqPushService,
+    ZmqPullService,
+    ZmqPublisherSubscriberService,
+    ZmqControllerService,
+    ZmqWorkerService,
+)
+
 __all__ = [
     # ZMQ utilities
     "ZmqPublisher",
@@ -47,12 +61,24 @@ __all__ = [
     "DEFAULT_PORTS",
     "HEARTBEAT_INTERVAL",
     
+    # Service base classes
+    "BaseService",
+    "BaseZmqService",
+    "ServiceState",
+    "ZmqPublisherService",
+    "ZmqSubscriberService",
+    "ZmqPushService",
+    "ZmqPullService",
+    "ZmqPublisherSubscriberService",
+    "ZmqControllerService",
+    "ZmqWorkerService",
+    
     # Schema definitions
     "Era",
     "Biome",
     "TransitionStyle",
     "MessageBase",
-    "EraChanged",
+        "EraChanged",
     "RenderRequest",
     "IdleStatus",
     "ImageReady",

@@ -82,7 +82,7 @@ experimance/
 ## ZeroMQ Communication
 
 - Services communicate via ZMQ PUB/SUB and PUSH/PULL patterns
-- Always use the `experimance_common.zmq_utils` classes for ZMQ communication
+- Always use the `experimance_common.services` base classes for services that need ZMQ communication
 - Port configurations are defined in `experimance_common.constants.DEFAULT_PORTS`
 - Message types are defined in `experimance_common.zmq_utils.MessageType` enum
 - ZMQ addresses should use proper formatting:

@@ -5,6 +5,7 @@ This library provides common utilities, schemas, and constants for all Experiman
 ## Features
 
 - **ZeroMQ Communication Utilities**: Non-hanging, timeout-aware ZMQ sockets for reliable inter-service communication
+- **Service Base Classes**: Standardized service classes for common service patterns (with and without ZMQ)
 - **Message Type Definitions**: Standard message types used throughout the system
 - **Configuration Utilities**: Shared configuration management
 - **Constants**: Default values for ports, timeouts, and other settings
@@ -259,6 +260,97 @@ To verify your ZMQ communication, refer to the test examples in the utils/tests 
 # Run ZMQ utility tests
 uv run pytest -v utils/tests/test_zmq_utils.py
 ```
+
+## Service Base Classes
+
+The `experimance_common.service` module provides a hierarchy of service classes that standardize service behavior across the Experimance system. These classes handle common concerns like lifecycle management, graceful shutdown, error handling, and statistics tracking.
+
+### Service Class Hierarchy
+
+The service classes are organized as follows:
+
+1. **BaseService**: Core functionality for all services (with or without ZMQ)
+   - **BaseZmqService**: Adds ZeroMQ-specific functionality
+     - **ZmqPublisherService**: For services that broadcast messages
+     - **ZmqSubscriberService**: For services that listen to broadcasts
+     - **ZmqPushService**: For services that distribute tasks
+     - **ZmqPullService**: For services that consume tasks
+     - **ZmqPublisherSubscriberService**: For services that both publish and subscribe
+     - **ZmqControllerService**: For controller services (publish + listen + push + pull)
+     - **ZmqWorkerService**: For worker services (subscribe + pull + push responses)
+
+See [README_SERVICE.md](README_SERVICE.md) for detailed documentation on using these service classes.
+
+### Example Usage: Non-ZMQ Service
+
+```python
+from experimance_common.service import BaseService
+import asyncio
+
+class MyService(BaseService):
+    def __init__(self):
+        super().__init__(
+            service_name="my-service",
+            service_type="custom-service"
+        )
+        
+    async def start(self):
+        await super().start()
+        # Register a custom task
+        self._register_task(self.periodic_task())
+        
+    async def periodic_task(self):
+        while self.running:
+            print("Performing work...")
+            await asyncio.sleep(1)
+
+async def main():
+    service = MyService()
+    await service.start()
+    await service.run()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Example Usage: ZMQ Service
+
+```python
+from experimance_common.service import ZmqPublisherService
+from experimance_common.constants import DEFAULT_PORTS
+import asyncio
+
+class MyService(ZmqPublisherService):
+    def __init__(self):
+        super().__init__(
+            service_name="my-service",
+            pub_address=f"tcp://*:{DEFAULT_PORTS['example_pub']}",
+            heartbeat_topic="my-service.events"
+        )
+    
+    async def start(self):
+        await super().start()
+        # Register additional tasks
+        self._register_task(self.my_background_task())
+    
+    async def my_background_task(self):
+        while self.running:
+            # Do something periodically
+            await asyncio.sleep(5)
+
+# Usage
+async def main():
+    service = MyService()
+    await service.start()
+    await service.run()  # Runs until terminated with Ctrl+C
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+For a complete example of controller-worker communication, see `utils/examples/zmq_service_example.py`.
+
+For more details on service classes, see [README_SERVICE.md](./README_SERVICE.md).
 
 ## Contributing
 
