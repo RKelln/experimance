@@ -1,13 +1,14 @@
 import multiprocessing as mp
 import time
-from typing import Tuple, Generator, Any
+import queue
+from typing import Tuple, Generator, Any, Optional
 
 import numpy as np
 
 from experimance_transition.transition import SimilarityTransition
 
 class TransitionWorker:
-    def __init__(self, transition_params: dict):
+    def __init__(self, transition_params: Optional[dict] = None):
         self.image = None
 
     def run(self, input_queue: mp.Queue, output_queue: mp.Queue):
@@ -18,7 +19,7 @@ class TransitionWorker:
                     break
                 self.image = image
                 output_queue.put((1, 1, image))
-            except mp.queues.Empty:
+            except queue.Empty:
                 continue
             except StopIteration:
                 break
@@ -55,7 +56,7 @@ class BlendTransitionWorker(TransitionWorker):
                     output_queue.put((step, steps, blended_image), block=False)
                 # output final image
                 output_queue.put((steps, steps, self.imageB))
-            except mp.queues.Empty:
+            except queue.Empty:
                 #print("blend empty input_queue")
                 continue
             except StopIteration:
@@ -102,7 +103,7 @@ class FlowTransitionWorker(TransitionWorker):
                 # output final image
                 output_queue.put((total_steps, total_steps, image))
 
-            except mp.queues.Empty:
+            except queue.Empty:
                 continue
             except StopIteration:
                 break
@@ -110,7 +111,7 @@ class FlowTransitionWorker(TransitionWorker):
                 break
 
 
-def start_transition_worker(worker_class:TransitionWorker, transition_params:dict, 
+def start_transition_worker(worker_class:type[TransitionWorker], transition_params:dict, 
                             input_queue: mp.Queue, output_queue: mp.Queue):
     #print("Creating transition worker", worker_class, transition_params)
     worker = worker_class(transition_params)
@@ -131,8 +132,8 @@ class mpTransitioner:
     def __init__(self, 
                  input_queue:mp.Queue, 
                  target,
-                 transition_class:TransitionWorker,
-                 transition_params) -> Generator[Tuple[int, int, np.ndarray], Tuple[np.ndarray, Any, int], None]:
+                 transition_class:type[TransitionWorker],  # Update type hint to specify we expect a class type
+                 transition_params) -> None:
         self.input_queue = input_queue  # input queue for incoming images that need to be transitioned
         self.output_queue = mp.Queue()  # output queue for transitioned images
         self.transition_params = transition_params
@@ -148,7 +149,7 @@ class mpTransitioner:
         frame = None
         last_step = 0
         last_total_steps = 0
-        last_frame = None
+        last_frame = np.ndarray(0)
 
         while True:
             try:
@@ -160,7 +161,7 @@ class mpTransitioner:
                 if total_steps > 0 and step >= total_steps:
                     self.total_transitions += 1
                     break # done with this generator
-            except mp.queues.Empty:
+            except queue.Empty:
                 #print("mpTransitioner: empty output_queue")
                 yield last_step, last_total_steps, last_frame
                 #print("mpTransitioner: after yield last frame")
@@ -184,7 +185,7 @@ class mpTransitioner:
     def add_image(self, image, location=None, steps=None):
         try:
             self.input_queue.put((image, location, steps), block=False)
-        except mp.queues.Full:
+        except queue.Full:
             print("mpTransitioner: input_queue full")
             pass
         except Exception as e:  # catch all exceptions

@@ -4,7 +4,7 @@ import concurrent.futures
 import queue
 import threading
 import os
-from typing import Tuple, Generator, Any
+from typing import Tuple, Generator, Union, Optional
 
 from experimance_transition.transition import SimilarityTransition
 
@@ -20,7 +20,7 @@ import multiprocessing as mp
 
 from ffmpegcv import VideoWriter
 
-from experimance_transition.transition_worker import *
+from experimance_transition.transition_worker import TransitionWorker, FlowTransitionWorker, BlendTransitionWorker, mpTransitioner
 from experimance_display.pygame_display import FullscreenImageDisplay, OpenGLImageDisplay, OpenGLImageShaderDisplay
 
 # display images sent to it over ZMQ
@@ -115,7 +115,7 @@ class DisplayServer:
     def run(self):
         image_updated:bool = False
         image  = None
-        transition : Generator = None
+        transition : Optional[Generator] = None
         dur:float = 1.0
 
         try:
@@ -329,7 +329,8 @@ class DisplayServer:
             self.transition_duration = float(message.split(" ")[1])
         elif message.startswith("set_transition"):
             self.transition_type = message.split(" ")[1]
-            self.init_transition()
+            #self.init_transition()
+            # TODO
         elif message == "get_size":
             # send the monitor size back
             self.server.send_json({"width": self.renderer.width, "height": self.renderer.height})

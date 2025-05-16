@@ -2,6 +2,7 @@ import io
 import os
 from pathlib import Path
 import base64
+from typing import Optional, Union
 
 import cv2
 from PIL import Image
@@ -30,9 +31,10 @@ def convert_images_to_mp4(input_path, output_path, filename, fps, remove_images=
         os.system(f"rm {input_path}/*.{input_format}")
 
 
-def get_mock_images(path:str) -> list:
+def get_mock_images(path: Union[str, Path]) -> list:
     # use the images in the folder for mock generation
-    path = Path(path)
+    if isinstance(path, str):
+        path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Mock images folder not found: {path}")
     mock_images = []
@@ -44,7 +46,7 @@ def get_mock_images(path:str) -> list:
     return mock_images
 
 # input cv2 image, output cv2 image and bounds
-def crop_to_content(image, size:tuple=(1024, 1024), bounds:tuple=None):
+def crop_to_content(image, size:tuple=(1024, 1024), bounds:Optional[tuple]=None):
 
     if bounds is None:
         # Find the bounding box of the content

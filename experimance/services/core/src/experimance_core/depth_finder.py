@@ -66,7 +66,7 @@ def mask_bright_area(image):
     # Use floodFill to find the contiguous bright area from the center
     # Note: The mask used by floodFill needs to be 2 pixels larger than the source image
     flood_fill_mask = np.zeros((gray_image.shape[0] + 2, gray_image.shape[1] + 2), np.uint8)
-    cv2.floodFill(thresholded_image, flood_fill_mask, center, 255, loDiff=20, upDiff=20, flags=cv2.FLOODFILL_MASK_ONLY)
+    cv2.floodFill(thresholded_image, flood_fill_mask, center, (255,), loDiff=(20,), upDiff=(20,), flags=cv2.FLOODFILL_MASK_ONLY)
 
     # The actual mask used for flood fill is 1 pixel larger all around, so we need to crop it
     cropped_mask = flood_fill_mask[1:-1, 1:-1]
@@ -152,8 +152,10 @@ def simple_obstruction_detect(image, size=(32,32), pixel_threshold=0):
 
 
 def depth_to_contour_map(ndarray_image, step=10):
-    # Normalize the depth image
-    normalized_depth = cv2.normalize(ndarray_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    # Create empty destination matrix with same size and type as input
+    normalized_depth = np.zeros_like(ndarray_image)
+    cv2.normalize(ndarray_image, normalized_depth, 0, 255, cv2.NORM_MINMAX)
+    normalized_depth = normalized_depth.astype(np.uint8)
     
     # Apply color map
     colored_image = cv2.applyColorMap(normalized_depth, cv2.COLORMAP_JET)
@@ -222,11 +224,11 @@ def is_blank_frame(image, threshold = 1.0):
 
 
 # Function to clip and normalize the image
-def clip_and_normalize(image, low_clip:int=15, high_clip:int=240, alpha:int=0, beta:int=255):
-    if low_clip == 0 and high_clip == 255: # no mask needed
-        return cv2.normalize(image, None, alpha, beta, cv2.NORM_MINMAX)
-    mask = cv2.inRange(image, low_clip, high_clip)
-    return cv2.normalize(image, None, alpha, beta, cv2.NORM_MINMAX, mask=mask)
+# def clip_and_normalize(image, low_clip:int=15, high_clip:int=240, alpha:int=0, beta:int=255):
+#     if low_clip == 0 and high_clip == 255: # no mask needed
+#         return cv2.normalize(image, None, alpha, beta, cv2.NORM_MINMAX)
+#     mask = cv2.inRange(image, low_clip, high_clip)
+#     return cv2.normalize(image, None, alpha, beta, cv2.NORM_MINMAX, mask=mask)
 
 
 # returns amount of difference between two images
@@ -465,7 +467,7 @@ def depth_generator( json_config=None,
             depth_frame_gen = mock_depth_generator(mock_images)
         elif isinstance(mock, list):
             depth_frame_gen = mock_depth_generator(mock)
-        elif isinstance(mock, function):
+        elif callable(mock):
             depth_frame_gen = mock()
         else:
             raise ValueError("Invalid mock parameter")
@@ -481,6 +483,7 @@ def depth_generator( json_config=None,
 
     changed = False
     obstruction = False
+    crop_bounds = None
     prev_masked_image = None  # for change detection
     prev_crop_bounds = None   # for cropping, to prefer to use the same center
     warm_up = True

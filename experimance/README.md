@@ -133,6 +133,10 @@ To update a particular service (e.g. core):
 uv sync --package experimance-core
 ```
 
+To update a particular dependency:
+```
+uv lock --upgrade-package opencv-python
+```
 
 ## Troubleshooting
 

@@ -22,7 +22,7 @@ def create_gradient_map(image, reference_point):
     
     diff_map = np.abs(image.astype(np.float32) - ref_value.astype(np.float32))
     gradient_map = np.sum(diff_map, axis=2)
-    gradient_map = cv2.normalize(gradient_map, None, 0, 1, cv2.NORM_MINMAX)
+    gradient_map = cv2.normalize(src=gradient_map, dst=None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX) # type: ignore
     return gradient_map
 
 
@@ -115,7 +115,8 @@ def flood_fill_color_image(image, start_point):
     
     max_dist = np.max(gradient_map[np.isfinite(gradient_map)])
     gradient_map[gradient_map == np.inf] = max_dist
-    gradient_map = cv2.normalize(gradient_map, None, 0, 1, cv2.NORM_MINMAX)
+    grad_out = np.empty_like(gradient_map)
+    gradient_map = cv2.normalize(gradient_map, grad_out, 0, 1, cv2.NORM_MINMAX)
     return gradient_map
 
 
@@ -144,12 +145,10 @@ def flood_fill_gradient_map(original_map, start_point):
     
     max_dist = np.max(gradient_map[np.isfinite(gradient_map)])
     gradient_map[gradient_map == np.inf] = max_dist
-    gradient_map = cv2.normalize(gradient_map, None, 0, 1, cv2.NORM_MINMAX)
+    grad_out = np.empty_like(gradient_map)
+    gradient_map = cv2.normalize(gradient_map, grad_out, 0, 1, cv2.NORM_MINMAX)
     return gradient_map
 
-
-def make_circle_gradient(width:int, height:int, origin_x:int, origin_y:int):
-    # fill the entire image with a smooth circle gradient starting from the origin
     # black at center white at point furthest from center
 
     # Generate (x,y) coordinate arrays
