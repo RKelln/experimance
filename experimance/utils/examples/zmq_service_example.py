@@ -139,7 +139,20 @@ class ExampleController(ZmqControllerService):
             try:
                 result = await self.pull_socket.pull_async()
                 if result:
-                    logger.debug(f"Received result: {result.get('task_id', 'unknown')}")
+                    # Check if the result is just an empty dict (error case)
+                    if not result or len(result) == 0:
+                        logger.debug("Received empty result, ignoring")
+                        continue
+                        
+                    task_id = result.get("task_id", "unknown")
+                    worker_name = result.get("service", "unknown")
+                    
+                    # Only process results that have a proper task_id and service name
+                    if task_id == "unknown" or worker_name == "unknown":
+                        logger.warning(f"Received incomplete task result, missing task_id or service: {result}")
+                        continue
+                        
+                    logger.debug(f"Received result for task: {task_id} from {worker_name}")
                     self.messages_received += 1
                     
                     # Process result with registered handler if any
@@ -183,6 +196,20 @@ class ExampleController(ZmqControllerService):
         worker_name = result.get("service", "unknown")
         status = result.get("status", "unknown")
         
+        # Validate that we have a real result from a worker
+        if worker_name == "unknown" or task_id == "unknown":
+            logger.warning(f"Received incomplete or invalid task result: {result}")
+            return
+            
+        # Check if this worker is in our connected workers list
+        if worker_name not in self.connected_workers:
+            logger.warning(f"Received result from unknown worker '{worker_name}' for task {task_id}")
+            # Add to connected workers for future tasks
+            self.connected_workers[worker_name] = {
+                'connected': True,
+                'last_seen': time.time()
+            }
+            
         logger.info(f"Task {task_id} completed by {worker_name} with status: {status}")
         self.tasks_completed += 1
     
@@ -191,6 +218,9 @@ class ExampleController(ZmqControllerService):
         while self.running:
             # Wait a bit before generating a new task
             await asyncio.sleep(random.uniform(2.0, 5.0))
+            
+            # Check if any workers are connected
+            worker_count = len([w for w in self.connected_workers.values() if w.get('connected', False)])
             
             # Generate a new task
             self.tasks_generated += 1
@@ -211,7 +241,10 @@ class ExampleController(ZmqControllerService):
             # Push the task to workers
             success = await self.push_task(task)
             if success:
-                logger.info(f"Generated and pushed task {task_id}")
+                if worker_count > 0:
+                    logger.info(f"Generated and pushed task {task_id} to {worker_count} worker(s)")
+                else:
+                    logger.warning(f"Generated task {task_id}, but no workers are connected. Task may be lost or never processed.")
                 
                 # Also publish a notification about the new task
                 notification = {
@@ -384,21 +417,59 @@ async def main():
         name = args.name or f"worker-{random.randint(1, 1000)}"
         service = ExampleWorker(name=name)
     
+    # Flag to track if we've started stopping the service
+    stopping = False
+        
     try:
         # Start and run the service
         await service.start()
         await service.run()
     except asyncio.CancelledError:
         logger.info("Service was cancelled")
+        stopping = True
     except KeyboardInterrupt:
         logger.info("Service interrupted by user")
+        stopping = True
     except Exception as e:
         logger.error(f"Error running service: {e}", exc_info=True)
     finally:
-        # Make sure we stop the service
-        if service.state != ServiceState.STOPPED:
-            await service.stop()
+        try:
+            # Skip cleanup if we're already exiting or system is finalizing
+            if sys.is_finalizing():
+                logger.debug("System is finalizing, skipping explicit cleanup")
+                return
+                    
+            # Make sure we stop the service with a timeout to prevent hanging
+            if service and service.state != ServiceState.STOPPED and not stopping:
+                logger.debug("Stopping service from main's finally block")
+                stop_task = asyncio.create_task(service.stop())
+                try:
+                    await asyncio.wait_for(stop_task, timeout=3.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout waiting for service to stop")
+                except asyncio.CancelledError:
+                    logger.debug("Stop task was cancelled")
+                except Exception as e:
+                    logger.warning(f"Error during stop: {e}")
+        except Exception as e:
+            logger.error(f"Error during service cleanup: {e}")
+            # Don't re-raise, we're in cleanup mode
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Handle KeyboardInterrupt at the top level
+        print("\nShutdown requested by keyboard interrupt")
+        sys.exit(0)
+    except RuntimeError as e:
+        if "Event loop stopped before Future completed" in str(e):
+            # This is expected during shutdown, exit gracefully
+            sys.exit(0)
+        else:
+            logger.error(f"Unhandled RuntimeError: {e}")
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}", exc_info=True)
+        sys.exit(1)

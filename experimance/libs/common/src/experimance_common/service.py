@@ -115,12 +115,17 @@ class BaseService:
         This ensures proper cleanup on service termination.
         """
         # Only process the signal if we're not already stopping
-        if not self._stopping:
-            signal_name = signal.Signals(signum).name
-            logger.info(f"Received signal {signal_name} ({signum}), shutting down gracefully...")
-            self.running = False
-            self.state = ServiceState.STOPPING
-            self._stopping = True
+        if self._stopping:
+            logger.debug(f"Signal handler called while already stopping, ignoring")
+            return
+            
+        signal_name = signal.Signals(signum).name
+        logger.info(f"Received signal {signal_name} ({signum}), shutting down gracefully...")
+        
+        # Set stopping flag and update state
+        self._stopping = True
+        self.running = False
+        self.state = ServiceState.STOPPING
     
     def _register_task(self, task_coroutine: Coroutine):
         """Register a task to be executed in the service's run loop.
@@ -190,12 +195,15 @@ class BaseService:
         # Prevent multiple simultaneous calls to stop()
         if self._stopping:
             logger.debug(f"Service {self.service_name} already stopping, ignoring duplicate stop call")
-            return
-            
-        self._stopping = True
-        logger.info(f"Stopping {self.service_name}...")
-        self.running = False
-        self.state = ServiceState.STOPPING
+            # If we're already in STOPPED state, don't proceed further
+            if self.state == ServiceState.STOPPED:
+                return
+            # Otherwise continue with the cleanup but don't log duplicate messages
+        else:
+            self._stopping = True
+            logger.info(f"Stopping {self.service_name}...")
+            self.running = False
+            self.state = ServiceState.STOPPING
         
         # Cancel any running tasks
         tasks = [task for task in asyncio.all_tasks() 
@@ -206,8 +214,13 @@ class BaseService:
             for task in tasks:
                 task.cancel()
             
-            # Wait for tasks to be cancelled
-            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                # Wait for tasks to be cancelled with a timeout
+                await asyncio.wait(tasks, timeout=1.0)
+            except asyncio.CancelledError:
+                logger.debug("Task cancellation was itself cancelled")
+            except Exception as e:
+                logger.warning(f"Error while waiting for tasks to cancel: {e}")
         
         self.state = ServiceState.STOPPED
         logger.info(f"Service {self.service_name} stopped")
@@ -234,10 +247,12 @@ class BaseService:
                 )
             
             # Run all tasks concurrently
-            await asyncio.gather(*self.tasks)
+            # Use asyncio.gather with return_exceptions=True to allow proper cleanup
+            await asyncio.gather(*self.tasks, return_exceptions=True)
             
         except asyncio.CancelledError:
             logger.info(f"Service {self.service_name} tasks cancelled")
+            # Don't re-raise, this is handled gracefully
         except Exception as e:
             logger.error(f"Error in service {self.service_name}: {e}")
             logger.debug(traceback.format_exc())
@@ -245,21 +260,36 @@ class BaseService:
             self.state = ServiceState.ERROR
             raise
         finally:
-            await self.stop()
+            # Even if we're cancelled, ensure service is stopped properly
+            if not self._stopping:  # Only call stop() if we haven't started stopping already
+                try:
+                    await self.stop()
+                except Exception as e:
+                    logger.error(f"Error during service shutdown: {e}")
+                    # Don't re-raise, we're in cleanup mode
     
     async def _handle_signal_async(self, sig):
         """Handle signals in the asyncio event loop."""
         # Only process the signal if we're not already stopping
-        if not self._stopping:
-            signal_name = signal.Signals(sig).name
-            logger.info(f"Received signal {signal_name} in asyncio event loop")
+        if self._stopping:
+            logger.debug("Signal handler called while already stopping, ignoring")
+            return
             
-            # Set service to stopping state and call stop
-            await self.stop()
-            
-            # Stop the event loop
-            loop = asyncio.get_running_loop()
-            loop.stop()
+        signal_name = signal.Signals(sig).name
+        logger.info(f"Received signal {signal_name} in asyncio event loop")
+        
+        # Mark as stopping before doing anything to prevent recursion
+        self._stopping = True
+        self.running = False
+        self.state = ServiceState.STOPPING
+        
+        # We don't need to call stop() from here - the main loop's finally block
+        # will handle that, and we've already set the proper flags
+        # Just log that we're shutting down
+        logger.info(f"Service {self.service_name} shutting down due to signal {signal_name}")
+
+        # Don't stop the event loop immediately - let the tasks clean up properly
+        # and let the main loop handle the exit
 
 
 class BaseZmqService(BaseService):
@@ -299,21 +329,41 @@ class BaseZmqService(BaseService):
         This method ensures all ZMQ sockets are properly closed
         in addition to the standard service cleanup.
         """
-        # If we're already stopping, let the parent handle it
-        if self._stopping:
-            await super().stop()
+        # If we're already stopping, let the parent handle it - but close sockets first
+        if self._stopping and self.state == ServiceState.STOPPED:
+            logger.debug(f"ZMQ Service {self.service_name} already fully stopped")
             return
             
-        # Close all sockets in reverse order of registration before stopping the service
+        # Set stopping flags even if already stopping - we still need to close sockets
+        self._stopping = True
+        self.running = False
+        self.state = ServiceState.STOPPING
+        
+        # First close all sockets in reverse order of registration
+        # We do this BEFORE calling super().stop() to avoid task cancellation issues
+        socket_errors = 0
         for socket in reversed(self._sockets):
             if socket:
-                logger.debug(f"Closing socket: {type(socket).__name__}")
-                socket.close()
+                try:
+                    logger.debug(f"Closing socket: {type(socket).__name__}")
+                    socket.close()
+                except Exception as e:
+                    logger.warning(f"Error closing socket: {e}")
+                    socket_errors += 1
         
+        # Clear the sockets list to prevent double-closure
         self._sockets = []
         
+        if socket_errors > 0:
+            logger.warning(f"Encountered {socket_errors} errors while closing ZMQ sockets")
+        
         # Call the parent class stop method to handle task cancellation
-        await super().stop()
+        try:
+            await super().stop()
+        except Exception as e:
+            logger.error(f"Error in parent stop method: {e}")
+            # Still mark as stopped even if there's an error
+            self.state = ServiceState.STOPPED
 
 
 class ZmqPublisherService(BaseZmqService):
