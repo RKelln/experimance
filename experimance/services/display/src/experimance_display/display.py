@@ -20,7 +20,13 @@ import multiprocessing as mp
 
 from ffmpegcv import VideoWriter
 
-from experimance_transition.transition_worker import TransitionWorker, FlowTransitionWorker, BlendTransitionWorker, mpTransitioner
+from experimance_transition.transition_worker import (
+    TransitionWorker, 
+    FlowTransitionWorker, 
+    BlendTransitionWorker, 
+    mpTransitioner,
+    start_transition_worker
+)
 from experimance_display.pygame_display import FullscreenImageDisplay, OpenGLImageDisplay, OpenGLImageShaderDisplay
 
 # display images sent to it over ZMQ

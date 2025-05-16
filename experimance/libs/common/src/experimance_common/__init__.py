@@ -2,13 +2,16 @@
 Experimance common package initialization.
 """
 
+from experimance_common.constants import (
+    DEFAULT_PORTS,
+)
+
 from experimance_common.zmq_utils import (
     ZmqPublisher,
     ZmqSubscriber,
     ZmqPushSocket,
     ZmqPullSocket,
     MessageType,
-    DEFAULT_PORTS,
     HEARTBEAT_INTERVAL,
 )
 

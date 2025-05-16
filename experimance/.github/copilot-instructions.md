@@ -77,6 +77,7 @@ experimance/
 - Use async/await for asynchronous code
 - Implement proper error handling with try/except blocks
 - Use logging instead of print statements
+- Update files directly, don't use temp files or scripts to write and then update files
 
 ## ZeroMQ Communication
 

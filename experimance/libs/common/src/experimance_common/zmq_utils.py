@@ -1,21 +1,29 @@
 """
-Common ZeroMQ utilities for Experimance services.
+ZMQ utility enhancement module that avoids hanging on socket operations.
 """
 
 import asyncio
 import json
 import logging
+import selectors
+import time
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 import zmq
 import zmq.asyncio
 
-from experimance_common.constants import DEFAULT_PORTS, DEFAULT_TIMEOUT, HEARTBEAT_INTERVAL
-
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+from experimance_common.constants import (
+    DEFAULT_TIMEOUT,
+    HEARTBEAT_INTERVAL,
+    DEFAULT_RETRY_ATTEMPTS,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_RECV_TIMEOUT,
+)
 
 
 class MessageType(str, Enum):
@@ -31,11 +39,60 @@ class MessageType(str, Enum):
     LOOP_REQUEST = "LoopRequest"
     HEARTBEAT = "Heartbeat"
 
-# Use the constants from constants.py
-# No need to redefine here
+
+class ZmqException(Exception):
+    """Base exception for ZMQ-related errors."""
+    pass
 
 
-class ZmqPublisher:
+class ZmqTimeoutError(ZmqException):
+    """Exception raised when a ZMQ operation times out."""
+    pass
+
+
+class ZmqBase:
+    """Base class for ZMQ socket wrappers."""
+    
+    def __init__(self, address: str, use_asyncio: bool = True):
+        """Initialize the base ZMQ object.
+        
+        Args:
+            address: The ZMQ address to connect/bind to
+            use_asyncio: Whether to use asyncio context
+        """
+        self.address = address
+        self.use_asyncio = use_asyncio
+        self.closed = False
+        
+        if use_asyncio:
+            self.context = zmq.asyncio.Context()
+        else:
+            self.context = zmq.Context()
+        
+        # Set socket to None initially
+        self.socket = None
+        
+    def close(self):
+        """Close the socket and terminate the context."""
+        if self.closed:
+            return
+            
+        if self.socket:
+            try:
+                self.socket.close(linger=0)
+            except Exception as e:
+                logger.error(f"Error closing socket: {e}")
+                
+        if self.context:
+            try:
+                self.context.term()
+            except Exception as e:
+                logger.error(f"Error terminating context: {e}")
+                
+        self.closed = True
+
+
+class ZmqPublisher(ZmqBase):
     """A ZeroMQ publisher that sends messages on a specific topic."""
     
     def __init__(self, address: str, topic: str = "", use_asyncio: bool = True):
@@ -44,238 +101,333 @@ class ZmqPublisher:
         Args:
             address: ZeroMQ address to bind to
             topic: Topic to publish on
-            use_asyncio: Whether to use asyncio (default: True)
+            use_asyncio: Whether to use asyncio
         """
-        self.address = address
+        super().__init__(address, use_asyncio)
         self.topic = topic
-        self.use_asyncio = use_asyncio
         
-        if use_asyncio:
-            self.context = zmq.asyncio.Context()
-        else:
-            self.context = zmq.Context()
-            
+        # Create the socket
         self.socket = self.context.socket(zmq.PUB)
-        self.socket.setsockopt(zmq.CONFLATE, 1)  # Only keep latest message
-        self.socket.setsockopt(zmq.HEARTBEAT_IVL, int(HEARTBEAT_INTERVAL * 1000))  # Convert to ms
         self.socket.bind(address)
-        logger.info(f"Publisher bound to {address} with topic '{topic}'")
         
-    async def publish_async(self, message: Dict[str, Any]) -> None:
-        """Publish a message asynchronously.
+        # Set timeout for send operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.SNDTIMEO, DEFAULT_TIMEOUT)
         
-        Args:
-            message: Message to publish (will be JSON encoded)
-        """
-        if not self.use_asyncio:
-            raise RuntimeError("Cannot use publish_async with use_asyncio=False")
+        # Allow some time for the socket to bind
+        time.sleep(0.1)
         
-        message_json = json.dumps(message).encode('utf-8')
-        topic_bytes = self.topic.encode('utf-8') if self.topic else b''
-        
-        await self.socket.send_multipart([topic_bytes, message_json])
-        logger.debug(f"Published message: {message}")
-        
-    def publish(self, message: Dict[str, Any]) -> None:
-        """Publish a message synchronously.
+        logger.debug(f"Publisher bound to {address} on topic '{topic}'")
+    
+    def publish(self, message: Dict[str, Any]) -> bool:
+        """Publish a message on the topic.
         
         Args:
-            message: Message to publish (will be JSON encoded)
-        """
-        if self.use_asyncio:
-            raise RuntimeError("Cannot use publish with use_asyncio=True")
+            message: The message to publish (will be serialized to JSON)
             
-        message_json = json.dumps(message).encode('utf-8')
-        topic_bytes = self.topic.encode('utf-8') if self.topic else b''
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.closed:
+            logger.error("Attempted to publish on closed socket")
+            return False
+            
+        try:
+            json_message = json.dumps(message)
+            self.socket.send_string(f"{self.topic} {json_message}")
+            return True
+        except zmq.error.Again:
+            logger.warning("Publish operation timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error publishing message: {e}")
+            return False
+    
+    async def publish_async(self, message: Dict[str, Any]) -> bool:
+        """Publish a message asynchronously on the topic.
         
-        self.socket.send_multipart([topic_bytes, message_json])
-        logger.debug(f"Published message: {message}")
-        
-    def close(self) -> None:
-        """Close the publisher socket."""
-        self.socket.close()
-        self.context.term()
+        Args:
+            message: The message to publish (will be serialized to JSON)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.closed:
+            logger.error("Attempted to publish on closed socket")
+            return False
+            
+        try:
+            json_message = json.dumps(message)
+            # Use wait_for to add a timeout
+            await asyncio.wait_for(
+                self.socket.send_string(f"{self.topic} {json_message}"), # type: ignore
+                timeout=DEFAULT_RECV_TIMEOUT
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("Async publish operation timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error publishing message asynchronously: {e}")
+            return False
 
 
-class ZmqSubscriber:
+class ZmqSubscriber(ZmqBase):
     """A ZeroMQ subscriber that receives messages on specific topics."""
     
-    def __init__(self, address: str, topics: List[str] = None, use_asyncio: bool = True):
+    def __init__(self, address: str, topics: List[str], use_asyncio: bool = True):
         """Initialize a ZeroMQ subscriber.
         
         Args:
             address: ZeroMQ address to connect to
-            topics: List of topics to subscribe to (empty list = all topics)
-            use_asyncio: Whether to use asyncio (default: True)
+            topics: List of topics to subscribe to
+            use_asyncio: Whether to use asyncio
         """
-        self.address = address
-        self.topics = topics or []
-        self.use_asyncio = use_asyncio
+        super().__init__(address, use_asyncio)
+        self.topics = topics
         
-        if use_asyncio:
-            self.context = zmq.asyncio.Context()
-        else:
-            self.context = zmq.Context()
-            
+        # Create the socket
         self.socket = self.context.socket(zmq.SUB)
-        self.socket.setsockopt(zmq.CONFLATE, 1)  # Only keep latest message
-        self.socket.setsockopt(zmq.HEARTBEAT_IVL, int(HEARTBEAT_INTERVAL * 1000))  # Convert to ms
-        
-        # Subscribe to specified topics or all if none specified
-        if not self.topics:
-            self.socket.setsockopt(zmq.SUBSCRIBE, b'')
-            logger.info(f"Subscriber connected to {address} with subscription to all topics")
-        else:
-            for topic in self.topics:
-                self.socket.setsockopt(zmq.SUBSCRIBE, topic.encode('utf-8'))
-            topic_list = ", ".join(self.topics)
-            logger.info(f"Subscriber connected to {address} with subscriptions to {topic_list}")
-            
         self.socket.connect(address)
         
-    async def receive_async(self) -> tuple[str, Dict[str, Any]]:
-        """Receive a message asynchronously.
+        # Set timeout for receive operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.RCVTIMEO, DEFAULT_TIMEOUT)
+        
+        # Subscribe to topics
+        for topic in topics:
+            self.socket.setsockopt_string(zmq.SUBSCRIBE, topic)
+        
+        # Allow some time for the connection to establish
+        time.sleep(0.1)
+        
+        logger.debug(f"Subscriber connected to {address} with topics {topics}")
+    
+    def receive(self) -> Tuple[str, Dict[str, Any]]:
+        """Receive a message from the subscribed topics.
         
         Returns:
             Tuple of (topic, message)
-        """
-        if not self.use_asyncio:
-            raise RuntimeError("Cannot use receive_async with use_asyncio=False")
             
-        [topic_bytes, message_json] = await self.socket.recv_multipart()
-        topic = topic_bytes.decode('utf-8')
-        message = json.loads(message_json.decode('utf-8'))
-        logger.debug(f"Received message on topic '{topic}': {message}")
-        return topic, message
-        
-    def receive(self) -> tuple[str, Dict[str, Any]]:
-        """Receive a message synchronously.
+        Raises:
+            ZmqTimeoutError: If the receive operation times out
+        """
+        if self.closed:
+            raise ZmqException("Attempted to receive on closed socket")
+            
+        try:
+            message_str : str = self.socket.recv_string() # type: ignore
+            space_index = message_str.find(" ") 
+            
+            if space_index == -1:
+                logger.warning(f"Received malformed message: {message_str}")
+                return "", {}
+                
+            topic = message_str[:space_index]
+            message_json = message_str[space_index + 1:]
+            message = json.loads(message_json)
+            
+            return topic, message
+        except zmq.error.Again:
+            raise ZmqTimeoutError("Receive operation timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding message: {e}")
+            return "", {}
+        except Exception as e:
+            logger.error(f"Error receiving message: {e}")
+            return "", {}
+    
+    async def receive_async(self) -> Tuple[str, Dict[str, Any]]:
+        """Receive a message asynchronously from the subscribed topics.
         
         Returns:
             Tuple of (topic, message)
-        """
-        if self.use_asyncio:
-            raise RuntimeError("Cannot use receive with use_asyncio=True")
             
-        [topic_bytes, message_json] = self.socket.recv_multipart()
-        topic = topic_bytes.decode('utf-8')
-        message = json.loads(message_json.decode('utf-8'))
-        logger.debug(f"Received message on topic '{topic}': {message}")
-        return topic, message
-        
-    def close(self) -> None:
-        """Close the subscriber socket."""
-        self.socket.close()
-        self.context.term()
+        Raises:
+            ZmqTimeoutError: If the receive operation times out
+        """
+        if self.closed:
+            raise ZmqException("Attempted to receive on closed socket")
+            
+        try:
+            # Use wait_for to add a timeout
+            message_str = await asyncio.wait_for(
+                self.socket.recv_string(), # type: ignore
+                timeout=DEFAULT_RECV_TIMEOUT
+            )
+            
+            space_index = message_str.find(" ")
+            
+            if space_index == -1:
+                logger.warning(f"Received malformed message: {message_str}")
+                return "", {}
+                
+            topic = message_str[:space_index]
+            message_json = message_str[space_index + 1:]
+            message = json.loads(message_json)
+            
+            return topic, message
+        except asyncio.TimeoutError:
+            raise ZmqTimeoutError("Async receive operation timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding message: {e}")
+            return "", {}
+        except Exception as e:
+            logger.error(f"Error receiving message: {e}")
+            return "", {}
 
 
-class ZmqPushSocket:
-    """A ZeroMQ PUSH socket for distributing work."""
+class ZmqPushSocket(ZmqBase):
+    """A ZeroMQ push socket that sends messages to a pull socket."""
     
     def __init__(self, address: str, use_asyncio: bool = True):
-        """Initialize a ZeroMQ PUSH socket.
+        """Initialize a ZeroMQ push socket.
         
         Args:
             address: ZeroMQ address to bind to
-            use_asyncio: Whether to use asyncio (default: True)
+            use_asyncio: Whether to use asyncio
         """
-        self.address = address
-        self.use_asyncio = use_asyncio
+        super().__init__(address, use_asyncio)
         
-        if use_asyncio:
-            self.context = zmq.asyncio.Context()
-        else:
-            self.context = zmq.Context()
-            
+        # Create the socket
         self.socket = self.context.socket(zmq.PUSH)
-        self.socket.setsockopt(zmq.HEARTBEAT_IVL, int(HEARTBEAT_INTERVAL * 1000))  # Convert to ms
         self.socket.bind(address)
-        logger.info(f"PUSH socket bound to {address}")
         
-    async def push_async(self, message: Dict[str, Any]) -> None:
-        """Push a message asynchronously.
+        # Set timeout for send operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.SNDTIMEO, DEFAULT_TIMEOUT)
         
-        Args:
-            message: Message to push (will be JSON encoded)
-        """
-        if not self.use_asyncio:
-            raise RuntimeError("Cannot use push_async with use_asyncio=False")
-            
-        message_json = json.dumps(message).encode('utf-8')
-        await self.socket.send(message_json)
-        logger.debug(f"Pushed message: {message}")
+        # Allow some time for the socket to bind
+        time.sleep(0.1)
         
-    def push(self, message: Dict[str, Any]) -> None:
-        """Push a message synchronously.
+        logger.debug(f"Push socket bound to {address}")
+    
+    def push(self, message: Dict[str, Any]) -> bool:
+        """Push a message to the socket.
         
         Args:
-            message: Message to push (will be JSON encoded)
-        """
-        if self.use_asyncio:
-            raise RuntimeError("Cannot use push with use_asyncio=True")
+            message: The message to push (will be serialized to JSON)
             
-        message_json = json.dumps(message).encode('utf-8')
-        self.socket.send(message_json)
-        logger.debug(f"Pushed message: {message}")
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.closed:
+            logger.error("Attempted to push on closed socket")
+            return False
+            
+        try:
+            json_message = json.dumps(message)
+            self.socket.send_string(json_message)
+            return True
+        except zmq.error.Again:
+            logger.warning("Push operation timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error pushing message: {e}")
+            return False
+    
+    async def push_async(self, message: Dict[str, Any]) -> bool:
+        """Push a message asynchronously to the socket.
         
-    def close(self) -> None:
-        """Close the PUSH socket."""
-        self.socket.close()
-        self.context.term()
+        Args:
+            message: The message to push (will be serialized to JSON)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.closed:
+            logger.error("Attempted to push on closed socket")
+            return False
+            
+        try:
+            json_message = json.dumps(message)
+            # Use wait_for to add a timeout
+            await asyncio.wait_for(
+                self.socket.send_string(json_message), # type: ignore
+                timeout=DEFAULT_RECV_TIMEOUT
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("Async push operation timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error pushing message asynchronously: {e}")
+            return False
 
 
-class ZmqPullSocket:
-    """A ZeroMQ PULL socket for receiving distributed work."""
+class ZmqPullSocket(ZmqBase):
+    """A ZeroMQ pull socket that receives messages from a push socket."""
     
     def __init__(self, address: str, use_asyncio: bool = True):
-        """Initialize a ZeroMQ PULL socket.
+        """Initialize a ZeroMQ pull socket.
         
         Args:
             address: ZeroMQ address to connect to
-            use_asyncio: Whether to use asyncio (default: True)
+            use_asyncio: Whether to use asyncio
         """
-        self.address = address
-        self.use_asyncio = use_asyncio
+        super().__init__(address, use_asyncio)
         
-        if use_asyncio:
-            self.context = zmq.asyncio.Context()
-        else:
-            self.context = zmq.Context()
-            
+        # Create the socket
         self.socket = self.context.socket(zmq.PULL)
-        self.socket.setsockopt(zmq.HEARTBEAT_IVL, int(HEARTBEAT_INTERVAL * 1000))  # Convert to ms
         self.socket.connect(address)
-        logger.info(f"PULL socket connected to {address}")
         
-    async def pull_async(self) -> Dict[str, Any]:
-        """Pull a message asynchronously.
+        # Set timeout for receive operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.RCVTIMEO, DEFAULT_TIMEOUT)
         
-        Returns:
-            Received message
-        """
-        if not self.use_asyncio:
-            raise RuntimeError("Cannot use pull_async with use_asyncio=False")
-            
-        message_json = await self.socket.recv()
-        message = json.loads(message_json.decode('utf-8'))
-        logger.debug(f"Pulled message: {message}")
-        return message
+        # Allow some time for the connection to establish
+        time.sleep(0.1)
         
+        logger.debug(f"Pull socket connected to {address}")
+    
     def pull(self) -> Dict[str, Any]:
-        """Pull a message synchronously.
+        """Pull a message from the socket.
         
         Returns:
-            Received message
-        """
-        if self.use_asyncio:
-            raise RuntimeError("Cannot use pull with use_asyncio=True")
+            The received message
             
-        message_json = self.socket.recv()
-        message = json.loads(message_json.decode('utf-8'))
-        logger.debug(f"Pulled message: {message}")
-        return message
+        Raises:
+            ZmqTimeoutError: If the receive operation times out
+        """
+        if self.closed:
+            raise ZmqException("Attempted to pull from closed socket")
+            
+        try:
+            message_str : str = self.socket.recv_string() # type: ignore
+            return json.loads(message_str)
+        except zmq.error.Again:
+            raise ZmqTimeoutError("Pull operation timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding message: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error pulling message: {e}")
+            return {}
+    
+    async def pull_async(self) -> Dict[str, Any]:
+        """Pull a message asynchronously from the socket.
         
-    def close(self) -> None:
-        """Close the PULL socket."""
-        self.socket.close()
-        self.context.term()
+        Returns:
+            The received message
+            
+        Raises:
+            ZmqTimeoutError: If the receive operation times out
+        """
+        if self.closed:
+            raise ZmqException("Attempted to pull from closed socket")
+            
+        try:
+            # Use wait_for to add a timeout
+            message_str = await asyncio.wait_for(
+                self.socket.recv_string(), # type: ignore
+                timeout=DEFAULT_RECV_TIMEOUT
+            )
+            return json.loads(message_str)
+        except asyncio.TimeoutError:
+            raise ZmqTimeoutError("Async pull operation timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding message: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error pulling message: {e}")
+            return {}

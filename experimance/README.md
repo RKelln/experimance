@@ -119,6 +119,14 @@ This structure makes development cleaner by:
 - Supporting proper editable installs
 - Making packages independently testable
 
+### Install tools
+
+```bash
+uv tool install ruff
+uv tool install pytest
+uv add --dev pytest pytest-asyncio pytest-mock pytest-cov 
+```
+
 ## Package management
 
 Use `uv` and see: https://docs.astral.sh/uv/concepts/projects/workspaces/ for reference.
@@ -138,6 +146,44 @@ To update a particular dependency:
 uv lock --upgrade-package opencv-python
 ```
 
+## Testing
+
+Run tests with uv and pytest:
+
+```bash
+# Install development dependencies
+uv sync --only-dev
+
+# Run all tests
+uv run pytest
+
+# Run tests with coverage
+uv run pytest --cov=experimance_common
+
+# Run specific tests
+uv run pytest -v utils/tests/test_zmq_utils.py
+```
+
+### ZeroMQ Utilities Tests
+
+The ZeroMQ communication layer has comprehensive tests:
+
+```bash
+# Run the basic ZMQ tests
+uv run pytest -v utils/tests/test_zmq_utils.py
+
+# Run advanced ZMQ tests (connection failures, retries, etc.)
+uv run pytest -v utils/tests/test_zmq_utils_advanced.py
+```
+
+The enhanced ZMQ utilities include:
+- Automatic reconnection with exponential backoff
+- Connection status monitoring and health checks
+- Proper error handling and logging
+- Non-blocking "fire-and-forget" async operations
+
+See `utils/tests/README_ZMQ_TESTS.md` for more details.
+
 ## Troubleshooting
 
 If you encounter issues with installation or imports, we provide several testing utilities:
@@ -148,9 +194,6 @@ uv run python utils/tests/simple_test.py
 
 # Check environment setup
 uv run python utils/tests/check_env.py
-
-# Verify comprehensive imports
-uv run python utils/tests/test_imports.py
 ```
 
 See `utils/tests/README.md` for detailed information about these utilities and common troubleshooting steps.
