@@ -21,15 +21,16 @@ ZeroMQ services additionally include:
 """
 
 import asyncio
-import json
 import logging
 import signal
-import sys
 import time
 import traceback
-import inspect # Added import
+import inspect
+import logging
+import signal
+import traceback  # Explicitly import traceback
 from contextlib import asynccontextmanager
-from enum import Enum
+from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, Coroutine
 
 import zmq
@@ -65,7 +66,14 @@ class ServiceState(str, Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     STOPPED = "stopped"
-    ERROR = "error"
+
+
+class ServiceStatus(str, Enum):
+    """Service health status."""
+    HEALTHY = "healthy"    # Service is operating normally
+    WARNING = "warning"    # Service encountered non-critical issues
+    ERROR = "error"        # Service encountered serious but recoverable errors
+    FATAL = "fatal"        # Service encountered unrecoverable errors
 
 
 class BaseService:
@@ -91,6 +99,7 @@ class BaseService:
         self.service_name = service_name
         self.service_type = service_type
         self.state = ServiceState.INITIALIZED
+        self.status = ServiceStatus.HEALTHY
         self.running = False
         self.tasks = []
         
@@ -162,6 +171,7 @@ class BaseService:
                 "service": self.service_name,
                 "type": self.service_type,
                 "state": self.state,
+                "status": self.status,
                 "uptime": uptime_str,
                 "messages_sent": self.messages_sent,
                 "messages_received": self.messages_received,
@@ -247,10 +257,10 @@ class BaseService:
                 logger.debug(f"Cleaning up {len(self.tasks)} registered coroutines for {self.service_name}.")
                 for task_coro in self.tasks:
                     try:
-                        if inspect.iscoroutine(task_coro) and not getattr(task_coro, 'cr_running', False):
-                            if getattr(task_coro, 'cr_frame', True) is None:
-                                logger.debug(f"Closing unawaited coroutine in {self.service_name}: {task_coro.__name__ if hasattr(task_coro, '__name__') else task_coro}")
-                                task_coro.close()
+                        if inspect.iscoroutine(task_coro):
+                            # Close any coroutine that hasn't been awaited
+                            logger.debug(f"Closing unawaited coroutine in {self.service_name}: {task_coro.__name__ if hasattr(task_coro, '__name__') else task_coro}")
+                            task_coro.close()
                     except Exception as e:
                         logger.debug(f"Error closing unawaited coroutine {task_coro} in {self.service_name}: {e}", exc_info=False)
                 self.tasks = [] # Clear the list after attempting to close
@@ -282,21 +292,68 @@ class BaseService:
                     lambda s=sig: asyncio.create_task(self._handle_signal_async(s))
                 )
             
+            # Create task objects for each coroutine to allow checking for exceptions
+            # even if we don't await them to completion
+            task_objects = []
+            for coro in self.tasks:
+                if inspect.iscoroutine(coro):  # Ensure it's a coroutine
+                    task_name = f"{self.service_name}-{coro.__name__ if hasattr(coro, '__name__') else 'task'}"
+                    task = asyncio.create_task(coro, name=task_name)
+                    task_objects.append(task)
+                else:
+                    logger.warning(f"Non-coroutine found in tasks list: {coro}")
+                    
             # Run all tasks concurrently
+            # Set up done callbacks to detect errors as they happen
+            for task in task_objects:
+                task.add_done_callback(self._task_done_callback)
+                
             # Use asyncio.gather with return_exceptions=True to allow proper cleanup
-            await asyncio.gather(*self.tasks, return_exceptions=True)
-            
+            try:
+                results = await asyncio.gather(*task_objects, return_exceptions=True)
+                
+                task_errors_found = False
+                for result in results:
+                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                        logger.error(f"Task error in service {self.service_name} during gather: {result}")
+                        # Assuming traceback is imported at the top of the file
+                        tb_str = ''.join(traceback.format_exception(type(result), result, result.__traceback__))
+                        logger.debug(f"Traceback for task error:\\n{tb_str}")
+                        self.record_error(result)
+                        task_errors_found = True
+                
+                if task_errors_found:
+                    self.status = ServiceStatus.ERROR
+                    logger.info(f"Service {self.service_name} encountered task errors. Status set to ERROR. Stop will be handled by finally block.")
+            except asyncio.CancelledError:
+                # If the gather itself is cancelled, we still want to check for task exceptions
+                logger.info(f"Gather was cancelled for {self.service_name}, checking individual tasks for errors")
+                for task in task_objects:
+                    if task.done() and not task.cancelled():
+                        try:
+                            exc = task.exception()
+                            if exc:
+                                logger.error(f"Task error in {task.get_name()} after cancellation: {exc}")
+                                self.record_error(exc)
+                                self.status = ServiceStatus.ERROR
+                        except (asyncio.CancelledError, asyncio.InvalidStateError):
+                            # Task was cancelled or not done, just skip
+                            pass
+                raise  # Re-raise the CancelledError
+        # This CancelledError is for the run() task itself being cancelled.
         except asyncio.CancelledError:
-            logger.info(f"Service {self.service_name} tasks cancelled, initiating stop.")
-            # If the run() task itself is cancelled, we need to ensure stop() is called.
-            # The finally block will handle this.
+            logger.info(f"Service {self.service_name} run task itself was cancelled, initiating stop.")
+            # The finally block will handle calling stop().
+        
+        # This Exception is for other unexpected errors directly within the run() method's logic,
+        # not from the tasks managed by gather.
         except Exception as e:
-            logger.error(f"Error in service {self.service_name}: {e}")
-            logger.debug(traceback.format_exc())
-            self.errors += 1
-            self.state = ServiceState.ERROR
-            # Even with an error, try to stop gracefully. The finally block will handle this.
-            raise # Re-raise after logging, but finally will still execute
+            logger.error(f"Unexpected error in service {self.service_name} run execution: {e}")
+            # Assuming traceback is imported at the top of the file
+            logger.debug(traceback.format_exc()) 
+            self.record_error(e, is_fatal=True)
+            # Re-raise to indicate a more fundamental issue with the service's run logic itself.
+            raise
         finally:
             logger.debug(f"Service {self.service_name} run() method's finally block reached. Current state: {self.state}, _stopping: {self._stopping}")
             # Only call stop() from here if a stop operation is NOT already in progress (_stopping is False)
@@ -310,12 +367,14 @@ class BaseService:
                     await self.stop()
                 except Exception as e:
                     logger.error(f"Error during self.stop() called from run() finally for {self.service_name}: {e}", exc_info=True)
-                    self.state = ServiceState.ERROR # Ensure error state if cleanup fails
+                    self.record_error(e)
             elif self._stopping and self.state != ServiceState.STOPPED:
                 logger.info(f"Service {self.service_name} run() method's finally block: A stop operation is already in progress "
                             f"(state: {self.state}, _stopping: {self._stopping}). Letting it complete.")
             elif self.state == ServiceState.STOPPED:
                 logger.info(f"Service {self.service_name} run() method's finally block: Service already STOPPED.")
+            
+            logger.info(f"Service {self.service_name} run() method completed. Final state: {self.state}")
 
     async def _handle_signal_async(self, sig):
         """Handle signals in the asyncio event loop by calling stop()."""
@@ -342,9 +401,57 @@ class BaseService:
         except Exception as e:
             logger.error(f"Error during signal-initiated stop for {self.service_name}: {e}", exc_info=True)
             # Ensure the service is in a non-operational state even if stop fails.
-            self.state = ServiceState.ERROR
+            self.state = ServiceState.STOPPED
+            self.status = ServiceStatus.ERROR
             self.running = False
             self._stopping = True # Mark as stopping even if stop() failed partially
+
+    def _task_done_callback(self, task):
+        """Callback for completed tasks to immediately detect errors.
+        
+        This callback is called when a task completes, is cancelled, or raises an exception.
+        It's used to detect errors as they happen rather than waiting for all tasks to complete.
+        """
+        try:
+            if task.done() and not task.cancelled():
+                exc = task.exception()
+                if exc:
+                    task_name = task.get_name()
+                    logger.error(f"Error detected in task {task_name} via callback: {exc}")
+                    self.record_error(exc)
+                    
+                    # If the service is still running, schedule a stop
+                    if self.running and not self._stopping:
+                        logger.warning(f"Scheduling service {self.service_name} to stop due to task error")
+                        # We can't call stop() directly from this callback as it could deadlock,
+                        # so we schedule it to run soon in the event loop
+                        asyncio.create_task(self.stop(), name=f"{self.service_name}-error-stop")
+        except (asyncio.CancelledError, asyncio.InvalidStateError):
+            # Task was cancelled or not done, just skip
+            pass
+            
+    def record_error(self, error: Exception, is_fatal: bool = False):
+        """Record an error and update service status.
+        
+        Args:
+            error: The exception that occurred
+            is_fatal: Whether this error should mark the service as fatally errored
+        """
+        self.errors += 1
+        if is_fatal:
+            self.status = ServiceStatus.FATAL
+            logger.error(f"Fatal error in service {self.service_name}: {error!r}", exc_info=True)
+        else:
+            self.status = ServiceStatus.ERROR
+            logger.error(f"Error in service {self.service_name}: {error!r}", exc_info=True)
+            
+    def reset_error_status(self):
+        """Reset the service's error status to HEALTHY.
+        
+        Call this after recovering from an error condition.
+        """
+        self.status = ServiceStatus.HEALTHY
+        logger.info(f"Service {self.service_name} error status reset to HEALTHY")
 
 
 class BaseZmqService(BaseService):

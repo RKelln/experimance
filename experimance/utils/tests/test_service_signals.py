@@ -24,6 +24,8 @@ from experimance_common.service import (
     BaseService, BaseZmqService, ZmqPublisherService, ServiceState
 )
 
+from test_utils import wait_for_service_shutdown
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 class TestSimpleService(BaseService):
     """Simple service for testing signal handling."""
+    __test__ = False  # Prevent pytest from treating this as a test case
     
     def __init__(self, name="signal-test-service"):
         super().__init__(service_name=name, service_type="test")
@@ -55,6 +58,7 @@ class TestSimpleService(BaseService):
 
 class TestZmqService(ZmqPublisherService):
     """ZMQ service for testing signal handling with ZMQ resources."""
+    __test__ = False  # Prevent pytest from treating this as a test case
     
     def __init__(self, name="zmq-signal-test-service"):
         super().__init__(
@@ -115,47 +119,6 @@ async def test_basic_service_signal():
     assert not service.running
     assert service._stopping  # Should have been set by stop()
     logger.info("Basic service signal test completed successfully")
-
-
-async def wait_for_service_shutdown(service_run_task: asyncio.Task, service: BaseService, timeout: float = 5.0):
-    """
-    Waits for the service.run() task to complete and the service to reach STOPPED state.
-    """
-    logger.info(f"Waiting for service {service.service_name} to shut down (run task: {service_run_task.get_name()})...")
-    try:
-        # Wait for the service's main run task to complete.
-        # This task should finish as a result of service.stop() being called (e.g., by a signal).
-        await asyncio.wait_for(service_run_task, timeout=timeout)
-        logger.info(f"Service {service.service_name} run task completed. Current service state: {service.state}")
-    except asyncio.CancelledError:
-        logger.info(f"Service {service.service_name} run task was cancelled, as expected during shutdown. Current service state: {service.state}")
-    except asyncio.TimeoutError:
-        logger.error(f"Timeout waiting for service {service.service_name} run task to complete (timeout: {timeout}s). Current state: {service.state}")
-        # Log details if timeout occurs
-        all_tasks = asyncio.all_tasks()
-        logger.error(f"Dumping all {len(all_tasks)} asyncio tasks at timeout:")
-        for i, task in enumerate(all_tasks):
-            logger.error(f"  Task {i}: {task.get_name()}, done: {task.done()}, cancelled: {task.cancelled()}")
-            if not task.done():
-                task.print_stack(file=sys.stderr) # Print stack to stderr
-        if not service_run_task.done():
-            logger.error(f"Service {service.service_name} run task is still not done. Attempting to cancel it now.")
-            service_run_task.cancel()
-            with suppress(asyncio.CancelledError): # Suppress if already cancelled
-                await service_run_task
-        assert False, f"Service {service.service_name} run task did not complete in time. State: {service.state}"
-    except Exception as e:
-        logger.error(f"Unexpected error waiting for {service.service_name} run task: {e!r}", exc_info=True)
-        assert False, f"Unexpected error waiting for {service.service_name} shutdown: {e!r}"
-
-    # After the run_task has finished, service.stop() should have set the state to STOPPED.
-    # A very short poll can confirm this, mainly for robustness against tiny timing windows.
-    if service.state != ServiceState.STOPPED:
-        logger.debug(f"Service {service.service_name} state is {service.state}, polling briefly for STOPPED state...")
-        await asyncio.sleep(0.1) # Brief pause for final state transition if needed
-
-    assert service.state == ServiceState.STOPPED, f"Service {service.service_name} should be STOPPED, but is {service.state}"
-    logger.info(f"Service {service.service_name} successfully shut down and confirmed STOPPED.")
 
 
 async def test_zmq_service_signal():
