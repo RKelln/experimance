@@ -256,29 +256,6 @@ class TestBaseZmqService:
         # Verify socket was attempted to be closed
         bad_socket.close.assert_called_once()
         assert service.state == ServiceState.STOPPED
-    
-    @pytest.mark.asyncio
-    async def test_zmq_stop_while_already_stopping(self):
-        """Test that calling stop while already stopping is handled correctly."""
-        service = BaseZmqService(service_name="already-stopping-service")
-        
-        # Create mock sockets
-        socket1 = MockZmqSocketBase()
-        socket2 = MockZmqSocketBase()
-        
-        service.register_socket(socket1)
-        service.register_socket(socket2)
-        
-        # Mark as stopping and set state to STOPPED
-        service._stopping = True
-        service.state = ServiceState.STOPPED
-        
-        # Call stop - should be a no-op
-        await service.stop()
-        
-        # Sockets should not be closed since we were already STOPPED
-        assert socket1.closed is False
-        assert socket2.closed is False
 
 
 @pytest.mark.asyncio

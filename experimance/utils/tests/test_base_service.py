@@ -18,6 +18,7 @@ import logging
 import signal
 import time
 import pytest
+import inspect # Add import for inspect
 from unittest.mock import MagicMock, patch
 from contextlib import suppress
 
@@ -173,16 +174,19 @@ class TestBaseService:
     @pytest.mark.asyncio
     async def test_async_signal_handler(self, base_service):
         """Test the async signal handler."""
-        # First ensure we're not stopping
-        base_service._stopping = False
+        # base_service is a fresh fixture, so _stopping is initially False.
+        # No need to manually set base_service._stopping = False
         
         # Call the async handler
+        logger.debug(f"test_async_signal_handler: Calling _handle_signal_async for {base_service.service_name}")
         await base_service._handle_signal_async(signal.SIGINT)
+        logger.debug(f"test_async_signal_handler: _handle_signal_async completed. Service state: {base_service.state}")
         
-        # Check state changes
-        assert base_service._stopping is True
-        assert base_service.running is False
-        assert base_service.state == ServiceState.STOPPING
+        # Check state changes. After _handle_signal_async calls await base_service.stop(),
+        # the service should be fully STOPPED.
+        assert base_service._stopping is True, "_stopping flag should be True after signal handling"
+        assert base_service.running is False, "running flag should be False after signal handling"
+        assert base_service.state == ServiceState.STOPPED, "Service state should be STOPPED after signal handling completes"
     
     @pytest.mark.asyncio
     async def test_error_during_task_execution(self):
@@ -203,38 +207,72 @@ class TestBaseService:
                 error_raised.set()
                 # Re-raise to ensure error propagation works
                 raise
+            # Note: If CancelledError occurs during await asyncio.sleep(0.1), 
+            # this block won't be reached, and error_raised won't be set.
                 
         # Register only our failing task
-        service.tasks = []  # Clear default tasks
+        service.tasks = []  # Clear default tasks (like display_stats)
         service._register_task(failing_task())
         
-        # Start the service
+        # Start the service (sets up state, but doesn't run tasks yet)
         await service.start()
         
-        # Create a run task to handle the service execution
+        # Patch _handle_signal_async to prevent stray signals from stopping the service
+        original_handle_signal_async = service._handle_signal_async
+        async def mock_noop_handle_signal_async(sig):
+            logger.info(f"Mocked _handle_signal_async for {service.service_name} received signal {sig}, ignoring for this test.")
+            pass
+        service._handle_signal_async = mock_noop_handle_signal_async
+
         run_task = asyncio.create_task(service.run())
         
-        # Wait for the error to be raised
         try:
-            await asyncio.wait_for(error_raised.wait(), timeout=1.0)
+            # Wait for the error to be raised by failing_task
+            await asyncio.wait_for(error_raised.wait(), timeout=2.0) # Increased timeout slightly
             
-            # The service should still be running with an error
-            assert service.errors >= 1
+            # Check that the service recorded the error (incremented by failing_task)
+            assert service.errors >= 1, "Service should have recorded an error from the failing task."
             
-            # Clean up
+            # The service.run() method's finally block should call service.stop()
+            # when failing_task causes gather to complete.
+            # We wait for run_task to complete, which includes this internal stop.
+            # If a stray signal *wasn't* the issue, run_task would complete due to its
+            # own stop logic triggered by the failing task.
+            # If a stray signal *was* the issue, our mock prevents it from acting.
+
+            # Explicitly stop the service from the test to ensure cleanup,
+            # though internal stop should have already occurred.
+            # This also ensures that if error_raised.wait() passed but run_task is somehow
+            # still running without having stopped itself, this will stop it.
+            logger.info(f"Test calling service.stop() for {service.service_name}")
             await service.stop()
-            run_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await run_task
-                
+            
         except asyncio.TimeoutError:
-            # If timeout, clean up and fail
-            await service.stop()
-            run_task.cancel()
+            logger.error(f"Timeout in test_error_during_task_execution: failing_task did not set error_raised event for {service.service_name}.")
+            # Attempt to stop the service if it's still running
+            if service.state != ServiceState.STOPPED:
+                logger.warning(f"Timeout occurred, ensuring service {service.service_name} is stopped.")
+                await service.stop()
+            pytest.fail(f"failing_task in {service.service_name} did not set error_raised event within timeout.")
+        finally:
+            # Restore original signal handler
+            service._handle_signal_async = original_handle_signal_async
+            
+            # Ensure run_task is cleaned up
+            if not run_task.done():
+                logger.info(f"Test ensuring run_task for {service.service_name} is cancelled.")
+                run_task.cancel()
             with suppress(asyncio.CancelledError):
                 await run_task
-            pytest.fail("Error was not raised within timeout")
-    
+            
+            # Final check to ensure service is stopped, especially if an assertion failed before explicit stop
+            if service.state != ServiceState.STOPPED:
+                current_frame = inspect.currentframe()
+                test_name = current_frame.f_code.co_name if current_frame else 'test_error_during_task_execution'
+                logger.warning(f"Test {test_name} "
+                               f"final cleanup: Service {service.service_name} was {service.state}. Forcing stop.")
+                await service.stop()
+
     @pytest.mark.asyncio
     async def test_statistics_tracking(self):
         """Test that statistics are tracked correctly."""
@@ -242,29 +280,65 @@ class TestBaseService:
         
         # Register a task that updates stats
         async def update_stats():
-            for _ in range(5):
+            for i in range(5):
                 if not service.running:
+                    logger.debug(f"update_stats: service not running, breaking loop at iteration {i}")
                     break
                 service.messages_sent += 1
                 service.messages_received += 2
+                logger.debug(f"update_stats: iter {i}, sent={service.messages_sent}, recv={service.messages_received}")
                 await asyncio.sleep(0.1)
+            logger.debug("update_stats task finished")
         
         service._register_task(update_stats())
         
-        # Register a task to stop the service after stats are updated
-        async def stop_after_delay():
-            await asyncio.sleep(0.6)
-            await service.stop()
+        # Register a task to trigger stopping the service after stats are updated
+        stop_trigger_event = asyncio.Event()
+        async def trigger_stop_event_task():
+            await asyncio.sleep(0.6) # Ensure update_stats has time to run (0.5s)
+            logger.debug("trigger_stop_event_task: setting stop_trigger_event")
+            stop_trigger_event.set()
         
-        service._register_task(stop_after_delay())
+        service._register_task(trigger_stop_event_task()) # Call the function here
         
-        # Run the service
+        # Start the service
         await service.start()
-        await service.run()
         
+        # Run the service in a background task
+        run_service_task = asyncio.create_task(service.run(), name=f"{service.service_name}-run-task")
+        
+        try:
+            # Wait for the trigger event
+            logger.debug("test_statistics_tracking: waiting for stop_trigger_event")
+            await asyncio.wait_for(stop_trigger_event.wait(), timeout=2.0) # Increased timeout for safety
+            logger.debug("test_statistics_tracking: stop_trigger_event received")
+            
+            # Now that the event is set, stop the service externally
+            logger.debug("test_statistics_tracking: calling service.stop() externally")
+            await service.stop()
+            logger.debug("test_statistics_tracking: service.stop() returned")
+            
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for stop_trigger_event in test_statistics_tracking")
+            # Ensure service is stopped even on timeout before failing
+            if service.state != ServiceState.STOPPED:
+                logger.warning("Timeout occurred, ensuring service stats-test is stopped.")
+                await service.stop()
+            pytest.fail("stop_trigger_event was not set in time")
+        finally:
+            # Ensure the service.run() task is complete/cancelled and awaited
+            logger.debug(f"test_statistics_tracking: finally block, run_service_task done: {run_service_task.done()}")
+            if not run_service_task.done():
+                logger.warning(f"test_statistics_tracking: run_service_task not done, cancelling.")
+                run_service_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await run_service_task
+            logger.debug("test_statistics_tracking: run_service_task awaited in finally")
+
         # Check that stats were updated
-        assert service.messages_sent == 5
-        assert service.messages_received == 10
+        assert service.messages_sent == 5, f"Expected 5 messages sent, got {service.messages_sent}"
+        assert service.messages_received == 10, f"Expected 10 messages received, got {service.messages_received}"
+        assert service.state == ServiceState.STOPPED, f"Service should be STOPPED, but is {service.state}"
     
     @pytest.mark.asyncio
     async def test_cancellation_during_stop(self):
