@@ -27,6 +27,7 @@ import signal
 import sys
 import time
 import traceback
+import inspect # Added import
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, Coroutine
@@ -102,6 +103,8 @@ class BaseService:
         
         # State control
         self._stopping = False  # Flag to prevent multiple stop() calls
+        self._stop_lock = asyncio.Lock() # Lock to serialize stop() execution
+        self._run_task_handle: Optional[asyncio.Task] = None # Handle to the main run() task
         
         # Set up signal handlers for graceful shutdown
         # We'll only use these for non-asyncio contexts
@@ -193,48 +196,67 @@ class BaseService:
         This method ensures all tasks are properly cancelled
         and resources are cleaned up.
         """
-        # Prevent multiple simultaneous calls to stop()
-        if self._stopping:
-            logger.debug(f"Service {self.service_name} already stopping, ignoring duplicate stop call")
-            # If we're already in STOPPED state, don't proceed further
+        if self.state == ServiceState.STOPPED:
+            logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring stop call.")
+            return
+
+        async with self._stop_lock:
             if self.state == ServiceState.STOPPED:
+                logger.debug(f"Service {self.service_name} became STOPPED while awaiting lock. Ignoring stop call.")
                 return
-            # Otherwise continue with the cleanup but don't log duplicate messages
-        else:
-            self._stopping = True
-            logger.info(f"Stopping {self.service_name}...")
-            self.running = False
-            self.state = ServiceState.STOPPING
-        
-        # Cancel any running tasks
-        tasks = [task for task in asyncio.all_tasks() 
-                if task is not asyncio.current_task() and not task.done()]
-        
-        if tasks:
-            logger.info(f"Cancelling {len(tasks)} pending tasks")
-            for task in tasks:
-                task.cancel()
             
-            try:
-                # Wait for tasks to be cancelled with a timeout
-                await asyncio.wait(tasks, timeout=1.0)
-            except asyncio.CancelledError:
-                logger.debug("Task cancellation was itself cancelled")
-            except Exception as e:
-                logger.warning(f"Error while waiting for tasks to cancel: {e}")
-        
-        # Clean up any unrun coroutines to prevent 'coroutine was never awaited' warnings
-        # When a coroutine object goes out of scope without being awaited, Python warns
-        # Here we explicitly close the coroutines
-        for task in self.tasks:
-            try:
-                task.close()  # Close the coroutine to prevent the warning
-            except Exception:
-                pass  # Ignore any errors when closing
-        self.tasks = []
-        
-        self.state = ServiceState.STOPPED
-        logger.info(f"Service {self.service_name} stopped")
+            if self._stopping:
+                logger.debug(f"Service {self.service_name} stop() entered critical section, but _stopping is True (state: {self.state}). Previous stop call should handle/has handled cleanup.")
+                return
+
+            self._stopping = True
+            logger.info(f"Stopping {self.service_name} (lock acquired)...")
+            self.running = False # Set running to False immediately
+            self.state = ServiceState.STOPPING
+            
+            # Cancel the main run task if it exists and is not this task
+            current_task = asyncio.current_task()
+            if self._run_task_handle and not self._run_task_handle.done():
+                if self._run_task_handle is current_task:
+                    logger.info(f"Main run task for {self.service_name} is the current task (stop() called from run() or its signal handler). Requesting cancellation, but cannot await self here.")
+                    self._run_task_handle.cancel()
+                    # We cannot await self._run_task_handle here as it would deadlock.
+                    # The task will be cancelled, and its own exception handling (e.g., CancelledError in run())
+                    # will proceed. The finally block in run() should not call stop() again due to _stopping flag.
+                else:
+                    logger.info(f"Cancelling main run task for {self.service_name}.")
+                    self._run_task_handle.cancel()
+                    try:
+                        logger.debug(f"Waiting for main run task of {self.service_name} to complete cancellation.")
+                        await self._run_task_handle
+                        logger.debug(f"Main run task of {self.service_name} completed after cancellation.")
+                    except asyncio.CancelledError:
+                        logger.debug(f"Main run task of {self.service_name} was cancelled as expected.")
+                    except Exception as e:
+                        logger.warning(f"Main run task of {self.service_name} raised an exception during/after cancellation: {e!r}", exc_info=True)
+            elif self._run_task_handle and self._run_task_handle.done():
+                logger.debug(f"Main run task for {self.service_name} was already done.")
+            elif not self._run_task_handle:
+                logger.debug(f"No main run task handle found for {self.service_name} to cancel.")
+
+            # Clean up any unrun coroutines registered via _register_task
+            # These are coroutines that were added to self.tasks but might not have been
+            # wrapped in an asyncio.Task by asyncio.gather in the run() method yet,
+            # or their tasks were not the _run_task_handle itself.
+            if self.tasks:
+                logger.debug(f"Cleaning up {len(self.tasks)} registered coroutines for {self.service_name}.")
+                for task_coro in self.tasks:
+                    try:
+                        if inspect.iscoroutine(task_coro) and not getattr(task_coro, 'cr_running', False):
+                            if getattr(task_coro, 'cr_frame', True) is None:
+                                logger.debug(f"Closing unawaited coroutine in {self.service_name}: {task_coro.__name__ if hasattr(task_coro, '__name__') else task_coro}")
+                                task_coro.close()
+                    except Exception as e:
+                        logger.debug(f"Error closing unawaited coroutine {task_coro} in {self.service_name}: {e}", exc_info=False)
+                self.tasks = [] # Clear the list after attempting to close
+            
+            self.state = ServiceState.STOPPED
+            logger.info(f"Service {self.service_name} stopped")
     
     async def run(self):
         """Run the service until stopped.
@@ -249,11 +271,14 @@ class BaseService:
         logger.info(f"Service {self.service_name} running")
         
         try:
+            self._run_task_handle = asyncio.current_task() # Store handle to this task
             # Register asyncio-specific signal handlers
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(
                     sig,
+                    # Use a lambda to ensure the current self is captured.
+                    # Assign to a variable to help with clarity if needed.
                     lambda s=sig: asyncio.create_task(self._handle_signal_async(s))
                 )
             
@@ -262,45 +287,64 @@ class BaseService:
             await asyncio.gather(*self.tasks, return_exceptions=True)
             
         except asyncio.CancelledError:
-            logger.info(f"Service {self.service_name} tasks cancelled")
-            # Don't re-raise, this is handled gracefully
+            logger.info(f"Service {self.service_name} tasks cancelled, initiating stop.")
+            # If the run() task itself is cancelled, we need to ensure stop() is called.
+            # The finally block will handle this.
         except Exception as e:
             logger.error(f"Error in service {self.service_name}: {e}")
             logger.debug(traceback.format_exc())
             self.errors += 1
             self.state = ServiceState.ERROR
-            raise
+            # Even with an error, try to stop gracefully. The finally block will handle this.
+            raise # Re-raise after logging, but finally will still execute
         finally:
-            # Even if we're cancelled, ensure service is stopped properly
-            if not self._stopping:  # Only call stop() if we haven't started stopping already
+            logger.debug(f"Service {self.service_name} run() method's finally block reached. Current state: {self.state}, _stopping: {self._stopping}")
+            # Only call stop() from here if a stop operation is NOT already in progress (_stopping is False)
+            # AND the service is not already stopped.
+            # This handles cases where run() exits due to an error or normal completion of its tasks,
+            # without an external stop signal.
+            if not self._stopping and self.state != ServiceState.STOPPED:
+                logger.info(f"Service {self.service_name} run() method ending (state: {self.state}, _stopping: {self._stopping}). "
+                            f"Stop not yet initiated by other means. Calling self.stop().")
                 try:
                     await self.stop()
                 except Exception as e:
-                    logger.error(f"Error during service shutdown: {e}")
-                    # Don't re-raise, we're in cleanup mode
-    
-    async def _handle_signal_async(self, sig):
-        """Handle signals in the asyncio event loop."""
-        # Only process the signal if we're not already stopping
-        if self._stopping:
-            logger.debug("Signal handler called while already stopping, ignoring")
-            return
-            
-        signal_name = signal.Signals(sig).name
-        logger.info(f"Received signal {signal_name} in asyncio event loop")
-        
-        # Mark as stopping before doing anything to prevent recursion
-        self._stopping = True
-        self.running = False
-        self.state = ServiceState.STOPPING
-        
-        # We don't need to call stop() from here - the main loop's finally block
-        # will handle that, and we've already set the proper flags
-        # Just log that we're shutting down
-        logger.info(f"Service {self.service_name} shutting down due to signal {signal_name}")
+                    logger.error(f"Error during self.stop() called from run() finally for {self.service_name}: {e}", exc_info=True)
+                    self.state = ServiceState.ERROR # Ensure error state if cleanup fails
+            elif self._stopping and self.state != ServiceState.STOPPED:
+                logger.info(f"Service {self.service_name} run() method's finally block: A stop operation is already in progress "
+                            f"(state: {self.state}, _stopping: {self._stopping}). Letting it complete.")
+            elif self.state == ServiceState.STOPPED:
+                logger.info(f"Service {self.service_name} run() method's finally block: Service already STOPPED.")
 
-        # Don't stop the event loop immediately - let the tasks clean up properly
-        # and let the main loop handle the exit
+    async def _handle_signal_async(self, sig):
+        """Handle signals in the asyncio event loop by calling stop()."""
+        signal_name = signal.Signals(sig).name
+        logger.info(f"Received signal {signal_name} in asyncio event loop for {self.service_name}")
+
+        # Prevent re-entrant calls or acting on signals if already fully stopped.
+        # If stop() is already in progress (_stopping is True), stop() itself is idempotent.
+        if self.state == ServiceState.STOPPED:
+            logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring signal {signal_name}.")
+            return
+
+        if self._stopping and self.state == ServiceState.STOPPING:
+            logger.debug(f"Service {self.service_name} is already STOPPING. Signal {signal_name} received again.")
+            # Potentially, here you could implement a force stop mechanism if a second signal is received
+            # For now, we let the current stop() proceed.
+            return
+
+        logger.info(f"Service {self.service_name} initiating shutdown via stop() due to signal {signal_name}")
+        try:
+            # Call stop() directly. stop() is responsible for setting flags
+            # like self._stopping, self.running, and self.state.
+            await self.stop()
+        except Exception as e:
+            logger.error(f"Error during signal-initiated stop for {self.service_name}: {e}", exc_info=True)
+            # Ensure the service is in a non-operational state even if stop fails.
+            self.state = ServiceState.ERROR
+            self.running = False
+            self._stopping = True # Mark as stopping even if stop() failed partially
 
 
 class BaseZmqService(BaseService):
@@ -325,6 +369,7 @@ class BaseZmqService(BaseService):
         
         # ZMQ sockets - to be initialized by subclasses
         self._sockets = []
+        self._zmq_sockets_closed = False # Initialize flag
     
     def register_socket(self, socket):
         """Register a ZMQ socket for automatic cleanup.
@@ -340,41 +385,37 @@ class BaseZmqService(BaseService):
         This method ensures all ZMQ sockets are properly closed
         in addition to the standard service cleanup.
         """
-        # If we're already stopping, let the parent handle it - but close sockets first
-        if self._stopping and self.state == ServiceState.STOPPED:
-            logger.debug(f"ZMQ Service {self.service_name} already fully stopped")
-            return
+        logger.debug(f"Entering BaseZmqService.stop() for {self.service_name}. Current state: {self.state}, _stopping: {self._stopping}")
+
+        # Close ZMQ sockets first. This should happen before tasks that might use them 
+        # are cancelled by super().stop(). This needs to be idempotent.
+        if not self._zmq_sockets_closed:
+            logger.info(f"Closing ZMQ sockets for {self.service_name}...")
+            socket_errors = 0
+            # Iterate over a copy if closing modifies the list, or ensure socket.close() is safe
+            for socket_obj in reversed(list(self._sockets)): # Iterate over a copy
+                if socket_obj: # Check if socket_obj is not None
+                    try:
+                        logger.debug(f"Closing socket: {type(socket_obj).__name__}")
+                        socket_obj.close() # Assuming this is synchronous and idempotent
+                    except Exception as e:
+                        logger.warning(f"Error closing ZMQ socket {type(socket_obj).__name__} in {self.service_name}: {e}")
+                        socket_errors += 1
             
-        # Set stopping flags even if already stopping - we still need to close sockets
-        self._stopping = True
-        self.running = False
-        self.state = ServiceState.STOPPING
+            if socket_errors > 0:
+                logger.warning(f"Encountered {socket_errors} errors while closing ZMQ sockets for {self.service_name}")
+            
+            self._zmq_sockets_closed = True
+            # Clear the original list after closing all sockets from the copy
+            self._sockets.clear()
+        else:
+            logger.debug(f"ZMQ sockets for {self.service_name} already marked as closed.")
+
+        # Delegate to the base class stop method for general task cancellation and state management.
+        logger.debug(f"Calling super().stop() from BaseZmqService.stop() for {self.service_name}")
+        await super().stop()
         
-        # First close all sockets in reverse order of registration
-        # We do this BEFORE calling super().stop() to avoid task cancellation issues
-        socket_errors = 0
-        for socket in reversed(self._sockets):
-            if socket:
-                try:
-                    logger.debug(f"Closing socket: {type(socket).__name__}")
-                    socket.close()
-                except Exception as e:
-                    logger.warning(f"Error closing socket: {e}")
-                    socket_errors += 1
-        
-        # Clear the sockets list to prevent double-closure
-        self._sockets = []
-        
-        if socket_errors > 0:
-            logger.warning(f"Encountered {socket_errors} errors while closing ZMQ sockets")
-        
-        # Call the parent class stop method to handle task cancellation
-        try:
-            await super().stop()
-        except Exception as e:
-            logger.error(f"Error in parent stop method: {e}")
-            # Still mark as stopped even if there's an error
-            self.state = ServiceState.STOPPED
+        logger.debug(f"Exiting BaseZmqService.stop() for {self.service_name}. Final state from super: {self.state}")
 
 
 class ZmqPublisherService(BaseZmqService):
