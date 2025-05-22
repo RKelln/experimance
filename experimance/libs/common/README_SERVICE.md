@@ -135,3 +135,39 @@ See the complete example in `utils/examples/zmq_service_example.py` which demons
 5. **Handle Errors Properly**: Catch and handle exceptions in message and task handlers
 6. **Use Lifecycle Methods**: Implement `start()`, `stop()`, and `run()` methods for consistent behavior
 7. **Monitor Service Health**: Use the built-in statistics tracking to monitor service performance
+8. **Manage Coroutines Correctly**: When registering tasks with `_register_task()`, be aware that coroutines are created but only awaited when `run()` is called.
+
+### Testing Services
+
+The service classes include comprehensive tests to ensure robustness, especially around lifecycle management and graceful shutdown. You can run these tests using `uv` (the recommended package manager for this project):
+
+```bash
+# Run all service tests
+uv run -m pytest -v
+
+# Or run individual test files
+uv run -m pytest utils/tests/test_base_service.py -v
+uv run -m pytest utils/tests/test_zmq_service.py -v
+```
+
+The test suite includes:
+
+1. **Unit Tests**: Testing individual components and methods
+   - `test_base_service.py`: Tests for BaseService functionality
+   - `test_zmq_service.py`: Tests for ZeroMQ service classes with a refactored mock system that includes:
+     - `MockZmqSocketBase`: Base class for all mock sockets with common setup logic
+     - `MockZmqSocketTimeout`: For simulating timeout behaviors in tests
+     - `MockZmqSocketWorking`: For simulating normally functioning sockets
+     - Specialized mocks for publishers, subscribers, and other socket types
+
+2. **Integration Tests**: Testing larger interactions
+   - `test_service_signals.py`: Tests proper handling of signals (Ctrl+C/SIGINT/SIGTERM)
+   - `test_service_integration.py`: Tests multiple services running together
+
+When implementing your own services, you should test:
+- Proper initialization and cleanup
+- Signal handling and graceful shutdown
+- Message and task handling
+- Error cases and recovery
+- Resource management (especially ZMQ sockets)
+- Coroutine cleanup to prevent "coroutine never awaited" warnings

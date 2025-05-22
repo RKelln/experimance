@@ -38,6 +38,8 @@ class MessageType(str, Enum):
     TRANSITION_REQUEST = "TransitionRequest"
     LOOP_REQUEST = "LoopRequest"
     HEARTBEAT = "Heartbeat"
+    ALERT = "Alert"
+    # Add more message types as needed
 
 
 class ZmqException(Exception):

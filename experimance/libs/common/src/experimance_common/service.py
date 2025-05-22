@@ -133,6 +133,7 @@ class BaseService:
         Args:
             task_coroutine: Coroutine function to execute
         """
+        # Store the coroutine without awaiting it yet
         self.tasks.append(task_coroutine)
     
     async def display_stats(self):
@@ -221,6 +222,16 @@ class BaseService:
                 logger.debug("Task cancellation was itself cancelled")
             except Exception as e:
                 logger.warning(f"Error while waiting for tasks to cancel: {e}")
+        
+        # Clean up any unrun coroutines to prevent 'coroutine was never awaited' warnings
+        # When a coroutine object goes out of scope without being awaited, Python warns
+        # Here we explicitly close the coroutines
+        for task in self.tasks:
+            try:
+                task.close()  # Close the coroutine to prevent the warning
+            except Exception:
+                pass  # Ignore any errors when closing
+        self.tasks = []
         
         self.state = ServiceState.STOPPED
         logger.info(f"Service {self.service_name} stopped")
