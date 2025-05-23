@@ -91,17 +91,15 @@ class ExampleBasicService(BaseService):
     async def simulate_random_errors(self):
         """Occasionally simulate errors to demonstrate error handling."""
         while self.running:
-            await asyncio.sleep(2.0)  # Check every few seconds
+            await asyncio.sleep(2.0 * random.random() + 2.0)  # every few seconds
             
-            # 10% chance of an error
-            if random.random() < 0.1:
-                try:
-                    # Simulate an error
-                    logger.warning("Simulating a recoverable error...")
-                    raise RuntimeError("Simulated error")
-                except Exception as e:
-                    logger.error(f"Caught error: {e}")
-                    self.errors += 1
+            try:
+                # Simulate an error
+                logger.warning("Simulating a recoverable error...")
+                raise RuntimeError("Simulated error")
+            except Exception as e:
+                logger.error(f"Caught error: {e}")
+                self.errors += 1
 
 
 async def main():
@@ -112,60 +110,10 @@ async def main():
     
     name = args.name or "basic-service-1"
     service = ExampleBasicService(name=name)
-    
-    # Flag to track if we've started stopping the service
-    stopping = False
-    
-    try:
-        # Start and run the service
-        await service.start()
-        await service.run()
-    except asyncio.CancelledError:
-        logger.info("Service was cancelled")
-        stopping = True
-    except KeyboardInterrupt:
-        logger.info("Service interrupted by user")
-        stopping = True
-    except Exception as e:
-        logger.error(f"Error running service: {e}", exc_info=True)
-    finally:
-        try:
-            # Skip cleanup if system is finalizing
-            if sys.is_finalizing():
-                logger.debug("System is finalizing, skipping explicit cleanup")
-                return
-                
-            # Make sure we stop the service with a timeout to prevent hanging
-            if service.state != ServiceState.STOPPED and not stopping:
-                logger.debug("Stopping service from main's finally block")
-                stop_task = asyncio.create_task(service.stop())
-                try:
-                    await asyncio.wait_for(stop_task, timeout=3.0)
-                except asyncio.TimeoutError:
-                    logger.warning("Timeout waiting for service to stop")
-                except asyncio.CancelledError:
-                    logger.debug("Stop task was cancelled")
-                except Exception as e:
-                    logger.warning(f"Error stopping service: {e}")
-        except Exception as e:
-            logger.error(f"Error during service cleanup: {e}")
-            # Don't re-raise, we're in cleanup mode
 
+    await service.start()
+    await service.run()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        # Handle KeyboardInterrupt at the top level
-        print("\nShutdown requested by keyboard interrupt")
-        sys.exit(0)
-    except RuntimeError as e:
-        if "Event loop stopped before Future completed" in str(e):
-            # This is expected during shutdown, exit gracefully
-            sys.exit(0)
-        else:
-            logger.error(f"Unhandled RuntimeError: {e}")
-            sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unhandled exception: {e}", exc_info=True)
-        sys.exit(1)
+    asyncio.run(main())
+
