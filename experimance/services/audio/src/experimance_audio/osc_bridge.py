@@ -266,8 +266,8 @@ class OscBridge:
                 except subprocess.TimeoutExpired:
                     # If it still doesn't terminate, kill it
                     logger.warning("SuperCollider did not terminate, killing process")
-                    self.sc_process.kill()
-                    self.sc_process.wait(timeout=1.0)
+                    self.sc_process.kill() # type: ignore
+                    self.sc_process.wait(timeout=1.0) # type: ignore
                     logger.info("SuperCollider killed")
                     self.sc_process = None
                     return True

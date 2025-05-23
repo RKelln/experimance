@@ -71,10 +71,54 @@ See the technical design document for configuration schema details.
 
 The audio service consists of:
 
-1. **ZMQ Subscriber Service**: Listens for system events
+1. **ZMQ Subscriber Service**: Listens for system events via the star topology
 2. **OSC Bridge**: Communicates with SuperCollider
 3. **Config Loader**: Manages audio configuration files
 4. **SuperCollider Script**: Handles audio playback and mixing
+
+### ZeroMQ Architecture
+
+The audio service follows a simplified star topology with the core service as the central hub:
+
+```
+                      ┌─────────────┐
+                      │             │
+                      │    Core     │      PUSH/PULL
+                      │  Publisher  │<─────────────┐
+                      │             │              │
+                      └──────┬──────┘              │
+                             │                     │
+                          PUB/SUB                  │
+                             │                     │
+           ┌─────────────────┼─────────────────┐   │ 
+           │                 │                 │   │
+           ▼                 ▼                 ▼   │
+    ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+    │   Display   │   │    Audio    │   │   Agent     │
+    │   Service   │   │   Service   │   │   Service   │
+    └─────────────┘   └─────────────┘   └─────────────┘
+                           │  ^              
+                           │  │              
+                      OSC  │  │              
+                           │  │              
+                           ▼  │              
+                      ┌─────────────┐        
+                      │             │        
+                      │SuperCollider│
+                      │             │
+                      └─────────────┘
+```
+
+All events, including agent events, are relayed through the core service, eliminating the need for multiple ZMQ connections and simplifying shutdown procedures.
+
+## ZeroMQ Architecture
+
+The audio service now follows a simplified star topology. 
+
+- **Core Service**: Central coordinator that publishes all system events including agent events
+- **Audio Service**: Subscribes to a single channel (coordinator's PUB socket) for ALL events
+- **Agent Events**: Relayed through core service rather than requiring separate connections
+
 
 ## Development and Testing
 

@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Constants
 EVENTS_CHANNEL_PORT = DEFAULT_PORTS["coordinator_pub"]  
-AGENT_CTRL_CHANNEL_PORT = DEFAULT_PORTS["agent_pub"]    
 
 class AudioService(ZmqSubscriberService):
     """
@@ -58,20 +57,17 @@ class AudioService(ZmqSubscriberService):
             sc_script_path: Path to SuperCollider script to execute
             sclang_path: Path to SuperCollider language interpreter executable
         """
-        # Initialize base service with subscription to both events and agent_ctrl channels
+        # Initialize base service with subscription to core events channel
         super().__init__(
             service_name=service_name,
             sub_address=f"tcp://localhost:{EVENTS_CHANNEL_PORT}",
             topics=[
-                MessageType.ERA_CHANGED,  # Subscribe to era changes
-                MessageType.IDLE_STATUS,  # Subscribe to idle status changes
+                MessageType.ERA_CHANGED,     # Subscribe to era changes
+                MessageType.IDLE_STATUS,     # Subscribe to idle status changes
+                MessageType.AGENT_CONTROL_EVENT, # Subscribe to agent control events (relayed by core)
             ],
             service_type="audio"
         )
-        
-        # Additional subscriber for agent control events on the agent_ctrl channel
-        self.agent_subscriber = None
-        self.agent_sub_address = f"tcp://localhost:{AGENT_CTRL_CHANNEL_PORT}"
         
         # Initialize OSC bridge for communication with SuperCollider
         self.osc = OscBridge(host=osc_host, port=osc_port)
@@ -92,8 +88,7 @@ class AudioService(ZmqSubscriberService):
         
     async def start(self):
         """Start the audio service."""
-        # Initialize the primary subscriber
-        self.subscriber = None  # Reset in case of restart
+        # Initialize the subscriber
         logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
         await super().start()
         
@@ -132,45 +127,18 @@ class AudioService(ZmqSubscriberService):
             
         def idle_status_wrapper(message):
             asyncio.create_task(self._handle_idle_status(message))
+            
+        def agent_control_wrapper(message):
+            asyncio.create_task(self._handle_agent_control_event(message))
         
-        # Register handler for EraChanged events
+        # Register handlers for events
         self.register_handler(MessageType.ERA_CHANGED, era_changed_wrapper)
-        
-        # Register handler for Idle events
         self.register_handler(MessageType.IDLE_STATUS, idle_status_wrapper)
-        
-        # Initialize the agent control subscriber
-        logger.info(f"Initializing agent control subscriber on {self.agent_sub_address}")
-        from experimance_common.zmq_utils import ZmqSubscriber
-        self.agent_subscriber = ZmqSubscriber(self.agent_sub_address, [MessageType.AGENT_CONTROL_EVENT])
-        self.register_socket(self.agent_subscriber)
-        
-        # Register additional task to listen for agent control events
-        self._register_task(self._listen_for_agent_events())
+        self.register_handler(MessageType.AGENT_CONTROL_EVENT, agent_control_wrapper)
         
         logger.info("Audio service started")
         
-    async def _listen_for_agent_events(self):
-        """Listen for agent control events on the agent_ctrl channel."""
-        if not self.agent_subscriber:
-            logger.error("Agent subscriber not initialized")
-            return
-            
-        while self.running:
-            try:
-                topic, message = await self.agent_subscriber.receive_async()
-                logger.debug(f"Received agent message: {message}")
-                
-                # Process the agent control event
-                await self._handle_agent_control_event(message)
-                
-            except ZmqTimeoutError:
-                # This is normal, just continue
-                pass
-            except Exception as e:
-                logger.error(f"Error receiving agent control event: {e}")
-                
-            await asyncio.sleep(0.01)  # Small delay to prevent CPU spinning
+    # Agent control events are now handled directly through the main subscriber
     
     async def _handle_era_changed(self, message: Dict[str, Any]):
         """Handle era changed events from the coordinator.
@@ -249,11 +217,22 @@ class AudioService(ZmqSubscriberService):
             message: AGENT_CONTROL_EVENT data
         """
         try:
-            sub_type = message.get("sub_type")
-            payload = message.get("payload", {})
+            # Extract AgentControlEvent data - this message is now coming directly from the main coordinator
+            # rather than through a separate agent_subscriber
+            
+            # The message structure might include topic info from the coordinator, so extract actual payload
+            if "payload" in message and isinstance(message["payload"], dict):
+                # If wrapped in a payload by the coordinator
+                agent_message = message["payload"]
+            else:
+                # Direct agent message
+                agent_message = message
+                
+            sub_type = agent_message.get("sub_type")
+            payload = agent_message.get("payload", {})
             
             if not sub_type:
-                logger.warning(f"Received agent control event without sub_type: {message}")
+                logger.warning(f"Received agent control event without sub_type: {agent_message}")
                 return
                 
             logger.debug(f"Agent control event: {sub_type}, payload: {payload}")
@@ -319,17 +298,24 @@ class AudioService(ZmqSubscriberService):
         """Stop the audio service and clean up resources."""
         logger.info("Stopping audio service")
         
-        # Stop SuperCollider if we started it
+        # First stop SuperCollider if we started it
         if self.auto_start_sc and hasattr(self.osc, 'sc_process') and self.osc.sc_process is not None:
             logger.info("Stopping SuperCollider")
-            success = self.osc.stop_supercollider()
-            if success:
-                logger.info("SuperCollider stopped successfully")
-            else:
-                logger.warning("Failed to stop SuperCollider gracefully")
+            try:
+                success = self.osc.stop_supercollider()
+                if success:
+                    logger.info("SuperCollider stopped successfully")
+                else:
+                    logger.warning("Failed to stop SuperCollider gracefully")
+            except Exception as e:
+                logger.error(f"Error stopping SuperCollider: {e}")
         
         # Stop the base service (handles ZMQ socket cleanup)
-        await super().stop()
+        try:
+            await super().stop()
+        except Exception as e:
+            logger.error(f"Error during base service stop: {e}")
+            
         logger.info("Audio service stopped")
 
 
@@ -371,15 +357,9 @@ async def run_audio_service(config_dir: Optional[str] = None,
     await service.start()
     logger.info("Audio service is running")
     
-    try:
-        await service.run()
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received, shutting down")
-    except Exception as e:
-        logger.error(f"Error running audio service: {e}")
-    finally:
-        await service.stop()
-        logger.info("Audio service stopped")
+    # Run the service until interrupted
+    await service.run()
+
 
 
 if __name__ == "__main__":
@@ -400,6 +380,18 @@ if __name__ == "__main__":
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
+    # Define a handler for SIGINT (Ctrl+C) that will allow a cleaner shutdown
+    import signal
+    
+    def signal_handler(sig, frame):
+        logger.info(f"Received signal {sig}, initiating shutdown...")
+        # Let asyncio.run handle the cleanup
+        # The KeyboardInterrupt will still be raised
+        
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     try:
         asyncio.run(run_audio_service(
             config_dir=args.config_dir,
@@ -410,7 +402,7 @@ if __name__ == "__main__":
             sclang_path=args.sclang_path
         ))
     except KeyboardInterrupt:
-        print("Keyboard interrupt received, exiting")
+        logger.info("Keyboard interrupt received, exiting")
     except Exception as e:
         logger.exception(f"Unhandled exception: {e}")
         sys.exit(1)
