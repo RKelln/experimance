@@ -62,11 +62,11 @@ logger = logging.getLogger(__name__)
 
 class ServiceState(str, Enum):
     """Service lifecycle states."""
-    INITIALIZED = "initialized"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    STOPPED = "stopped"
+    INITIALIZED = "initialized"  # Service has been instantiated but not started
+    STARTING = "starting"        # Service is in the process of starting up
+    RUNNING = "running"          # Service is fully operational
+    STOPPING = "stopping"        # Service is in the process of shutting down
+    STOPPED = "stopped"          # Service has been fully stopped
 
 
 class ServiceStatus(str, Enum):
@@ -119,7 +119,7 @@ class BaseService:
         # Set up signal handlers for graceful shutdown
         # We'll only use these for non-asyncio contexts
         # Asyncio signal handlers will be set up in the run() method
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGTSTP):
             signal.signal(sig, self._signal_handler)
     
     def _signal_handler(self, signum, frame):
@@ -133,6 +133,7 @@ class BaseService:
             return
             
         signal_name = signal.Signals(signum).name
+            
         logger.info(f"Received signal {signal_name} ({signum}), shutting down gracefully...")
         
         # Set stopping flag and update state
@@ -285,7 +286,24 @@ class BaseService:
             self._run_task_handle = asyncio.current_task() # Store handle to this task
             # Register asyncio-specific signal handlers
             loop = asyncio.get_running_loop()
-            for sig in (signal.SIGINT, signal.SIGTERM):
+            
+            # Set up a custom exception handler to handle CancelledError in futures
+            # This prevents the ZeroMQ _chain callback CancelledError from propagating
+            def custom_exception_handler(loop, context):
+                exception = context.get('exception')
+                if isinstance(exception, asyncio.CancelledError):
+                    # Just log and ignore CancelledError - it's expected during shutdown
+                    logger.debug("Suppressed asyncio.CancelledError in event loop exception handler")
+                    return
+                # For other exceptions, use the default handler
+                loop.default_exception_handler(context)
+            
+            # Save the original handler and set our custom one
+            original_exception_handler = loop.get_exception_handler()
+            loop.set_exception_handler(custom_exception_handler)
+            
+            # Register signal handlers
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGTSTP):
                 loop.add_signal_handler(
                     sig,
                     # Use a lambda to ensure the current self is captured.
@@ -378,7 +396,7 @@ class BaseService:
             logger.info(f"Service {self.service_name} run() method completed. Final state: {self.state}")
 
     async def _handle_signal_async(self, sig):
-        """Handle signals in the asyncio event loop by calling stop()."""
+        """Handle signals in the asyncio event loop by calling stop() or handling SIGTSTP."""
         signal_name = signal.Signals(sig).name
         logger.info(f"Received signal {signal_name} in asyncio event loop for {self.service_name}")
 
@@ -499,13 +517,33 @@ class BaseZmqService(BaseService):
         # are cancelled by super().stop(). This needs to be idempotent.
         if not self._zmq_sockets_closed:
             logger.info(f"Closing ZMQ sockets for {self.service_name}...")
+            
+            # Give pending operations a chance to complete or be cancelled
+            # This helps prevent CancelledError exceptions in callbacks
+            try:
+                # Short sleep to allow any pending async operations to complete
+                # or at least reach a cancellable state
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                logger.debug(f"Sleep interrupted during ZMQ socket cleanup for {self.service_name}")
+            
             socket_errors = 0
             # Iterate over a copy if closing modifies the list, or ensure socket.close() is safe
             for socket_obj in reversed(list(self._sockets)): # Iterate over a copy
                 if socket_obj: # Check if socket_obj is not None
                     try:
                         logger.debug(f"Closing socket: {type(socket_obj).__name__}")
+                        # Make sure linger is set to 0 for immediate close
+                        if hasattr(socket_obj, 'socket') and hasattr(socket_obj.socket, 'set'):
+                            try:
+                                socket_obj.socket.set(zmq.LINGER, 0)
+                            except Exception as e:
+                                logger.debug(f"Could not set LINGER on socket: {e}")
+                        
                         socket_obj.close() # Assuming this is synchronous and idempotent
+                    except asyncio.CancelledError:
+                        # Ignore CancelledError, as this might happen if the socket is already closed
+                        logger.debug(f"CancelledError while closing socket {type(socket_obj).__name__} in {self.service_name}")
                     except Exception as e:
                         logger.warning(f"Error closing ZMQ socket {type(socket_obj).__name__} in {self.service_name}: {e}")
                         socket_errors += 1

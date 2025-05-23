@@ -60,7 +60,7 @@ class TestZmqService(ZmqPublisherService):
     """ZMQ service for testing signal handling with ZMQ resources."""
     __test__ = False  # Prevent pytest from treating this as a test case
     
-    def __init__(self, name="zmq-signal-test-service"):
+    def __init__(self, name="zmq-signal-test"):
         super().__init__(
             service_name=name,
             pub_address="tcp://*:15555",
@@ -161,6 +161,79 @@ async def test_zmq_service_signal():
     logger.info("ZMQ service signal test completed successfully")
 
 
+async def test_zmq_service_sigint_signal():
+    """Test signal handling in ZmqService."""
+    service = TestZmqService(name="zmq-sigint-test")
+    
+    logger.info("Starting ZMQ service signal test")
+    
+    # Start the service
+    await service.start()
+    
+    # Create a task to run the service - this will move it to RUNNING state
+    run_task = asyncio.create_task(service.run())
+    
+    # Wait for the service to be fully running
+    await wait_for_service_state(service, ServiceState.RUNNING)
+    
+    # Let it run for a bit to ensure tasks are established
+    await asyncio.sleep(1.0)
+    
+    # Send a SIGTERM to the process
+    logger.info("Sending SIGINT to process")
+    os.kill(os.getpid(), signal.SIGINT)
+    
+    await wait_for_service_shutdown(run_task, service)
+
+    logger.info(f"Service state after SIGINT: {service.state}")
+    assert service.state == ServiceState.STOPPED
+    assert not service.running
+    assert service._stopping
+
+    # Ensure ZMQ resources are cleaned up
+    # Depending on mock setup, 'closed' might be an attribute or a method call check
+    assert service.publisher is not None, "Publisher should exist"
+    assert service.publisher.closed, "Publisher socket should be closed"
+
+    logger.info("ZMQ service signal test completed successfully")
+
+
+async def test_zmq_service_sigtstp_signal():
+    """Test SIGTSTP (Ctrl+Z) handling in ZmqService."""
+    service = TestZmqService(name="zmq-sigtstp-test")
+    
+    logger.info("Starting ZMQ service SIGTSTP test")
+    
+    # Start the service
+    await service.start()
+    
+    # Create a task to run the service - this will move it to RUNNING state
+    run_task = asyncio.create_task(service.run())
+    
+    # Wait for the service to be fully running
+    await wait_for_service_state(service, ServiceState.RUNNING)
+    
+    # Let it run for a bit to ensure tasks are established
+    await asyncio.sleep(1.0)
+    
+    # Send a SIGTSTP to the process
+    logger.info("Sending SIGTSTP to process")
+    os.kill(os.getpid(), signal.SIGTSTP)
+    
+    await wait_for_service_shutdown(run_task, service)
+
+    logger.info(f"Service state after SIGTSTP: {service.state}")
+    assert service.state == ServiceState.STOPPED
+    assert not service.running
+    assert service._stopping
+
+    # Ensure ZMQ resources are cleaned up
+    assert service.publisher is not None, "Publisher should exist"
+    assert service.publisher.closed, "Publisher socket should be closed"
+
+    logger.info("ZMQ service SIGTSTP test completed successfully")
+
+
 async def test_multiple_signals():
     """Test handling multiple signals in succession."""
     service = TestSimpleService(name="multi-signal-test")
@@ -225,6 +298,12 @@ async def main():
         
         # Run multiple signal test
         await test_multiple_signals()
+        
+        # Brief pause to reset signal handlers and ensure clean state between tests
+        await asyncio.sleep(0.5)
+        
+        # Run SIGTSTP test
+        await test_zmq_service_sigtstp_signal()
         
         logger.info("All signal tests passed!")
         

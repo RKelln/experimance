@@ -56,6 +56,12 @@ class ZmqTimeoutError(ZmqException):
 class ZmqBase:
     """Base class for ZMQ socket wrappers."""
     
+    address: str
+    use_asyncio: bool
+    closed: bool
+    context: Optional[Union[zmq.Context, zmq.asyncio.Context]]
+    socket: Optional[Union[zmq.Socket, zmq.asyncio.Socket]]
+    
     def __init__(self, address: str, use_asyncio: bool = True):
         """Initialize the base ZMQ object.
         
@@ -67,6 +73,7 @@ class ZmqBase:
         self.use_asyncio = use_asyncio
         self.closed = False
         
+        # Initialize context
         if use_asyncio:
             self.context = zmq.asyncio.Context()
         else:
@@ -82,13 +89,19 @@ class ZmqBase:
             
         if self.socket:
             try:
+                # Setting linger to 0 ensures socket closes immediately without waiting
+                # This is critical for clean shutdown with asyncio
                 self.socket.close(linger=0)
             except Exception as e:
                 logger.error(f"Error closing socket: {e}")
                 
         if self.context:
             try:
-                self.context.term()
+                # Setting the context to None before terminating helps prevent errors
+                # during shutdown with asyncio
+                context = self.context
+                self.context = None
+                context.term()
             except Exception as e:
                 logger.error(f"Error terminating context: {e}")
                 
@@ -108,6 +121,8 @@ class ZmqPublisher(ZmqBase):
         """
         super().__init__(address, use_asyncio)
         self.topic = topic
+        
+        assert self.context is not None, "ZMQ context was not properly initialized"
         
         # Create the socket
         self.socket = self.context.socket(zmq.PUB)
@@ -133,6 +148,7 @@ class ZmqPublisher(ZmqBase):
             return False
             
         try:
+            assert self.socket is not None, "ZMQ socket was not properly initialized"
             json_message = json.dumps(message)
             self.socket.send_string(f"{self.topic} {json_message}")
             return True
@@ -187,6 +203,7 @@ class ZmqSubscriber(ZmqBase):
         self.topics = topics
         
         # Create the socket
+        assert self.context is not None, "ZMQ context was not properly initialized"
         self.socket = self.context.socket(zmq.SUB)
         self.socket.connect(address)
         
@@ -266,6 +283,10 @@ class ZmqSubscriber(ZmqBase):
             return topic, message
         except asyncio.TimeoutError:
             raise ZmqTimeoutError("Async receive operation timed out")
+        except asyncio.CancelledError:
+            # Quietly handle task cancellation during shutdown
+            logger.debug("Receive operation was cancelled (likely during shutdown)")
+            return "", {}
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding message: {e}")
             return "", {}
@@ -287,6 +308,7 @@ class ZmqPushSocket(ZmqBase):
         super().__init__(address, use_asyncio)
         
         # Create the socket
+        assert self.context is not None, "ZMQ context was not properly initialized"
         self.socket = self.context.socket(zmq.PUSH)
         self.socket.bind(address)
         
@@ -310,6 +332,7 @@ class ZmqPushSocket(ZmqBase):
             return False
             
         try:
+            assert self.socket is not None, "ZMQ socket was not properly initialized"
             json_message = json.dumps(message)
             self.socket.send_string(json_message)
             return True
@@ -362,6 +385,7 @@ class ZmqPullSocket(ZmqBase):
         super().__init__(address, use_asyncio)
         
         # Create the socket
+        assert self.context is not None, "ZMQ context was not properly initialized"
         self.socket = self.context.socket(zmq.PULL)
         self.socket.connect(address)
         
@@ -416,6 +440,10 @@ class ZmqPullSocket(ZmqBase):
             return json.loads(message_str)
         except asyncio.TimeoutError:
             raise ZmqTimeoutError("Async pull operation timed out")
+        except asyncio.CancelledError:
+            # Quietly handle task cancellation during shutdown
+            logger.debug("Pull operation was cancelled (likely during shutdown)")
+            return {}
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding message: {e}")
             return {}
@@ -448,6 +476,7 @@ class ZmqBindingPullSocket(ZmqBase):
         super().__init__(address, use_asyncio)
         
         # Create the socket
+        assert self.context is not None, "ZMQ context was not properly initialized"
         self.socket = self.context.socket(zmq.PULL)
         self.socket.bind(address)  # bind instead of connect
         
@@ -503,6 +532,10 @@ class ZmqBindingPullSocket(ZmqBase):
             return json.loads(message_str)
         except asyncio.TimeoutError:
             raise ZmqTimeoutError("Async pull operation timed out")
+        except asyncio.CancelledError:
+            # Quietly handle task cancellation during shutdown
+            logger.debug("Pull operation was cancelled (likely during shutdown)")
+            return {}
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding message: {e}")
             return {}
@@ -535,6 +568,7 @@ class ZmqConnectingPushSocket(ZmqBase):
         super().__init__(address, use_asyncio)
         
         # Create the socket
+        assert self.context is not None, "ZMQ context was not properly initialized"
         self.socket = self.context.socket(zmq.PUSH)
         self.socket.connect(address)  # connect instead of bind
         
