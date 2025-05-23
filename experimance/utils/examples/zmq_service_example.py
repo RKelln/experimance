@@ -25,13 +25,23 @@ import signal
 import sys
 import time
 from typing import Dict, Any, List, Optional
+import zmq
+import zmq.asyncio
 
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.zmq_utils import MessageType, ZmqTimeoutError
+from experimance_common.zmq_utils import (
+    MessageType, 
+    ZmqTimeoutError, 
+    ZmqPullSocket,
+    ZmqPublisher,
+    ZmqSubscriber,
+    ZmqPushSocket
+)
 from experimance_common.service import (
     ZmqControllerService, 
     ZmqWorkerService,
-    ServiceState
+    ServiceState,
+    BaseZmqService
 )
 
 # Configure logging
@@ -39,17 +49,86 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Define ports for our example
-CONTROLLER_PUB_PORT = DEFAULT_PORTS["example_pub"]
-CONTROLLER_PUSH_PORT = DEFAULT_PORTS["example_pull"]
-WORKER_PUSH_PORT = CONTROLLER_PUSH_PORT + 1000  # Use a different port for worker responses
+CONTROLLER_PUB_PORT = DEFAULT_PORTS["example_pub"]    # 5567 - Controller publishes heartbeats/commands
+CONTROLLER_PUSH_PORT = DEFAULT_PORTS["example_pull"]  # 5568 - Controller pushes tasks 
+CONTROLLER_PULL_PORT = CONTROLLER_PUSH_PORT + 10     # 5578 - Controller pulls results from workers
+WORKER_RESPONSE_PUB_PORT = CONTROLLER_PUB_PORT + 20  # 5587 - Workers publish responses
 
 # Topics for PUB/SUB communication
 CONTROL_TOPIC = "example.control"
 WORKER_RESPONSE_TOPIC = "example.response"
 
-# Generate a random port for worker responses to avoid conflicts
-def get_random_worker_port():
-    return WORKER_PUSH_PORT + random.randint(1, 1000)
+
+class ZmqBindingPullSocket(ZmqPullSocket):
+    """A ZeroMQ pull socket that binds instead of connects.
+    
+    This is needed for controllers that need to receive messages from multiple workers.
+    """
+    
+    def __init__(self, address: str, use_asyncio: bool = True):
+        """Initialize a ZeroMQ pull socket that binds.
+        
+        Args:
+            address: ZeroMQ address to bind to
+            use_asyncio: Whether to use asyncio
+        """
+        # Initialize the base class attributes without calling super().__init__
+        self.address = address
+        self.use_asyncio = use_asyncio
+        self.closed = False
+        
+        if use_asyncio:
+            self.context = zmq.asyncio.Context()
+        else:
+            self.context = zmq.Context()
+        
+        # Create the socket
+        self.socket = self.context.socket(zmq.PULL)
+        self.socket.bind(address)  # bind instead of connect
+        
+        # Set timeout for receive operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
+        
+        logging.getLogger(__name__).debug(f"Pull socket bound to {address}")
+    
+    # Inherit all other methods from ZmqPullSocket (pull, pull_async, close, etc.)
+
+
+class ZmqConnectingPushSocket(ZmqPushSocket):
+    """A ZeroMQ push socket that explicitly connects instead of binds.
+    
+    This is needed for workers to connect to a controller's pull socket.
+    """
+    
+    def __init__(self, address: str, use_asyncio: bool = True):
+        """Initialize a ZeroMQ push socket that connects.
+        
+        Args:
+            address: ZeroMQ address to connect to
+            use_asyncio: Whether to use asyncio
+        """
+        # Initialize the base class attributes without calling super().__init__
+        self.address = address
+        self.use_asyncio = use_asyncio
+        self.closed = False
+        
+        if use_asyncio:
+            self.context = zmq.asyncio.Context()
+        else:
+            self.context = zmq.Context()
+        
+        # Create the socket
+        self.socket = self.context.socket(zmq.PUSH)
+        self.socket.connect(address)  # connect instead of bind
+        
+        # Set timeout for send operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 second timeout
+        
+        logging.getLogger(__name__).debug(f"Push socket connected to {address}")
+    
+    # Inherit all other methods from ZmqPushSocket (push, push_async, close, etc.)
 
 
 class ExampleController(ZmqControllerService):
@@ -68,16 +147,15 @@ class ExampleController(ZmqControllerService):
         Args:
             name: Name of this controller instance
         """
-        # Initialize with just the publish and push sockets
-        # We'll add the subscriber and pull sockets dynamically when workers connect
+        # Initialize with just the publish and push sockets for sending to workers
+        # and pull socket for receiving from workers
         super().__init__(
             service_name=name,
             pub_address=f"tcp://*:{CONTROLLER_PUB_PORT}",
-            # Use None for now - we'll update these when workers connect
-            sub_address=f"tcp://localhost:{CONTROLLER_PUB_PORT}",  # dummy value
+            sub_address=f"tcp://localhost:99999",  # Dummy address - not used since no subscription needed
             push_address=f"tcp://*:{CONTROLLER_PUSH_PORT}",
-            pull_address=f"tcp://localhost:{CONTROLLER_PUSH_PORT}",  # dummy value
-            topics=[WORKER_RESPONSE_TOPIC],
+            pull_address=f"tcp://*:{CONTROLLER_PULL_PORT}",  # Bind to receive results from workers
+            topics=[],  # No subscription topics needed
             heartbeat_topic=CONTROL_TOPIC,
             service_type="example-controller"
         )
@@ -87,16 +165,35 @@ class ExampleController(ZmqControllerService):
         
     async def start(self):
         """Start the controller service with additional tasks."""
-        await super().start()
+        # Initialize publisher for broadcasting
+        logger.info(f"Initializing publisher on {self.pub_address}")
+        self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
+        self.register_socket(self.publisher)
         
-        # Register message handlers
-        self.register_handler(WORKER_RESPONSE_TOPIC, self.handle_worker_response)
+        # Initialize subscriber for receiving responses (dummy since not used)
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
+        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        self.register_socket(self.subscriber)
+        
+        # Initialize push socket for distributing tasks
+        logger.info(f"Initializing push socket on {self.push_address}")
+        self.push_socket = ZmqPushSocket(self.push_address)
+        self.register_socket(self.push_socket)
+        
+        # Initialize custom binding pull socket for receiving worker responses
+        logger.info(f"Initializing binding pull socket on {self.pull_address}")
+        self.pull_socket = ZmqBindingPullSocket(self.pull_address)
+        self.register_socket(self.pull_socket)
+        
+        # Register tasks
+        self._register_task(self.send_heartbeat())
+        self._register_task(self.listen_for_messages())
+        self._register_task(self.pull_tasks())
+        
+        await BaseZmqService.start(self)
         
         # Save handler for worker results
         self.task_handler = self.handle_worker_result
-        
-        # Add pull_tasks method for the controller
-        self._register_task(self.pull_tasks())
         
         # Add task to register workers
         self._register_task(self.connect_to_workers())
@@ -143,17 +240,6 @@ class ExampleController(ZmqControllerService):
                     if not result or len(result) == 0:
                         logger.debug("Received empty result, ignoring")
                         continue
-                        
-                    task_id = result.get("task_id", "unknown")
-                    worker_name = result.get("service", "unknown")
-                    
-                    # Only process results that have a proper task_id and service name
-                    if task_id == "unknown" or worker_name == "unknown":
-                        logger.warning(f"Received incomplete task result, missing task_id or service: {result}")
-                        continue
-                        
-                    logger.debug(f"Received result for task: {task_id} from {worker_name}")
-                    self.messages_received += 1
                     
                     # Process result with registered handler if any
                     if self.task_handler:
@@ -162,6 +248,8 @@ class ExampleController(ZmqControllerService):
                         except Exception as e:
                             logger.error(f"Error in result handler: {e}")
                             self.errors += 1
+                    
+                    self.messages_received += 1
             
             except ZmqTimeoutError:
                 # This is normal, just continue
@@ -172,28 +260,48 @@ class ExampleController(ZmqControllerService):
             
             await asyncio.sleep(0.01)  # Small delay to prevent CPU spinning
     
-    def handle_worker_response(self, message: Dict[str, Any]):
-        """Handle worker response messages (via PUB/SUB)."""
-        worker_name = message.get("service", "unknown")
-        message_type = message.get("type", "unknown")
-        
-        if message_type == "WorkerRegistration":
-            # Handle worker registration
-            port = message.get("port")
-            if port:
-                logger.info(f"Worker {worker_name} registered with port {port}")
-                self.connected_workers[worker_name] = {
-                    'port': port,
-                    'connected': False,
-                    'last_seen': time.time()
-                }
-        else:
-            logger.info(f"Received response from {worker_name}: {message}")
-    
     async def handle_worker_result(self, result: Dict[str, Any]):
-        """Handle worker task results (via PUSH/PULL)."""
-        task_id = result.get("task_id", "unknown")
+        """Handle worker task results and registrations (via PUSH/PULL)."""
+        message_type = result.get("type", "unknown")
         worker_name = result.get("service", "unknown")
+        
+        if worker_name == "unknown":
+            logger.warning(f"Received incomplete task result, missing task_id or service: {result}")
+            return
+        
+        # Handle worker registration messages
+        if message_type == "WorkerRegistration":
+            logger.info(f"Worker {worker_name} registered")
+            self.connected_workers[worker_name] = {
+                'connected': True,
+                'last_seen': time.time()
+            }
+            return
+        
+        if worker_name not in self.connected_workers:
+            logger.warning(f"Received result from unknown worker '{worker_name}'")
+            return
+
+        # Handle worker status updates
+        if message_type == MessageType.IDLE_STATUS:
+            tasks_processed = result.get("tasks_processed", 0)
+            logger.debug(f"Status update from worker {worker_name}: {tasks_processed} tasks processed")
+            
+            # Update worker status in connected workers list
+            if worker_name not in self.connected_workers:
+                self.connected_workers[worker_name] = {
+                    'connected': True,
+                    'last_seen': time.time(),
+                    'tasks_processed': tasks_processed
+                }
+            else:
+                self.connected_workers[worker_name]['last_seen'] = time.time()
+                self.connected_workers[worker_name]['tasks_processed'] = tasks_processed
+                
+            return
+        
+        # For task results, we need a task_id
+        task_id = result.get("task_id", "unknown")
         status = result.get("status", "unknown")
         
         # Validate that we have a real result from a worker
@@ -245,15 +353,6 @@ class ExampleController(ZmqControllerService):
                     logger.info(f"Generated and pushed task {task_id} to {worker_count} worker(s)")
                 else:
                     logger.warning(f"Generated task {task_id}, but no workers are connected. Task may be lost or never processed.")
-                
-                # Also publish a notification about the new task
-                notification = {
-                    "type": MessageType.RENDER_REQUEST,
-                    "timestamp": time.time(),
-                    "task_id": task_id,
-                    "message": f"New task {task_id} is available"
-                }
-                await self.publish_message(notification)
             else:
                 logger.warning(f"Failed to push task {task_id}")
 
@@ -273,23 +372,39 @@ class ExampleWorker(ZmqWorkerService):
         Args:
             name: Name of this worker instance
         """
-        # Use a random worker port to avoid conflicts
-        worker_port = get_random_worker_port()
-        
         super().__init__(
             service_name=name,
             sub_address=f"tcp://localhost:{CONTROLLER_PUB_PORT}",
             pull_address=f"tcp://localhost:{CONTROLLER_PUSH_PORT}",
-            push_address=f"tcp://*:{worker_port}",  # Bind to this address for sending responses
+            push_address=f"tcp://localhost:{CONTROLLER_PULL_PORT}",  # Connect to controller's pull socket
             topics=[CONTROL_TOPIC],
             service_type="example-worker"
         )
         self.tasks_processed = 0
-        self.worker_port = worker_port
         
     async def start(self):
         """Start the worker service with additional handlers."""
-        await super().start()
+        # Initialize subscriber for receiving control messages
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
+        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        self.register_socket(self.subscriber)
+        
+        # Initialize pull socket for receiving tasks
+        logger.info(f"Initializing pull socket on {self.pull_address}")
+        self.pull_socket = ZmqPullSocket(self.pull_address)
+        self.register_socket(self.pull_socket)
+        
+        # Initialize custom connecting push socket for sending responses back
+        if self.push_address:
+            logger.info(f"Initializing connecting push socket on {self.push_address}")
+            self.push_socket = ZmqConnectingPushSocket(self.push_address)
+            self.register_socket(self.push_socket)
+        
+        # Register tasks
+        self._register_task(self.listen_for_messages())
+        self._register_task(self.pull_tasks())
+        
+        await BaseZmqService.start(self)
         
         # Register message handlers
         self.register_handler(CONTROL_TOPIC, self.handle_control_message)
@@ -321,14 +436,13 @@ class ExampleWorker(ZmqWorkerService):
             "type": "WorkerRegistration",
             "timestamp": time.time(),
             "service": self.service_name,
-            "port": self.worker_port,
-            "state": self.state
+            "state": self.state.value if hasattr(self.state, 'value') else str(self.state)
         }
         
-        # Send via PUSH/PULL for direct communication
+        # Send via PUSH socket to controller
         success = await self.send_response(registration)
         if success:
-            logger.info(f"Registered with controller (port {self.worker_port})")
+            logger.info(f"Registered with controller via PUSH socket")
         else:
             logger.warning("Failed to register with controller")
     
@@ -341,10 +455,6 @@ class ExampleWorker(ZmqWorkerService):
             
             # Send a status update to the controller
             asyncio.create_task(self.send_status_update())
-        elif message_type == MessageType.RENDER_REQUEST:
-            # This is just a notification, actual task comes through PULL socket
-            task_id = message.get("task_id", "unknown")
-            logger.info(f"Received notification about new task: {task_id}")
         else:
             logger.info(f"Received control message: {message}")
     
@@ -398,6 +508,41 @@ class ExampleWorker(ZmqWorkerService):
             logger.info(f"Sent result for task {task_id}")
         else:
             logger.warning(f"Failed to send result for task {task_id}")
+    
+    async def send_response(self, response: Dict[str, Any]) -> bool:
+        """Send a response back to the controller.
+        
+        Args:
+            response: Response message to send
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.push_socket:
+            logger.error(f"Cannot send response: push socket not initialized")
+            return False
+            
+        try:
+            # Ensure we have our service name in the response
+            if "service" not in response:
+                response["service"] = self.service_name
+                
+            # Add timestamp if not present
+            if "timestamp" not in response:
+                response["timestamp"] = time.time()
+                
+            # Send the message using the push socket
+            result = await self.push_socket.push_async(response)
+            self.messages_sent += 1
+            return True
+        except ZmqTimeoutError:
+            logger.warning(f"Timeout sending response to controller")
+            self.errors += 1
+            return False
+        except Exception as e:
+            logger.error(f"Error sending response to controller: {e}")
+            self.errors += 1
+            return False
 
 
 async def main():
