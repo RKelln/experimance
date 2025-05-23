@@ -146,6 +146,21 @@ To update a particular dependency:
 uv lock --upgrade-package opencv-python
 ```
 
+### Troubleshooting packages
+
+If you encounter issues with installation or imports, we provide several testing utilities:
+
+```bash
+# Basic import test
+uv run python utils/tests/simple_test.py
+
+# Check environment setup
+uv run python utils/tests/check_env.py
+```
+
+See `utils/tests/README.md` for detailed information about these utilities and common troubleshooting steps.
+
+
 ## Testing
 
 Run tests with uv and pytest:
@@ -161,39 +176,8 @@ uv run pytest
 uv run pytest --cov=experimance_common
 
 # Run specific tests
-uv run pytest -v utils/tests/test_zmq_utils.py
+uv run pytest -v utils/tests/test_zmq_utils.py -k test_name
 ```
 
-### ZeroMQ Utilities Tests
+See [`utils/tests/README.md`](utils/tests/README.md) and [`utils/tests/README_ZMQ_TESTS.md](utils/tests/README_ZMQ_TESTS.md) for more details.
 
-The ZeroMQ communication layer has comprehensive tests:
-
-```bash
-# Run the basic ZMQ tests
-uv run pytest -v utils/tests/test_zmq_utils.py
-
-# Run advanced ZMQ tests (connection failures, retries, etc.)
-uv run pytest -v utils/tests/test_zmq_utils_advanced.py
-```
-
-The enhanced ZMQ utilities include:
-- Automatic reconnection with exponential backoff
-- Connection status monitoring and health checks
-- Proper error handling and logging
-- Non-blocking "fire-and-forget" async operations
-
-See `utils/tests/README_ZMQ_TESTS.md` for more details.
-
-## Troubleshooting
-
-If you encounter issues with installation or imports, we provide several testing utilities:
-
-```bash
-# Basic import test
-uv run python utils/tests/simple_test.py
-
-# Check environment setup
-uv run python utils/tests/check_env.py
-```
-
-See `utils/tests/README.md` for detailed information about these utilities and common troubleshooting steps.
