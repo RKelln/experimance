@@ -18,15 +18,17 @@ import asyncio
 import logging
 import signal
 import pytest
+from contextlib import suppress
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from experimance_common.service import (
-    BaseZmqService, ServiceState,
+    BaseZmqService, ServiceState, ServiceStatus,
     ZmqPublisherService, ZmqSubscriberService,
     ZmqPushService, ZmqPullService,
     ZmqPublisherSubscriberService, ZmqControllerService, ZmqWorkerService
 )
 from experimance_common.zmq_utils import MessageType
+from utils.tests.test_utils import active_service, wait_for_service_state, wait_for_service_shutdown, debug_service_tasks
 
 # Configure test logging
 logging.basicConfig(level=logging.DEBUG, 
@@ -253,6 +255,9 @@ class TestBaseZmqService:
         # Stop should handle the exception
         await service.stop()
         
+        # Wait for service to reach STOPPED state
+        await wait_for_service_state(service, ServiceState.STOPPED)
+        
         # Verify socket was attempted to be closed
         bad_socket.close.assert_called_once()
         assert service.state == ServiceState.STOPPED
@@ -271,21 +276,14 @@ class TestPublisherService:
             heartbeat_topic="test.heartbeat"
         )
         
-        # Start the service
-        await service.start()
-        
-        try:
-            # Check publisher was created
-            assert service.publisher is not None
-            assert service.publisher.address == "tcp://*:5555"
-            assert service.publisher.topic == "test.heartbeat"
+        async with active_service(service) as s:
+            assert s.publisher is not None
+            assert s.publisher.address == "tcp://*:5555"
+            assert s.publisher.topic == "test.heartbeat"
             
             # Should have at least one task (heartbeat)
-            assert len(service.tasks) > 0
-        finally:
-            # Clean up
-            await service.stop()
-    
+            assert len(s.tasks) > 0
+
     async def test_publish_message(self):
         """Test publishing messages."""
         service = ZmqPublisherService(
@@ -293,24 +291,21 @@ class TestPublisherService:
             pub_address="tcp://*:5555"
         )
         
-        # Start the service
-        await service.start()
-        
-        try:
+        async with active_service(service) as s:
             # Publish a test message
             message = {"type": "TEST", "content": "test-data"}
-            success = await service.publish_message(message)
+            success = await s.publish_message(message)
             
             # Check message was published
             assert success is True
-            assert service.messages_sent == 1
+            assert s.messages_sent == 2  # Expect heartbeat + published message
             
             # Check message is in the publisher's message list
-            assert len(service.publisher.messages) == 1  # type: ignore
-            assert service.publisher.messages[0] == message  # type: ignore
-        finally:
-            # Clean up
-            await service.stop()
+            assert len(s.publisher.messages) == 2  # type: ignore
+            # The first message should be the heartbeat
+            assert s.publisher.messages[0]["type"] == MessageType.HEARTBEAT.value  # type: ignore
+            # The second message should be the one explicitly published by the test
+            assert s.publisher.messages[1] == message  # type: ignore
 
 
 @pytest.mark.asyncio
@@ -326,19 +321,13 @@ class TestSubscriberService:
             topics=["test.topic1", "test.topic2"]
         )
         
-        # Start the service
-        await service.start()
-        
-        # Check subscriber was created
-        assert service.subscriber is not None
-        assert service.subscriber.address == "tcp://localhost:5555"
-        
-        # Should have at least one task (message listener)
-        assert len(service.tasks) > 0
-        
-        # Clean up
-        await service.stop()
-    
+        async with active_service(service) as s:
+            assert s.subscriber is not None
+            assert s.subscriber.address == "tcp://localhost:5555"
+            
+            # Should have at least one task (message listener)
+            assert len(s.tasks) > 0
+
     async def test_message_handler_registration(self):
         """Test registering and calling message handlers."""
         service = ZmqSubscriberService(
@@ -383,15 +372,10 @@ class TestPushService:
             push_address="tcp://*:5555"
         )
         
-        # Start the service
-        await service.start()
-        
-        # Check push socket was created
-        assert service.push_socket is not None
-        assert service.push_socket.address == "tcp://*:5555"
-        
-        # Clean up
-        await service.stop()
+        async with active_service(service) as s:
+            assert s.push_socket is not None
+            assert s.push_socket.address == "tcp://*:5555"
+            assert len(s.tasks) > 0, "Expected at least one task to be created"
     
     async def test_push_task(self):
         """Test pushing tasks."""
@@ -400,23 +384,15 @@ class TestPushService:
             push_address="tcp://*:5555"
         )
         
-        # Start the service
-        await service.start()
-        
-        # Push a test task
-        task = {"id": "task-1", "command": "test-command"}
-        success = await service.push_task(task)
-        
-        # Check task was pushed
-        assert success is True
-        assert service.messages_sent == 1
-        
-        # Check task is in the socket's message list
-        assert len(service.push_socket.messages) == 1  # type: ignore
-        assert service.push_socket.messages[0] == task  # type: ignore
-        
-        # Clean up
-        await service.stop()
+        async with active_service(service) as s:
+            task = {"id": "task-1", "command": "test-command"}
+            success = await s.push_task(task)
+            
+            assert success is True
+            assert s.messages_sent == 1
+            assert len(s.push_socket.messages) == 1  # type: ignore
+            assert s.push_socket.messages[0] == task  # type: ignore
+            assert len(s.tasks) > 0, "Expected at least one task to be created"
 
 
 @pytest.mark.asyncio
@@ -430,19 +406,14 @@ class TestPullService:
             service_name="test-pull", 
             pull_address="tcp://localhost:5555"
         )
+        # Register a dummy handler so _task_puller_task is created by service.start()
+        dummy_handler = AsyncMock()
+        service.register_task_handler(dummy_handler)
         
-        # Start the service
-        await service.start()
-        
-        # Check pull socket was created
-        assert service.pull_socket is not None
-        assert service.pull_socket.address == "tcp://localhost:5555"
-        
-        # Should have at least one task (task puller)
-        assert len(service.tasks) > 0
-        
-        # Clean up
-        await service.stop()
+        async with active_service(service) as s:
+            assert s.pull_socket is not None
+            assert s.pull_socket.address == "tcp://localhost:5555"
+            assert len(s.tasks) >= 2 # run_task + task_puller
     
     async def test_task_handler_registration(self):
         """Test registering task handlers."""
@@ -451,28 +422,23 @@ class TestPullService:
             pull_address="tcp://localhost:5555"
         )
         
-        # Create a mock handler
         handler_mock = AsyncMock()
-        
-        # Register the handler
+        # Register the handler directly on the service instance before active_service starts it
         service.register_task_handler(handler_mock)
         
-        # Check handler was registered
-        assert service.task_handler == handler_mock
-        
-        # Start the service
-        await service.start()
-        
-        # Manually call the task handler with a test task
-        test_task = {"id": "test-task", "data": "test"}
-        if service.task_handler:  # Check if task_handler is not None
-            await service.task_handler(test_task)
+        async with active_service(service) as s:
+            assert s.task_handler == handler_mock
             
-            # Check handler was called with the task
-            handler_mock.assert_called_once_with(test_task)
-        
-        # Clean up
-        await service.stop()
+            test_task = {"id": "test-task", "data": "test"}
+            # Manually call the handler to test registration, not the pull loop
+            if s.task_handler:
+                await s.task_handler(test_task)
+                # Check that the handler was called with test_task at least once,
+                # acknowledging that the service's pull loop might also call it.
+                handler_mock.assert_any_call(test_task)
+            
+            # Verify tasks are running
+            assert len(s.tasks) >= 2
 
 
 @pytest.mark.asyncio
@@ -493,23 +459,19 @@ class TestCombinedServices:
             heartbeat_topic="test.heartbeat"
         )
         
-        # Start the service
-        await service.start()
-        
-        # Check both publisher and subscriber were created
-        assert service.publisher is not None
-        assert service.subscriber is not None
-        
-        # Should have multiple tasks (heartbeat and message listener)
-        assert len(service.tasks) >= 2
-        
-        # Test publishing a message
-        message = {"type": "TEST", "content": "test-data"}
-        success = await service.publish_message(message)
-        assert success is True
-        
-        # Clean up
-        await service.stop()
+        async with active_service(service) as s:
+            assert s.publisher is not None
+            assert s.subscriber is not None
+
+            assert len(s.tasks) >= 3
+            task_names = [task.__name__ for task in s.tasks]
+            assert "send_heartbeat" in task_names
+            assert "listen_for_messages" in task_names
+            assert "display_stats" in task_names
+            
+            message = {"type": "TEST", "content": "test-data"}
+            success = await s.publish_message(message)
+            assert success is True
     
     async def test_controller_service(self):
         """Test ZmqControllerService."""
@@ -522,26 +484,25 @@ class TestCombinedServices:
             topics=["test.topic"],
             heartbeat_topic="test.heartbeat"
         )
+        # ZmqControllerService auto-registers a pull handler (_handle_worker_response)
         
-        # Start the service
-        await service.start()
-        
-        # Check all sockets were created
-        assert service.publisher is not None
-        assert service.subscriber is not None
-        assert service.push_socket is not None
-        assert service.pull_socket is not None
-        
-        # Should have multiple tasks
-        assert len(service.tasks) >= 2
-        
-        # Test publishing a message
-        message = {"type": "TEST", "content": "test-data"}
-        success = await service.publish_message(message)
-        assert success is True
-        
-        # Clean up
-        await service.stop()
+        async with active_service(service) as s:
+            assert s.publisher is not None
+            assert s.subscriber is not None
+            assert s.push_socket is not None
+            assert s.pull_socket is not None
+
+            debug_service_tasks(s)
+            assert len(s.tasks) >= 4
+            task_names = [task.__name__ for task in s.tasks]
+            assert "send_heartbeat" in task_names
+            assert "pull_tasks" in task_names
+            assert "listen_for_messages" in task_names
+            assert "display_stats" in task_names
+            
+            message = {"type": "TEST", "content": "test-data"}
+            success = await s.publish_message(message)
+            assert success is True
     
     async def test_worker_service(self):
         """Test ZmqWorkerService."""
@@ -552,22 +513,19 @@ class TestCombinedServices:
             push_address="tcp://*:5557",
             topics=["test.topic"]
         )
+        # ZmqWorkerService auto-registers _handle_task for pull and _handle_message for sub
         
-        # Start the service
-        await service.start()
-        
-        # Check all sockets were created
-        assert service.subscriber is not None
-        assert service.pull_socket is not None
-        assert service.push_socket is not None
-        
-        # Should have multiple tasks
-        assert len(service.tasks) >= 2
-        
-        # Test sending a response
-        response = {"type": "RESPONSE", "content": "test-data"}
-        success = await service.send_response(response)
-        assert success is True
-        
-        # Clean up
-        await service.stop()
+        async with active_service(service) as s:
+            assert s.subscriber is not None
+            assert s.pull_socket is not None
+            assert s.push_socket is not None
+            
+            assert len(s.tasks) >= 3
+            task_names = [task.__name__ for task in s.tasks]
+            assert "pull_tasks" in task_names
+            assert "listen_for_messages" in task_names
+            assert "display_stats" in task_names
+            
+            response = {"type": "RESPONSE", "content": "test-data"}
+            success = await s.send_response(response)
+            assert success is True

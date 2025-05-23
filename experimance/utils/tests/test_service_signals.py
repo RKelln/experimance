@@ -24,7 +24,7 @@ from experimance_common.service import (
     BaseService, BaseZmqService, ZmqPublisherService, ServiceState
 )
 
-from test_utils import wait_for_service_shutdown
+from utils.tests.test_utils import wait_for_service_shutdown, wait_for_service_state
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -102,11 +102,14 @@ async def test_basic_service_signal():
     # Start the service
     await service.start()
     
-    # Create a task to run the service
+    # Create a task to run the service - this will move it to RUNNING state
     run_task = asyncio.create_task(service.run())
     
-    # Let it run for a bit
-    await asyncio.sleep(3.0)
+    # Wait for the service to be fully running
+    await wait_for_service_state(service, ServiceState.RUNNING)
+    
+    # Let it run for a bit to ensure tasks are established
+    await asyncio.sleep(1.0)
     
     # Send a SIGINT to the process (simulating Ctrl+C)
     logger.info("Sending SIGINT to process")
@@ -130,11 +133,14 @@ async def test_zmq_service_signal():
     # Start the service
     await service.start()
     
-    # Create a task to run the service
+    # Create a task to run the service - this will move it to RUNNING state
     run_task = asyncio.create_task(service.run())
     
-    # Let it run for a bit
-    await asyncio.sleep(3.0)
+    # Wait for the service to be fully running
+    await wait_for_service_state(service, ServiceState.RUNNING)
+    
+    # Let it run for a bit to ensure tasks are established
+    await asyncio.sleep(1.0)
     
     # Send a SIGTERM to the process
     logger.info("Sending SIGTERM to process")
@@ -164,11 +170,11 @@ async def test_multiple_signals():
     # Start the service
     await service.start()
     
-    # Create a task to run the service
+    # Create a task to run the service - this will move it to RUNNING state
     run_task = asyncio.create_task(service.run(), name=f"{service.service_name}-run")
     
-    # Let it run for a bit to ensure it's fully up
-    await asyncio.sleep(1.0) # Reduced from 2.0 to speed up, ensure tasks are running
+    # Wait for the service to be fully running
+    await wait_for_service_state(service, ServiceState.RUNNING)
     assert service.running, "Service should be running before sending signals"
     
     # Send multiple signals
@@ -176,12 +182,13 @@ async def test_multiple_signals():
     logger.info(f"Sending first SIGINT to {service.service_name}")
     os.kill(os.getpid(), signal.SIGINT)
     
-    # Give a very short moment for the first signal to be processed by the event loop
-    # and for the service to enter the stopping state.
-    await asyncio.sleep(0.2) 
+    # Wait for the service to finish shutdown
+    await wait_for_service_state(service, ServiceState.STOPPED, timeout=2.0)
     
     logger.info(f"Sending second SIGINT to {service.service_name} (should be ignored if already stopping)")
     os.kill(os.getpid(), signal.SIGINT)
+    
+    # Brief pause to ensure signal is processed
     await asyncio.sleep(0.1)
 
     logger.info(f"Sending third SIGINT to {service.service_name} (should be ignored if already stopping)")
@@ -207,12 +214,14 @@ async def main():
         # Run basic service test
         await test_basic_service_signal()
         
-        await asyncio.sleep(1.0)  # Brief pause between tests
+        # Brief pause to reset signal handlers and ensure clean state between tests
+        await asyncio.sleep(0.5)  
         
         # Run ZMQ service test
         await test_zmq_service_signal()
         
-        await asyncio.sleep(1.0)  # Brief pause between tests
+        # Brief pause to reset signal handlers and ensure clean state between tests
+        await asyncio.sleep(0.5)  
         
         # Run multiple signal test
         await test_multiple_signals()

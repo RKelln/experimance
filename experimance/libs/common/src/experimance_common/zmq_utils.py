@@ -23,6 +23,7 @@ from experimance_common.constants import (
     DEFAULT_RETRY_ATTEMPTS,
     DEFAULT_RETRY_DELAY,
     DEFAULT_RECV_TIMEOUT,
+    HEARTBEAT_TOPIC,
 )
 
 

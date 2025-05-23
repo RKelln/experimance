@@ -25,6 +25,7 @@ from experimance_common.service import (
     ZmqPublisherService, ZmqSubscriberService
 )
 from experimance_common.zmq_utils import MessageType
+from utils.tests.test_utils import wait_for_service_state, wait_for_service_shutdown, wait_for_service_state_and_status
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -66,7 +67,9 @@ class MetricsService(BaseService):
             logger.debug(f"Collected metrics: {self.metrics}")
             self.messages_sent += 1
             
-            await asyncio.sleep(1.0)
+            # In a real service, we'd use asyncio.sleep for longer periods,
+            # but for tests we want faster interaction cycles
+            await asyncio.sleep(0.2)
 
 
 class EventPublisher(ZmqPublisherService):
@@ -112,7 +115,8 @@ class EventPublisher(ZmqPublisherService):
                     await self.publish_message(event, topic="events.alert")
                     logger.info(f"Published alert event #{self.event_count}")
             
-            await asyncio.sleep(2.0)
+            # For testing, use shorter sleep periods
+            await asyncio.sleep(0.5)
 
 
 class EventSubscriber(ZmqSubscriberService):
@@ -170,8 +174,20 @@ async def run_services_integration_test():
         
         # Let services run and interact
         logger.info("All services running, waiting to observe interactions...")
-        await asyncio.sleep(10.0)
         
+        # Wait for sufficient interaction between services 
+        # (Wait until we've received at least 3 heartbeats)
+        start_time = time.monotonic()
+        max_wait_time = 10.0  # Maximum time to wait
+        
+        while (subscriber.heartbeats_received < 3 and 
+               time.monotonic() - start_time < max_wait_time):
+            await asyncio.sleep(0.1)  # Small sleep to avoid busy waiting
+            
+        # If we didn't receive any heartbeats in the max wait time, that's a failure
+        if subscriber.heartbeats_received == 0:
+            assert False, "No heartbeats received within timeout period"
+            
         # Verify the services interacted correctly
         logger.info(f"Metrics collected: {metrics.messages_sent}")
         logger.info(f"Events published: {publisher.event_count}")
@@ -184,18 +200,23 @@ async def run_services_integration_test():
         # Stop in reverse order to test proper shutdown sequence
         for service in reversed([metrics, publisher, subscriber]):
             await service.stop()
+            # Wait for each service to fully stop before stopping the next one
+            await wait_for_service_state(service, ServiceState.STOPPED)
         
         # Cancel all service tasks
         for task in service_tasks:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         
-        # Verify all services stopped correctly
+        # Verify all services stopped correctly - this should be redundant after wait_for_service_state above,
+        # but we'll keep it as an extra verification
         for i, service in enumerate([metrics, publisher, subscriber]):
             logger.info(f"Service {i+1} state: {service.state}")
             assert service.state == ServiceState.STOPPED
-        
+            assert not service.running
+            
         logger.info("All services stopped successfully")
         logger.info("Service integration test completed successfully")
         

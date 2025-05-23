@@ -43,6 +43,7 @@ from experimance_common.constants import (
     DEFAULT_RETRY_ATTEMPTS,
     DEFAULT_RETRY_DELAY,
     DEFAULT_RECV_TIMEOUT,
+    HEARTBEAT_TOPIC
 )
 
 from experimance_common.zmq_utils import (
@@ -534,7 +535,7 @@ class ZmqPublisherService(BaseZmqService):
     
     def __init__(self, service_name: str, 
                  pub_address: str, 
-                 heartbeat_topic: str = "heartbeat",
+                 heartbeat_topic: str = HEARTBEAT_TOPIC,
                  service_type: str = "publisher"):
         """Initialize a publisher service.
         
@@ -851,7 +852,7 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
                  pub_address: str,
                  sub_address: str,
                  topics: List[str],
-                 heartbeat_topic: str = "heartbeat",
+                 heartbeat_topic: str = HEARTBEAT_TOPIC,
                  service_type: str = "pubsub"):
         """Initialize a publisher-subscriber service.
         
@@ -891,11 +892,12 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
         await BaseZmqService.start(self)
 
 
-class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService):
+class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService, ZmqPullService):  # Added ZmqPullService
     """Controller service that publishes events, listens for responses, and pushes tasks.
     
     This combined service is suitable for central coordinator services that
     need to broadcast messages, listen for responses, and distribute tasks.
+    It also pulls responses from workers.
     """
     
     def __init__(self, service_name: str,
@@ -904,37 +906,22 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService):
                  push_address: str,
                  pull_address: str,
                  topics: List[str],
-                 heartbeat_topic: str = "heartbeat",
+                 heartbeat_topic: str = HEARTBEAT_TOPIC,
                  service_type: str = "controller"):
-        """Initialize a controller service.
-        
-        Args:
-            service_name: Unique name for this service instance
-            pub_address: ZeroMQ address to bind publisher to
-            sub_address: ZeroMQ address to connect subscriber to
-            push_address: ZeroMQ address to bind push socket to
-            pull_address: ZeroMQ address to connect pull socket to
-            topics: List of topics to subscribe to
-            heartbeat_topic: Topic for heartbeat messages
-            service_type: Type of service (for logging and monitoring)
-        """
-        BaseZmqService.__init__(self, service_name, service_type)
-        self.pub_address = pub_address
-        self.sub_address = sub_address
-        self.push_address = push_address
-        self.pull_address = pull_address
-        self.topics = topics
-        self.heartbeat_topic = heartbeat_topic
-        
-        # Initialize all sockets as None - they will be created in start()
-        self.publisher = None
-        self.subscriber = None
-        self.push_socket = None
-        self.pull_socket = None
-        
-        # Handlers
-        self.message_handlers = {}
-        self.task_handler = None
+        ZmqPublisherSubscriberService.__init__(
+            self,
+            service_name=service_name,
+            pub_address=pub_address,
+            sub_address=sub_address,
+            topics=topics,
+            heartbeat_topic=heartbeat_topic,
+            service_type=service_type
+        )
+        ZmqPushService.__init__(self, service_name=service_name, push_address=push_address, service_type=service_type)
+        ZmqPullService.__init__(self, service_name=service_name, pull_address=pull_address, service_type=service_type)
+
+        # Register the handler for messages from the PULL socket
+        #self.register_task_handler(self._handle_worker_response)
     
     async def start(self):
         """Start the controller service."""
@@ -961,11 +948,12 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService):
         # Register tasks
         self._register_task(self.send_heartbeat())
         self._register_task(self.listen_for_messages())
+        self._register_task(self.pull_tasks())
         
         await BaseZmqService.start(self)
 
 
-class ZmqWorkerService(ZmqSubscriberService, ZmqPullService):
+class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
     """Worker service that subscribes to events and pulls tasks.
     
     This combined service is suitable for worker services that
@@ -976,7 +964,7 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService):
                  sub_address: str,
                  pull_address: str,
                  push_address: Optional[str] = None,
-                 topics: Optional[List[str]] = None,
+                 topics: List[str] = [],
                  service_type: str = "worker"):
         """Initialize a worker service.
         
@@ -988,21 +976,12 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService):
             topics: List of topics to subscribe to
             service_type: Type of service (for logging and monitoring)
         """
-        topics = topics or ["heartbeat"]
-        BaseZmqService.__init__(self, service_name, service_type)
-        self.sub_address = sub_address
-        self.pull_address = pull_address
-        self.push_address = push_address
-        self.topics = topics
-        
-        # Initialize sockets as None - they will be created in start()
-        self.subscriber = None
-        self.pull_socket = None
-        self.push_socket = None
-        
-        # Handlers
-        self.message_handlers = {}
-        self.task_handler = None
+        ZmqSubscriberService.__init__(self, service_name, sub_address, topics, service_type)
+        ZmqPullService.__init__(self, service_name, pull_address, service_type)
+
+        self.push_address:Optional[str] = push_address
+        if self.push_address is not None:
+            ZmqPushService.__init__(self, service_name, self.push_address, service_type)
     
     async def start(self):
         """Start the worker service."""

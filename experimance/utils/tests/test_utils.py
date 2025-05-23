@@ -1,114 +1,17 @@
 import asyncio
-from contextlib import suppress
+from contextlib import suppress, asynccontextmanager
 import logging
 import pytest  # For pytest.fail
 import sys
 import time
-from typing import Optional
+from typing import Optional, Any, Callable, Union, TypeVar, List, Dict, AsyncIterator
 
 from experimance_common.service import BaseService, ServiceState, ServiceStatus
 
 logger = logging.getLogger(__name__)
 
-async def wait_for_service_shutdown_gemini(service_run_task: asyncio.Task, service: BaseService, timeout: float = 5.0):
-    """
-    Waits for the service.run() task to complete and the service to reach STOPPED state.
-    """
-    logger.info(f"Waiting for service {service.service_name} to shut down (run task: {service_run_task.get_name()})...")
-    try:
-        await asyncio.wait_for(service_run_task, timeout=timeout)
-        logger.info(f"Service {service.service_name} run task completed. Current service state: {service.state}")
-    except asyncio.CancelledError:
-        logger.info(f"Service {service.service_name} run task was cancelled, as expected during shutdown. Current service state: {service.state}")
-    except asyncio.TimeoutError:
-        logger.error(f"Timeout waiting for service {service.service_name} run task to complete (timeout: {timeout}s). Current state: {service.state}")
-        pytest.fail(f"Timeout waiting for {service.service_name} run task (task name: {service_run_task.get_name()}). State: {service.state}")
-    except Exception as e:
-        logger.error(f"Unexpected error while waiting for service {service.service_name} run task (task name: {service_run_task.get_name()}): {e!r}", exc_info=True)
-        pytest.fail(f"Unexpected error waiting for {service.service_name} run task (task name: {service_run_task.get_name()}): {e}")
-
-    # Poll for STOPPED state if not immediately set, for robustness.
-    # poll_duration_secs = 2.0  # Max time to wait in this polling loop
-    # poll_interval = 0.1
-    # max_polls_for_stopped_state = int(poll_duration_secs / poll_interval)
-
-    # if service.state != ServiceState.STOPPED:
-    #     logger.warning(f"Service {service.service_name} is {service.state} after run_task completed. Polling for STOPPED state for up to {poll_duration_secs}s...")
-    #     for i in range(max_polls_for_stopped_state):
-    #         if service.state == ServiceState.STOPPED:
-    #             logger.info(f"Service {service.service_name} reached STOPPED state after {i*poll_interval:.1f}s of polling.")
-    #             break
-    #         await asyncio.sleep(poll_interval)
-    #     else:  # Loop finished without break
-    #         logger.error(
-    #             f"Service {service.service_name} did not reach STOPPED state after run_task completion and {poll_duration_secs}s of polling. "
-    #             f"Final state: {service.state}. Task: {service_run_task.get_name()}"
-    #         )
-    
-    assert service.state == ServiceState.STOPPED, \
-        f"Service {service.service_name} should be STOPPED, but is {service.state}. Task: {service_run_task.get_name()}"
-    logger.info(f"Service {service.service_name} (task: {service_run_task.get_name()}) successfully shut down and confirmed STOPPED.")
-
-
-async def wait_for_service_shutdown(service_run_task: asyncio.Task, service: BaseService, timeout: float = 5.0):
-    """
-    Waits for the service.run() task to complete and the service to reach STOPPED state.
-    
-    If the service is already in STOPPED state, we'll still monitor the run task
-    but won't fail the test if it doesn't complete (it might be a case where 
-    the service stopped itself from within run()).
-    """
-    logger.info(f"Waiting for service {service.service_name} to shut down (run task: {service_run_task.get_name()})...")
-    
-    # Check if already in STOPPED state - if so, we won't wait for the run task
-    # because there might be a self-stop situation where the run task won't complete
-    # until this function returns
-    if service.state == ServiceState.STOPPED:
-        logger.info(f"Service {service.service_name} is already in STOPPED state - skipping wait for run task completion")
-        return
-    
-    try:
-        # Wait for the service's main run task to complete.
-        # This task should finish as a result of service.stop() being called (e.g., by a signal).
-        await asyncio.wait_for(service_run_task, timeout=timeout)
-        logger.info(f"Service {service.service_name} run task completed. Current service state: {service.state}")
-    except asyncio.CancelledError:
-        logger.info(f"Service {service.service_name} run task was cancelled, as expected during shutdown. Current service state: {service.state}")
-    except asyncio.TimeoutError:
-        logger.warning(f"Timeout waiting for service {service.service_name} run task to complete (timeout: {timeout}s). Current state: {service.state}")
-        # Log details if timeout occurs
-        all_tasks = asyncio.all_tasks()
-        logger.debug(f"All asyncio tasks at timeout ({len(all_tasks)} total):")
-        for i, task in enumerate(all_tasks):
-            logger.debug(f"  Task {i}: {task.get_name()}, done: {task.done()}, cancelled: {task.cancelled()}")
-            if not task.done() and i < 3:  # Only dump stack for first few tasks to avoid log clutter
-                task.print_stack(file=sys.stderr)  # Print stack to stderr
-        
-        # If service transitioned to STOPPED state during our wait, that's acceptable
-        # This handles cases where the service stops itself from run()
-        if service.state == ServiceState.STOPPED:
-            logger.info(f"Service {service.service_name} reached STOPPED state, but run task timed out - this can happen with self-stopping services")
-            # Don't fail the test, service state is what matters most
-        else:
-            # If not STOPPED, we do have a real problem - attempt cancellation
-            if not service_run_task.done():
-                logger.error(f"Service {service.service_name} run task is still not done and service not STOPPED. Attempting to cancel it now.")
-                service_run_task.cancel()
-                with suppress(asyncio.CancelledError):  # Suppress if already cancelled
-                    await service_run_task
-            assert False, f"Service {service.service_name} run task did not complete in time and service is not STOPPED. State: {service.state}"
-    except Exception as e:
-        logger.error(f"Unexpected error waiting for {service.service_name} run task: {e!r}", exc_info=True)
-        assert False, f"Unexpected error waiting for {service.service_name} shutdown: {e!r}"
-
-    # After the run_task has finished, service.stop() should have set the state to STOPPED.
-    # A very short poll can confirm this, mainly for robustness against tiny timing windows.
-    if service.state != ServiceState.STOPPED:
-        logger.debug(f"Service {service.service_name} state is {service.state}, polling briefly for STOPPED state...")
-        await asyncio.sleep(0.1)  # Brief pause for final state transition if needed
-
-    assert service.state == ServiceState.STOPPED, f"Service {service.service_name} should be STOPPED, but is {service.state}"
-    logger.info(f"Service {service.service_name} successfully shut down and confirmed STOPPED.")
+# Type variable for services
+T = TypeVar('T', bound=BaseService)
 
 async def wait_for_service_state(
     service: BaseService, 
@@ -248,3 +151,145 @@ async def wait_for_service_state_and_status(
                 f"Current state={service.state}, status={service.status}")
     assert False, (f"Service {service.service_name} did not reach {condition_desc} in {timeout}s "
                   f"(current state={service.state}, status={service.status})")
+
+async def wait_for_service_shutdown(
+    run_task: asyncio.Task, 
+    service: BaseService, 
+    timeout: float = 5.0,
+    check_interval: float = 0.1
+):
+    """
+    Wait for a service to shut down completely, monitoring both the run task and service state.
+    
+    This helper ensures that both the run task completes and the service reaches the STOPPED state.
+    It's particularly useful when testing signal handling and shutdown procedures.
+    
+    Args:
+        run_task: The asyncio task running the service.run() method
+        service: The service instance being monitored
+        timeout: Maximum time to wait in seconds
+        check_interval: How often to check the service state
+        
+    Raises:
+        asyncio.TimeoutError: If service doesn't reach STOPPED state in time
+        AssertionError: If service doesn't reach proper shutdown state
+    """
+    logger.info(f"Waiting for {service.service_name} to shut down completely")
+    
+    start_time = time.monotonic()
+    
+    # First wait for the service to reach STOPPED state
+    await wait_for_service_state(service, ServiceState.STOPPED, timeout, check_interval)
+    
+    # Now wait for the run task to complete (it should be done or nearly done)
+    remaining_timeout = max(0.1, timeout - (time.monotonic() - start_time))
+    try:
+        logger.info(f"Waiting for {service.service_name} run task to complete, timeout: {remaining_timeout:.2f}s")
+        await asyncio.wait_for(run_task, timeout=remaining_timeout)
+        logger.info(f"Run task for {service.service_name} completed successfully")
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout waiting for {service.service_name} run task to complete")
+        # Cancel it if it's still running
+        if not run_task.done():
+            logger.warning(f"Cancelling {service.service_name} run task that didn't complete")
+            run_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await run_task
+        assert False, f"Run task for {service.service_name} did not complete in {remaining_timeout:.2f}s"
+    except asyncio.CancelledError:
+        logger.info(f"Run task for {service.service_name} was cancelled")
+    
+    # Extra safety check to ensure proper shutdown
+    assert service.state == ServiceState.STOPPED, f"Service {service.service_name} should be in STOPPED state"
+    assert not service.running, f"Service {service.service_name} running flag should be False"
+    
+    logger.info(f"Service {service.service_name} shutdown confirmed after {time.monotonic() - start_time:.2f}s")
+
+@asynccontextmanager
+async def active_service(service: T, 
+                        run_task_name: Optional[str] = None,
+                        target_state: ServiceState = ServiceState.RUNNING,
+                        setup_func: Optional[Callable[[T], Any]] = None) -> AsyncIterator[T]:
+    """
+    A context manager that handles service lifecycle for tests.
+    
+    This utility makes test code cleaner by handling the standard pattern of:
+    1. Starting a service
+    2. Creating a run task
+    3. Waiting for it to reach a target state
+    4. Running the test
+    5. Stopping the service and cleaning up
+    
+    Args:
+        service: The service to start and manage
+        run_task_name: Optional name for the run task (for debugging)
+        target_state: The service state to wait for before yielding
+        setup_func: Optional function to run on the service before starting it
+        
+    Yields:
+        The started service ready for testing
+        
+    Example:
+        ```python
+        async def test_example():
+            service = MyService(...)
+            
+            async with active_service(service) as active:
+                # Test the running service here
+                result = await active.some_method()
+                assert result is True
+            
+            # Service is now stopped and cleaned up
+        ```
+    """
+    run_task = None
+    task_name = run_task_name or f"{service.service_name}-run-task"
+    
+    try:
+        # Run any setup function if provided
+        if setup_func:
+            setup_func(service)
+            
+        # Start the service
+        await service.start()
+        
+        # Create a task to run the service
+        run_task = asyncio.create_task(service.run(), name=task_name)
+        
+        # Wait for service to reach the target state
+        await wait_for_service_state(service, target_state)
+        
+        # Yield the service to the context block
+        yield service
+        
+    finally:
+        # Clean up regardless of whether the context block completed normally or raised an exception
+        
+        # Only attempt to stop if the service is running (not in error)
+        if service.state != ServiceState.STOPPED:
+            await service.stop()
+        
+        # Clean up the run task if it exists
+        if run_task:
+            if not run_task.done():
+                run_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await run_task
+                    
+        # Wait for service to fully shut down
+        await wait_for_service_state(service, ServiceState.STOPPED)
+
+
+def debug_service_tasks(service: BaseService):
+    """
+    Print debug information about the service's tasks.
+    
+    This function is useful for debugging and understanding the state of tasks
+    within a service, especially during testing.
+    
+    Args:
+        service: The service whose tasks to debug
+    """
+    logger.debug(f"Tasks for service {service.service_name}:")
+    for task_coro in service.tasks:
+        logger.debug(f"  - Task Name: {task_coro.__name__}, Qualified Name: {task_coro.__qualname__}, Type: {type(task_coro)}")
