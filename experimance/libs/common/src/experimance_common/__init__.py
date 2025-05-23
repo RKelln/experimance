@@ -11,6 +11,8 @@ from experimance_common.zmq_utils import (
     ZmqSubscriber,
     ZmqPushSocket,
     ZmqPullSocket,
+    ZmqBindingPullSocket,
+    ZmqConnectingPushSocket,
     MessageType,
     HEARTBEAT_INTERVAL,
 )

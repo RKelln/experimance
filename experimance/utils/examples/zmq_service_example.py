@@ -35,7 +35,9 @@ from experimance_common.zmq_utils import (
     ZmqPullSocket,
     ZmqPublisher,
     ZmqSubscriber,
-    ZmqPushSocket
+    ZmqPushSocket,
+    ZmqBindingPullSocket,
+    ZmqConnectingPushSocket
 )
 from experimance_common.service import (
     ZmqControllerService, 
@@ -49,87 +51,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Define ports for our example
-CONTROLLER_PUB_PORT = DEFAULT_PORTS["example_pub"]    # 5567 - Controller publishes heartbeats/commands
-CONTROLLER_PUSH_PORT = DEFAULT_PORTS["example_pull"]  # 5568 - Controller pushes tasks 
+CONTROLLER_PUB_PORT = 5567    # 5567 - Controller publishes heartbeats/commands
+CONTROLLER_PUSH_PORT = 5568   # 5568 - Controller pushes tasks 
 CONTROLLER_PULL_PORT = CONTROLLER_PUSH_PORT + 10     # 5578 - Controller pulls results from workers
 WORKER_RESPONSE_PUB_PORT = CONTROLLER_PUB_PORT + 20  # 5587 - Workers publish responses
 
 # Topics for PUB/SUB communication
 CONTROL_TOPIC = "example.control"
 WORKER_RESPONSE_TOPIC = "example.response"
-
-
-class ZmqBindingPullSocket(ZmqPullSocket):
-    """A ZeroMQ pull socket that binds instead of connects.
     
-    This is needed for controllers that need to receive messages from multiple workers.
-    """
-    
-    def __init__(self, address: str, use_asyncio: bool = True):
-        """Initialize a ZeroMQ pull socket that binds.
-        
-        Args:
-            address: ZeroMQ address to bind to
-            use_asyncio: Whether to use asyncio
-        """
-        # Initialize the base class attributes without calling super().__init__
-        self.address = address
-        self.use_asyncio = use_asyncio
-        self.closed = False
-        
-        if use_asyncio:
-            self.context = zmq.asyncio.Context()
-        else:
-            self.context = zmq.Context()
-        
-        # Create the socket
-        self.socket = self.context.socket(zmq.PULL)
-        self.socket.bind(address)  # bind instead of connect
-        
-        # Set timeout for receive operations
-        if not use_asyncio:
-            self.socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
-        
-        logging.getLogger(__name__).debug(f"Pull socket bound to {address}")
-    
-    # Inherit all other methods from ZmqPullSocket (pull, pull_async, close, etc.)
-
-
-class ZmqConnectingPushSocket(ZmqPushSocket):
-    """A ZeroMQ push socket that explicitly connects instead of binds.
-    
-    This is needed for workers to connect to a controller's pull socket.
-    """
-    
-    def __init__(self, address: str, use_asyncio: bool = True):
-        """Initialize a ZeroMQ push socket that connects.
-        
-        Args:
-            address: ZeroMQ address to connect to
-            use_asyncio: Whether to use asyncio
-        """
-        # Initialize the base class attributes without calling super().__init__
-        self.address = address
-        self.use_asyncio = use_asyncio
-        self.closed = False
-        
-        if use_asyncio:
-            self.context = zmq.asyncio.Context()
-        else:
-            self.context = zmq.Context()
-        
-        # Create the socket
-        self.socket = self.context.socket(zmq.PUSH)
-        self.socket.connect(address)  # connect instead of bind
-        
-        # Set timeout for send operations
-        if not use_asyncio:
-            self.socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 second timeout
-        
-        logging.getLogger(__name__).debug(f"Push socket connected to {address}")
-    
-    # Inherit all other methods from ZmqPushSocket (push, push_async, close, etc.)
-
 
 class ExampleController(ZmqControllerService):
     """Example controller service using the base ZmqControllerService class.

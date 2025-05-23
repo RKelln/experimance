@@ -35,7 +35,7 @@ Pytest module for testing the service base classes in `experimance_common.servic
 
 ```bash
 # Run from the experimance root directory
-uv run pytest -v utils/tests/
+uv run -m pytest -v utils/tests/
 ```
 
 For more detailed information about the ZMQ service base classes and their testing, see [README_ZMQ_TESTS.md](./README_ZMQ_TESTS.md) and `libs/common/README_SERVICE.md`.

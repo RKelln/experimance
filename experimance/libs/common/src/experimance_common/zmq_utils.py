@@ -422,3 +422,176 @@ class ZmqPullSocket(ZmqBase):
         except Exception as e:
             logger.error(f"Error pulling message: {e}")
             return {}
+
+
+class ZmqBindingPullSocket(ZmqBase):
+    """A ZeroMQ pull socket that binds instead of connects.
+    
+    This is needed for controllers or central services that need to receive messages 
+    from multiple workers. Unlike the standard ZmqPullSocket which connects to a 
+    bound socket, this socket binds to an address and allows multiple clients to 
+    connect to it.
+    
+    Key differences from ZmqPullSocket:
+    - Uses bind() instead of connect()
+    - Suitable for fan-in communication patterns where multiple senders report to one receiver
+    - Typically used in controller/coordinator services to collect results from workers
+    """
+    
+    def __init__(self, address: str, use_asyncio: bool = True):
+        """Initialize a ZeroMQ pull socket that binds.
+        
+        Args:
+            address: ZeroMQ address to bind to
+            use_asyncio: Whether to use asyncio
+        """
+        super().__init__(address, use_asyncio)
+        
+        # Create the socket
+        self.socket = self.context.socket(zmq.PULL)
+        self.socket.bind(address)  # bind instead of connect
+        
+        # Set timeout for receive operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.RCVTIMEO, DEFAULT_TIMEOUT)
+        
+        logger.debug(f"Pull socket bound to {address}")
+    
+    # Re-use the pull and pull_async methods from ZmqPullSocket
+    def pull(self) -> Dict[str, Any]:
+        """Pull a message from the socket.
+        
+        Returns:
+            The received message
+            
+        Raises:
+            ZmqTimeoutError: If the receive operation times out
+        """
+        if self.closed:
+            raise ZmqException("Attempted to pull from closed socket")
+            
+        try:
+            message_str : str = self.socket.recv_string() # type: ignore
+            return json.loads(message_str)
+        except zmq.error.Again:
+            raise ZmqTimeoutError("Pull operation timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding message: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error pulling message: {e}")
+            return {}
+    
+    async def pull_async(self) -> Dict[str, Any]:
+        """Pull a message asynchronously from the socket.
+        
+        Returns:
+            The received message
+            
+        Raises:
+            ZmqTimeoutError: If the receive operation times out
+        """
+        if self.closed:
+            raise ZmqException("Attempted to pull from closed socket")
+            
+        try:
+            # Use wait_for to add a timeout
+            message_str = await asyncio.wait_for(
+                self.socket.recv_string(), # type: ignore
+                timeout=DEFAULT_RECV_TIMEOUT
+            )
+            return json.loads(message_str)
+        except asyncio.TimeoutError:
+            raise ZmqTimeoutError("Async pull operation timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding message: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error pulling message: {e}")
+            return {}
+
+
+class ZmqConnectingPushSocket(ZmqBase):
+    """A ZeroMQ push socket that explicitly connects instead of binds.
+    
+    This is needed for workers to connect to a controller's binding pull socket.
+    Unlike the standard ZmqPushSocket which binds to an address, this socket 
+    connects to a bound socket, allowing multiple instances to connect to 
+    the same endpoint.
+    
+    Key differences from ZmqPushSocket:
+    - Uses connect() instead of bind()
+    - Suitable for fan-in communication patterns where multiple senders report to one receiver
+    - Typically used in worker services to send results back to a controller
+    """
+    
+    def __init__(self, address: str, use_asyncio: bool = True):
+        """Initialize a ZeroMQ push socket that connects.
+        
+        Args:
+            address: ZeroMQ address to connect to
+            use_asyncio: Whether to use asyncio
+        """
+        super().__init__(address, use_asyncio)
+        
+        # Create the socket
+        self.socket = self.context.socket(zmq.PUSH)
+        self.socket.connect(address)  # connect instead of bind
+        
+        # Set timeout for send operations
+        if not use_asyncio:
+            self.socket.setsockopt(zmq.SNDTIMEO, DEFAULT_TIMEOUT)
+        
+        logger.debug(f"Push socket connected to {address}")
+    
+    def push(self, message: Dict[str, Any]) -> bool:
+        """Push a message to the socket.
+        
+        Args:
+            message: The message to push (will be serialized to JSON)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.closed:
+            logger.error("Attempted to push to closed socket")
+            return False
+            
+        try:
+            message_str = json.dumps(message)
+            self.socket.send_string(message_str) # type: ignore
+            return True
+        except zmq.error.Again:
+            logger.warning("Push operation timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error pushing message: {e}")
+            return False
+    
+    async def push_async(self, message: Dict[str, Any]) -> bool:
+        """Push a message asynchronously to the socket.
+        
+        Args:
+            message: The message to push (will be serialized to JSON)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.closed:
+            logger.error("Attempted to push to closed socket")
+            return False
+            
+        try:
+            message_str = json.dumps(message)
+            # Use wait_for to add a timeout
+            await asyncio.wait_for(
+                self.socket.send_string(message_str), # type: ignore
+                timeout=DEFAULT_RECV_TIMEOUT
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("Async push operation timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error pushing message: {e}")
+            return False

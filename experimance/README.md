@@ -170,13 +170,13 @@ Run tests with uv and pytest:
 uv sync --only-dev
 
 # Run all tests
-uv run pytest
+uv run -m pytest
 
 # Run tests with coverage
-uv run pytest --cov=experimance_common
+uv run -m pytest --cov=experimance_common
 
 # Run specific tests
-uv run pytest -v utils/tests/test_zmq_utils.py -k test_name
+uv run -m pytest -v utils/tests/test_zmq_utils.py -k test_name
 ```
 
 See [`utils/tests/README.md`](utils/tests/README.md) and [`utils/tests/README_ZMQ_TESTS.md](utils/tests/README_ZMQ_TESTS.md) for more details.

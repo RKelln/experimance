@@ -20,19 +20,19 @@ Run the tests using `uv` from the project root:
 
 ```bash
 # Run all tests
-uv run pytest -v
+uv run -m pytest -v
 
 # Run tests for the ZMQ service base classes
-uv run pytest -v utils/tests/test_zmq_service.py
+uv run -m pytest -v utils/tests/test_zmq_service.py
 
 # Run tests for low-level ZMQ utilities
-uv run pytest -v utils/tests/test_zmq_utils.py
+uv run -m pytest -v utils/tests/test_zmq_utils.py
 
 # Run all tests in the directory
-uv run pytest -v utils/tests/
+uv run -m pytest -v utils/tests/
 
 # Run tests with coverage for the common library
-uv run pytest --cov=experimance_common utils/tests/
+uv run -m pytest --cov=experimance_common utils/tests/
 ```
 
 ## Key Testing Considerations for ZMQ Services (`test_zmq_service.py`)

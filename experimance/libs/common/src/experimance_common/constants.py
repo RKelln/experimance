@@ -15,8 +15,6 @@ DEFAULT_PORTS = {
     "image_server_pull": 5564,
     "audio_pub": 5565,
     "audio_pull": 5566,
-    "example_pub": 5567,
-    "example_pull": 5568,
 }
 
 # Timeout settings
