@@ -6,6 +6,12 @@ enabling control of the audio engine from the Experimance system.
 """
 
 import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
 from pythonosc import udp_client
 from typing import Any, Dict, List, Optional, Union
 
@@ -13,6 +19,8 @@ from experimance_common.constants import DEFAULT_PORTS
 
 logger = logging.getLogger(__name__)
 
+# Default paths for SuperCollider
+DEFAULT_SCLANG_PATH = "sclang"  # Assumes sclang is in PATH
 
 
 class OscBridge:
@@ -21,6 +29,7 @@ class OscBridge:
     host: str
     port: int
     client: Optional[udp_client.SimpleUDPClient] = None
+    sc_process: Optional[subprocess.Popen] = None
 
     def __init__(self, host: str = "localhost", port: int = DEFAULT_PORTS["audio_osc_send_port"]):
         """Initialize the OSC bridge.
@@ -32,6 +41,7 @@ class OscBridge:
         self.host = host
         self.port = port
         self.client = None
+        self.sc_process = None
         self._connect()
     
     def _connect(self) -> bool:
@@ -174,3 +184,105 @@ class OscBridge:
         except Exception as e:
             logger.error(f"Error sending reload OSC message: {e}")
             return False
+    
+    def start_supercollider(self, sc_script_path: str, sclang_path: str = DEFAULT_SCLANG_PATH) -> bool:
+        """Start SuperCollider with the given script.
+        
+        Args:
+            sc_script_path: Path to the SuperCollider script to execute
+            sclang_path: Path to the SuperCollider language interpreter executable
+            
+        Returns:
+            bool: True if SuperCollider was started successfully, False otherwise
+        """
+        try:
+            script_path = Path(sc_script_path).resolve()
+            if not script_path.exists():
+                logger.error(f"SuperCollider script not found: {script_path}")
+                return False
+
+            # Start SuperCollider in a non-blocking subprocess
+            logger.info(f"Starting SuperCollider with script: {script_path}")
+            self.sc_process = subprocess.Popen(
+                [sclang_path, str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+            )
+            
+            # Log the process ID for debugging/cleanup
+            logger.info(f"SuperCollider started with PID: {self.sc_process.pid}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start SuperCollider: {e}")
+            return False
+    
+    def stop_supercollider(self, timeout: float = 3.0) -> bool:
+        """Stop the SuperCollider process if it's running.
+        
+        Args:
+            timeout: Timeout in seconds to wait for graceful termination
+            
+        Returns:
+            bool: True if SuperCollider was stopped successfully, False otherwise
+        """
+        if self.sc_process is None:
+            logger.debug("No SuperCollider process to stop")
+            return True
+            
+        try:
+            # First try to quit gracefully by sending an OSC message
+            if self.client:
+                try:
+                    # Send a quit command to SuperCollider
+                    logger.info("Sending quit command to SuperCollider")
+                    self.client.send_message("/quit", [])
+                    
+                    # Give SuperCollider time to quit gracefully
+                    start_time = time.time()
+                    while time.time() - start_time < timeout:
+                        if self.sc_process is not None and self.sc_process.poll() is not None:
+                            logger.info("SuperCollider quit gracefully")
+                            self.sc_process = None
+                            return True
+                        time.sleep(0.1)
+                except Exception as e:
+                    logger.warning(f"Failed to send quit command to SuperCollider: {e}")
+            
+            # If still running, terminate the process
+            if self.sc_process is not None and self.sc_process.poll() is None:
+                logger.info(f"Terminating SuperCollider process (PID: {self.sc_process.pid})")
+                self.sc_process.terminate()
+                
+                # Wait for termination
+                try:
+                    self.sc_process.wait(timeout=timeout)
+                    logger.info("SuperCollider terminated")
+                    self.sc_process = None
+                    return True
+                except subprocess.TimeoutExpired:
+                    # If it still doesn't terminate, kill it
+                    logger.warning("SuperCollider did not terminate, killing process")
+                    self.sc_process.kill()
+                    self.sc_process.wait(timeout=1.0)
+                    logger.info("SuperCollider killed")
+                    self.sc_process = None
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error stopping SuperCollider: {e}")
+            # Make a best effort to force kill if everything else fails
+            try:
+                if self.sc_process is not None and self.sc_process.poll() is None:
+                    self.sc_process.kill()
+                    self.sc_process = None
+            except Exception:
+                logger.error("Failed to kill SuperCollider process")
+            
+        # If we get here, either the process was stopped or we couldn't stop it
+        # In either case, we no longer have a reference to it
+        self.sc_process = None
+        return False

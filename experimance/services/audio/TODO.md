@@ -5,62 +5,64 @@ This document outlines the steps needed to implement the Experimance Audio Servi
 ## Implementation Phases
 
 ### Phase 1: Setup and Basic Communication
-- [ ] Define package structure following project conventions
-- [ ] Create `pyproject.toml` with proper dependencies:
-  - [ ] python-osc (for SuperCollider communication)
-  - [ ] pyzmq (for integration with Experimance system)
-  - [ ] pydantic (for data validation)
-- [ ] Setup directories for audio files, config and SC scripts
-- [ ] Implement basic ZMQ subscriber to listen for system events
-  - [ ] Connect to `events` channel (`tcp://localhost:5555`)
-  - [ ] Listen for `EraChanged`, `RenderRequest`, and `Idle` topics
-  - [ ] Listen for `agent_ctrl` channel for audience interaction cues
+- [X] Define package structure following project conventions
+- [X] Create `pyproject.toml` with proper dependencies:
+  - [X] python-osc (for SuperCollider communication)
+  - [X] pyzmq (for integration with Experimance system)
+  - [X] pydantic (for data validation)
+- [X] Setup directories for audio files, config and SC scripts
+- [X] Implement basic ZMQ subscriber to listen for system events
+  - [X] Connect to `events` channel (`tcp://localhost:5555`)
+  - [X] Listen for `EraChanged`, `RenderRequest`, and `Idle` topics
+  - [X] Listen for `agent_ctrl` channel for audience interaction cues
 
 ### Phase 2: SuperCollider OSC Bridge
-- [ ] Implement Python OSC client for sending commands to SuperCollider
-- [ ] Add command handling for all OSC patterns:
-  - [ ] `/spacetime <biome> <era>` - Set main context
-  - [ ] `/include <tag>` - Add sound tag to active set
-  - [ ] `/exclude <tag>` - Remove tag from active set
-  - [ ] `/listening <start|stop>` - Trigger UI/interaction SFX
-  - [ ] `/speaking <start|stop>` - Trigger UI/interaction SFX
-  - [ ] `/transition <start|stop>` - Scene/era/biome transition cue
-  - [ ] `/reload` - Reload configs in SuperCollider
-- [ ] Create config loaders for JSON configuration files
-- [ ] Add state machine for context management (current era, biome, active tags)
+- [X] Implement Python OSC client for sending commands to SuperCollider
+- [X] Add command handling for all OSC patterns:
+  - [X] `/spacetime <biome> <era>` - Set main audio context
+  - [X] `/include <tag>` - Add sound tag to active set
+  - [X] `/exclude <tag>` - Remove tag from active set
+  - [X] `/listening <start|stop>` - Trigger UI interaction SFX
+  - [X] `/speaking <start|stop>` - Trigger UI interaction SFX
+  - [X] `/transition <start|stop>` - Trigger transition cues
+  - [X] `/reload` - Reload audio configs
+- [X] Add SuperCollider lifecycle management
+  - [X] Start SuperCollider script during service initialization
+  - [X] Command-line arguments to control SC startup behavior
+  - [X] Graceful shutdown of SuperCollider when service stops
 
 ### Phase 3: SuperCollider Script Development
-- [ ] Implement basic SuperCollider script that accepts OSC commands
-- [ ] Add environment audio layer management
-  - [ ] JSON config loading and parsing
-  - [ ] Tag-based filtering mechanism
-  - [ ] Crossfading between audio environments
-- [ ] Add music loop system
-  - [ ] Era-based loop loading
-  - [ ] Slot-ordered crossfades between era transitions
-- [ ] Add triggered sound effect handlers
-  - [ ] Ducking system for listening/speaking modes
-- [ ] Implement hot-reload functionality
+- [X] Implement basic SuperCollider script that accepts OSC commands
+- [X] Add environment audio layer management
+  - [X] JSON config loading and parsing
+  - [X] Tag-based filtering mechanism
+  - [X] Crossfading between audio environments
+- [X] Add music loop system
+  - [X] Era-based loop loading
+  - [X] Slot-ordered crossfades between era transitions
+- [X] Add triggered sound effect handlers
+  - [X] Ducking system for listening/speaking modes
+- [X] Implement hot-reload functionality
 
 ### Phase 4: Service Integration
-- [ ] Implement full ZMQ service based on `experimance_common.service.BaseZmqService`
-- [ ] Add proper service lifecycle (start, stop, run)
-- [ ] Implement signal handling for clean shutdown
+- [X] Implement full ZMQ service based on `experimance_common.service.BaseZmqService`
+- [X] Add proper service lifecycle (start, stop, run)
+- [X] Implement signal handling for clean shutdown
 - [ ] Add configuration loading from TOML
-- [ ] Add logging with configurable levels
+- [X] Add logging with configurable levels
 
 ### Phase 5: Testing and Reliability
 - [ ] Create unit tests for Python components
-- [ ] Create manual test script for OSC commands
-- [ ] Add error handling and fallback mechanisms
+- [X] Create manual test script for OSC commands
+- [X] Add error handling and fallback mechanisms
 - [ ] Test with sample audio content
 - [ ] Add reconnection logic for both ZMQ and OSC
 - [ ] Implement recording/playback of OSC sessions for testing
-- [ ] Add graceful degradation for missing audio files
+- [X] Add graceful degradation for missing audio files
 
 ### Phase 6: Documentation and Optimization
-- [ ] Document API and configuration options
-- [ ] Add inline comments and docstrings
+- [X] Document API and configuration options
+- [X] Add inline comments and docstrings
 - [ ] Optimize audio loading and memory usage
 - [ ] Profile and optimize performance
 - [ ] Document testing procedures

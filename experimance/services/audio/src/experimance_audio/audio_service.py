@@ -8,10 +8,12 @@ This service:
 """
 
 import asyncio
+import argparse
 import json
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
@@ -20,7 +22,7 @@ from experimance_common.schemas import Era, Biome, EraChanged, AgentControlEvent
 from experimance_common.zmq_utils import MessageType, ZmqTimeoutError
 
 from .config_loader import AudioConfigLoader
-from .osc_bridge import OscBridge
+from .osc_bridge import OscBridge, DEFAULT_SCLANG_PATH
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -41,7 +43,10 @@ class AudioService(ZmqSubscriberService):
                 service_name: str = "audio-service",
                 config_dir: Optional[str] = None,
                 osc_host: str = "localhost",
-                osc_port: int = DEFAULT_PORTS["audio_osc_send_port"]):
+                osc_port: int = DEFAULT_PORTS["audio_osc_send_port"],
+                auto_start_sc: bool = True,
+                sc_script_path: Optional[str] = None,
+                sclang_path: str = DEFAULT_SCLANG_PATH):
         """Initialize the audio service.
         
         Args:
@@ -49,6 +54,9 @@ class AudioService(ZmqSubscriberService):
             config_dir: Directory containing audio configuration files
             osc_host: SuperCollider host address
             osc_port: SuperCollider OSC listening port
+            auto_start_sc: Whether to automatically start SuperCollider
+            sc_script_path: Path to SuperCollider script to execute
+            sclang_path: Path to SuperCollider language interpreter executable
         """
         # Initialize base service with subscription to both events and agent_ctrl channels
         super().__init__(
@@ -68,6 +76,11 @@ class AudioService(ZmqSubscriberService):
         # Initialize OSC bridge for communication with SuperCollider
         self.osc = OscBridge(host=osc_host, port=osc_port)
         
+        # Store SuperCollider startup parameters
+        self.auto_start_sc = auto_start_sc
+        self.sc_script_path = sc_script_path
+        self.sclang_path = sclang_path
+        
         # Initialize configuration loader
         self.config = AudioConfigLoader(config_dir=config_dir)
         self.config.load_configs()
@@ -84,11 +97,47 @@ class AudioService(ZmqSubscriberService):
         logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
         await super().start()
         
+        # Resolve SuperCollider script path if auto-start is enabled
+        if self.auto_start_sc:
+            # If no script path provided, look for it in standard locations
+            if not self.sc_script_path:
+                # Check relative to this file's directory
+                module_dir = Path(__file__).parent.resolve()
+                service_dir = module_dir.parent.parent  # Go up from src/experimance_audio
+                
+                # Try to find the script in the expected sc_scripts directory
+                sc_script_dir = service_dir / "sc_scripts"
+                default_script = sc_script_dir / "experimance_audio.scd"
+                
+                if default_script.exists():
+                    self.sc_script_path = str(default_script)
+                    logger.info(f"Found SuperCollider script at: {self.sc_script_path}")
+                else:
+                    logger.warning("No SuperCollider script path provided and couldn't find default script")
+                    logger.warning("SuperCollider auto-start disabled")
+                    self.auto_start_sc = False
+            
+            # Start SuperCollider if we have a script path
+            if self.auto_start_sc and self.sc_script_path:
+                if self.osc.start_supercollider(self.sc_script_path, self.sclang_path):
+                    logger.info("SuperCollider started successfully")
+                    # Give SuperCollider a moment to initialize
+                    await asyncio.sleep(2)
+                else:
+                    logger.error("Failed to start SuperCollider")
+        
+        # Define wrapper functions for async handlers to work with the register_handler method
+        def era_changed_wrapper(message):
+            asyncio.create_task(self._handle_era_changed(message))
+            
+        def idle_status_wrapper(message):
+            asyncio.create_task(self._handle_idle_status(message))
+        
         # Register handler for EraChanged events
-        self.register_handler(MessageType.ERA_CHANGED, self._handle_era_changed)
+        self.register_handler(MessageType.ERA_CHANGED, era_changed_wrapper)
         
         # Register handler for Idle events
-        self.register_handler(MessageType.IDLE_STATUS, self._handle_idle_status)
+        self.register_handler(MessageType.IDLE_STATUS, idle_status_wrapper)
         
         # Initialize the agent control subscriber
         logger.info(f"Initializing agent control subscriber on {self.agent_sub_address}")
@@ -265,17 +314,40 @@ class AudioService(ZmqSubscriberService):
             logger.info("Audio configurations reloaded")
         else:
             logger.error("Failed to reload audio configurations")
+    
+    async def stop(self):
+        """Stop the audio service and clean up resources."""
+        logger.info("Stopping audio service")
+        
+        # Stop SuperCollider if we started it
+        if self.auto_start_sc and hasattr(self.osc, 'sc_process') and self.osc.sc_process is not None:
+            logger.info("Stopping SuperCollider")
+            success = self.osc.stop_supercollider()
+            if success:
+                logger.info("SuperCollider stopped successfully")
+            else:
+                logger.warning("Failed to stop SuperCollider gracefully")
+        
+        # Stop the base service (handles ZMQ socket cleanup)
+        await super().stop()
+        logger.info("Audio service stopped")
 
 
 async def run_audio_service(config_dir: Optional[str] = None,
                            osc_host: str = "localhost", 
-                           osc_port: int = 57120):
+                           osc_port: int = 57120,
+                           auto_start_sc: bool = True,
+                           sc_script_path: Optional[str] = None,
+                           sclang_path: str = DEFAULT_SCLANG_PATH):
     """Run the audio service.
     
     Args:
         config_dir: Directory containing audio configuration files
         osc_host: SuperCollider host address
         osc_port: SuperCollider OSC listening port
+        auto_start_sc: Whether to automatically start SuperCollider
+        sc_script_path: Path to SuperCollider script to execute
+        sclang_path: Path to SuperCollider language interpreter executable
     """
     # Configure logging
     logging.basicConfig(
@@ -290,7 +362,10 @@ async def run_audio_service(config_dir: Optional[str] = None,
     service = AudioService(
         config_dir=config_dir,
         osc_host=osc_host,
-        osc_port=osc_port
+        osc_port=osc_port,
+        auto_start_sc=auto_start_sc,
+        sc_script_path=sc_script_path,
+        sclang_path=sclang_path
     )
     
     await service.start()
@@ -315,6 +390,9 @@ if __name__ == "__main__":
     parser.add_argument("--osc-host", type=str, default="localhost", help="SuperCollider host address")
     parser.add_argument("--osc-port", type=int, default=57120, help="SuperCollider OSC port")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--no-sc", action="store_true", help="Don't automatically start SuperCollider")
+    parser.add_argument("--sc-script", type=str, help="Path to SuperCollider script (defaults to experimance_audio.scd in sc_scripts dir)")
+    parser.add_argument("--sclang-path", type=str, default=DEFAULT_SCLANG_PATH, help="Path to SuperCollider language interpreter executable")
     
     args = parser.parse_args()
     
@@ -326,7 +404,10 @@ if __name__ == "__main__":
         asyncio.run(run_audio_service(
             config_dir=args.config_dir,
             osc_host=args.osc_host,
-            osc_port=args.osc_port
+            osc_port=args.osc_port,
+            auto_start_sc=not args.no_sc,
+            sc_script_path=args.sc_script,
+            sclang_path=args.sclang_path
         ))
     except KeyboardInterrupt:
         print("Keyboard interrupt received, exiting")
