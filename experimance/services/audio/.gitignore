@@ -48,6 +48,9 @@ coverage.xml
 logs/
 *.log
 
+# audio files
+audio/
+
 # Audio files
 *.wav
 *.mp3
