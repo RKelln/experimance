@@ -2,6 +2,9 @@
 
 Interactive sand-table art installation with AI-generated satellite imagery.
 
+Projected on to a 
+
+
 ## Overview
 
 This project consists of multiple services that communicate via ZeroMQ:

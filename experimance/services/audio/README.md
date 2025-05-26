@@ -15,6 +15,10 @@ The Experimance Audio Service integrates SuperCollider with the main Experimance
   - Automatic startup with configurable script path
   - Graceful shutdown when service stops
   - Clean process termination
+- Placeholder music generation for missing audio files:
+  - Era-specific musical keys (circle of fifths progression)
+  - Unique synthesizer timbres for each era
+  - Different musical patterns by slot (drones, arpeggios, melodies)
 
 ## Getting Started
 
@@ -129,3 +133,30 @@ uv run -m experimance_audio.cli
 ```
 
 This provides an interactive interface for sending OSC commands to SuperCollider.
+
+### Testing OSC Communication
+
+To test OSC communication between Python and SuperCollider:
+
+```bash
+# Run the test script with help to see all options
+./scripts/test_osc.sh help
+
+# Send single test messages (manual mode)
+./scripts/test_osc.sh manual --message /spacetime --args forest ancient
+./scripts/test_osc.sh manual --message /listening --args true
+
+# Run integrated testing with SuperCollider
+./scripts/test_osc.sh integrated
+
+# Run automated unit tests
+./scripts/test_osc.sh unittest
+```
+
+This testing framework verifies that:
+1. OSC messages are properly formatted and sent from Python
+2. Messages can be received by OSC clients (verified with oscdump)
+3. SuperCollider can receive and respond to the messages
+4. Resources are properly cleaned up when processes terminate
+
+See the [test documentation](tests/README.md) for more details.

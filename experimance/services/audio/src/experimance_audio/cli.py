@@ -11,12 +11,15 @@ import cmd
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from typing import Dict, List, Any, Optional
 
 from .osc_bridge import OscBridge
 from .config_loader import AudioConfigLoader
+
+from experimance_common.constants import DEFAULT_PORTS
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,23 +31,93 @@ class AudioCli(cmd.Cmd):
     intro = "Experimance Audio CLI. Type 'help' or '?' to list commands."
     prompt = "audio> "
     
-    def __init__(self, osc_host: str = "localhost", osc_port: int = 57120, config_dir: Optional[str] = None):
+    def __init__(self, osc_host: str = "localhost", 
+                 osc_port: int = DEFAULT_PORTS['audio_osc_recv_port'], 
+                 config_dir: Optional[str] = None, 
+                 sc_script_path: Optional[str] = None, 
+                 sclang_path: str = "sclang"):
         """Initialize the audio CLI.
         
         Args:
             osc_host: SuperCollider host address
             osc_port: SuperCollider OSC listening port
             config_dir: Directory containing audio configuration files
+            sc_script_path: Path to the SuperCollider script to execute
+            sclang_path: Path to the SuperCollider language interpreter executable
         """
         super().__init__()
         self.osc = OscBridge(host=osc_host, port=osc_port)
         self.config = AudioConfigLoader(config_dir=config_dir)
         self.config.load_configs()
         
+        # Store SC paths for later use
+        self.sc_script_path = sc_script_path
+        self.sclang_path = sclang_path
+        
         # Track current state
         self.current_biome = "temperate_forest"  # Default biome
         self.current_era = "wilderness"  # Default era
         self.active_tags = set([self.current_biome, self.current_era])
+    
+    def do_start_sc(self, arg):
+        """Start SuperCollider with the default script.
+        
+        Usage: start_sc [script_path]
+        Example: start_sc
+        """
+        script_path = arg.strip() if arg else self.sc_script_path
+        
+        # Try to find the default script in the sc_scripts directory
+        import os
+        from pathlib import Path
+        
+        # Get the directory of the current file
+        current_dir = Path(__file__).parent.parent.parent  # Go up from src/experimance_audio to services/audio
+        sc_scripts_dir = current_dir / "sc_scripts"
+
+        if not script_path:
+            default_script = sc_scripts_dir / "experimance_audio.scd"
+            
+            if default_script.exists():
+                script_path = str(default_script)
+            else:
+                print("Error: No SuperCollider script path specified and default script not found.")
+                print(f"Looked for default script at: {default_script}")
+                return
+        else: 
+            # if just a filename is provided, look in the sc_scripts directory
+            script_path = Path(script_path)
+            if not script_path.is_absolute():
+                # If it's a relative path, assume it's in the sc_scripts directory
+                script_path = sc_scripts_dir / script_path
+            if not script_path.exists():
+                print(f"Error: SuperCollider script not found at {script_path}")
+                return
+            
+        print(f"Starting SuperCollider with script: {script_path}")
+        # Start SuperCollider with logging to file (not console)
+        self.sc_log_file_path = self.osc.start_supercollider(
+            str(script_path), 
+            str(self.sclang_path),
+            log_to_file=True,
+            log_to_console=False
+        )
+        
+        if self.sc_log_file_path:
+            print(f"Started SuperCollider (success)")
+            print(f"Logs are being written to: {self.sc_log_file_path}")
+            print(f"To view logs in real-time, open another terminal and run:")
+            print(f"  tail -f {self.sc_log_file_path}")
+        else:
+            print(f"Started SuperCollider (failed)")
+        
+    def do_stop_sc(self, arg):
+        """Stop the SuperCollider process.
+        
+        Usage: stop_sc
+        """
+        success = self.osc.stop_supercollider()
+        print(f"Stopped SuperCollider" + (" (success)" if success else " (failed)"))
     
     def do_spacetime(self, arg):
         """Set the current spacetime context (biome and era).
@@ -244,6 +317,41 @@ class AudioCli(cmd.Cmd):
                     print(f"  {i+1}. {path}")
             print("==========================")
     
+    def do_view_logs(self, arg):
+        """Open the SuperCollider log file with tail -f in a new terminal.
+        
+        Usage: view_logs [log_file_path]
+        Example: view_logs
+        """
+        log_file = arg.strip() if arg else self.sc_log_file_path
+        
+        if not log_file:
+            print("No log file available. Start SuperCollider first with the 'start_sc' command.")
+            return
+            
+        try:
+            # Use the system's default terminal to open a new window with tail
+            if os.path.exists(log_file):
+                # Try different terminal emulators based on what might be available
+                for terminal_cmd in ["gnome-terminal", "xterm", "konsole", "terminal"]:
+                    try:
+                        # Check if the command exists
+                        if subprocess.run(["which", terminal_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+                            # The command exists, use it
+                            subprocess.Popen([terminal_cmd, "--", "tail", "-f", log_file])
+                            print(f"Opening log viewer using {terminal_cmd}...")
+                            return
+                    except Exception:
+                        continue
+                        
+                # If we get here, none of the terminals worked
+                print(f"Could not open terminal. To view logs manually, run: tail -f {log_file}")
+            else:
+                print(f"Log file not found: {log_file}")
+        except Exception as e:
+            print(f"Error opening log viewer: {e}")
+            print(f"To view logs manually, run: tail -f {log_file}")
+    
     def do_exit(self, arg):
         """Exit the CLI.
         
@@ -287,37 +395,33 @@ class AudioCli(cmd.Cmd):
         print("\nDemo sequence completed")
 
 
-def run_cli(osc_host: str = "localhost", osc_port: int = 57120, config_dir: Optional[str] = None):
-    """Run the audio CLI.
-    
-    Args:
-        osc_host: SuperCollider host address
-        osc_port: SuperCollider OSC listening port
-        config_dir: Directory containing audio configuration files
-    """
-    cli = AudioCli(osc_host=osc_host, osc_port=osc_port, config_dir=config_dir)
-    cli.cmdloop()
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Experimance Audio CLI")
     parser.add_argument("--osc-host", type=str, default="localhost", help="SuperCollider host address")
-    parser.add_argument("--osc-port", type=int, default=57120, help="SuperCollider OSC port")
+    parser.add_argument("--osc-port", type=int, default=DEFAULT_PORTS['audio_osc_recv_port'], help="SuperCollider OSC port")
     parser.add_argument("--config-dir", type=str, help="Directory containing audio configuration files")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    
+    parser.add_argument("--sc-script", type=str, help="Path to SuperCollider script to execute")
+    parser.add_argument("--sclang-path", type=str, default="sclang", help="Path to SuperCollider language interpreter executable")
+
     args = parser.parse_args()
     
     # Set log level
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
+    if args.config_dir and not os.path.isdir(args.config_dir):
+        print(f"Config directory does not exist: {args.config_dir}")
+        sys.exit(1)
+
     try:
-        run_cli(
-            osc_host=args.osc_host,
-            osc_port=args.osc_port,
-            config_dir=args.config_dir
-        )
+        cli = AudioCli(
+            osc_host=args.osc_host, 
+            osc_port=args.osc_port, 
+            config_dir=args.config_dir,
+            sc_script_path=args.sc_script,
+            sclang_path=args.sclang_path)
+        cli.cmdloop()
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received, exiting")
     except Exception as e:

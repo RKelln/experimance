@@ -1,0 +1,119 @@
+[
+    {
+        "path": "environment/forest_ambience.wav",
+        "tags": [
+            "temperate_forest",
+            "wilderness",
+            "pre_industrial"
+        ],
+        "volume": 0.8
+    },
+    {
+        "path": "environment/wind.wav",
+        "tags": [
+            "temperate_forest",
+            "wilderness",
+            "tundra",
+            "desert"
+        ],
+        "volume": 0.5
+    },
+    {
+        "path": "environment/birds.wav",
+        "tags": [
+            "temperate_forest",
+            "wilderness",
+            "grassland"
+        ],
+        "volume": 0.6
+    },
+    {
+        "path": "environment/stream.wav",
+        "tags": [
+            "temperate_forest",
+            "wilderness"
+        ],
+        "volume": 0.7
+    },
+    {
+        "path": "environment/distant_machinery.wav",
+        "tags": [
+            "early_inustrial",
+            "late_industrial"
+        ],
+        "volume": 0.5
+    },
+    {
+        "path": "environment/factory.wav",
+        "tags": [
+            "late_industrial"
+        ],
+        "volume": 0.6
+    },
+    {
+        "path": "environment/modern_city.wav",
+        "tags": [
+            "modern",
+            "current"
+        ],
+        "volume": 0.7
+    },
+    {
+        "path": "environment/digital_hum.wav",
+        "tags": [
+            "current",
+            "future"
+        ],
+        "volume": 0.5
+    },
+    {
+        "path": "environment/glitches.wav",
+        "tags": [
+            "future",
+            "dystopia"
+        ],
+        "volume": 0.6
+    },
+    {
+        "path": "environment/broken_machinery.wav",
+        "tags": [
+            "dystopia"
+        ],
+        "volume": 0.7
+    },
+    {
+        "path": "environment/wind_ruins.wav",
+        "tags": [
+            "ruins"
+        ],
+        "volume": 0.8
+    },
+    {
+        "path": "environment/distant_echoes.wav",
+        "tags": [
+            "ruins"
+        ],
+        "volume": 0.6
+    },
+    {
+        "path": "environment/desert_wind.wav",
+        "tags": [
+            "desert"
+        ],
+        "volume": 0.8
+    },
+    {
+        "path": "environment/tundra_wind.wav",
+        "tags": [
+            "tundra"
+        ],
+        "volume": 0.7
+    },
+    {
+        "path": "environment/grassland_insects.wav",
+        "tags": [
+            "grassland"
+        ],
+        "volume": 0.6
+    }
+]

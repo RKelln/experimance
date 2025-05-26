@@ -28,7 +28,11 @@ class AudioConfigLoader:
         Args:
             config_dir: Directory containing audio config files. If None, uses default.
         """
-        self.config_dir = config_dir or DEFAULT_CONFIG_DIR
+        if config_dir is None:
+            # get the default config directory relative to the audio service
+            config_dir = str(Path(__file__).parent.parent / DEFAULT_CONFIG_DIR)
+        
+        self.config_dir = config_dir
         self.layers = []  # Environmental audio layers
         self.triggers = []  # Sound effect triggers
         self.music_loops = {}  # Era-based music loops

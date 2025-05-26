@@ -5,11 +5,13 @@ This module provides functionality to send OSC messages to SuperCollider,
 enabling control of the audio engine from the Experimance system.
 """
 
+import datetime
 import logging
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from pythonosc import udp_client
@@ -185,21 +187,25 @@ class OscBridge:
             logger.error(f"Error sending reload OSC message: {e}")
             return False
     
-    def start_supercollider(self, sc_script_path: str, sclang_path: str = DEFAULT_SCLANG_PATH) -> bool:
+    def start_supercollider(self, sc_script_path: str, sclang_path: str = DEFAULT_SCLANG_PATH, 
+                       log_to_file: bool = True, log_to_console: bool = False) -> Optional[str]:
         """Start SuperCollider with the given script.
         
         Args:
             sc_script_path: Path to the SuperCollider script to execute
             sclang_path: Path to the SuperCollider language interpreter executable
+            log_to_file: Whether to log SuperCollider output to a file
+            log_to_console: Whether to log SuperCollider output to the console
             
         Returns:
-            bool: True if SuperCollider was started successfully, False otherwise
+            Optional[str]: Path to the log file if SuperCollider was started successfully and log_to_file is True,
+                           None if SuperCollider could not be started
         """
         try:
             script_path = Path(sc_script_path).resolve()
             if not script_path.exists():
                 logger.error(f"SuperCollider script not found: {script_path}")
-                return False
+                return None
 
             # Start SuperCollider in a non-blocking subprocess
             logger.info(f"Starting SuperCollider with script: {script_path}")
@@ -214,12 +220,88 @@ class OscBridge:
             
             # Log the process ID for debugging/cleanup
             logger.info(f"SuperCollider started with PID: {self.sc_process.pid}")
-            return True
+            
+            # Start threads to handle stdout and stderr
+            log_path = self._start_output_threads(log_to_file, log_to_console)
+            
+            return log_path
             
         except Exception as e:
             logger.error(f"Failed to start SuperCollider: {e}")
-            return False
-    
+            return None
+            
+    def _start_output_threads(self, log_to_file: bool = True, log_to_console: bool = False) -> Optional[str]:
+        """Start threads to process SuperCollider stdout and stderr streams.
+        
+        Args:
+            log_to_file: Whether to log SuperCollider output to a file
+            log_to_console: Whether to log SuperCollider output to the console
+            
+        Returns:
+            Optional[str]: Path to the log file if created, None otherwise
+        """
+        if self.sc_process is None:
+            return None
+        
+        # Create logs directory if it doesn't exist
+        log_file = None
+        log_file_path = None
+        
+        if log_to_file:
+            # Create log directory
+            script_dir = Path(__file__).parent.parent.parent  # Go up from src/experimance_audio to services/audio
+            log_dir = script_dir / "logs"
+            log_dir.mkdir(exist_ok=True)
+            
+            # Create log file with timestamp
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file_path = log_dir / f"supercollider_{timestamp}.log"
+            log_file = open(log_file_path, "w", encoding="utf-8", buffering=1)  # Line buffered
+            logger.info(f"SuperCollider logs will be saved to: {log_file_path}")
+        
+        def _process_stream(stream, prefix):
+            """Process each line from a stream and log it."""
+            for line in iter(stream.readline, ''):
+                if not line.strip():
+                    continue
+                    
+                formatted_line = f"{prefix}: {line.rstrip()}"
+                
+                # Log to file if requested
+                if log_to_file and log_file:
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    log_file.write(f"[{timestamp}] {formatted_line}\n")
+                    log_file.flush()  # Ensure it's written immediately
+                
+                # Log to console if requested
+                if log_to_console:
+                    logger.info(formatted_line)
+            
+            stream.close()
+            
+            # Close the log file when the thread exits
+            if log_to_file and log_file:
+                log_file.close()
+        
+        # Create and start threads for stdout and stderr
+        if self.sc_process.stdout:
+            stdout_thread = threading.Thread(
+                target=_process_stream, 
+                args=(self.sc_process.stdout, "SuperCollider"),
+                daemon=True
+            )
+            stdout_thread.start()
+            
+        if self.sc_process.stderr:
+            stderr_thread = threading.Thread(
+                target=_process_stream, 
+                args=(self.sc_process.stderr, "SuperCollider ERROR"),
+                daemon=True
+            )
+            stderr_thread.start()
+            
+        return str(log_file_path) if log_file_path else None
+
     def stop_supercollider(self, timeout: float = 3.0) -> bool:
         """Stop the SuperCollider process if it's running.
         
@@ -237,24 +319,41 @@ class OscBridge:
             # First try to quit gracefully by sending an OSC message
             if self.client:
                 try:
-                    # Send a quit command to SuperCollider
+                    # Send a quit command to SuperCollider - this triggers our cleanup routine
                     logger.info("Sending quit command to SuperCollider")
                     self.client.send_message("/quit", [])
                     
-                    # Give SuperCollider time to quit gracefully
+                    # Give SuperCollider time to run its cleanup and quit gracefully
+                    logger.debug("Waiting for SuperCollider to clean up and quit gracefully...")
                     start_time = time.time()
                     while time.time() - start_time < timeout:
                         if self.sc_process is not None and self.sc_process.poll() is not None:
                             logger.info("SuperCollider quit gracefully")
                             self.sc_process = None
+                            # Wait another second to ensure JACK resources are released
+                            time.sleep(1.0)
                             return True
                         time.sleep(0.1)
+                    logger.warning("SuperCollider did not quit gracefully within timeout")
                 except Exception as e:
                     logger.warning(f"Failed to send quit command to SuperCollider: {e}")
             
             # If still running, terminate the process
             if self.sc_process is not None and self.sc_process.poll() is None:
                 logger.info(f"Terminating SuperCollider process (PID: {self.sc_process.pid})")
+                
+                # Try to send quit again with a different approach (using shell)
+                try:
+                    # Try using oscsend if available
+                    subprocess.run(['which', 'oscsend'], check=True, capture_output=True)
+                    logger.debug("Using oscsend to send quit command")
+                    subprocess.run(['oscsend', 'localhost', str(self.port), '/quit'], 
+                                  timeout=1.0, check=False)
+                    time.sleep(1.0)  # Give it a chance to process
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    logger.debug("oscsend not available")
+                
+                # Now try terminating the process
                 self.sc_process.terminate()
                 
                 # Wait for termination
@@ -262,6 +361,8 @@ class OscBridge:
                     self.sc_process.wait(timeout=timeout)
                     logger.info("SuperCollider terminated")
                     self.sc_process = None
+                    # Wait to ensure JACK resources are released
+                    time.sleep(1.0)
                     return True
                 except subprocess.TimeoutExpired:
                     # If it still doesn't terminate, kill it
@@ -270,6 +371,8 @@ class OscBridge:
                     self.sc_process.wait(timeout=1.0) # type: ignore
                     logger.info("SuperCollider killed")
                     self.sc_process = None
+                    # Wait to ensure JACK resources are released
+                    time.sleep(1.0)
                     return True
                     
         except Exception as e:
@@ -279,10 +382,24 @@ class OscBridge:
                 if self.sc_process is not None and self.sc_process.poll() is None:
                     self.sc_process.kill()
                     self.sc_process = None
+                    # Wait to ensure JACK resources are released
+                    time.sleep(1.0)
             except Exception:
                 logger.error("Failed to kill SuperCollider process")
             
         # If we get here, either the process was stopped or we couldn't stop it
         # In either case, we no longer have a reference to it
         self.sc_process = None
+        
+        # Try to clean up JACK connections as a last resort
+        try:
+            # Check if jackd is running
+            jack_check = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
+            if jack_check.returncode == 0:
+                logger.debug("JACK is running, attempting to disconnect any lingering JACK clients")
+                # Try to disconnect all SuperCollider connections
+                subprocess.run(['jack_disconnect', '-a'], check=False, capture_output=True)
+        except Exception as e:
+            logger.debug(f"Error cleaning up JACK connections: {e}")
+            
         return False
