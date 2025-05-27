@@ -26,8 +26,8 @@ s.waitForBoot {
     var oscRecvPort = 5568;
 
     // Context tracking
-    var currentBiome = "temperate_forest";  // Default biome
-    var currentEra = "wilderness";          // Default era
+    var currentBiome = "temperate_forest".asSymbol;  // Default biome
+    var currentEra = "wilderness".asSymbol;          // Default era
     var activeTags = Set["temperate_forest", "wilderness"];  // Default active tags
 
     // Audio buffers and synths
@@ -68,26 +68,95 @@ s.waitForBoot {
     // Configuration loading
     // -----------------------------------------------------
 
+    // Helper function to convert JSON objects with string keys to objects with symbol keys
+    ~convertJsonKeysToSymbols = { |jsonObj|
+        var result;
+        
+        // Handle nil case gracefully
+        if(jsonObj.isNil) {
+            nil;
+        } {
+            // Handle different types appropriately
+            if(jsonObj.isKindOf(Dictionary)) {
+                // If it's a dictionary/object, create a new one with symbol keys
+                result = Dictionary.new;
+                try {
+                    jsonObj.keysValuesDo { |k, v|
+                        var symKey = k.asSymbol;
+                        // Debug log for key conversion
+                        //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
+                        
+                        // Recursively convert nested objects/arrays
+                        result[symKey] = ~convertJsonKeysToSymbols.(v);
+                    };
+                } { |error|
+                    "Error during key conversion: %".format(error.errorString).error;
+                };
+                result;
+            } {
+                if(jsonObj.isKindOf(SequenceableCollection) && jsonObj.isKindOf(String).not) {
+                    // If it's an array/sequence (but not a string), process each element
+                    try {
+                        jsonObj.collect { |item|
+                            ~convertJsonKeysToSymbols.(item);
+                        };
+                    } { |error|
+                        "Error converting array elements: %".format(error.errorString).error;
+                        jsonObj; // Return original on error
+                    };
+                } {
+                    // For primitives (strings, numbers, booleans, etc.), return as-is
+                    jsonObj;
+                };
+            };
+        };
+    };
+
     // Load JSON config file
     ~loadJsonConfig = { |filename|
         var path = configDir +/+ filename;
-        var file = File(path, "r");
-        var data;
-
-        if(file.isOpen) {
-            data = file.readAllString;
-            file.close;
-            data = data.parseYAML;  // SuperCollider's JSON parser
-            data;
+        var file, data, result = nil;
+        
+        // Check if file exists
+        if(File.exists(path).not) {
+            "Config file does not exist: %".format(path).error;
         } {
-            "Could not open config file: %".format(path).error;
-            nil;
+            // Try to open and read the file
+            file = File(path, "r");
+            
+            if(file.isOpen) {
+                // Read file contents
+                data = file.readAllString;
+                file.close;
+                
+                // Handle empty files
+                if(data.size < 2) {
+                    "Config file is empty: %".format(path).error;
+                } {
+                    // Parse the JSON with error handling
+                    try {
+                        data = data.parseJSON;
+                        
+                        // Convert JSON object with string keys to symbols
+                        result = ~convertJsonKeysToSymbols.(data);
+                        "Successfully loaded and converted %".format(filename).postln;
+                    } { |error|
+                        "Error parsing JSON in file %: %".format(path, error.errorString).error;
+                    };
+                };
+            } {
+                "Could not open config file: %".format(path).error;
+            };
         };
+        
+        // Return the final result
+        result;
     };
 
     // Load all configurations
     ~loadAllConfigs = {
         var musicConfig;  // Declare all variables at the beginning
+        var i, j, path;
 
         "Loading audio configurations...".postln;
 
@@ -95,16 +164,106 @@ s.waitForBoot {
         configurations = Dictionary.new;
         configurations[\layers] = ~loadJsonConfig.("layers.json");
 
+        // Verify file existence for each environmental layer
+        if(configurations[\layers].notNil) {
+            "Verifying environmental audio files...".postln;
+            configurations[\layers].do { |layer, i|
+                path = layer[\path];
+                if(path.notNil) {
+                    layer[\exists] = File.exists(audioDir +/+ path);
+                    if(layer[\exists].not) {
+                        "WARNING: Environmental audio file not found: %".format(path).warn;
+                    } {
+                        "Verified environmental audio file: %".format(path).postln;
+                    };
+                };
+            };
+        };
+
         // Load triggers.json (sound effects)
         configurations[\triggers] = ~loadJsonConfig.("triggers.json");
+
+        // Verify file existence for each trigger
+        if(configurations[\triggers].notNil) {
+            "Verifying trigger audio files...".postln;
+            configurations[\triggers].do { |trigger, i|
+                path = trigger[\path];
+                if(path.notNil) {
+                    trigger[\exists] = File.exists(audioDir +/+ path);
+                    if(trigger[\exists].not) {
+                        "WARNING: Trigger audio file not found: %".format(path).warn;
+                    } {
+                        "Verified trigger audio file: %".format(path).postln;
+                    };
+                };
+            };
+        };
 
         // Load music_loops.json (music by era)
         musicConfig = ~loadJsonConfig.("music_loops.json");
         if(musicConfig.notNil) {
-            configurations[\music_loops] = musicConfig[\era_loops];
+            "Loaded music config: %".format(musicConfig.class).postln;
+            
+            // Log music config keys for debugging
+            "Music config keys: %".format(musicConfig.keys).postln;
+            
+            // Try both symbol and string access to be safe
+            if(musicConfig[\era_loops].notNil) {
+                "Using symbol access for era_loops".postln;
+                configurations[\music_loops] = musicConfig[\era_loops];
+            } {
+                // Try string access as fallback
+                if(musicConfig.respondsTo('at') and: { musicConfig["era_loops"].notNil }) {
+                    "Using string access for era_loops - keys weren't properly converted".warn;
+                    configurations[\music_loops] = musicConfig["era_loops"];
+                    "Converting era_loops manually".postln;
+                    configurations[\music_loops] = ~convertJsonKeysToSymbols.(configurations[\music_loops]);
+                } {
+                    "Warning: No era_loops found in music config".warn;
+                    if(musicConfig.respondsTo('keys')) {
+                        "Available keys: %".format(musicConfig.keys).postln;
+                    };
+                };
+            };
+
+            // Verify file existence for each music loop in each era
+            if(configurations[\music_loops].notNil) {
+                "Verifying music loop audio files...".postln;
+                
+                // Debug - show the type of keys
+                "Music loops configuration type: %".format(configurations[\music_loops].class).postln;
+                "Music loops keys: %".format(configurations[\music_loops].keys).postln;
+                
+                configurations[\music_loops].keysValuesDo { |era, loops|
+                    "Processing era: % (type: %)".format(era, era.class).postln;
+                    
+                    loops.do { |loop, i|
+                        path = loop[\path];
+                        if(path.notNil) {
+                            loop[\exists] = File.exists(audioDir +/+ path);
+                            if(loop[\exists].not) {
+                                "WARNING: Music loop file not found: % for era: %".format(path, era).warn;
+                            } {
+                                "Verified music loop file: % for era: %".format(path, era).postln;
+                            };
+                            
+                            // Debug - show the keys in this loop
+                            //"Loop % keys: %".format(i, loop.keys).postln;
+                        } {
+                            "WARNING: Loop % in era % has no path".format(i, era).warn;
+                        };
+                    };
+                };
+            };
         };
 
-        "Configurations loaded.".postln;
+        "Configurations loaded and verified.".postln;
+        "Environmental layers".postln;
+        configurations[\layers].postln;
+        "Triggers".postln;
+        configurations[\triggers].postln;
+        "Music".postln;
+        configurations[\music_loops].postln;
     };
 
     // -----------------------------------------------------
@@ -114,42 +273,52 @@ s.waitForBoot {
     // Play an environmental sound layer
     ~playEnvironmentLayer = { |layerData|
         var path, buffer, synth, tags, volume;
+        var fileExists;
 
         path = layerData[\path];
         tags = layerData[\tags];
-        volume = layerData[\volume] ? 1.0;
+        volume = (layerData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
+        fileExists = layerData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
 
-        // Load audio file
-        buffer = Buffer.read(s, audioDir +/+ path);
+        if(fileExists) {
+            // Load audio file if it exists
+            buffer = Buffer.read(s, audioDir +/+ path);
 
-        // Create synth for looping playback
-        synth = Synth(\loopPlayer, [
-            \buf, buffer,
-            \amp, volume,
-            \fadeTime, 3.0  // 3 second crossfade
-        ], envGroup);
+            // Create synth for looping playback
+            synth = Synth(\loopPlayer, [
+                \buf, buffer,
+                \amp, volume,
+                \fadeTime, 3.0  // 3 second crossfade
+            ], envGroup);
 
-        // Return info about this layer
-        (\synth: synth, \buffer: buffer, \tags: tags, \volume: volume);
+            // Return info about this layer
+            (\synth: synth, \buffer: buffer, \tags: tags, \volume: volume);
+        } {
+            // Return empty info for non-existing file (no placeholder for ambient sounds)
+            "WARNING: Skipping non-existent environmental audio file: %".format(path).warn;
+            (\synth: nil, \buffer: nil, \tags: tags, \volume: volume);
+        };
     };
 
     // Play a music loop
     ~playMusicLoop = { |loopData, slotIndex|
         var path, buffer, synth, prompt, volume;
-        var fileExists = true;
+        var fileExists;
         var placeholderResult;
 
-        path = loopData[\path];
-        prompt = loopData[\prompt];
-        volume = loopData[\volume] ? 1.0;
+        // path, prompt, and volume are optional
+		path = loopData[\path];
+		volume = (loopData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
+        fileExists = loopData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
 
-        // Check if the audio file exists
-        if(File.exists(audioDir +/+ path).not) {
-            "Audio file not found: %. Using placeholder sound.".format(path).warn;
-            fileExists = false;
+        // Log the file status
+        if(path.notNil && fileExists) {
+            "Using existing audio file: %".format(path).postln;
+        } {
+            "Audio file unavailable: %. Using placeholder sound for era % slot %.".format(path, currentEra, slotIndex).warn;
         };
 
-        if(fileExists) {
+        if(path.notNil && fileExists) {
             // Load audio file if it exists
             buffer = Buffer.read(s, audioDir +/+ path);
 
@@ -162,16 +331,17 @@ s.waitForBoot {
             ], musicGroup);
 
             // Return info about this music loop with standard format
-            (\synth: synth, \buffer: buffer, \prompt: prompt, \volume: volume);
+            (\synth: synth, \buffer: buffer, \volume: volume);
         } {
             // Generate placeholder music based on era and slot
             placeholderResult = ~createPlaceholderMusic.(currentEra, slotIndex, volume);
 
             // Return info about this music loop with placeholder format
+            // placeholderResult already contains the player and properly defined stop method
+            // We need to combine this with our standard info structure
             (
-                synth: placeholderResult,  // This contains the player and stop method
+                synth: placeholderResult,  // Contains the player and stop method
                 buffer: nil,
-                prompt: prompt,
                 volume: volume,
                 isPlaceholder: true
             );
@@ -181,34 +351,70 @@ s.waitForBoot {
     // Play a trigger sound (one-shot)
     ~playTrigger = { |triggerData|
         var path, buffer, synth, volume;
+        var fileExists;
 
         path = triggerData[\path];
-        volume = triggerData[\volume] ? 1.0;
+        volume = (triggerData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
+        fileExists = triggerData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
 
-        // Load audio file
-        buffer = Buffer.read(s, audioDir +/+ path);
+        if(fileExists) {
+            // Load audio file if it exists
+            buffer = Buffer.read(s, audioDir +/+ path);
 
-        // Create synth for one-shot playback
-        synth = Synth(\triggerPlayer, [
-            \buf, buffer,
-            \amp, volume
-        ], fxGroup);
+            // Create synth for one-shot playback
+            synth = Synth(\triggerPlayer, [
+                \buf, buffer,
+                \amp, volume
+            ], fxGroup);
 
-        // Return the synth
-        synth;
+            // Return the synth
+            synth;
+        } {
+            // Return nil for non-existing file (no placeholder for triggers)
+            "WARNING: Skipping non-existent trigger audio file: %".format(path).warn;
+            nil;
+        };
     };
 
     // Update audio based on current context
-    ~updateAudioContext = {
+    ~updateAudioContext = { |biome, era, fadeTime|
         var matching, nonMatching, matchingTags;
         var eraLoops;
+        var prevEra, prevBiome;
+
+        if (biome.notNil and: {biome != currentBiome}) {
+            prevBiome = currentBiome;
+            currentBiome = biome.asSymbol;  // Convert to symbol for consistency
+            "Biome changed from % to %".format(prevBiome, currentBiome).postln;
+            activeTags.add(currentBiome);
+            if(prevBiome.notNil) {
+                activeTags.remove(prevBiome);
+            }
+        } {
+            prevBiome = nil;  // No change
+        };
+
+        if (era.notNil and: {era != currentEra}) {
+            prevEra = currentEra;
+            currentEra = era.asSymbol;  // Convert to symbol for consistency
+            "Era changed from % to %".format(prevEra, currentEra).postln;
+            activeTags.add(currentEra);
+            if(prevEra.notNil) {
+                activeTags.remove(prevEra);
+            }
+        } {
+            prevEra = nil;  // No change
+        };
+
+        "Update audio context for biome: %, era: %".format(currentBiome, currentEra).postln;
 
         // Get layers that match current context (biome + era + active tags)
         matchingTags = activeTags.asArray;
         matching = if(configurations[\layers].notNil) {
             configurations[\layers].select { |layer|
                 var layerTags = layer[\tags];
-                layerTags.notNil and: { layerTags.any { |tag| matchingTags.includes(tag) } };
+                var exists = layer[\exists] ? false; // Check if file exists
+                exists and: { layerTags.notNil and: { layerTags.any { |tag| matchingTags.includes(tag) } } };
             };
         } {
             [];
@@ -236,41 +442,75 @@ s.waitForBoot {
             };
         };
 
-        // Handle music loops
-        eraLoops = if(configurations[\music_loops].notNil) {
-            configurations[\music_loops][currentEra.asSymbol]
-        } {
-            nil
-        };
+        // Handle music loops, which only change on era transitions
+        if (currentEra.notNil) {
+            "Updating music loops % -> %".format(prevEra, currentEra).postln;
+            configurations[\music_loops].postln;
 
-        if(eraLoops.notNil) {
-            // Update music loops for this era
-            eraLoops.do { |loop, i|
-                var path = loop[\path].asSymbol;
-                if(musicLoops[path].isNil) {
-                    // New loop for this slot
-                    musicLoops[path] = ~playMusicLoop.(loop, i);
-                };
+            eraLoops = if(configurations[\music_loops].notNil) {
+                configurations[\music_loops][currentEra.asSymbol];
+            } {
+                nil
             };
 
-            // Fade out loops that aren't in this era
-            musicLoops.keys.do { |path|
-                if(eraLoops.notNil and: { eraLoops.any { |l| l[\path].notNil and: { l[\path].asSymbol == path } }.not }) {
-                    // This loop isn't in the current era
-                    if(musicLoops[path][\isPlaceholder] == true) {
-                        // Handle placeholder music with custom stop method
-                        if(musicLoops[path][\synth].notNil) {
-                            musicLoops[path][\synth].stop(5.0);  // 5 second fadeout
-                        };
-                    } {
-                        // Handle regular buffer playback
-                        if(musicLoops[path][\synth].notNil) {
-                            musicLoops[path][\synth].set(\gate, 0);  // Trigger release
-                        };
+            if(eraLoops.notNil) {
+                "Era loops for %: %".format(currentEra, eraLoops).postln;
+
+                musicLoops.postln;
+
+                if (musicLoops.includesKey(currentEra).not) {
+                    "New era: %".format(currentEra).postln;
+                
+                    // Initialize array with proper size and nil values
+                    musicLoops[currentEra] = Array.fill(eraLoops.size, { nil });
+                    
+                    // Update music loops for this era
+                    eraLoops.do { |loopInfo, i|
+                        // New loop for this slot (note: playMusicLoop handles exists internally)
+                        musicLoops[currentEra][i] = ~playMusicLoop.(loopInfo, i);
+                        "Creating new % music loop for slot %".format(currentEra, i).postln;
+                    
+                        // TODO: if not a placeholder then set the timing to match the previous era
+                        // i.e. new music loops should start at the same time as the current time previous era's loops
+
+                        // TODO: fade in new music loop
+                        fadeTime = fadeTime ? loopInfo[\fadeTime] ? 5.0;
                     };
-                    { musicLoops.removeAt(path); }.defer(6);  // Remove after fade
+
+                    if(musicLoops.includesKey(prevEra)) {
+                        // Fade out loops that aren't in this era
+                        musicLoops[prevEra].do { |loopInfo|
+                            fadeTime = fadeTime ? loopInfo[\fadeTime] ? 5.0;  // Default fade time if not provided
+                            if(loopInfo[\synth].notNil) {
+                                if(loopInfo[\synth].respondsTo(\stop)) {
+                                    // Make sure the fadeTime parameter is passed correctly
+                                    "Fading out placeholder % with % second fade".format(i, fadeTime).postln;
+                                    try {
+                                        // Using the custom stop method 
+                                        loopInfo[\synth].stop(fadeTime);
+                                    } { |error|
+                                        "Error fading out: %".format(error.errorString).error;
+                                    };
+                                } {
+                                    // Handle regular buffer playback
+                                    "Fading out music loop %".format(era).postln;
+                                    loopInfo[\synth].set(\gate, 0);  // Trigger release
+                                };
+                            };
+                        };
+                        // remove the previous era's music loops
+                        musicLoops.removeAt(prevEra);
+                    } {
+                        "No previous era music loops to fade out.".postln;
+                    };
+                } {
+                    "Era % already exists".format(currentEra).postln;
                 };
+            } {
+                "No music loops found for era: %".format(currentEra).warn;
             };
+        } {
+            "No current era.".warn;
         };
     };
 
@@ -284,25 +524,14 @@ s.waitForBoot {
         OSCdef(\spacetime, { |msg, time, addr, recvPort|
             var biome = msg[1].asString;
             var era = msg[2].asString;
-            var prevEra = currentEra;
 
             "Context changed: biome=%, era=%".format(biome, era).postln;
-
-            // If era is changing and we have placeholder music, create a transition
-            if(era != currentEra) {
-                // Create crossfade for placeholder music if needed
-                ~crossfadePlaceholder.(currentEra, era, 5.0);
-            };
-
-            // Update state
-            currentBiome = biome;
-            currentEra = era;
 
             // Clear and rebuild active tags
             activeTags = Set[biome, era];
 
             // Update audio context
-            ~updateAudioContext.();
+            ~updateAudioContext.(biome, era);
 
         }, '/spacetime', nil, oscRecvPort);
 
@@ -348,8 +577,10 @@ s.waitForBoot {
             // Play listening trigger if starting
             if(isListening) {
                 listeningTrigger = configurations[\triggers].detect { |t| t[\trigger] == "listening" };
-                if(listeningTrigger.notNil) {
+                if(listeningTrigger.notNil && (listeningTrigger[\exists] ? false)) {
                     ~playTrigger.(listeningTrigger);
+                } {
+                    "No valid listening trigger audio found.".postln;
                 };
             };
 
@@ -369,8 +600,10 @@ s.waitForBoot {
             // Play speaking trigger if starting
             if(isSpeaking) {
                 speakingTrigger = configurations[\triggers].detect { |t| t[\trigger] == "speaking" };
-                if(speakingTrigger.notNil) {
+                if(speakingTrigger.notNil && (speakingTrigger[\exists] ? false)) {
                     ~playTrigger.(speakingTrigger);
+                } {
+                    "No valid speaking trigger audio found.".postln;
                 };
             };
 
@@ -387,8 +620,10 @@ s.waitForBoot {
             // Play transition sound effect
             if(isTransitioning) {
                 transitionTrigger = configurations[\triggers].detect { |t| t[\trigger] == "transition" };
-                if(transitionTrigger.notNil) {
+                if(transitionTrigger.notNil && (transitionTrigger[\exists] ? false)) {
                     ~playTrigger.(transitionTrigger);
+                } {
+                    "No valid transition trigger audio found.".postln;
                 };
             };
 
@@ -402,6 +637,45 @@ s.waitForBoot {
 
         }, '/reload', nil, oscRecvPort);
 
+        // Test path command: /test_path <path>
+        OSCdef(\test_path, { |msg, time, addr, recvPort|
+            var path = msg[1].asString;
+            
+            "TEST: Checking path: %".format(path).postln;
+            
+            // Test accessing configuration elements with the path
+            "TEST: Searching for path in configurations...".postln;
+            
+            if(configurations[\layers].notNil) {
+                var found = configurations[\layers].detect { |layer| layer[\path] == path };
+                if(found.notNil) {
+                    "TEST: Found matching layer - Keys: %".format(found.keys).postln;
+                    "TEST: Path: %, Tags: %, Volume: %".format(found[\path], found[\tags], found[\volume]).postln;
+                };
+            };
+            
+            if(configurations[\triggers].notNil) {
+                var found = configurations[\triggers].detect { |trigger| trigger[\path] == path };
+                if(found.notNil) {
+                    "TEST: Found matching trigger - Keys: %".format(found.keys).postln;
+                    "TEST: Path: %, Trigger: %, Volume: %".format(found[\path], found[\trigger], found[\volume]).postln;
+                };
+            };
+            
+            if(configurations[\music_loops].notNil) {
+                configurations[\music_loops].keysValuesDo { |era, loops|
+                    var found = loops.detect { |loop| loop[\path] == path };
+                    if(found.notNil) {
+                        "TEST: Found matching music loop in era % - Keys: %".format(era, found.keys).postln;
+                        "TEST: Path: %, Prompt: %, Volume: %".format(found[\path], found[\prompt], found[\volume]).postln;
+                    };
+                };
+            };
+            
+            "TEST: File exists? %".format(File.exists(audioDir +/+ path)).postln;
+            
+        }, '/test_path', nil, oscRecvPort);
+
         // Quit: /quit
         OSCdef(\quit, { |msg, time, addr, recvPort|
             "Quit command received - shutting down".postln;
@@ -413,6 +687,32 @@ s.waitForBoot {
             }.fork;*/
 			0.exit;
         }, '/quit', nil, oscRecvPort);
+        
+        // Test placeholder sounds: /test_placeholders
+        OSCdef(\test_placeholders, { |msg, time, addr, recvPort|
+            "Starting placeholder sound test...".postln;
+            ~testAllPlaceholderSounds.();
+        }, '/test_placeholders', nil, oscRecvPort);
+        
+        // Test specific placeholder: /test_placeholder <era> <slot> <duration>
+        OSCdef(\test_placeholder, { |msg, time, addr, recvPort|
+            var era = msg[1].asString;
+            var slot = msg[2].asInteger;
+            var duration = msg[3].asFloat ? 5.0;
+            var placeholder;
+            
+            "Testing specific placeholder - Era: %, Slot: %, Duration: %s".format(era, slot, duration).postln;
+            
+            placeholder = ~createPlaceholderMusic.(era, slot, 0.7);
+            
+            // Stop after the specified duration
+            {
+                duration.wait;
+                placeholder.stop(2.0);
+                "Finished playing test placeholder.".postln;
+            }.fork;
+            
+        }, '/test_placeholder', nil, oscRecvPort);
     };
 
     // -----------------------------------------------------
@@ -461,10 +761,26 @@ s.waitForBoot {
     ~createPlaceholderMusic = { |era, slotIndex, volume=0.5|
         var key, timbre, pattern, synth, root, scale, tempo;
         var noteDur, patternType;
+        var result;
+
+        // Ensure era is valid or use wilderness as default
+        era = era ? "wilderness";
+
+        // Ensure slotIndex is valid
+        slotIndex = slotIndex ? 0;
+        
+        // Ensure volume is a number (in case it's passed as a string or other type)
+        volume = volume.asFloat;
+
+        // Log what we're creating
+        "Creating placeholder music for era: % and slot: %".format(era, slotIndex).postln;
 
         // Get key info for this era, default to C major if not found
         key = ~eraKeys[era.asSymbol];
-        if(key.isNil) { key = ~eraKeys[\wilderness]; };
+        if(key.isNil) {
+            "Era % not found in key definitions, using wilderness default".format(era).warn;
+            key = ~eraKeys[\wilderness];
+        };
 
         root = key[\root];
         scale = key[\scale];
@@ -495,6 +811,14 @@ s.waitForBoot {
         );
 
 		format("Created placeholder: root: %, scale %, tempo: %, timbre: %", root, scale, tempo, timbre).postln;
+
+        // Error handling - make sure we have valid parameters before creating pattern
+        if(root.isNil || scale.isNil || timbre.isNil) {
+            "ERROR: Invalid parameters for placeholder music. Using defaults.".error;
+            root = 60;  // Middle C
+            scale = Scale.major;
+            timbre = \placeholderDefault;
+        };
 
         // Create different pattern types based on slot
         patternType = switch(slotIndex,
@@ -625,33 +949,71 @@ s.waitForBoot {
             }
         );
 
-        // Start the pattern with fade-in
-        synth = pattern.play;
-        "Started placeholder music pattern for era: % (%), slot: %".format(era, key[\name], slotIndex).postln;
-
-        // Return the EventStreamPlayer as the "synth" with custom stop method
-        (
-            player: synth,
-            stop: { |fadeTime=5|
-                var oldAmp = synth.stream.originalStream.patternpairs.indexOf(\amp).notNil.if({
-                    synth.stream.originalStream.patternpairs[synth.stream.originalStream.patternpairs.indexOf(\amp) + 1]
-                }, { 0.5 });
-
-                // Create a fade out over fadeTime seconds
-                Routine({
-                    var steps = fadeTime * 20; // 20 steps per second
-                    var stepAmt = oldAmp / steps;
-
-                    steps.do({ |i|
-                        synth.set(\amp, oldAmp - (stepAmt * i));
-                        (fadeTime / steps).wait;
-                    });
-
-                    synth.stop;
-                    "Stopped placeholder music pattern for era: %, slot: %".format(era, slotIndex).postln;
-                }).play;
+        // Initialize result structure
+        result = (
+            player: nil,
+            stop: { |fadeTime=5| 
+                "No pattern to stop - placeholder already stopped or never started.".postln;
             }
         );
+        
+        // Safely start the pattern with error handling
+        try {
+            synth = pattern.play;
+            "Started placeholder music pattern for era: % (%), slot: %".format(era, key[\name], slotIndex).postln;
+            
+            // Define full result with live synth and proper stop method
+            result = (
+                player: synth,
+                stop: { |fadeTime=5|
+                    // Only proceed if we have a valid synth
+                    if(synth.notNil) {
+                        var oldAmp;
+                        
+                        "Stopping placeholder music for era: % slot: % with % second fade".format(era, slotIndex, fadeTime).postln;
+                        
+                        try {
+                            // Get current amplitude for smooth fade-out
+                            oldAmp = synth.stream.originalStream.patternpairs.indexOf(\amp).notNil.if({
+                                synth.stream.originalStream.patternpairs[synth.stream.originalStream.patternpairs.indexOf(\amp) + 1]
+                            }, { 0.5 });
+                            
+                            // Create a fade out over fadeTime seconds
+                            Routine({
+                                var steps = fadeTime * 20; // 20 steps per second
+                                var stepAmt = oldAmp / steps;
+                                
+                                steps.do({ |i|
+                                    synth.set(\amp, oldAmp - (stepAmt * i));
+                                    (fadeTime / steps).wait;
+                                });
+                                
+                                synth.stop;
+                                "Stopped placeholder music pattern for era: %, slot: %".format(era, slotIndex).postln;
+                            }).play;
+                        } { |error|
+                            "Error during placeholder fadeout: %".format(error.errorString).error;
+                            // Force stop on error
+                            synth.stop;
+                        };
+                    } {
+                        "No synth to stop for placeholder music".warn;
+                    };
+                },
+                isPlaceholder: true
+            );
+        } { |error|
+            "Error starting placeholder pattern: %".format(error.errorString).error;
+            // We already defined a minimal result above that won't crash when stop is called
+        };
+
+        // Final log message if pattern was successfully started
+        if(result.notNil and: { result[\player].notNil }) {
+            "Created placeholder music result for era: % slot: %".format(era, slotIndex).postln;
+        };
+        
+        // Return the result (either the full version with working synth or the minimal version if there was an error)
+        result;
     };
 
     // Define all synths
@@ -875,12 +1237,59 @@ s.waitForBoot {
         ~setupOSC.();
 
         // Update audio with default context
+        "Initializing audio context with default values...".postln;
         ~updateAudioContext.();
+        "Audio context initialization complete.".postln;
 
         // Register cleanup function for proper shutdown
         ShutDown.add({ ~cleanup.() });
 
         "Experimance Audio System initialized and ready.".postln;
+    };
+
+    // Test function to play all placeholder sounds in sequence
+    ~testAllPlaceholderSounds = {
+        var eras, placeholders, testRoutine;
+        
+        // List of all eras to test
+        eras = [\wilderness, \pre_industrial, \early_industrial, \late_industrial, 
+                 \modern, \current, \future, \dystopia, \ruins];
+        
+        placeholders = List.new;
+        
+        // Start the test routine
+        "=== STARTING PLACEHOLDER SOUND TEST ===".postln;
+        "This will play each placeholder sound for each era and slot for a few seconds".postln;
+        
+        testRoutine = Routine({
+            eras.do { |era|
+                // For each era, test all three slot types (drone, chord, melody)
+                3.do { |slot|
+                    "Testing era: % - slot: %".postln;
+                    "  Creating placeholder...".format(era, slot).postln;
+                    
+                    // Create placeholder for this era and slot
+                    placeholders.add(~createPlaceholderMusic.(era.asString, slot, 0.7));
+                    
+                    // Let it play for a few seconds
+                    3.wait;
+                    
+                    // Stop current placeholder before moving to next
+                    "  Stopping placeholder for era: % - slot: %".format(era, slot).postln;
+                    placeholders.last.stop(1.0);
+                    
+                    // Wait for fade out
+                    2.wait;
+                };
+            };
+            
+            "=== PLACEHOLDER SOUND TEST COMPLETE ===".postln;
+        });
+        
+        testRoutine.play;
+        
+        // Return the routine so it can be stopped if needed
+        testRoutine;
     };
 
     // Cleanup function to ensure proper release of resources
@@ -902,13 +1311,15 @@ s.waitForBoot {
         };
 
         if(musicLoops.notNil) {
-            musicLoops.do { |loopInfo|
-                if(loopInfo[\buffer].notNil) { loopInfo[\buffer].free };
-                if(loopInfo[\synth].notNil) {
-                    if(loopInfo[\isPlaceholder] == true) {
-                        if(loopInfo[\synth][\player].notNil) { loopInfo[\synth][\player].stop };
-                    } {
-                        loopInfo[\synth].free;
+            musicLoops.keysValuesDo { |era, loops|
+                loops.do { |loopInfo, i|
+                    if(loopInfo[\buffer].notNil) { loopInfo[\buffer].free };
+                    if(loopInfo[\synth].notNil) {
+                        if(loopInfo[\isPlaceholder] == true) {
+                            if(loopInfo[\synth][\player].notNil) { loopInfo[\synth][\player].stop };
+                        } {
+                            loopInfo[\synth].free;
+                        };
                     };
                 };
             };
@@ -947,3 +1358,5 @@ s.waitForBoot {
 };
 
 // EOF
+m = NetAddr("127.0.0.1", 5568); // loopback
+m.sendMsg("/spacetime", "forest", "wilderness")
