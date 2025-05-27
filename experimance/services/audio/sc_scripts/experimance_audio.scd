@@ -470,24 +470,14 @@ s.waitForBoot {
 
                         // TODO: if not a placeholder then set the timing to match the previous era
                         // i.e. new music loops should start at the same time as the current time previous era's loops
-
-                        // TODO: fade in new music loop
-                        fadeTime = fadeTime ? loopInfo[\fadeTime] ? 5.0;
                     };
 
                     if(musicLoops.includesKey(prevEra)) {
                         // Fade out loops that aren't in this era
                         musicLoops[prevEra].do { |loopInfo|
-                            fadeTime = fadeTime ? loopInfo[\fadeTime] ? 5.0;  // Default fade time if not provided
                             if(loopInfo[\synth].notNil) {
-                                if(loopInfo[\isPlaceholder] ? false) {
-                                    "Stopping placeholder music loop %".format(prevEra).postln;
-                                    loopInfo[\synth].stop;
-                                } {
-                                    // Handle regular buffer playback with fade
-                                    "Fading out music loop %".format(prevEra).postln;
-                                    loopInfo[\synth].set(\gate, 0);  // Trigger release
-                                };
+                                "Fading out music loop %".format(prevEra).postln;
+                                loopInfo[\synth].set(\gate, 0);  // Trigger release
                             };
                         };
                         // remove the previous era's music loops
@@ -700,7 +690,16 @@ s.waitForBoot {
             // Stop after the specified duration
             {
                 duration.wait;
-                placeholder.stop;
+                
+                if(placeholder.isPlaying) {
+                    "Releasing test placeholder...".postln;
+                    placeholder.set(\gate, 0);  // Trigger release phase
+                    1.0.wait;  // Wait for release to complete
+                    placeholder.free;  // Ensure synth is freed
+                } {
+                    "Placeholder already stopped.".postln;
+                };
+                
                 "Finished playing test placeholder.".postln;
             }.fork;
 
@@ -713,397 +712,102 @@ s.waitForBoot {
 
     // PLACEHOLDER MUSIC SYSTEM
     // -----------------------
-    // This system creates procedurally generated music when audio files are missing.
-    // Each era has:
-    //  1. A unique musical key and scale (natural -> complex -> back to natural)
-    //  2. Era-specific synthesizer sounds (pure -> electronic/mechanical -> distorted -> back to natural)
-    //  3. Three layered musical elements:
-    //     - Layer 0: Slow drone/bass notes (8 beat cycle)
-    //     - Layer 1: Medium-speed arpeggiated chords (4 beat cycle)
-    //     - Layer 2: Fast melodic patterns (2 beat cycle)
-    //
-    // The system gracefully handles missing audio files and creates musically
-    // appropriate placeholder sounds that reflect the character of each era.
+    // This system provides simple placeholder sounds when audio files are missing.
+    // Each era and slot (layer) has a slightly different sound character.
+    // The system gracefully handles missing audio files with minimal complexity.
 
-    // Musical keys for each era based on natural to electrical progression
-    ~eraKeys = Dictionary[
-        // Nature-based, pleasant harmonies
-        \wilderness -> Dictionary[\root -> 60, \scale -> Scale.majorPentatonic, \name -> "C Pentatonic"],
-
-        // Early civilization, consonant scales
-        \pre_industrial -> Dictionary[\root -> 65, \scale -> Scale.mixolydian, \name -> "F Mixolydian"],
-        \early_industrial -> Dictionary[\root -> 67, \scale -> Scale.major, \name -> "G Major"],
-
-        // Industrial era, moving toward more tension
-        \late_industrial -> Dictionary[\root -> 62, \scale -> Scale.dorian, \name -> "D Dorian"],
-
-        // Modern to future, increasing complexity and dissonance
-        \modern -> Dictionary[\root -> 69, \scale -> Scale.harmonicMinor, \name -> "A Harmonic Minor"],
-        \current -> Dictionary[\root -> 64, \scale -> Scale.diminished, \name -> "E Diminished"],
-        \future -> Dictionary[\root -> 71, \scale -> Scale.chromatic, \name -> "B Chromatic"],
-
-        // Peak dissonance
-        \dystopia -> Dictionary[\root -> 66, \scale -> Scale.enigmatic, \name -> "F# Enigmatic"],
-
-        // Return to nature, peaceful
-        \ruins -> Dictionary[\root -> 60, \scale -> Scale.majorPentatonic, \name -> "C Pentatonic"],
-    ];
-
-    // Create a placeholder music synth based on era and slot
+    // Create a simple placeholder synth based on era and slot
     ~createPlaceholderMusic = { |era, slotIndex, volume=0.5|
-        var key, timbre, pattern, synth, root, scale, tempo;
-        var noteDur, patternType;
-        var result;
+        var synth, freq, eraIndex;
 
         // Ensure era is valid or use wilderness as default
         era = era ? "wilderness";
 
-        // Ensure slotIndex is valid
+        // Ensure slotIndex is valid (0, 1, 2 for bass, mid, high)
         slotIndex = slotIndex ? 0;
 
-        // Ensure volume is a number (in case it's passed as a string or other type)
+        // Ensure volume is a float
         volume = volume.asFloat;
 
         // Log what we're creating
-        "Creating placeholder music for era: % and slot: %".format(era, slotIndex).postln;
+        "Creating simple placeholder for era: % and slot: %".format(era, slotIndex).postln;
 
-        // Get key info for this era, default to C major if not found
-        key = ~eraKeys[era.asSymbol];
-        if(key.isNil) {
-            "Era % not found in key definitions, using wilderness default".format(era).warn;
-            key = ~eraKeys[\wilderness];
-        };
-
-        root = key[\root];
-        scale = key[\scale];
-
-        // Default tempo (beats per second)
-        tempo = 1; // 60 BPM
-
-        // Duration based on slot index (first slot is slowest)
-        noteDur = switch(slotIndex,
-            0, { 8 },    // Slowest - 8 beats
-            1, { 4 },    // Medium - 4 beats
-            2, { 2 },    // Fast - 2 beats
-            { 1 }        // Default - 1 beat
+        // Map era to a base frequency multiplier (different sound character per era)
+        // This gives each era a slightly different pitch profile
+        eraIndex = switch(era.asSymbol,
+            \wilderness, { 0.6 },
+            \pre_industrial, { 0.7 },
+            \early_industrial, { 0.8 },
+            \late_industrial, { 0.9 },
+            \modern, { 1.0 },
+            \current, { 1.1 },
+            \future, { 1.2 },
+            \dystopia, { 1.3 },
+            \ruins, { 1.4 },
+            { 1.0 }  // Default
         );
 
-        // Create a unique timbre for each era with distinct sonic characteristics
-        timbre = switch(era.asSymbol,
-            \wilderness, { \placeholderSine },     // Pure, natural tones
-            \pre_industrial, { \placeholderSine }, // Continued natural sounds
-            \early_industrial, { \placeholderSaw },  // Early mechanical sounds
-            \late_industrial, { \placeholderSaw },  // More developed mechanical sounds
-            \modern, { \placeholderSquare },        // Early electronic sounds
-            \current, { \placeholderPad },          // Contemporary digital/ambient
-            \future, { \placeholderBell },          // Advanced digital/crystalline
-            \dystopia, { \placeholderNoise },       // Broken, distorted sounds
-            \ruins, { \placeholderFM },             // Return to nature, but complex
-            { \placeholderDefault }                 // Default fallback
+        // Base frequency varies by slot: bass (low), mid, high
+        freq = switch(slotIndex,
+            0, { 60 * eraIndex },    // Bass/drone (low C)
+            1, { 200 * eraIndex },   // Mid-range
+            2, { 320 * eraIndex },   // Higher
+            { 100 * eraIndex }       // Default
         );
 
-		format("Created placeholder: root: %, scale %, tempo: %, timbre: %", root, scale, tempo, timbre).postln;
+        // Create synth with the calculated parameters
+        synth = Synth(\simplePlaceholder, [
+            \amp, volume,
+            \freq, freq,
+            \fadeTime, 1.0,  // 1 second fade for more responsive testing
+            \slotIndex, slotIndex
+        ], musicGroup);
 
-        // Error handling - make sure we have valid parameters before creating pattern
-        if(root.isNil || scale.isNil || timbre.isNil) {
-            "ERROR: Invalid parameters for placeholder music. Using defaults.".error;
-            root = 60;  // Middle C
-            scale = Scale.major;
-            timbre = \placeholderDefault;
-        };
-
-        // Create different pattern types based on slot
-        patternType = switch(slotIndex,
-            0, { // Root note drone
-                var notePattern, amp, legato;
-
-                // Adjust drone characteristics based on era
-                if (era.asSymbol == \wilderness || era.asSymbol == \pre_industrial || era.asSymbol == \ruins) {
-                    // Stable root with fifth for natural/early eras
-                    notePattern = Pseq([root, root + 7], inf);
-                    amp = volume * 0.7;
-                    legato = 0.95;
-                } {
-                    if (era.asSymbol == \early_industrial || era.asSymbol == \late_industrial) {
-                        // Root alternating with octave for industrial eras
-                        notePattern = Pseq([root, root + 12], inf);
-                        amp = volume * 0.65;
-                        legato = 0.9;
-                    } {
-                        if (era.asSymbol == \modern || era.asSymbol == \current) {
-                            // Root with some motion for modern/current
-                            notePattern = Pseq([root, root + 7, root + 4, root], inf);
-                            amp = volume * 0.6;
-                            legato = 0.85;
-                        } {
-                            // Complex drone with tension for future/dystopia
-                            notePattern = Pseq([root, root + 1, root, root - 1], inf);
-                            amp = volume * 0.55;
-                            legato = 0.75;
-                        }
-                    }
-                };
-
-                Pbind(
-                    \instrument, timbre,
-                    \note, notePattern,
-                    \dur, noteDur / 2, // Split the drone into pulses
-                    \amp, amp,
-                    \legato, legato,
-                    \slotIndex, slotIndex
-                )
-            },
-            1, { // Arpeggiated chord
-                var notes, pattern;
-
-                // Different chord types based on era
-                if (era.asSymbol == \wilderness || era.asSymbol == \ruins) {
-                    // Open fifth + octave for natural sounds
-                    notes = [0, 7, 12, 7];
-                    pattern = Pseq(notes, inf);
-                } {
-                    if (era.asSymbol == \pre_industrial || era.asSymbol == \early_industrial) {
-                        // Traditional triads for pre/early industrial
-                        notes = [0, 4, 7, 4]; // Major triad
-                        pattern = Pseq(notes, inf);
-                    } {
-                        if (era.asSymbol == \late_industrial || era.asSymbol == \modern) {
-                            // More complex chords for modern
-                            notes = [0, 4, 7, 11]; // Major 7th
-                            pattern = Pseq(notes, inf);
-                        } {
-                            if (era.asSymbol == \current || era.asSymbol == \future) {
-                                // Tension-filled chords for future era
-                                notes = [0, 3, 6, 10]; // diminished 7th
-                                pattern = Pseq(notes, inf);
-                            } {
-                                // Dissonant intervals for dystopia
-                                notes = [0, 1, 6, 11];
-                                pattern = Pshuf(notes, inf); // shuffle for more chaos
-                            }
-                        }
-                    }
-                };
-
-                Pbind(
-                    \instrument, timbre,
-                    \degree, pattern,
-                    \octave, 4,
-                    \root, root,
-                    \scale, scale,
-                    \dur, noteDur / 4, // Four notes per cycle
-                    \amp, volume * 0.5,
-                    \legato, (era.asSymbol == \dystopia).if(0.4, 0.7), // shorter notes for dystopia
-                    \slotIndex, slotIndex
-                )
-            },
-            2, { // Melodic pattern
-                var degrees, pattern;
-
-                // Different melodic patterns based on era
-                if (era.asSymbol == \wilderness || era.asSymbol == \pre_industrial || era.asSymbol == \ruins) {
-                    // Natural, flowing melodies for natural eras
-                    degrees = [0, 2, 4, 7, 9, 7, 4, 2]; // Pentatonic-based pattern
-                    pattern = Pseq(degrees, inf);
-                } {
-                    if (era.asSymbol == \early_industrial || era.asSymbol == \late_industrial || era.asSymbol == \modern) {
-                        // More structured, mechanical patterns for industrial eras
-                        degrees = [0, 4, 7, 4, 0, 7, 4, 0]; // Arpeggiated pattern
-                        pattern = Pseq(degrees, inf);
-                    } {
-                        // Complex, unpredictable patterns for future/dystopian eras
-                        degrees = scale.degrees;
-                        pattern = Pxrand(degrees, inf);
-                    };
-                };
-
-                Pbind(
-                    \instrument, timbre,
-                    \degree, pattern,
-                    \octave, 5,
-                    \root, root,
-                    \scale, scale,
-                    \dur, noteDur / 8, // Eight notes per cycle
-                    \amp, volume * 0.4,
-                    \legato, (era.asSymbol == \wilderness).if(0.8, (era.asSymbol == \dystopia).if(0.3, 0.5)), // Smoother for natural, choppier for dystopia
-                    \slotIndex, slotIndex
-                )
-            },
-            { // Default pattern
-                Pbind(
-                    \instrument, timbre,
-                    \midinote, Pseq([root, root+7, root+12], inf),
-                    \dur, 1,
-                    \amp, volume * 0.6,
-                    \legato, 0.8,
-                    \slotIndex, slotIndex
-                )
-            }
-        );
-
-        patternType.play
+        // Return the synth instance
+        synth
     };
 
     // Define all synths
     ~defineSynths = {
-        // Placeholder synthesizers for generated music
-        SynthDef(\placeholderDefault, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur;
-            dur = 0.4 * legato;
-            // Generic but pleasant envelope
-            env = EnvGen.kr(Env.perc(0.03, dur, curve: -2), gate, doneAction: 2);
-            // Simple but rich tone
-            sig = SinOsc.ar(freq) * 0.6 + Saw.ar(freq) * 0.1;
-            sig = LPF.ar(sig, 2000);
-            sig = sig * env * amp;
-            Out.ar(0, Pan2.ar(sig, pan));
-        }).add;
 
-        SynthDef(\placeholderSine, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur;
-            dur = 0.5 * legato; // Longer, more natural tones
-            // Gentle attack and release for natural sounds
-            env = EnvGen.kr(Env.perc(0.05, dur, curve: -2), gate, doneAction: 2);
-            // Pure sine with subtle fifth harmonic for natural character
-            sig = SinOsc.ar(freq) + (SinOsc.ar(freq * 1.5) * 0.15);
-            sig = sig * env * amp;
-            // Add very slight chorus effect for organic quality
-            sig = sig + DelayC.ar(sig, 0.02, SinOsc.kr(0.1, 0, 0.005, 0.005)) * 0.3;
-            Out.ar(0, Pan2.ar(sig, pan));
-        }).add;
+        // Simple placeholder SynthDef - provides basic sound when audio files are missing
+        SynthDef(\simplePlaceholder, { |freq=220, amp=0.5, fadeTime=5.0, gate=1, slotIndex=0|
+            var sig, env, mod, filterFreq;
 
-        SynthDef(\placeholderSaw, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur, filterEnv;
-            dur = 0.3 * legato;
-            // More mechanical envelope for industrial sound
-            env = EnvGen.kr(Env.perc(0.01, dur, curve: 0), gate, doneAction: 2);
-            // Filter envelope for movement
-            filterEnv = EnvGen.kr(Env.perc(0.05, dur * 1.5, curve: -4), gate);
-            // Saw wave with sub-oscillator for industrial era power
-            sig = Saw.ar(freq) + (Saw.ar(freq * 0.5) * 0.4);
-            // Moving filter typical of early industrial synth sounds
-            sig = LPF.ar(sig, 500 + (filterEnv * 2500));
-            sig = sig * env * amp * 0.4;
-            Out.ar(0, Pan2.ar(sig, pan));
-        }).add;
+            // Sustain envelope with proper fade in/out
+            // gate=1 keeps the sound playing, gate=0 triggers release phase
+            // doneAction: 2 frees the synth after release completes
+            env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
 
-        SynthDef(\placeholderSquare, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur, pwm;
-            dur = 0.2 * legato;
-            env = EnvGen.kr(Env.perc(0.01, dur), gate, doneAction: 2);
-            // Pulse width modulation for "modern" character
-            pwm = SinOsc.kr(3).range(0.3, 0.7);
-            sig = Pulse.ar(freq, pwm) * env * amp * 0.35;
-            // Resonant filter for modern 80s/90s synth character
-            sig = RLPF.ar(sig, 1800 * (1 + (env * 2)), 0.6);
-            // Stereo spread
-            sig = Pan2.ar(sig, SinOsc.kr(0.4).range(-0.3, 0.3) + pan);
-            Out.ar(0, sig);
-        }).add;
-
-        SynthDef(\placeholderPad, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur, chorus, detune;
-            dur = 0.8 * legato; // Longer for pad-like sound
-            // Slow attack, slow release for current era ambient pads
-            env = EnvGen.kr(Env.perc(0.2, dur, curve: -3), gate, doneAction: 2);
-            // Detuned oscillators for richness - current electronic music pads
-            detune = 0.01;
-            sig = Mix([
-                SinOsc.ar(freq * (1 - detune)),
-                SinOsc.ar(freq),
-                SinOsc.ar(freq * (1 + detune)),
-                Saw.ar(freq * 2) * 0.2 // Upper harmonic with saw
+            // Different modulation per slot for variety
+            mod = Select.kr(slotIndex, [
+                // Very slow bass drone (slot 0) - slowed down for more stability
+                SinOsc.kr(0.05).range(0.98, 1.02),
+                // Medium rhythmic element (slot 1)
+                SinOsc.kr(0.5).range(0.95, 1.05),
+                // Fast high element (slot 2)
+                SinOsc.kr(1.0).range(0.93, 1.07)
             ]);
-            // Dynamic filtering
-            sig = RLPF.ar(sig, 800 + SinOsc.kr(0.1).range(200, 1200), 0.5);
-            // Add chorus effect for lush sound
-            chorus = DelayC.ar(sig, 0.03, SinOsc.kr([0.15, 0.16]).range(0.01, 0.03)) * 0.4;
-            sig = sig + chorus;
-            sig = sig * env * amp * 0.25;
-            Out.ar(0, Pan2.ar(sig, pan));
-        }).add;
 
-        SynthDef(\placeholderBell, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env;
-            // Define dur first before using it
-            var dur = 0.6 * legato;
+            // Create a signal based on slot index
+            sig = Select.ar(slotIndex, [
+                // Bass drone (sine + subtle saw) - increased volume for the bass component
+                SinOsc.ar(freq * mod) * 0.8 + (Saw.ar(freq * 0.5) * 0.4),
+                // Mid range (triangle + pulse)
+                LFTri.ar(freq * mod) * 0.6 + (Pulse.ar(freq * mod * 1.01, 0.3) * 0.2),
+                // High range (FM-like sound)
+                SinOsc.ar(freq * mod + (SinOsc.ar(freq * 3) * 20))
+            ]);
 
-            // Carefully tuned harmonics for future bell-like tones
-            var harmonics = [1, 2.38, 3.95, 5.1, 6.8];
-            // Different envelope for each harmonic
-            var envs = Array.fill(5, { |i|
-                // Shorter decay for higher harmonics
-                var envDur = dur * legato * (1 - (i * 0.1));
-                EnvGen.kr(Env.perc(0.001, envDur, curve: -4 - i), gate);
-            });
+            // Filter based on slot
+            filterFreq = Select.kr(slotIndex, [500, 2000, 4000]);
+            sig = LPF.ar(sig, filterFreq);
 
-            env = EnvGen.kr(Env.perc(0.001, dur), gate, doneAction: 2);
+            // Add some stereo width
+            sig = Pan2.ar(sig, SinOsc.kr(0.1).range(-0.5, 0.5));
 
-            // Mix harmonics with individual envelopes
-            sig = Mix.fill(5, { |i|
-                SinOsc.ar(freq * harmonics[i]) * 0.2 * envs[i]
-            });
-
-            // Add digital artifacts for future feel
-            sig = sig + HPF.ar(sig.clip(-0.5, 0.5) * 0.05, 3000);
-            sig = sig * env * amp * 0.4;
-
-            // Stereo delay for futuristic space
-            sig = sig + DelayL.ar(sig, 0.05, [0.03, 0.05]) * 0.2;
-
-            Out.ar(0, Pan2.ar(sig, pan));
-        }).add;
-
-        SynthDef(\placeholderNoise, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur, noiseSig, ringMod;
-            dur = 0.25 * legato; // Short and harsh for dystopian character
-            // Sharp attack, faster decay for aggressive dystopian sound
-            env = EnvGen.kr(Env.perc(0.005, dur, curve: 0), gate, doneAction: 2);
-
-            // Base signal - dissonant, harsh
-            sig = Pulse.ar(freq, SinOsc.kr(7).range(0.1, 0.9)) * 0.3;
-
-            // Add noise component - dystopian grit
-            noiseSig = HPF.ar(WhiteNoise.ar(0.7) * Pulse.ar(freq * 4, 0.1), 1500);
-            sig = sig + noiseSig;
-
-            // Ring modulation for harshness
-            ringMod = sig * SinOsc.ar(freq * 7.1) * 0.2;
-            sig = sig + ringMod;
-
-            // Distort the result
-            sig = sig.tanh * 1.2;
-
-            // Heavy filter modulation
-            sig = BPF.ar(sig, freq * SinOsc.kr(3).range(0.5, 2.5), 0.3);
-
-            sig = sig * env * amp * 0.25;
-            Out.ar(0, Pan2.ar(sig, pan));
-        }).add;
-
-        SynthDef(\placeholderFM, { |amp=0.5, freq=440, gate=1, pan=0, legato=0.8, slotIndex=0|
-            var sig, env, dur, mod, modenv;
-            dur = 0.7 * legato; // Longer for ruins era's nature return
-            // Gentle envelope for ruins era - return to nature but with complexity
-            env = EnvGen.kr(Env.perc(0.04, dur, curve: -2), gate, doneAction: 2);
-
-            // Modulation envelope - starts strong then becomes gentle
-            modenv = EnvGen.kr(Env.perc(0.01, dur * 1.5, curve: -3), gate);
-
-            // FM synthesis with multiple carriers - nature with a twist
-            mod = SinOsc.ar(freq * [1.5, 2.5, 0.75], 0, modenv * [100, 200, 50]);
-            sig = SinOsc.ar(freq + mod);
-
-            // Mix with a gentle sine for foundational warmth
-            sig = Mix(sig) * 0.3 + SinOsc.ar(freq * 0.5) * 0.2;
-
-            // Filter sweeping down - like returning to earth
-            sig = LPF.ar(sig, 3000 * (1 - (env * 0.5)) + 500);
-
-            sig = sig * env * amp * 0.35;
-
-            // Gentle stereo effect
-            sig = Pan2.ar(sig, SinOsc.kr(0.1).range(-0.2, 0.2) + pan);
+            // Apply envelope and amplitude
+            sig = sig * env * amp * 0.5; // Lower volume to avoid surprises
 
             Out.ar(0, sig);
         }).add;
@@ -1177,38 +881,44 @@ s.waitForBoot {
 
     // Test function to play all placeholder sounds in sequence
     ~testAllPlaceholderSounds = {
-        var eras, placeholders, testRoutine;
+        var eras, testRoutine;
 
         // List of all eras to test
         eras = [\wilderness, \pre_industrial, \early_industrial, \late_industrial,
                  \modern, \current, \future, \dystopia, \ruins];
 
-        placeholders = List.new;
-
         // Start the test routine
         "=== STARTING PLACEHOLDER SOUND TEST ===".postln;
-        "This will play each placeholder sound for each era and slot for a few seconds".postln;
+        "This will play all three slots (bass, mid, high) simultaneously for each era".postln;
+        "Each era's sounds will play for 5 seconds, then fade out for 1 second before the next era".postln;
+
+        // stop any existing music
+        ~stopMusic.();
 
         testRoutine = Routine({
             eras.do { |era|
-                // For each era, test all three slot types (drone, chord, melody)
-                3.do { |slot|
-                    "Testing era: % - slot: %".postln;
-                    "  Creating placeholder...".format(era, slot).postln;
-
-                    // Create placeholder for this era and slot
-                    placeholders.add(~createPlaceholderMusic.(era.asString, slot, 0.7));
-
-                    // Let it play for a few seconds
-                    3.wait;
-
-                    // Stop current placeholder before moving to next
-                    "  Stopping placeholder for era: % - slot: %".format(era, slot).postln;
-                    placeholders.last.stop;
-
-                    // Brief pause before next sound
-                    0.5.wait;
+                var placeholders;
+                
+                "=== Testing era: % with all slots simultaneously ===".format(era).postln;
+                
+                // Create three placeholders (bass, mid, high) for this era at once
+                placeholders = Array.fill(3, { |slot|
+                    "Creating placeholder for era % - slot %".format(era, slot).postln;
+                    ~createPlaceholderMusic.(era.asString, slot, 0.7);
+                });
+                
+                // Let them play together for a moment (5 seconds)
+                "Playing all slots for era % simultaneously...".format(era).postln;
+                5.0.wait;
+                
+                // Release all placeholders at once
+                "Releasing all placeholders for era %".format(era).postln;
+                placeholders.do { |synth, i|
+                    synth.set(\gate, 0);
                 };
+                
+                // Wait for release to complete (based on fadeTime parameter)
+                1.5.wait;
             };
 
             "=== PLACEHOLDER SOUND TEST COMPLETE ===".postln;
@@ -1220,15 +930,28 @@ s.waitForBoot {
         testRoutine;
     };
 
+    ~stopMusic = {
+        "Stopping all music...".postln;
+
+        if(musicLoops.notNil) {
+            musicLoops.keysValuesDo { |era, loops|
+                loops.do { |loopInfo, i|
+                    if(loopInfo[\buffer].notNil) { loopInfo[\buffer].free };
+                    if(loopInfo[\synth].notNil) {
+                        "Stopping music loop % for era %".format(i, era).postln;
+                        // Free the synth node whether it's a placeholder or regular buffer player
+                        loopInfo[\synth].free;
+                    };
+                };
+            };
+        };
+    };
+
     // Cleanup function to ensure proper release of resources
     ~cleanup = {
         "Performing proper cleanup of audio resources...".postln;
 
-        // Free all active synths and groups
-        if(mainGroup.notNil) { mainGroup.free };
-        if(envGroup.notNil) { envGroup.free };
-        if(musicGroup.notNil) { musicGroup.free };
-        if(fxGroup.notNil) { fxGroup.free };
+        ~stopMusic.();
 
         // Free all buffers
         if(environmentLayers.notNil) {
@@ -1238,22 +961,11 @@ s.waitForBoot {
             };
         };
 
-        if(musicLoops.notNil) {
-            musicLoops.keysValuesDo { |era, loops|
-                loops.do { |loopInfo, i|
-                    if(loopInfo[\buffer].notNil) { loopInfo[\buffer].free };
-                    if(loopInfo[\synth].notNil) {
-                        if(loopInfo[\isPlaceholder] == true) {
-                            // Direct stop for placeholder sounds
-                            if(loopInfo[\player].notNil) { loopInfo[\player].stop };
-                        } {
-                            // For regular synths
-                            loopInfo[\synth].free;
-                        };
-                    };
-                };
-            };
-        };
+        // Free all active synths and groups
+        if(mainGroup.notNil) { mainGroup.free };
+        if(envGroup.notNil) { envGroup.free };
+        if(musicGroup.notNil) { musicGroup.free };
+        if(fxGroup.notNil) { fxGroup.free };
 
         // Release all buses
         if(speakingBus.notNil) { speakingBus.free };
@@ -1285,11 +997,9 @@ s.waitForBoot {
 
     // Run initialization
     ~init.();
-
-	~testAllPlaceholderSounds.();
 };
 
 // EOF
-m = NetAddr("127.0.0.1", 5568); // loopback
-m.sendMsg("/spacetime", "forest", "wilderness")
+//m = NetAddr("127.0.0.1", 5568); // loopback
+//m.sendMsg("/spacetime", "forest", "wilderness")
 
