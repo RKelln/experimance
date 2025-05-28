@@ -419,10 +419,7 @@ s.waitForBoot {
 
         // Get layers that match current context (biome + era + active tags)
         matchingTags = activeTags.asArray;
-        "Active tags: % (types: %)".format(
-            matchingTags, 
-            matchingTags.collect { |t| t.class.name }
-        ).postln;
+        //"Active tags: %".format(matchingTags).postln;
         matching = if(configurations[\layers].notNil) {
             configurations[\layers].select { |layer|
                 var layerTags = layer[\tags];
@@ -435,7 +432,7 @@ s.waitForBoot {
         };
         // debugging, if matching layers are found
         if (matching.size > 0) {
-            "Matching environmental layers: %".format(matching.size).postln;
+            //"Matching environmental layers: %".format(matching.size).postln;
             matching.do { |layer|
                 "Adding: %, tags: %".format(layer[\path], layer[\tags]).postln;
             };
@@ -470,7 +467,7 @@ s.waitForBoot {
         // and era != currentEra, update music loops
         if (currentEra.notNil and: { currentEra != prevEra and: {era != currentEra }}) {
             "Updating music loops % -> %".format(prevEra, currentEra).postln;
-            configurations[\music_loops].postln;
+            //configurations[\music_loops].postln;
 
             eraLoops = if(configurations[\music_loops].notNil) {
                 // Try to get era loops first with string key
@@ -484,8 +481,7 @@ s.waitForBoot {
 
             if(eraLoops.notNil) {
                 "Era loops for %: %".format(currentEra, eraLoops).postln;
-
-                musicLoops.postln;
+                //musicLoops.postln;
 
                 if (musicLoops.includesKey(currentEra).not) {
                     "New era: %".format(currentEra).postln;

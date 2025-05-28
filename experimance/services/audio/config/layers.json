@@ -116,7 +116,7 @@
         "tags": [
             "pre_industrial",
             "transportation",
-            "hunting trail"
+            "hunting"
         ],
         "prompt": "Footsteps on a soft earth trail, leaves crunching, distant animal calls"
     },
@@ -126,7 +126,8 @@
             "river",
             "pre_industrial",
             "transportation",
-            "river, dugout canoe"
+            "river",
+            "canoe"
         ],
         "prompt": "Wooden canoe gliding through water, gentle paddling, birdsong"
     },
@@ -145,7 +146,7 @@
             "desert",
             "pre_industrial",
             "transportation",
-            "camel caravan"
+            "caravan"
         ],
         "prompt": "Camels walking on sand, bells jingling, light wind"
     },
@@ -155,7 +156,8 @@
             "river",
             "pre_industrial",
             "transportation",
-            "river, wood canoe"
+            "river",
+            "canoe"
         ],
         "prompt": "Canoe moving on a quiet river, paddles, forest wildlife"
     },
@@ -323,7 +325,7 @@
         "tags": [
             "pre_industrial",
             "business",
-            "caravan trading stops"
+            "caravan"
         ],
         "prompt": "Camels settling, merchants haggling, market bustle"
     },
@@ -387,7 +389,8 @@
             "river",
             "industrial",
             "transportation",
-            "river, steamboat"
+            "river",
+            "steamboat"
         ],
         "prompt": "Paddle steamer churning, water, passengers chatting"
     },
@@ -406,7 +409,8 @@
             "river",
             "industrial",
             "transportation",
-            "river, barge"
+            "river",
+            "barge"
         ],
         "prompt": "Barge creaks, water movement, workers loading"
     },
@@ -433,7 +437,7 @@
         "tags": [
             "industrial",
             "housing",
-            "logging camp, clearcut"
+            "logging camp"
         ],
         "prompt": "Saws cutting, workers shouting, falling trees"
     },
@@ -451,7 +455,7 @@
         "tags": [
             "industrial",
             "housing",
-            "plantation houses"
+            "plantation"
         ],
         "prompt": "Distant field work, wind in trees, footsteps on wood"
     },
@@ -460,7 +464,8 @@
         "tags": [
             "industrial",
             "industry",
-            "factory, pollution"
+            "factory",
+            "pollution"
         ],
         "prompt": "Machinery thumping, hiss of steam, pulleys and belts"
     },
@@ -469,7 +474,7 @@
         "tags": [
             "industrial",
             "industry",
-            "mine, tailings"
+            "mine"
         ],
         "prompt": "Distant blasts, rocks falling, metal on rock"
     },
@@ -614,7 +619,8 @@
             "river",
             "current",
             "transportation",
-            "river, bridge"
+            "river",
+            "bridge"
         ],
         "prompt": "Traffic crossing, water below, city noises"
     },
@@ -704,7 +710,7 @@
         "tags": [
             "current",
             "housing",
-            "modern research station"
+            "research station"
         ],
         "prompt": "Computer hum, wind, radio chatter"
     },
@@ -713,7 +719,7 @@
         "tags": [
             "current",
             "industry",
-            "commercial agriculture fields"
+            "commercial agriculture"
         ],
         "prompt": "Machinery in fields, birds, wind in crops"
     },
@@ -722,7 +728,7 @@
         "tags": [
             "current",
             "industry",
-            "factory, pollution"
+            "factory"
         ],
         "prompt": "Continuous machines, conveyor beeps, metal clanks"
     },
@@ -731,7 +737,7 @@
         "tags": [
             "current",
             "industry",
-            "oil refinery, pollution"
+            "oil refinery"
         ],
         "prompt": "Engines, hiss of gas, loud machinery"
     },
@@ -759,7 +765,7 @@
             "river",
             "current",
             "industry",
-            "hydroelectric dam, river, lake"
+            "hydroelectric dam"
         ],
         "prompt": "Rushing water, turbines, echoing mechanical hum"
     },
@@ -768,7 +774,7 @@
         "tags": [
             "current",
             "industry",
-            "large dam and reservoir"
+            "large dam"
         ],
         "prompt": "Water rushing, gates opening, machinery"
     },
@@ -795,7 +801,7 @@
         "tags": [
             "current",
             "industry",
-            "tourism, beaches"
+            "tourist beach"
         ],
         "prompt": "Waves, laughter, music, volleyball"
     },
@@ -976,7 +982,8 @@
             "river",
             "future",
             "transportation",
-            "river, bridge"
+            "river",
+            "bridge"
         ],
         "prompt": "Silent public transit, water below, birds"
     },
