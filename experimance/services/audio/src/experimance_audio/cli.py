@@ -58,6 +58,12 @@ class AudioCli(cmd.Cmd):
         self.current_biome = "temperate_forest"  # Default biome
         self.current_era = "wilderness"  # Default era
         self.active_tags = set([self.current_biome, self.current_era])
+        
+        # Track volume levels (0.0 to 1.0)
+        self.master_volume = 1.0
+        self.environment_volume = 1.0
+        self.music_volume = 1.0
+        self.sfx_volume = 1.0
     
     def do_start_sc(self, arg):
         """Start SuperCollider with the default script.
@@ -221,13 +227,84 @@ class AudioCli(cmd.Cmd):
         Example: transition start
         """
         if arg not in ["start", "stop"]:
-            print("Usage: transition <start|stop>")
+            print("Error: Please use 'start' or 'stop'")
             return
             
         start = (arg == "start")
         success = self.osc.transition(start)
         
         print(f"Transition: {arg}" + (" (success)" if success else " (failed)"))
+    
+    def do_volume(self, arg):
+        """Set volume levels.
+        
+        Usage: volume <type> <level>
+        Where: <type> is one of: master, environment, music, sfx
+               <level> is a float between 0.0 and 1.0
+        
+        Examples:
+          volume master 0.8
+          volume music 0.5
+          volume environment 0.7
+          volume sfx 0.9
+        """
+        args = arg.split()
+        if len(args) != 2:
+            print("Error: Please provide both volume type and level")
+            print("Usage: volume <type> <level>")
+            return
+        
+        volume_type, level_str = args
+        
+        if volume_type not in ["master", "environment", "music", "sfx"]:
+            print("Error: Volume type must be one of: master, environment, music, sfx")
+            return
+        
+        try:
+            level = float(level_str)
+            if not (0.0 <= level <= 1.0):
+                print("Error: Volume level must be between 0.0 and 1.0")
+                return
+        except ValueError:
+            print("Error: Volume level must be a float")
+            return
+        
+        # Use the appropriate method based on volume type
+        success = False
+        if volume_type == "master":
+            success = self.osc.set_master_volume(level)
+            self.master_volume = level  # Track the volume level
+        elif volume_type == "environment":
+            success = self.osc.set_environment_volume(level)
+            self.environment_volume = level  # Track the volume level
+        elif volume_type == "music":
+            success = self.osc.set_music_volume(level)
+            self.music_volume = level  # Track the volume level
+        elif volume_type == "sfx":
+            success = self.osc.set_sfx_volume(level)
+            self.sfx_volume = level  # Track the volume level
+        
+        print(f"Set {volume_type} volume to {level}" + (" (success)" if success else " (failed)"))
+    
+    def help_volume(self):
+        """Print detailed help for the volume command."""
+        print("\nVolume Control Commands")
+        print("=====================")
+        print("Usage: volume <type> <level>")
+        print("  where <type> is one of:")
+        print("    master      - controls overall volume")
+        print("    environment - controls environmental sound layers")
+        print("    music       - controls music loops")
+        print("    sfx         - controls sound effects")
+        print("  and <level> is a value between 0.0 and 1.0")
+        print("\nExamples:")
+        print("  volume master 0.8     # Set master volume to 80%")
+        print("  volume music 0.5      # Set music volume to 50%")
+        print("  volume environment 0.7 # Set environment volume to 70%")
+        print("  volume sfx 0.9        # Set sound effects volume to 90%")
+        print("\nNote: Volume changes take effect immediately.")
+        print("      Master volume affects all other volumes.")
+        print("      The actual volume will be: <specific volume> × <master volume>")
     
     def do_reload(self, arg):
         """Reload audio configurations in SuperCollider.
@@ -252,6 +329,13 @@ class AudioCli(cmd.Cmd):
         print(f"Era: {self.current_era}")
         print(f"Active tags: {', '.join(sorted(self.active_tags))}")
         print(f"OSC connection: {self.osc.host}:{self.osc.port}")
+        
+        # Get volume information (we just use the stored values as there's no way to query SuperCollider)
+        print("\n--- Volume Levels ---")
+        print(f"Master volume: {int(self.master_volume * 100)}%")
+        print(f"Environment volume: {int(self.environment_volume * 100)}%")
+        print(f"Music volume: {int(self.music_volume * 100)}%")
+        print(f"SFX volume: {int(self.sfx_volume * 100)}%")
         print("=========================")
     
     def do_layers(self, arg):

@@ -153,6 +153,71 @@ class OscBridge:
             logger.error(f"Error sending speaking OSC message: {e}")
             return False
     
+    def set_volume(self, volume_type: str, value: float) -> bool:
+        """Set volume level for a specific audio category.
+        
+        Args:
+            volume_type: Type of volume to set ('master', 'environment', 'music', 'sfx')
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        try:
+            assert self.client is not None, "OSC client is not initialized"
+            # Ensure volume is in valid range
+            value = max(0.0, min(1.0, value))
+            self.client.send_message(f"/volume/{volume_type}", [value])
+            logger.debug(f"Set {volume_type} volume: {value}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending volume OSC message: {e}")
+            return False
+    
+    def set_master_volume(self, value: float) -> bool:
+        """Set master volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        return self.set_volume("master", value)
+    
+    def set_environment_volume(self, value: float) -> bool:
+        """Set environment sounds volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        return self.set_volume("environment", value)
+    
+    def set_music_volume(self, value: float) -> bool:
+        """Set music volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        return self.set_volume("music", value)
+    
+    def set_sfx_volume(self, value: float) -> bool:
+        """Set sound effects volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        return self.set_volume("sfx", value)
+    
     def transition(self, start: bool) -> bool:
         """Trigger transition sound effect.
         

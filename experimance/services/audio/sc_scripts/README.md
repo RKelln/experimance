@@ -78,7 +78,22 @@ The script responds to OSC messages sent to port 57120 (SuperCollider's default 
 - `/listening <start|stop>`: Signal when the agent is listening
 - `/speaking <start|stop>`: Signal when the agent is speaking
 - `/transition <start|stop>`: Signal a transition effect
+- `/volume/master <value>`: Set master volume (0.0 to 1.0)
+- `/volume/environment <value>`: Set environmental sounds volume (0.0 to 1.0)
+- `/volume/music <value>`: Set music volume (0.0 to 1.0)
+- `/volume/sfx <value>`: Set sound effects volume (0.0 to 1.0)
 - `/reload`: Reload audio configurations
+
+## Volume Control System
+
+The audio system features a layered volume control system with four independent volume controls:
+
+1. **Master Volume**: Controls the overall output level of the entire audio system
+2. **Environment Volume**: Controls the volume of environmental ambient sounds (birds, water, wind, etc.)
+3. **Music Volume**: Controls the volume of music loops and placeholder music
+4. **SFX Volume**: Controls the volume of sound effects such as UI sounds and triggers
+
+Each volume can be set independently via OSC commands, allowing fine-grained control over the audio mix. The actual output volume for each audio component is calculated as its specific volume multiplied by the master volume.
 
 ## Development Notes
 

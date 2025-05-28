@@ -30,6 +30,12 @@ s.waitForBoot {
     var currentEra = "wilderness".asSymbol;          // Default era
     var activeTags = Set["temperate_forest", "wilderness"];  // Default active tags
 
+    // Volume control variables
+    var masterVolume = 1.0;        // Master volume (0.0 to 1.0)
+    var environmentVolume = 1.0;   // Environmental sounds volume
+    var musicVolume = 1.0;         // Music loops volume
+    var sfxVolume = 1.0;           // Sound effects volume
+
     // Audio buffers and synths
     var environmentLayers;     // Dictionary of active environmental layers
     var musicLoops;            // Dictionary of active music loops
@@ -599,7 +605,7 @@ s.waitForBoot {
             isTransitioning = (status == "start");
             "Transition: %".format(isTransitioning).postln;
 
-            // Play transition sound effect
+            // Play transition effect if starting
             if(isTransitioning) {
                 transitionTrigger = configurations[\triggers].detect { |t| t[\trigger] == "transition" };
                 if(transitionTrigger.notNil && (transitionTrigger[\exists] ? false)) {
@@ -610,6 +616,58 @@ s.waitForBoot {
             };
 
         }, '/transition', nil, oscRecvPort);
+
+        // Volume control: /volume/master <value>
+        OSCdef(\volume_master, { |msg, time, addr, recvPort|
+            var value = msg[1].asFloat;
+            
+            // Ensure volume is between 0.0 and 1.0
+            masterVolume = value.clip(0.0, 1.0);
+            "Master volume set to: %".format(masterVolume).postln;
+            
+            // Update all groups with new master volume
+            mainGroup.set(\masterVolume, masterVolume);
+            
+        }, '/volume/master', nil, oscRecvPort);
+        
+        // Volume control: /volume/environment <value>
+        OSCdef(\volume_environment, { |msg, time, addr, recvPort|
+            var value = msg[1].asFloat;
+            
+            // Ensure volume is between 0.0 and 1.0
+            environmentVolume = value.clip(0.0, 1.0);
+            "Environment volume set to: %".format(environmentVolume).postln;
+            
+            // Update environment group
+            envGroup.set(\envVolume, environmentVolume);
+            
+        }, '/volume/environment', nil, oscRecvPort);
+        
+        // Volume control: /volume/music <value>
+        OSCdef(\volume_music, { |msg, time, addr, recvPort|
+            var value = msg[1].asFloat;
+            
+            // Ensure volume is between 0.0 and 1.0
+            musicVolume = value.clip(0.0, 1.0);
+            "Music volume set to: %".format(musicVolume).postln;
+            
+            // Update music group
+            musicGroup.set(\musicVolume, musicVolume);
+            
+        }, '/volume/music', nil, oscRecvPort);
+        
+        // Volume control: /volume/sfx <value>
+        OSCdef(\volume_sfx, { |msg, time, addr, recvPort|
+            var value = msg[1].asFloat;
+            
+            // Ensure volume is between 0.0 and 1.0
+            sfxVolume = value.clip(0.0, 1.0);
+            "SFX volume set to: %".format(sfxVolume).postln;
+            
+            // Update fx group
+            fxGroup.set(\sfxVolume, sfxVolume);
+            
+        }, '/volume/sfx', nil, oscRecvPort);
 
         // Reload configs: /reload
         OSCdef(\reload, { |msg, time, addr, recvPort|
@@ -771,7 +829,7 @@ s.waitForBoot {
     ~defineSynths = {
 
         // Simple placeholder SynthDef - provides basic sound when audio files are missing
-        SynthDef(\simplePlaceholder, { |freq=220, amp=0.5, fadeTime=5.0, gate=1, slotIndex=0|
+        SynthDef(\simplePlaceholder, { |freq=220, amp=0.5, fadeTime=5.0, gate=1, slotIndex=0, masterVolume=1.0, musicVolume=1.0|
             var sig, env, mod, filterFreq;
 
             // Sustain envelope with proper fade in/out
@@ -806,36 +864,36 @@ s.waitForBoot {
             // Add some stereo width
             sig = Pan2.ar(sig, SinOsc.kr(0.1).range(-0.5, 0.5));
 
-            // Apply envelope and amplitude
-            sig = sig * env * amp * 0.5; // Lower volume to avoid surprises
+            // Apply envelope, amplitude and volume controls
+            sig = sig * env * amp * 0.5 * musicVolume * masterVolume; // Apply both music and master volume
 
             Out.ar(0, sig);
         }).add;
 
         // Environmental sound player (looping with crossfade)
-        SynthDef(\loopPlayer, { |buf, amp=1.0, fadeTime=3.0, duck=1.0, gate=1|
+        SynthDef(\loopPlayer, { |buf, amp=1.0, fadeTime=3.0, duck=1.0, gate=1, masterVolume=1.0, envVolume=1.0|
             var sig, env;
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
-            sig = sig * env * amp * duck;
+            sig = sig * env * amp * duck * envVolume * masterVolume; // Apply both environment and master volume
             Out.ar(0, sig);
         }).add;
 
         // Music loop player (looping with crossfade, ducking by slot)
-        SynthDef(\musicPlayer, { |buf, amp=1.0, fadeTime=5.0, slotIndex=0, gate=1|
+        SynthDef(\musicPlayer, { |buf, amp=1.0, fadeTime=5.0, slotIndex=0, gate=1, masterVolume=1.0, musicVolume=1.0|
             var sig, env;
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
-            sig = sig * env * amp;
+            sig = sig * env * amp * musicVolume * masterVolume; // Apply both music and master volume
             Out.ar(0, sig);
         }).add;
 
         // One-shot trigger player
-        SynthDef(\triggerPlayer, { |buf, amp=1.0|
+        SynthDef(\triggerPlayer, { |buf, amp=1.0, masterVolume=1.0, sfxVolume=1.0|
             var sig, env;
             env = EnvGen.kr(Env.linen(0.01, BufDur.kr(buf), 0.1), doneAction: 2);
-            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf));
-            sig = sig * env * amp;
+            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), doneAction: 2);
+            sig = sig * env * amp * sfxVolume * masterVolume; // Apply both SFX and master volume
             Out.ar(0, sig);
         }).add;
     };
@@ -867,6 +925,14 @@ s.waitForBoot {
 
         // Set up OSC responders
         ~setupOSC.();
+
+        // Apply initial volume settings to all groups
+        "Setting up initial volume controls...".postln;
+        mainGroup.set(\masterVolume, masterVolume);
+        envGroup.set(\envVolume, environmentVolume);
+        musicGroup.set(\musicVolume, musicVolume);
+        fxGroup.set(\sfxVolume, sfxVolume);
+        "Volume controls initialized.".postln;
 
         // Update audio with default context
         "Initializing audio context with default values...".postln;

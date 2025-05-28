@@ -86,6 +86,12 @@ class AudioService(ZmqSubscriberService):
         self.current_era = None
         self.active_tags = set()  # Track which tags are active
         
+        # Volume settings (0.0 to 1.0)
+        self.master_volume = 1.0
+        self.environment_volume = 1.0
+        self.music_volume = 1.0
+        self.sfx_volume = 1.0
+        
     async def start(self):
         """Start the audio service."""
         # Initialize the subscriber
@@ -275,15 +281,89 @@ class AudioService(ZmqSubscriberService):
             logger.debug(f"Added tag: {tag}")
     
     def remove_tag(self, tag: str):
-        """Remove a tag from the active set and notify SuperCollider.
+        """Remove a tag from the active tags set.
         
         Args:
-            tag: Tag to remove
+            tag: The tag to remove
         """
         if tag in self.active_tags:
             self.active_tags.remove(tag)
             self.osc.exclude_tag(tag)
             logger.debug(f"Removed tag: {tag}")
+    
+    def set_volume(self, volume_type: str, value: float) -> bool:
+        """Set volume level for a specific audio category.
+        
+        Args:
+            volume_type: Type of volume to set ('master', 'environment', 'music', 'sfx')
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if volume was set successfully
+        """
+        # Ensure value is within range
+        value = max(0.0, min(1.0, value))
+        
+        # Set the appropriate volume parameter
+        if volume_type == "master":
+            self.master_volume = value
+            return self.osc.set_master_volume(value)
+        elif volume_type == "environment":
+            self.environment_volume = value
+            return self.osc.set_environment_volume(value)
+        elif volume_type == "music":
+            self.music_volume = value
+            return self.osc.set_music_volume(value)
+        elif volume_type == "sfx":
+            self.sfx_volume = value
+            return self.osc.set_sfx_volume(value)
+        else:
+            logger.error(f"Unknown volume type: {volume_type}")
+            return False
+    
+    def set_master_volume(self, value: float) -> bool:
+        """Set master volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if volume was set successfully
+        """
+        return self.set_volume("master", value)
+    
+    def set_environment_volume(self, value: float) -> bool:
+        """Set environment sounds volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if volume was set successfully
+        """
+        return self.set_volume("environment", value)
+    
+    def set_music_volume(self, value: float) -> bool:
+        """Set music volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if volume was set successfully
+        """
+        return self.set_volume("music", value)
+    
+    def set_sfx_volume(self, value: float) -> bool:
+        """Set sound effects volume level.
+        
+        Args:
+            value: Volume level (0.0 to 1.0)
+            
+        Returns:
+            bool: True if volume was set successfully
+        """
+        return self.set_volume("sfx", value)
     
     def reload_audio_configs(self):
         """Reload audio configurations and notify SuperCollider."""
