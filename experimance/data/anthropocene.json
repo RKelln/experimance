@@ -1,0 +1,405 @@
+{
+    "base_prompt": {
+        "prompt": "top down satellite aerial photography",
+        "style": "hills, valleys, highly detailed",
+        "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens, vein, tentacle"
+    },
+    "eras": {
+        "wilderness": {
+            "prompt": "preindustrial landscape, (wilderness)",
+            "negative": "modern, plastic, roads, buildings, humans",
+            "lora": ["<lora:xl_more_art-full_v1:0.6>"]
+        },
+        "pre_industrial": {
+            "prompt": "preindustrial landscape, 1600s, subsistence agriculture",
+            "negative": "(paved) roads, modern, plastic",
+            "lora": ["<lora:xl_more_art-full_v1:0.6>"]
+        },
+        "industrial": {
+            "prompt": "industrial landscape, 1800s",
+            "style": "brick and wood buildings, in the style of (Burtynsky:0.5) and (Richter:0.5), smokestacks, pollution, dirty",
+            "negative": "(paved), pavement, modern vehicles",
+            "lora": ["<lora:xl_more_art-full_v1:0.7>"]
+        },
+        "current": {
+            "prompt": "modern urban landscape, dense urban development",
+            "style": "busy roads, in the style of (Burtynsky:1.1) and (Richter:1.1), vibrant (colorful), entangled, chaotic, dense, crowded, traffic, parking lots",
+            "negative": "",
+            "lora": ["<lora:xl_more_art-full_v1:0.8>"]
+        },
+        "solarpunk": {
+            "prompt": "solarpunk urban landscape, eco-friendly, sustainable architecture, high density city",
+            "style": "in the style of (Burtynsky:0.5) and (Richter:0.5), vibrant (colorful), solar, green roofs, gardens",
+            "negative": "pollution, smog, traffic",
+            "lora": ["<lora:xl_more_art-full_v1:0.8>"]
+        },
+        "post_apocalyptic": {
+            "prompt": "post-apocalyptic landscape, abandoned, (overgrown)",
+            "style": "in the style of (Burtynsky:1.1) and (Richter:0.5), abandoned buildings, parking lots, overgrown, decay, rust, ruin, flooded",
+            "negative": "people, vehicles",
+            "lora": ["<lora:xl_more_art-full_v1:0.8>"]
+        }
+    },
+    "sectors": ["transportation", "housing", "industry", "business", "culture"],
+    "sector_defaults": {
+        "wilderness": {
+            "transportation": [],
+            "housing": [],
+            "industry": [],
+            "business": [],
+            "culture": []
+        },
+        "pre_industrial": {
+            "transportation": ["hunting trail", "river, dugout canoe"],
+            "housing": ["traditional dwellings", "tribal camp"],
+            "industry": ["", "subsistence agriculture"],
+            "business": ["", "village market"],
+            "culture": ["", "tribal meeting ground", "ceremonial gathering site"]
+        },
+        "industrial": {
+            "transportation": ["dirt roads", "railroad", "carts", "river, steamboat", "river, barge"],
+            "housing": ["village", "town"],
+            "industry": ["factory, pollution", "mine, tailings", "farm, clearcut", "oil extraction, pollution"],
+            "business": ["trading post", "hotel", "train station"],
+            "culture": ["church", "town square", "community hall", "theatre", "clock tower"]
+        },
+        "current": {
+            "transportation": ["highways", "superhighway", "river, bridge", "airport"],
+            "housing": ["apartments", "mansion", "suburban housing"],
+            "industry": ["commercial agriculture fields", "factory, pollution", "oil refinery, pollution", "power plant"],
+            "business": ["shopping mall", "box stores", "strip mall", "skyscrapers", "garbage dump"],
+            "culture": ["stadium", "park", "museum", "amusement park", "pool"]
+        },
+        "solarpunk": {
+            "transportation": ["highways", "river, bridge", "high-speed train"],
+            "housing": ["eco-villages", "co-op apartments"],
+            "industry": ["solar farms", "wind farm", "organic farming", "recycling center"],
+            "business": ["market"],
+            "culture": ["stadium", "park", "museum", "theatre", "public art sculpture", "community center"]
+        },
+        "post_apocalyptic": {
+            "transportation": ["abandoned highways", "collapsed bridges", "derelict airports"],
+            "housing": ["favelas", "crumbling apartments", "fortified mansion", "military base", "makeshift shelter"],
+            "industry": ["derelict factories", "abandoned refinery", "ruined power plant", "subsistence farming"],
+            "business": ["deserted shopping mall", "ruined strip mall", "ruined box stores", "crumbling skyscrapers"],
+            "culture": ["empty stadium", "overgrown park", "decaying amusement park"]
+        }
+    },
+    "locations": {
+        "rainforest": {
+            "pre_industrial": {
+                "transportation": ["river, wood canoe"],
+                "housing": [],
+                "industry": ["swidden agriculture"],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["logging camp, clearcut"],
+                "industry": ["sawmill, clearcut", "ranch, clearcut", "plantation, clearcut"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": ["favelas"],
+                "industry": ["ranch", "plantation"],
+                "business": [],
+                "culture": []
+            },
+            "post_apocalyptic": {
+                "transportation": [],
+                "housing": ["favelas"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            }
+        },
+        "temperate_forest": {
+            "pre_industrial": {
+                "transportation": ["horse trail"],
+                "housing": ["log cabin"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["logging camp, clearcut"],
+                "industry": ["sawmill, clearcut", "windmill", "papermill, clearcut"],
+                "business": [],
+                "culture": []
+            }
+        },
+        "boreal_forest": {
+            "pre_industrial": {
+                "transportation": ["horse trail"],
+                "housing": ["log cabin"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["logging camp, clearcut"],
+                "industry": ["sawmill, clearcut", "windmill", "papermill, clearcut"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": [],
+                "industry": ["papermill"],
+                "business": [],
+                "culture": []
+            }
+        },
+        "deciduous_forest": {
+            "pre_industrial": {
+                "transportation": ["horse trail"],
+                "housing": ["log cabin"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["logging camp, clearcut"],
+                "industry": ["sawmill, clearcut", "windmill", "papermill, clearcut"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": [],
+                "industry": ["papermill"],
+                "business": [],
+                "culture": []
+            }
+        },
+        "swamp": {
+            "pre_industrial": {
+                "transportation": ["canoes", "rafts"],
+                "housing": ["stilt houses", "floating villages"],
+                "industry": ["subsistence fishing"],
+                "business": ["floating markets"],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": ["barge", "riverboat"],
+                "housing": ["small towns on stilts"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "solarpunk": {
+                "transportation": [],
+                "housing": ["sustainable stilt houses"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            }
+        },
+        "desert": {
+            "pre_industrial": {
+                "transportation": ["camel caravan"],
+                "housing": ["nomadic tents", "oasis camp"],
+                "industry": ["oasis farming"],
+                "business": ["caravan trading stops"],
+                "culture": ["marketplace"]
+            },
+            "current": {
+                "transportation": [],
+                "housing": ["fortified compounds"],
+                "industry": ["oil wells"],
+                "business": ["tourist resort"],
+                "culture": []
+            }
+        },
+        "mountain": {
+            "pre_industrial": {
+                "transportation": [],
+                "housing": ["mountain village"],
+                "industry": ["terraced farming"],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["mining camp"],
+                "industry": ["mining operation"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": ["villa"],
+                "industry": ["hydroelectric dam, river, lake"],
+                "business": ["tourist resort", "ski resort, winter, snow"],
+                "culture": []
+            }
+        },
+        "tropical_island": {
+            "pre_industrial": {
+                "transportation": ["tribal fishing canoes"],
+                "housing": ["fishing village"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": ["ports and harbors"],
+                "housing": ["plantation houses"],
+                "industry": ["plantation"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": ["tourist resort"],
+                "industry": ["tourism, beaches", "fishing"],
+                "business": [],
+                "culture": ["sailboats", "yachts"]
+            }
+        },
+        "river": {
+            "pre_industrial": {
+                "transportation": ["tribal fishing canoes"],
+                "housing": ["fishing village"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": ["river port", "bridge"],
+                "housing": [],
+                "industry": ["small hydroelectric dam", "warehouses"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": [],
+                "industry": ["large dam and reservoir", "shipping containers"],
+                "business": [],
+                "culture": []
+            }
+        },
+        "tundra": {
+            "pre_industrial": {
+                "transportation": [],
+                "housing": ["nomadic camp"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["mining camp"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            }
+        },
+        "steppe": {
+            "pre_industrial": {
+                "transportation": [],
+                "housing": ["nomadic camp"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["mining camp"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            }
+        },
+        "coastal": {
+            "pre_industrial": {
+                "transportation": ["tribal finishing canoes"],
+                "housing": ["fishing village"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": ["docks and port"],
+                "housing": [],
+                "industry": ["warehouses"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": ["shipping"],
+                "housing": [],
+                "industry": ["shipping containers"],
+                "business": ["tourist resort"],
+                "culture": ["beach", "boardwalk"]
+            }
+        },
+        "plains": {
+            "pre_industrial": {
+                "transportation": [],
+                "housing": ["grass huts"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": [],
+                "housing": ["farmhouses"],
+                "industry": ["large-scale farming"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": [],
+                "housing": ["rural town"],
+                "industry": ["industrial agriculture"],
+                "business": [],
+                "culture": ["sports fields"]
+            }
+        },
+        "arctic": {
+            "pre_industrial": {
+                "transportation": ["sleds"],
+                "housing": ["igloos"],
+                "industry": ["fishing"],
+                "business": [],
+                "culture": []
+            },
+            "industrial": {
+                "transportation": ["ice roads"],
+                "housing": ["research station"],
+                "industry": ["radio tower"],
+                "business": [],
+                "culture": []
+            },
+            "current": {
+                "transportation": ["airstrip", "ice roads"],
+                "housing": ["modern research station"],
+                "industry": ["oil and gas extraction"],
+                "business": ["tourist facilities"],
+                "culture": []
+            },
+            "solarpunk": {
+                "transportation": ["ice roads", "landing pad"],
+                "housing": [],
+                "industry": [],
+                "business": [],
+                "culture": []
+            },
+            "post_apocalyptic": {
+                "transportation": [],
+                "housing": ["abandoned research station"],
+                "industry": [],
+                "business": [],
+                "culture": []
+            }
+        }
+    }
+}

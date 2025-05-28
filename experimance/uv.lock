@@ -807,6 +807,7 @@ name = "experimance-project"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "experimance-agent" },
     { name = "experimance-audio" },
     { name = "experimance-common" },
@@ -814,6 +815,7 @@ dependencies = [
     { name = "experimance-display" },
     { name = "experimance-image-server" },
     { name = "experimance-transition" },
+    { name = "fal-client" },
 ]
 
 [package.optional-dependencies]
@@ -836,6 +838,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11.18" },
     { name = "experimance-agent", editable = "services/agent" },
     { name = "experimance-audio", editable = "services/audio" },
     { name = "experimance-common", editable = "libs/common" },
@@ -843,6 +846,7 @@ requires-dist = [
     { name = "experimance-display", editable = "services/display" },
     { name = "experimance-image-server", editable = "services/image_server" },
     { name = "experimance-transition", editable = "services/transition" },
+    { name = "fal-client", specifier = ">=0.6.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },

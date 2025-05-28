@@ -1,119 +1,1299 @@
 [
     {
-        "path": "environment/forest_ambience.wav",
+        "path": "environment/wilderness/rainforest_ambience.wav",
         "tags": [
-            "temperate_forest",
-            "wilderness",
-            "pre_industrial"
+            "rainforest",
+            "wilderness"
         ],
-        "volume": 0.8
+        "prompt": "Dense rainforest ambience: rainfall, insects, distant animal calls, river sounds"
     },
     {
-        "path": "environment/wind.wav",
-        "tags": [
-            "temperate_forest",
-            "wilderness",
-            "tundra",
-            "desert"
-        ],
-        "volume": 0.5
-    },
-    {
-        "path": "environment/birds.wav",
-        "tags": [
-            "temperate_forest",
-            "wilderness",
-            "grassland"
-        ],
-        "volume": 0.6
-    },
-    {
-        "path": "environment/stream.wav",
+        "path": "environment/wilderness/temperate_forest_ambience.wav",
         "tags": [
             "temperate_forest",
             "wilderness"
         ],
-        "volume": 0.7
+        "prompt": "Temperate forest ambience: songbirds, wind in trees, distant animal sounds"
     },
     {
-        "path": "environment/distant_machinery.wav",
+        "path": "environment/wilderness/boreal_forest_ambience.wav",
         "tags": [
-            "early_inustrial",
-            "late_industrial"
+            "boreal_forest",
+            "wilderness"
         ],
-        "volume": 0.5
+        "prompt": "Boreal forest ambience: pine trees creaking, wind, ravens, light snow in winter"
     },
     {
-        "path": "environment/factory.wav",
+        "path": "environment/wilderness/deciduous_forest_ambience.wav",
         "tags": [
-            "late_industrial"
+            "deciduous_forest",
+            "wilderness"
         ],
-        "volume": 0.6
+        "prompt": "Deciduous forest ambience: birds, wind, seasonal leaf fall, insects"
     },
     {
-        "path": "environment/modern_city.wav",
+        "path": "environment/wilderness/desert_ambience.wav",
         "tags": [
-            "modern",
-            "current"
+            "desert",
+            "wilderness"
         ],
-        "volume": 0.7
+        "prompt": "Desert ambience: wind over sand, sparse animal calls, distant shifting dunes"
     },
     {
-        "path": "environment/digital_hum.wav",
+        "path": "environment/wilderness/mountain_ambience.wav",
+        "tags": [
+            "mountain",
+            "wilderness"
+        ],
+        "prompt": "Mountain ambience: wind, distant avalanches, eagles, occasional rocks tumbling"
+    },
+    {
+        "path": "environment/wilderness/tropical_island_ambience.wav",
+        "tags": [
+            "tropical_island",
+            "wilderness"
+        ],
+        "prompt": "Tropical island ambience: waves on shore, palm leaves, tropical birds, distant thunder"
+    },
+    {
+        "path": "environment/wilderness/river_ambience.wav",
+        "tags": [
+            "river",
+            "wilderness"
+        ],
+        "prompt": "River ambience: flowing water, splashes, reeds in wind, riverbank animals"
+    },
+    {
+        "path": "environment/wilderness/tundra_ambience.wav",
+        "tags": [
+            "tundra",
+            "wilderness"
+        ],
+        "prompt": "Tundra ambience: wind, distant birds, light snow, silence"
+    },
+    {
+        "path": "environment/wilderness/steppe_ambience.wav",
+        "tags": [
+            "steppe",
+            "wilderness"
+        ],
+        "prompt": "Steppe ambience: tall grasses rustling, insects, distant herds"
+    },
+    {
+        "path": "environment/wilderness/coastal_ambience.wav",
+        "tags": [
+            "coastal",
+            "wilderness"
+        ],
+        "prompt": "Coastal ambience: breaking waves, seabirds, wind, tidal sounds"
+    },
+    {
+        "path": "environment/wilderness/swamp_ambience.wav",
+        "tags": [
+            "swamp",
+            "wilderness"
+        ],
+        "prompt": "Swamp ambience: frogs, insects, water movement, distant birds"
+    },
+    {
+        "path": "environment/wilderness/plains_ambience.wav",
+        "tags": [
+            "plains",
+            "wilderness"
+        ],
+        "prompt": "Plains ambience: wind in grasses, crickets, distant animal herds"
+    },
+    {
+        "path": "environment/wilderness/arctic_ambience.wav",
+        "tags": [
+            "arctic",
+            "wilderness"
+        ],
+        "prompt": "Arctic ambience: howling wind, cracking ice, distant seals, muffled silence"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_hunting_trail.wav",
+        "tags": [
+            "pre_industrial",
+            "transportation",
+            "hunting trail"
+        ],
+        "prompt": "Footsteps on a soft earth trail, leaves crunching, distant animal calls"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_river_dugout_canoe.wav",
+        "tags": [
+            "river",
+            "pre_industrial",
+            "transportation",
+            "river, dugout canoe"
+        ],
+        "prompt": "Wooden canoe gliding through water, gentle paddling, birdsong"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_horse_trail.wav",
+        "tags": [
+            "pre_industrial",
+            "transportation",
+            "horse trail"
+        ],
+        "prompt": "Horses walking on a forest trail, birds and wind in trees"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_camel_caravan.wav",
+        "tags": [
+            "desert",
+            "pre_industrial",
+            "transportation",
+            "camel caravan"
+        ],
+        "prompt": "Camels walking on sand, bells jingling, light wind"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_river_wood_canoe.wav",
+        "tags": [
+            "river",
+            "pre_industrial",
+            "transportation",
+            "river, wood canoe"
+        ],
+        "prompt": "Canoe moving on a quiet river, paddles, forest wildlife"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_canoes.wav",
+        "tags": [
+            "river",
+            "pre_industrial",
+            "transportation",
+            "canoes"
+        ],
+        "prompt": "Canoes gliding in still water, soft splashes, insect sounds"
+    },
+    {
+        "path": "environment/pre_industrial/transportation_rafts.wav",
+        "tags": [
+            "pre_industrial",
+            "transportation",
+            "rafts"
+        ],
+        "prompt": "Wooden rafts creaking, gentle water, human voices"
+    },
+    {
+        "path": "environment/pre_industrial/housing_traditional_dwellings.wav",
+        "tags": [
+            "pre_industrial",
+            "housing",
+            "traditional dwellings"
+        ],
+        "prompt": "Chatter around a traditional dwelling, fire crackling, animal sounds"
+    },
+    {
+        "path": "environment/pre_industrial/housing_tribal_camp.wav",
+        "tags": [
+            "pre_industrial",
+            "housing",
+            "tribal camp"
+        ],
+        "prompt": "Low voices, fire crackling, distant night animals"
+    },
+    {
+        "path": "environment/pre_industrial/housing_log_cabin.wav",
+        "tags": [
+            "pre_industrial",
+            "housing",
+            "log cabin"
+        ],
+        "prompt": "Wood crackling in a hearth, creaking logs, wind outside"
+    },
+    {
+        "path": "environment/pre_industrial/housing_nomadic_tents.wav",
+        "tags": [
+            "pre_industrial",
+            "housing",
+            "nomadic tents"
+        ],
+        "prompt": "Canvas flapping, distant animal bells, wind"
+    },
+    {
+        "path": "environment/pre_industrial/housing_oasis_camp.wav",
+        "tags": [
+            "desert",
+            "pre_industrial",
+            "housing",
+            "oasis camp"
+        ],
+        "prompt": "Murmur of camp near oasis, water, date palms, animal brays"
+    },
+    {
+        "path": "environment/pre_industrial/housing_mountain_village.wav",
+        "tags": [
+            "mountain",
+            "pre_industrial",
+            "housing",
+            "mountain village"
+        ],
+        "prompt": "Stone footsteps, goats, distant bells, mountain wind"
+    },
+    {
+        "path": "environment/pre_industrial/housing_fishing_village.wav",
+        "tags": [
+            "coastal",
+            "pre_industrial",
+            "housing",
+            "fishing village"
+        ],
+        "prompt": "Children playing, gulls, small waves, nets cast in water"
+    },
+    {
+        "path": "environment/pre_industrial/housing_stilt_houses.wav",
+        "tags": [
+            "pre_industrial",
+            "housing",
+            "stilt houses"
+        ],
+        "prompt": "Water slapping stilts, birds, village chatter"
+    },
+    {
+        "path": "environment/pre_industrial/housing_floating_villages.wav",
+        "tags": [
+            "pre_industrial",
+            "housing",
+            "floating villages"
+        ],
+        "prompt": "Wood creaks, water movement, people talking"
+    },
+    {
+        "path": "environment/pre_industrial/industry_subsistence_agriculture.wav",
+        "tags": [
+            "pre_industrial",
+            "industry",
+            "subsistence agriculture"
+        ],
+        "prompt": "Tools working earth, farm animals, distant voices"
+    },
+    {
+        "path": "environment/pre_industrial/industry_swidden_agriculture.wav",
+        "tags": [
+            "rainforest",
+            "pre_industrial",
+            "industry",
+            "swidden agriculture"
+        ],
+        "prompt": "Fire crackling, machetes clearing brush, forest insects"
+    },
+    {
+        "path": "environment/pre_industrial/industry_oasis_farming.wav",
+        "tags": [
+            "desert",
+            "pre_industrial",
+            "industry",
+            "oasis farming"
+        ],
+        "prompt": "Digging, water irrigation, animal brays"
+    },
+    {
+        "path": "environment/pre_industrial/industry_subsistence_fishing.wav",
+        "tags": [
+            "pre_industrial",
+            "industry",
+            "subsistence fishing"
+        ],
+        "prompt": "Casting nets, water splashes, birds"
+    },
+    {
+        "path": "environment/pre_industrial/industry_terraced_farming.wav",
+        "tags": [
+            "pre_industrial",
+            "industry",
+            "terraced farming"
+        ],
+        "prompt": "Raking earth, water trickling, workers talking"
+    },
+    {
+        "path": "environment/pre_industrial/business_village_market.wav",
+        "tags": [
+            "pre_industrial",
+            "business",
+            "village market"
+        ],
+        "prompt": "Crowd chatter, bartering, animal sounds, wood stalls"
+    },
+    {
+        "path": "environment/pre_industrial/business_caravan_trading_stops.wav",
+        "tags": [
+            "pre_industrial",
+            "business",
+            "caravan trading stops"
+        ],
+        "prompt": "Camels settling, merchants haggling, market bustle"
+    },
+    {
+        "path": "environment/pre_industrial/business_floating_markets.wav",
+        "tags": [
+            "pre_industrial",
+            "business",
+            "floating markets"
+        ],
+        "prompt": "Vendors calling, wooden boats, splashing, market chatter"
+    },
+    {
+        "path": "environment/pre_industrial/culture_tribal_meeting_ground.wav",
+        "tags": [
+            "pre_industrial",
+            "culture",
+            "tribal meeting ground"
+        ],
+        "prompt": "Group singing, drums, fire crackling, night insects"
+    },
+    {
+        "path": "environment/pre_industrial/culture_ceremonial_gathering_site.wav",
+        "tags": [
+            "pre_industrial",
+            "culture",
+            "ceremonial gathering site"
+        ],
+        "prompt": "Ceremonial chants, group movement, fire sounds"
+    },
+    {
+        "path": "environment/pre_industrial/culture_marketplace.wav",
+        "tags": [
+            "pre_industrial",
+            "culture",
+            "marketplace"
+        ],
+        "prompt": "Crowds, traders, distant music, goods being sold"
+    },
+    {
+        "path": "environment/industrial/transportation_dirt_roads.wav",
+        "tags": [
+            "industrial",
+            "transportation",
+            "dirt roads"
+        ],
+        "prompt": "Horse carts on dirt roads, wagon wheels, distant blacksmith hammer"
+    },
+    {
+        "path": "environment/industrial/transportation_railroad.wav",
+        "tags": [
+            "industrial",
+            "transportation",
+            "railroad"
+        ],
+        "prompt": "Steam train approaching, whistle, track clatter"
+    },
+    {
+        "path": "environment/industrial/transportation_river_steamboat.wav",
+        "tags": [
+            "river",
+            "industrial",
+            "transportation",
+            "river, steamboat"
+        ],
+        "prompt": "Paddle steamer churning, water, passengers chatting"
+    },
+    {
+        "path": "environment/industrial/transportation_carts.wav",
+        "tags": [
+            "industrial",
+            "transportation",
+            "carts"
+        ],
+        "prompt": "Wooden carts, creaking wheels, shouts"
+    },
+    {
+        "path": "environment/industrial/transportation_river_barge.wav",
+        "tags": [
+            "river",
+            "industrial",
+            "transportation",
+            "river, barge"
+        ],
+        "prompt": "Barge creaks, water movement, workers loading"
+    },
+    {
+        "path": "environment/industrial/housing_village.wav",
+        "tags": [
+            "industrial",
+            "housing",
+            "village"
+        ],
+        "prompt": "Children playing, distant animals, village chatter"
+    },
+    {
+        "path": "environment/industrial/housing_town.wav",
+        "tags": [
+            "industrial",
+            "housing",
+            "town"
+        ],
+        "prompt": "Market bustle, bells, carts rolling on streets"
+    },
+    {
+        "path": "environment/industrial/housing_logging_camp_clearcut.wav",
+        "tags": [
+            "industrial",
+            "housing",
+            "logging camp, clearcut"
+        ],
+        "prompt": "Saws cutting, workers shouting, falling trees"
+    },
+    {
+        "path": "environment/industrial/housing_mining_camp.wav",
+        "tags": [
+            "industrial",
+            "housing",
+            "mining camp"
+        ],
+        "prompt": "Machinery, clanking, distant explosions, worker voices"
+    },
+    {
+        "path": "environment/industrial/housing_plantation_houses.wav",
+        "tags": [
+            "industrial",
+            "housing",
+            "plantation houses"
+        ],
+        "prompt": "Distant field work, wind in trees, footsteps on wood"
+    },
+    {
+        "path": "environment/industrial/industry_factory_pollution.wav",
+        "tags": [
+            "industrial",
+            "industry",
+            "factory, pollution"
+        ],
+        "prompt": "Machinery thumping, hiss of steam, pulleys and belts"
+    },
+    {
+        "path": "environment/industrial/industry_mine_tailings.wav",
+        "tags": [
+            "industrial",
+            "industry",
+            "mine, tailings"
+        ],
+        "prompt": "Distant blasts, rocks falling, metal on rock"
+    },
+    {
+        "path": "environment/industrial/industry_oil_extraction_pollution.wav",
+        "tags": [
+            "industrial",
+            "industry",
+            "oil extraction, pollution"
+        ],
+        "prompt": "Oil pump jacks, metallic clang, leaking fluids"
+    },
+    {
+        "path": "environment/industrial/industry_sawmill_clearcut.wav",
+        "tags": [
+            "industrial",
+            "industry",
+            "sawmill, clearcut"
+        ],
+        "prompt": "Buzz saws, logs rolling, workers' voices"
+    },
+    {
+        "path": "environment/industrial/industry_windmill.wav",
+        "tags": [
+            "industrial",
+            "industry",
+            "windmill"
+        ],
+        "prompt": "Rotating wooden blades, creaks, wind"
+    },
+    {
+        "path": "environment/industrial/industry_papermill_clearcut.wav",
+        "tags": [
+            "industrial",
+            "industry",
+            "papermill, clearcut"
+        ],
+        "prompt": "Paper machines, water sprays, mechanical clatter"
+    },
+    {
+        "path": "environment/industrial/business_trading_post.wav",
+        "tags": [
+            "industrial",
+            "business",
+            "trading post"
+        ],
+        "prompt": "Bell rings, doors creak, conversation, goods exchanged"
+    },
+    {
+        "path": "environment/industrial/business_hotel.wav",
+        "tags": [
+            "industrial",
+            "business",
+            "hotel"
+        ],
+        "prompt": "Luggage rolling, bellhop, quiet lobby music"
+    },
+    {
+        "path": "environment/industrial/business_train_station.wav",
+        "tags": [
+            "industrial",
+            "business",
+            "train station"
+        ],
+        "prompt": "Steam train sounds, crowd chatter, announcements"
+    },
+    {
+        "path": "environment/industrial/culture_church.wav",
+        "tags": [
+            "industrial",
+            "culture",
+            "church"
+        ],
+        "prompt": "Organ playing, congregation murmur, bells"
+    },
+    {
+        "path": "environment/industrial/culture_town_square.wav",
+        "tags": [
+            "industrial",
+            "culture",
+            "town square"
+        ],
+        "prompt": "Market crowd, carts, music, public speeches"
+    },
+    {
+        "path": "environment/industrial/culture_community_hall.wav",
+        "tags": [
+            "industrial",
+            "culture",
+            "community hall"
+        ],
+        "prompt": "Gathered voices, wooden floor footsteps, laughter"
+    },
+    {
+        "path": "environment/industrial/culture_theatre.wav",
+        "tags": [
+            "industrial",
+            "culture",
+            "theatre"
+        ],
+        "prompt": "Murmur of audience, musicians tuning"
+    },
+    {
+        "path": "environment/industrial/culture_clock_tower.wav",
+        "tags": [
+            "industrial",
+            "culture",
+            "clock tower"
+        ],
+        "prompt": "Mechanical ticking, bell chimes, birds"
+    },
+    {
+        "path": "environment/current/transportation_highways.wav",
         "tags": [
             "current",
-            "future"
+            "transportation",
+            "highways"
         ],
-        "volume": 0.5
+        "prompt": "Distant roar of traffic, horns, whooshing cars"
     },
     {
-        "path": "environment/glitches.wav",
+        "path": "environment/current/transportation_superhighway.wav",
+        "tags": [
+            "current",
+            "transportation",
+            "superhighway"
+        ],
+        "prompt": "Continuous high-speed vehicles, faint rumble, occasional horn"
+    },
+    {
+        "path": "environment/current/transportation_airport.wav",
+        "tags": [
+            "current",
+            "transportation",
+            "airport"
+        ],
+        "prompt": "Jet engines, PA announcements, rolling suitcases"
+    },
+    {
+        "path": "environment/current/transportation_river_bridge.wav",
+        "tags": [
+            "river",
+            "current",
+            "transportation",
+            "river, bridge"
+        ],
+        "prompt": "Traffic crossing, water below, city noises"
+    },
+    {
+        "path": "environment/current/transportation_shipping.wav",
+        "tags": [
+            "current",
+            "transportation",
+            "shipping"
+        ],
+        "prompt": "Large ship engines, waves, dock workers calling"
+    },
+    {
+        "path": "environment/current/housing_apartments.wav",
+        "tags": [
+            "current",
+            "housing",
+            "apartments"
+        ],
+        "prompt": "Footsteps in hallway, distant elevator ding, city outside"
+    },
+    {
+        "path": "environment/current/housing_mansion.wav",
+        "tags": [
+            "current",
+            "housing",
+            "mansion"
+        ],
+        "prompt": "Muted voices, garden birds, faint music"
+    },
+    {
+        "path": "environment/current/housing_suburban_housing.wav",
+        "tags": [
+            "current",
+            "housing",
+            "suburban housing"
+        ],
+        "prompt": "Children playing, lawnmower, neighbors talking"
+    },
+    {
+        "path": "environment/current/housing_fortified_compounds.wav",
+        "tags": [
+            "current",
+            "housing",
+            "fortified compounds"
+        ],
+        "prompt": "Security gates, radios, distant conversations"
+    },
+    {
+        "path": "environment/current/housing_villa.wav",
+        "tags": [
+            "current",
+            "housing",
+            "villa"
+        ],
+        "prompt": "Quiet breeze, pool water, distant laughter"
+    },
+    {
+        "path": "environment/current/housing_rural_town.wav",
+        "tags": [
+            "current",
+            "housing",
+            "rural town"
+        ],
+        "prompt": "Dogs barking, passing cars, birds, voices"
+    },
+    {
+        "path": "environment/current/housing_favelas.wav",
+        "tags": [
+            "current",
+            "housing",
+            "favelas"
+        ],
+        "prompt": "Distant music, voices, everyday life sounds"
+    },
+    {
+        "path": "environment/current/housing_tourist_resort.wav",
+        "tags": [
+            "current",
+            "housing",
+            "tourist resort"
+        ],
+        "prompt": "Splashing pool, crowd, tropical music, seagulls"
+    },
+    {
+        "path": "environment/current/housing_modern_research_station.wav",
+        "tags": [
+            "current",
+            "housing",
+            "modern research station"
+        ],
+        "prompt": "Computer hum, wind, radio chatter"
+    },
+    {
+        "path": "environment/current/industry_commercial_agriculture_fields.wav",
+        "tags": [
+            "current",
+            "industry",
+            "commercial agriculture fields"
+        ],
+        "prompt": "Machinery in fields, birds, wind in crops"
+    },
+    {
+        "path": "environment/current/industry_factory_pollution.wav",
+        "tags": [
+            "current",
+            "industry",
+            "factory, pollution"
+        ],
+        "prompt": "Continuous machines, conveyor beeps, metal clanks"
+    },
+    {
+        "path": "environment/current/industry_oil_refinery_pollution.wav",
+        "tags": [
+            "current",
+            "industry",
+            "oil refinery, pollution"
+        ],
+        "prompt": "Engines, hiss of gas, loud machinery"
+    },
+    {
+        "path": "environment/current/industry_power_plant.wav",
+        "tags": [
+            "current",
+            "industry",
+            "power plant"
+        ],
+        "prompt": "Turbine whir, deep rumble, warning alarms"
+    },
+    {
+        "path": "environment/current/industry_oil_wells.wav",
+        "tags": [
+            "current",
+            "industry",
+            "oil wells"
+        ],
+        "prompt": "Thumping oil pump, mechanical grinding, wind"
+    },
+    {
+        "path": "environment/current/industry_hydroelectric_dam_river_lake.wav",
+        "tags": [
+            "river",
+            "current",
+            "industry",
+            "hydroelectric dam, river, lake"
+        ],
+        "prompt": "Rushing water, turbines, echoing mechanical hum"
+    },
+    {
+        "path": "environment/current/industry_large_dam_and_reservoir.wav",
+        "tags": [
+            "current",
+            "industry",
+            "large dam and reservoir"
+        ],
+        "prompt": "Water rushing, gates opening, machinery"
+    },
+    {
+        "path": "environment/current/industry_shipping_containers.wav",
+        "tags": [
+            "current",
+            "industry",
+            "shipping containers"
+        ],
+        "prompt": "Metal containers moved, crane beeps, dock traffic"
+    },
+    {
+        "path": "environment/current/industry_industrial_agriculture.wav",
+        "tags": [
+            "current",
+            "industry",
+            "industrial agriculture"
+        ],
+        "prompt": "Sprinklers, combine harvesters, distant tractors"
+    },
+    {
+        "path": "environment/current/industry_tourism_beaches.wav",
+        "tags": [
+            "current",
+            "industry",
+            "tourism, beaches"
+        ],
+        "prompt": "Waves, laughter, music, volleyball"
+    },
+    {
+        "path": "environment/current/industry_fishing.wav",
+        "tags": [
+            "current",
+            "industry",
+            "fishing"
+        ],
+        "prompt": "Engines, nets pulled, seagulls, crew calls"
+    },
+    {
+        "path": "environment/current/industry_papermill.wav",
+        "tags": [
+            "current",
+            "industry",
+            "papermill"
+        ],
+        "prompt": "Paper machine noise, fans, forklifts moving"
+    },
+    {
+        "path": "environment/current/business_shopping_mall.wav",
+        "tags": [
+            "current",
+            "business",
+            "shopping mall"
+        ],
+        "prompt": "Background music, crowd chatter, shoe footsteps, escalator hum"
+    },
+    {
+        "path": "environment/current/business_box_stores.wav",
+        "tags": [
+            "current",
+            "business",
+            "box stores"
+        ],
+        "prompt": "Shopping carts, announcements, cash register beeps"
+    },
+    {
+        "path": "environment/current/business_strip_mall.wav",
+        "tags": [
+            "current",
+            "business",
+            "strip mall"
+        ],
+        "prompt": "Parking lot traffic, door chimes, low chatter"
+    },
+    {
+        "path": "environment/current/business_skyscrapers.wav",
+        "tags": [
+            "current",
+            "business",
+            "skyscrapers"
+        ],
+        "prompt": "Elevator bells, city hum, HVAC"
+    },
+    {
+        "path": "environment/current/business_garbage_dump.wav",
+        "tags": [
+            "current",
+            "business",
+            "garbage dump"
+        ],
+        "prompt": "Trucks backing up, seagulls, machinery"
+    },
+    {
+        "path": "environment/current/business_tourist_resort.wav",
+        "tags": [
+            "current",
+            "business",
+            "tourist resort"
+        ],
+        "prompt": "Pool splashing, music, drinks being served"
+    },
+    {
+        "path": "environment/current/business_tourist_facilities.wav",
+        "tags": [
+            "current",
+            "business",
+            "tourist facilities"
+        ],
+        "prompt": "Tourist chatter, guide announcements"
+    },
+    {
+        "path": "environment/current/culture_stadium.wav",
+        "tags": [
+            "current",
+            "culture",
+            "stadium"
+        ],
+        "prompt": "Crowd roars, announcer, music, horns"
+    },
+    {
+        "path": "environment/current/culture_park.wav",
+        "tags": [
+            "current",
+            "culture",
+            "park"
+        ],
+        "prompt": "Birds, people chatting, kids playing, dogs"
+    },
+    {
+        "path": "environment/current/culture_museum.wav",
+        "tags": [
+            "current",
+            "culture",
+            "museum"
+        ],
+        "prompt": "Quiet footsteps, murmured conversations, echoing gallery"
+    },
+    {
+        "path": "environment/current/culture_amusement_park.wav",
+        "tags": [
+            "current",
+            "culture",
+            "amusement park"
+        ],
+        "prompt": "Ride clanks, music, laughter, excited shouts"
+    },
+    {
+        "path": "environment/current/culture_pool.wav",
+        "tags": [
+            "current",
+            "culture",
+            "pool"
+        ],
+        "prompt": "Splashing water, kids, lifeguard whistle"
+    },
+    {
+        "path": "environment/current/culture_beach.wav",
+        "tags": [
+            "current",
+            "culture",
+            "beach"
+        ],
+        "prompt": "Waves, seagulls, voices, distant music"
+    },
+    {
+        "path": "environment/current/culture_boardwalk.wav",
+        "tags": [
+            "current",
+            "culture",
+            "boardwalk"
+        ],
+        "prompt": "Footsteps on wood, games, carnival music, gulls"
+    },
+    {
+        "path": "environment/current/culture_sports_fields.wav",
+        "tags": [
+            "current",
+            "culture",
+            "sports fields"
+        ],
+        "prompt": "Whistle, cheering, play sounds"
+    },
+    {
+        "path": "environment/current/culture_sailboats.wav",
+        "tags": [
+            "current",
+            "culture",
+            "sailboats"
+        ],
+        "prompt": "Wind in sails, ropes creak, waves"
+    },
+    {
+        "path": "environment/future/transportation_highways.wav",
         "tags": [
             "future",
-            "dystopia"
+            "transportation",
+            "highways"
         ],
-        "volume": 0.6
+        "prompt": "Electric vehicles passing, faint hum, wind turbines"
     },
     {
-        "path": "environment/broken_machinery.wav",
+        "path": "environment/future/transportation_river_bridge.wav",
         "tags": [
-            "dystopia"
+            "river",
+            "future",
+            "transportation",
+            "river, bridge"
         ],
-        "volume": 0.7
+        "prompt": "Silent public transit, water below, birds"
     },
     {
-        "path": "environment/wind_ruins.wav",
+        "path": "environment/future/transportation_high_speed_train.wav",
         "tags": [
-            "ruins"
+            "future",
+            "transportation",
+            "high-speed train"
         ],
-        "volume": 0.8
+        "prompt": "Smooth train whoosh, automated announcements"
     },
     {
-        "path": "environment/distant_echoes.wav",
+        "path": "environment/future/housing_eco_villages.wav",
         "tags": [
-            "ruins"
+            "future",
+            "housing",
+            "eco-villages"
         ],
-        "volume": 0.6
+        "prompt": "Solar panels, soft garden sounds, quiet conversation"
     },
     {
-        "path": "environment/desert_wind.wav",
+        "path": "environment/future/housing_co_op_apartments.wav",
         "tags": [
-            "desert"
+            "future",
+            "housing",
+            "co-op apartments"
         ],
-        "volume": 0.8
+        "prompt": "Community kitchen, laughter, quiet living spaces"
     },
     {
-        "path": "environment/tundra_wind.wav",
+        "path": "environment/future/housing_sustainable_stilt_houses.wav",
         "tags": [
-            "tundra"
+            "future",
+            "housing",
+            "sustainable stilt houses"
         ],
-        "volume": 0.7
+        "prompt": "Waves, wind in eco-construction, laughter"
     },
     {
-        "path": "environment/grassland_insects.wav",
+        "path": "environment/future/industry_solar_farms.wav",
         "tags": [
-            "grassland"
+            "future",
+            "industry",
+            "solar farms"
         ],
-        "volume": 0.6
+        "prompt": "Faint inverter hum, wind, energy transmission"
+    },
+    {
+        "path": "environment/future/industry_wind_farm.wav",
+        "tags": [
+            "future",
+            "industry",
+            "wind farm"
+        ],
+        "prompt": "Rotating turbine blades, wind passing through"
+    },
+    {
+        "path": "environment/future/industry_organic_farming.wav",
+        "tags": [
+            "future",
+            "industry",
+            "organic farming"
+        ],
+        "prompt": "Hand tools, birds, soft conversation"
+    },
+    {
+        "path": "environment/future/industry_recycling_center.wav",
+        "tags": [
+            "future",
+            "industry",
+            "recycling center"
+        ],
+        "prompt": "Glass sorting, conveyor belts, alarms"
+    },
+    {
+        "path": "environment/future/business_market.wav",
+        "tags": [
+            "future",
+            "business",
+            "market"
+        ],
+        "prompt": "Lively community market, vendors, music, sustainable products"
+    },
+    {
+        "path": "environment/future/culture_stadium.wav",
+        "tags": [
+            "future",
+            "culture",
+            "stadium"
+        ],
+        "prompt": "Cheering crowds, music, PA announcements"
+    },
+    {
+        "path": "environment/future/culture_park.wav",
+        "tags": [
+            "future",
+            "culture",
+            "park"
+        ],
+        "prompt": "Children playing, green energy hum, birds"
+    },
+    {
+        "path": "environment/future/culture_museum.wav",
+        "tags": [
+            "future",
+            "culture",
+            "museum"
+        ],
+        "prompt": "Guided tours, energy efficient lighting, quiet voices"
+    },
+    {
+        "path": "environment/future/culture_theatre.wav",
+        "tags": [
+            "future",
+            "culture",
+            "theatre"
+        ],
+        "prompt": "Music, applause, green building acoustics"
+    },
+    {
+        "path": "environment/future/culture_public_art_sculpture.wav",
+        "tags": [
+            "future",
+            "culture",
+            "public art sculpture"
+        ],
+        "prompt": "Outdoor voices, wind, occasional footsteps"
+    },
+    {
+        "path": "environment/future/culture_community_center.wav",
+        "tags": [
+            "future",
+            "culture",
+            "community center"
+        ],
+        "prompt": "Voices, kids, shared activities"
+    },
+    {
+        "path": "environment/dystopia/transportation_abandoned_highways.wav",
+        "tags": [
+            "dystopia",
+            "transportation",
+            "abandoned highways"
+        ],
+        "prompt": "Wind over cracked pavement, distant crows, silence"
+    },
+    {
+        "path": "environment/dystopia/transportation_collapsed_bridges.wav",
+        "tags": [
+            "dystopia",
+            "transportation",
+            "collapsed bridges"
+        ],
+        "prompt": "Echoes, dripping water, rubble shifting"
+    },
+    {
+        "path": "environment/dystopia/transportation_derelict_airports.wav",
+        "tags": [
+            "dystopia",
+            "transportation",
+            "derelict airports"
+        ],
+        "prompt": "Rusting metal, loose wires clanging, empty space"
+    },
+    {
+        "path": "environment/dystopia/housing_favelas.wav",
+        "tags": [
+            "dystopia",
+            "housing",
+            "favelas"
+        ],
+        "prompt": "Quiet, wind through ruins, occasional voices"
+    },
+    {
+        "path": "environment/dystopia/housing_crumbling_apartments.wav",
+        "tags": [
+            "dystopia",
+            "housing",
+            "crumbling apartments"
+        ],
+        "prompt": "Dust, debris falling, wind, silence"
+    },
+    {
+        "path": "environment/dystopia/housing_fortified_mansion.wav",
+        "tags": [
+            "dystopia",
+            "housing",
+            "fortified mansion"
+        ],
+        "prompt": "Clanking metal doors, echoing footsteps"
+    },
+    {
+        "path": "environment/dystopia/housing_military_base.wav",
+        "tags": [
+            "dystopia",
+            "housing",
+            "military base"
+        ],
+        "prompt": "Rattling fences, distant alarm, crows"
+    },
+    {
+        "path": "environment/dystopia/housing_makeshift_shelter.wav",
+        "tags": [
+            "dystopia",
+            "housing",
+            "makeshift shelter"
+        ],
+        "prompt": "Flapping tarps, crackling fire, dogs barking"
+    },
+    {
+        "path": "environment/dystopia/housing_abandoned_research_station.wav",
+        "tags": [
+            "dystopia",
+            "housing",
+            "abandoned research station"
+        ],
+        "prompt": "Wind whistling, cracking ice, silence"
+    },
+    {
+        "path": "environment/dystopia/industry_derelict_factories.wav",
+        "tags": [
+            "dystopia",
+            "industry",
+            "derelict factories"
+        ],
+        "prompt": "Dripping water, distant clang, rats in metal pipes"
+    },
+    {
+        "path": "environment/dystopia/industry_abandoned_refinery.wav",
+        "tags": [
+            "dystopia",
+            "industry",
+            "abandoned refinery"
+        ],
+        "prompt": "Echoes, rusting metal, hollow wind"
+    },
+    {
+        "path": "environment/dystopia/industry_ruined_power_plant.wav",
+        "tags": [
+            "dystopia",
+            "industry",
+            "ruined power plant"
+        ],
+        "prompt": "Occasional electrical crackle, broken glass"
+    },
+    {
+        "path": "environment/dystopia/industry_subsistence_farming.wav",
+        "tags": [
+            "dystopia",
+            "industry",
+            "subsistence farming"
+        ],
+        "prompt": "Hoe striking earth, distant birds, wind"
+    },
+    {
+        "path": "environment/dystopia/business_deserted_shopping_mall.wav",
+        "tags": [
+            "desert",
+            "dystopia",
+            "business",
+            "deserted shopping mall"
+        ],
+        "prompt": "Dripping water, distant echo, broken glass"
+    },
+    {
+        "path": "environment/dystopia/business_ruined_strip_mall.wav",
+        "tags": [
+            "dystopia",
+            "business",
+            "ruined strip mall"
+        ],
+        "prompt": "Shifting debris, creaking beams, silence"
+    },
+    {
+        "path": "environment/dystopia/business_ruined_box_stores.wav",
+        "tags": [
+            "dystopia",
+            "business",
+            "ruined box stores"
+        ],
+        "prompt": "Wind through open doors, creaks"
+    },
+    {
+        "path": "environment/dystopia/business_crumbling_skyscrapers.wav",
+        "tags": [
+            "dystopia",
+            "business",
+            "crumbling skyscrapers"
+        ],
+        "prompt": "Loose debris, rattling glass, moaning wind"
+    },
+    {
+        "path": "environment/dystopia/culture_empty_stadium.wav",
+        "tags": [
+            "dystopia",
+            "culture",
+            "empty stadium"
+        ],
+        "prompt": "Echoing wind, distant birds, silence"
+    },
+    {
+        "path": "environment/dystopia/culture_overgrown_park.wav",
+        "tags": [
+            "dystopia",
+            "culture",
+            "overgrown park"
+        ],
+        "prompt": "Birds, rustling leaves, broken playground sounds"
+    },
+    {
+        "path": "environment/dystopia/culture_decaying_amusement_park.wav",
+        "tags": [
+            "dystopia",
+            "culture",
+            "decaying amusement park"
+        ],
+        "prompt": "Wind through rides, creaks, distant animal calls"
     }
 ]
