@@ -2,155 +2,65 @@
     "era_loops": {
         "wilderness": [
             {
-                "path": "music/wilderness/drone.wav",
+                "path": "music/wilderness/piano_pads.mp3",
                 "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/wilderness/atmosphere.wav",
-                "prompt": "Wilderness atmosphere, gentle wind and natural ambience",
-                "volume": 0.6
-            },
-            {
-                "path": "music/wilderness/melody.wav",
-                "prompt": "Wilderness melody layer, bird-like calls and natural patterns",
-                "volume": 0.5
             }
         ],
         "pre_industrial": [
             {
-                "path": "music/pre_industrial/drone.wav",
-                "prompt": "Pre-industrial drone, natural but with human elements",
+                "path": "music/wilderness/piano_pads.mp3",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/pre_industrial/atmosphere.wav",
-                "prompt": "Pre-industrial atmosphere, containing simple tools and early craft sounds",
-                "volume": 0.6
-            },
-            {
-                "path": "music/pre_industrial/melody.wav",
-                "prompt": "Pre-industrial melody layer, early folk-like musical patterns",
-                "volume": 0.5
             }
         ],
         "early_inustrial": [
             {
-                "path": "music/early_industrial/drone.wav",
-                "prompt": "Early industrial drone, steam and mechanical foundations",
+                "path": "music/wilderness/piano_pads.mp3",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/early_industrial/rhythm.wav",
-                "prompt": "Early industrial rhythm, mechanical repetition, steam engines",
-                "volume": 0.6
-            },
-            {
-                "path": "music/early_industrial/melody.wav",
-                "prompt": "Early industrial melody, structured mechanical patterns",
-                "volume": 0.5
             }
         ],
         "late_industrial": [
             {
-                "path": "music/late_industrial/drone.wav",
-                "prompt": "Late industrial drone, factory foundations, motor hum",
+                "path": "music/wilderness/piano_pads.mp3",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/late_industrial/rhythm.wav",
-                "prompt": "Late industrial rhythm, factory rhythms, mass production",
-                "volume": 0.6
-            },
-            {
-                "path": "music/late_industrial/melody.wav",
-                "prompt": "Late industrial melody, more complex mechanical patterns",
-                "volume": 0.5
             }
         ],
         "modern": [
             {
-                "path": "music/modern/bass.wav",
-                "prompt": "Modern bass layer, electronic undertones",
+                "path": "music/wilderness/piano_pads.mp3",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/modern/rhythm.wav",
-                "prompt": "Modern rhythm layer, structured electronic patterns",
-                "volume": 0.6
-            },
-            {
-                "path": "music/modern/melody.wav",
-                "prompt": "Modern melody layer, synthesizer-based melodies",
-                "volume": 0.5
             }
         ],
         "current": [
             {
-                "path": "music/current/ambient.wav",
-                "prompt": "Current era ambient layer, digital pads and textures",
+                "path": "music/wilderness/piano_pads.mp3",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/current/rhythm.wav",
-                "prompt": "Current era rhythm, glitchy and processed beats",
-                "volume": 0.6
-            },
-            {
-                "path": "music/current/melody.wav",
-                "prompt": "Current era melody, algorithmic patterns and processed sounds",
-                "volume": 0.5
             }
         ],
         "future": [
             {
-                "path": "music/future/ambient.wav",
-                "prompt": "Future ambient layer, advanced synthetic textures",
+                "path": "music/future/enna_vector_test.wav",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/future/rhythm.wav",
-                "prompt": "Future rhythm layer, complex and evolving patterns",
-                "volume": 0.6
-            },
-            {
-                "path": "music/future/melody.wav",
-                "prompt": "Future melody layer, alien-like musical structures",
-                "volume": 0.5
             }
         ],
         "dystopia": [
             {
-                "path": "music/dystopia/drone.wav",
-                "prompt": "Dystopian drone, harsh and dissonant textures",
+                "path": "music/future/enna_vector_test.wav",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/dystopia/noise.wav",
-                "prompt": "Dystopian noise layer, industrial decay and distortion",
-                "volume": 0.6
-            },
-            {
-                "path": "music/dystopia/melody.wav",
-                "prompt": "Dystopian melody layer, fragmented and broken patterns",
-                "volume": 0.5
             }
         ],
         "ruins": [
             {
-                "path": "music/ruins/ambient.wav",
-                "prompt": "Ruins ambient layer, return to nature with traces of past",
+                "path": "music/wilderness/piano_pads.mp3",
+                "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
-            },
-            {
-                "path": "music/ruins/atmosphere.wav",
-                "prompt": "Ruins atmosphere, wind through abandoned structures",
-                "volume": 0.6
-            },
-            {
-                "path": "music/ruins/melody.wav",
-                "prompt": "Ruins melody layer, natural sounds with remnants of past complexity",
-                "volume": 0.5
             }
         ]
     }

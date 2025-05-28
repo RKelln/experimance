@@ -26,9 +26,9 @@ s.waitForBoot {
     var oscRecvPort = 5568;
 
     // Context tracking
-    var currentBiome = "temperate_forest".asSymbol;  // Default biome
-    var currentEra = "wilderness".asSymbol;          // Default era
-    var activeTags = Set["temperate_forest", "wilderness"];  // Default active tags
+    var currentBiome = \temperate_forest;  // Default biome as symbol
+    var currentEra = \wilderness;          // Default era as symbol
+    var activeTags = Set[\temperate_forest];  // Default active tags as symbols
 
     // Volume control variables
     var masterVolume = 1.0;        // Master volume (0.0 to 1.0)
@@ -74,8 +74,23 @@ s.waitForBoot {
     // Configuration loading
     // -----------------------------------------------------
 
-    // Helper function to convert JSON objects with string keys to objects with symbol keys
-    ~convertJsonKeysToSymbols = { |jsonObj|
+    // Helper function to convert tag arrays to symbols
+    ~convertTagsToSymbols = { |tagsArray|
+        if(tagsArray.notNil) {
+            tagsArray.collect { |tag|
+                if(tag.isKindOf(String)) {
+                    tag.asSymbol; // Convert each tag to symbol
+                };
+            };
+        } {
+            nil;
+        };
+    };
+
+    // Helper function to:
+    // 1) Convert all keys to symbols
+    // 2) convert all tag strings in all \tags keys to symbols
+    ~processJSON = { |jsonObj|
         var result;
 
         // Handle nil case gracefully
@@ -92,8 +107,14 @@ s.waitForBoot {
                         // Debug log for key conversion
                         //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
 
-                        // Recursively convert nested objects/arrays
-                        result[symKey] = ~convertJsonKeysToSymbols.(v);
+                        // If the key is \tags, convert its values to symbols
+                        if (symKey == \tags and: { v.isKindOf(Array) }) {
+                            // Convert tags to symbols
+                            result[symKey] = ~convertTagsToSymbols.(v);
+                        } {
+                            // Recursively convert nested objects/arrays
+                            result[symKey] = ~processJSON.(v);
+                        }
                     };
                 } { |error|
                     "Error during key conversion: %".format(error.errorString).error;
@@ -104,7 +125,7 @@ s.waitForBoot {
                     // If it's an array/sequence (but not a string), process each element
                     try {
                         jsonObj.collect { |item|
-                            ~convertJsonKeysToSymbols.(item);
+                            ~processJSON.(item);
                         };
                     } { |error|
                         "Error converting array elements: %".format(error.errorString).error;
@@ -144,7 +165,7 @@ s.waitForBoot {
                         data = data.parseJSON;
 
                         // Convert JSON object with string keys to symbols
-                        result = ~convertJsonKeysToSymbols.(data);
+                        result = ~processJSON.(data);
                         "Successfully loaded and converted %".format(filename).postln;
                     } { |error|
                         "Error parsing JSON in file %: %".format(path, error.errorString).error;
@@ -180,7 +201,7 @@ s.waitForBoot {
                     if(layer[\exists].not) {
                         "WARNING: Environmental audio file not found: %".format(path).warn;
                     } {
-                        "Verified environmental audio file: %".format(path).postln;
+                        //"Verified environmental audio file: %".format(path).postln;
                     };
                 };
             };
@@ -215,30 +236,14 @@ s.waitForBoot {
 
             // Try both symbol and string access to be safe
             if(musicConfig[\era_loops].notNil) {
-                "Using symbol access for era_loops".postln;
                 configurations[\music_loops] = musicConfig[\era_loops];
             } {
-                // Try string access as fallback
-                if(musicConfig.respondsTo('at') and: { musicConfig["era_loops"].notNil }) {
-                    "Using string access for era_loops - keys weren't properly converted".warn;
-                    configurations[\music_loops] = musicConfig["era_loops"];
-                    "Converting era_loops manually".postln;
-                    configurations[\music_loops] = ~convertJsonKeysToSymbols.(configurations[\music_loops]);
-                } {
-                    "Warning: No era_loops found in music config".warn;
-                    if(musicConfig.respondsTo('keys')) {
-                        "Available keys: %".format(musicConfig.keys).postln;
-                    };
-                };
+                "Warning: No era_loops found in music config".warn;
             };
 
             // Verify file existence for each music loop in each era
             if(configurations[\music_loops].notNil) {
                 "Verifying music loop audio files...".postln;
-
-                // Debug - show the type of keys
-                "Music loops configuration type: %".format(configurations[\music_loops].class).postln;
-                "Music loops keys: %".format(configurations[\music_loops].keys).postln;
 
                 configurations[\music_loops].keysValuesDo { |era, loops|
                     "Processing era: % (type: %)".format(era, era.class).postln;
@@ -250,7 +255,7 @@ s.waitForBoot {
                             if(loop[\exists].not) {
                                 "WARNING: Music loop file not found: % for era: %".format(path, era).warn;
                             } {
-                                "Verified music loop file: % for era: %".format(path, era).postln;
+                                //"Verified music loop file: % for era: %".format(path, era).postln;
                             };
 
                             // Debug - show the keys in this loop
@@ -388,7 +393,7 @@ s.waitForBoot {
 
         if (biome.notNil and: {biome != currentBiome}) {
             prevBiome = currentBiome;
-            currentBiome = biome.asSymbol;  // Convert to symbol for consistency
+            currentBiome = biome.asString;  // Ensure it's a string
             "Biome changed from % to %".format(prevBiome, currentBiome).postln;
             activeTags.add(currentBiome);
             if(prevBiome.notNil) {
@@ -400,7 +405,7 @@ s.waitForBoot {
 
         if (era.notNil and: {era != currentEra}) {
             prevEra = currentEra;
-            currentEra = era.asSymbol;  // Convert to symbol for consistency
+            currentEra = era.asString;  // Ensure it's a string
             "Era changed from % to %".format(prevEra, currentEra).postln;
             activeTags.add(currentEra);
             if(prevEra.notNil) {
@@ -414,25 +419,39 @@ s.waitForBoot {
 
         // Get layers that match current context (biome + era + active tags)
         matchingTags = activeTags.asArray;
+        "Active tags: % (types: %)".format(
+            matchingTags, 
+            matchingTags.collect { |t| t.class.name }
+        ).postln;
         matching = if(configurations[\layers].notNil) {
             configurations[\layers].select { |layer|
                 var layerTags = layer[\tags];
                 var exists = layer[\exists] ? false; // Check if file exists
-                exists and: { layerTags.notNil and: { layerTags.any { |tag| matchingTags.includes(tag) } } };
+                //"Layer path: %, tags: % %, exists: %".format(layer[\path], layerTags, layerTags.collect { |t| t.class.name }, exists).postln;
+                exists and: { layerTags.notNil and: { layerTags.any { |layerTag| matchingTags.any { |activeTag| activeTag == layerTag } } } }
             };
         } {
             [];
         };
+        // debugging, if matching layers are found
+        if (matching.size > 0) {
+            "Matching environmental layers: %".format(matching.size).postln;
+            matching.do { |layer|
+                "Adding: %, tags: %".format(layer[\path], layer[\tags]).postln;
+            };
+        };
 
         // Handle environment layers - fade out non-matching, fade in matching
         if(environmentLayers.notNil) {
-            environmentLayers.do { |layerInfo, path|
+            environmentLayers.pairsDo { |path, layerInfo|
+                // If path is not in the matching layers, fade it out
                 if(matching.notNil and: { matching.any { |m| m[\path] == path.asString }.not }) {
+                    "Fading out non-matching layer: %".format(path).postln;
                     // Fade out and remove this layer
                     if(layerInfo[\synth].notNil) {
                         layerInfo[\synth].set(\gate, 0);  // Trigger release
                     };
-                    { environmentLayers.removeAt(path); }.defer(5);  // Remove after fade
+                    environmentLayers.removeAt(path);
                 };
             };
         };
@@ -440,19 +459,25 @@ s.waitForBoot {
         // Add new matching layers
         matching.do { |layer|
             var path = layer[\path];
-            if(environmentLayers[path.asSymbol].isNil) {
+            if(environmentLayers[path].isNil) {
                 // This is a new layer, add it
-                environmentLayers[path.asSymbol] = ~playEnvironmentLayer.(layer);
+                environmentLayers[path] = ~playEnvironmentLayer.(layer);
             };
         };
 
         // Handle music loops, which only change on era transitions
-        if (currentEra.notNil) {
+        // If the current era is different from the previous one
+        // and era != currentEra, update music loops
+        if (currentEra.notNil and: { currentEra != prevEra and: {era != currentEra }}) {
             "Updating music loops % -> %".format(prevEra, currentEra).postln;
             configurations[\music_loops].postln;
 
             eraLoops = if(configurations[\music_loops].notNil) {
-                configurations[\music_loops][currentEra.asSymbol];
+                // Try to get era loops first with string key
+                configurations[\music_loops][currentEra.asString] ?? {
+                    // If not found, try symbol key as fallback  
+                    configurations[\music_loops][currentEra.asSymbol];
+                };
             } {
                 nil
             };
@@ -510,13 +535,14 @@ s.waitForBoot {
     ~setupOSC = {
         // Main context: /spacetime <biome> <era>
         OSCdef(\spacetime, { |msg, time, addr, recvPort|
-            var biome = msg[1].asString;
-            var era = msg[2].asString;
+            var biome = msg[1].asSymbol;
+            var era = msg[2].asSymbol;
 
             "Context changed: biome=%, era=%".format(biome, era).postln;
 
             // Clear and rebuild active tags
             activeTags = Set[biome, era];
+            "Reset active tags to: %".format(activeTags.asArray).postln;
 
             // Update audio context
             ~updateAudioContext.(biome, era);
@@ -525,12 +551,13 @@ s.waitForBoot {
 
         // Include tag: /include <tag>
         OSCdef(\include, { |msg, time, addr, recvPort|
-            var tag = msg[1].asString;
+            var tag = msg[1].asSymbol;
 
             "Including tag: %".format(tag).postln;
 
-            // Add tag to active set
+            // Add tag to active set (ensure it's a string)
             activeTags.add(tag);
+            "Active tags now: %".format(activeTags.asArray).postln;
 
             // Update audio context
             ~updateAudioContext.();
@@ -539,12 +566,13 @@ s.waitForBoot {
 
         // Exclude tag: /exclude <tag>
         OSCdef(\exclude, { |msg, time, addr, recvPort|
-            var tag = msg[1].asString;
+            var tag = msg[1].asSymbol;
 
             "Excluding tag: %".format(tag).postln;
 
-            // Remove tag from active set
+            // Remove tag from active set (convert to both string and symbol to be safe)
             activeTags.remove(tag);
+            "Active tags now: %".format(activeTags.asArray).postln;
 
             // Update audio context
             ~updateAudioContext.();

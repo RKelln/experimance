@@ -1,32 +1,12 @@
 [
     {
         "trigger": "transition",
-        "path": "triggers/transition.wav",
+        "path": "sfx/transition.mp3",
         "volume": 1.0
     },
     {
-        "trigger": "listening",
-        "path": "triggers/listening_start.wav",
-        "volume": 0.7
-    },
-    {
-        "trigger": "speaking",
-        "path": "triggers/speaking_start.wav",
-        "volume": 0.7
-    },
-    {
-        "trigger": "confirmation",
-        "path": "triggers/confirm.wav",
-        "volume": 0.8
-    },
-    {
         "trigger": "error",
-        "path": "triggers/error.wav",
+        "path": "sfx/error.mp3",
         "volume": 0.8
-    },
-    {
-        "trigger": "notification",
-        "path": "triggers/notification.wav",
-        "volume": 0.7
     }
 ]
