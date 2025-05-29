@@ -10,30 +10,40 @@ from pydantic import BaseModel, Field
 
 
 class Era(str, Enum):
-    """Era definitions for the Experimance installation."""
+    """Era definitions for the Experimance installation.
+    
+    These values must match the 'eras' array in data/experimance_config.json
+    """
     WILDERNESS = "wilderness"
     PRE_INDUSTRIAL = "pre_industrial"
     EARLY_INDUSTRIAL = "early_industrial"
     LATE_INDUSTRIAL = "late_industrial"
-    EARLY_MODERN = "early_modern"
     MODERN = "modern"
-    AI = "ai_future"
-    POST_APOCALYPTIC = "post_apocalyptic"
+    CURRENT = "current"
+    FUTURE = "future"
+    DYSTOPIA = "dystopia"
     RUINS = "ruins"
 
 
 class Biome(str, Enum):
-    """Biome definitions for the Experimance installation."""
-    DESERT = "desert"
-    FOREST = "forest"
+    """Biome definitions for the Experimance installation.
+    
+    These values must match the 'biomes' array in data/experimance_config.json
+    """
+    RAINFOREST = "rainforest"
     TEMPERATE_FOREST = "temperate_forest"
-    TROPICAL_FOREST = "tropical_forest"
-    MOUNTAINS = "mountains" 
-    HILLS = "hills"
+    BOREAL_FOREST = "boreal_forest"
+    DECIDUOUS_FOREST = "deciduous_forest"
+    DESERT = "desert"
+    MOUNTAIN = "mountain"
+    TROPICAL_ISLAND = "tropical_island"
+    RIVER = "river"
     TUNDRA = "tundra"
+    STEPPE = "steppe"
     COASTAL = "coastal"
+    SWAMP = "swamp"
     PLAINS = "plains"
-    SAVANNA = "savanna"
+    ARCTIC = "arctic"
 
 
 class TransitionStyle(str, Enum):

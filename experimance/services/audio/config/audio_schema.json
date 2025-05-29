@@ -1,0 +1,167 @@
+{
+    "metadata": {
+        "version": "1.0",
+        "description": "Audio service specific configuration for Experimance",
+        "lastUpdated": "2025-05-28",
+        "generalConfig": "../../../data/experimance_config.json"
+    },
+    "audioTags": [
+        "ambient",
+        "music",
+        "effect",
+        "dialogue",
+        "transition_sound",
+        "background",
+        "foreground",
+        "loop",
+        "oneshot",
+        "layered"
+    ],
+    "volumeControls": {
+        "master": {
+            "range": [
+                0.0,
+                1.0
+            ],
+            "default": 1.0,
+            "description": "Overall system volume"
+        },
+        "environment": {
+            "range": [
+                0.0,
+                1.0
+            ],
+            "default": 1.0,
+            "description": "Environmental ambient sounds"
+        },
+        "music": {
+            "range": [
+                0.0,
+                1.0
+            ],
+            "default": 1.0,
+            "description": "Music loops and placeholder music"
+        },
+        "sfx": {
+            "range": [
+                0.0,
+                1.0
+            ],
+            "default": 1.0,
+            "description": "Sound effects and triggers"
+        }
+    },
+    "oscCommands": {
+        "/spacetime": {
+            "args": [
+                "biome",
+                "era"
+            ],
+            "description": "Set current biome and era context"
+        },
+        "/include": {
+            "args": [
+                "tag"
+            ],
+            "description": "Include a tag in active set"
+        },
+        "/exclude": {
+            "args": [
+                "tag"
+            ],
+            "description": "Remove a tag from active set"
+        },
+        "/listening": {
+            "args": [
+                "start|stop"
+            ],
+            "description": "Signal agent listening state"
+        },
+        "/speaking": {
+            "args": [
+                "start|stop"
+            ],
+            "description": "Signal agent speaking state"
+        },
+        "/transition": {
+            "args": [
+                "start|stop"
+            ],
+            "description": "Signal scene transition"
+        },
+        "/trigger": {
+            "args": [
+                "triggerName"
+            ],
+            "description": "Play a trigger sound effect"
+        },
+        "/volume/master": {
+            "args": [
+                "value"
+            ],
+            "description": "Set master volume (0.0-1.0)"
+        },
+        "/volume/environment": {
+            "args": [
+                "value"
+            ],
+            "description": "Set environmental volume (0.0-1.0)"
+        },
+        "/volume/music": {
+            "args": [
+                "value"
+            ],
+            "description": "Set music volume (0.0-1.0)"
+        },
+        "/volume/sfx": {
+            "args": [
+                "value"
+            ],
+            "description": "Set sound effects volume (0.0-1.0)"
+        },
+        "/reload": {
+            "args": [],
+            "description": "Reload audio configurations"
+        }
+    },
+    "fileStructure": {
+        "layers.json": {
+            "description": "Environmental audio layers",
+            "schema": {
+                "path": "string - relative path to audio file",
+                "tags": "array - list of tags for filtering",
+                "prompt": "string - description for reference",
+                "volume": "number - optional volume (0.0-1.0)"
+            }
+        },
+        "triggers.json": {
+            "description": "One-shot sound effects",
+            "schema": {
+                "trigger": "string - trigger event name",
+                "path": "string - relative path to audio file",
+                "volume": "number - optional volume (0.0-1.0)"
+            }
+        },
+        "music_loops.json": {
+            "description": "Era-based layered music",
+            "schema": {
+                "era_loops": {
+                    "eraName": [
+                        {
+                            "path": "string - relative path to audio file",
+                            "prompt": "string - description for reference",
+                            "volume": "number - optional volume (0.0-1.0)"
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "recommendations": {
+        "tagNaming": "Use lowercase with underscores for consistency",
+        "fileNaming": "Use descriptive names with biome/era/sector structure",
+        "volumes": "Keep most volumes between 0.5-1.0 for good dynamic range",
+        "tags": "Each layer should have at least biome and era tags",
+        "musicSlots": "Keep same number of slots across eras for smooth transitions"
+    }
+}

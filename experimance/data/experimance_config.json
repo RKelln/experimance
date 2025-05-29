@@ -1,0 +1,67 @@
+{
+    "metadata": {
+        "version": "1.0",
+        "description": "General Experimance project configuration - shared across all services",
+        "lastUpdated": "2025-05-28"
+    },
+    "biomes": [
+        "rainforest",
+        "temperate_forest",
+        "boreal_forest",
+        "deciduous_forest",
+        "desert",
+        "mountain",
+        "tropical_island",
+        "river",
+        "tundra",
+        "steppe",
+        "coastal",
+        "swamp",
+        "plains",
+        "arctic"
+    ],
+    "eras": [
+        "wilderness",
+        "pre_industrial",
+        "early_industrial",
+        "late_industrial",
+        "modern",
+        "current",
+        "future",
+        "dystopia",
+        "ruins"
+    ],
+    "sectors": [
+        "transportation",
+        "housing",
+        "industry",
+        "business",
+        "culture"
+    ],
+    "commonTags": [
+        "birds",
+        "water",
+        "wind",
+        "machinery",
+        "voices",
+        "animals",
+        "music",
+        "footsteps",
+        "vehicles",
+        "nature",
+        "construction",
+        "crowd",
+        "mechanical",
+        "electronic",
+        "organic"
+    ],
+    "triggerTypes": [
+        "transition",
+        "error",
+        "success",
+        "ui_select",
+        "ui_hover",
+        "alert",
+        "notification"
+    ]
+}
