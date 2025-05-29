@@ -4,7 +4,6 @@
 // Load utilities first
 var scriptDir = thisProcess.nowExecutingPath.dirname;
 var configDir, audioDir, projectRoot, generalConfigDir;
-var configurations;
 
 // GUI variables
 var window, oscAddr, configs;
@@ -28,111 +27,180 @@ generalConfigDir = projectRoot +/+ "data";
 "Audio directory: %".format(audioDir).postln;
 "General config directory: %".format(generalConfigDir).postln;
 
-// Utility functions - copied directly to avoid class system issues
-// Process JSON and convert it to a usable format
-~processJSON = { |jsonObj|
-    var result, parsed;
 
-    if(jsonObj.isKindOf(String)) {
-        // Parse JSON string to object
-        parsed = jsonObj.parseYAML;
-
-        // Return the dictionary directly
-        if(parsed.isKindOf(Dictionary)) {
-            result = parsed;
-        } {
-            result = parsed;
+// Helper function to convert tag arrays to symbols
+~convertStringsToSymbols = { |stringsArray|
+    if(stringsArray.notNil) {
+        stringsArray.collect { |string|
+            if(string.isKindOf(String)) {
+                string.asSymbol; // Convert each tag to symbol
+            };
         };
     } {
-        // Already parsed, just return as is
-        result = jsonObj;
+        nil;
     };
-
-    result
 };
 
-// Load a JSON configuration file
-~loadJsonConfig = { |filename|
-    var path, file, data, result = nil;
+// Helper function to:
+// 1) Convert all keys to symbols
+// 2) convert all tag strings in all \tags keys to symbols
+~processJSON = { |jsonObj|
+    var result;
 
-    path = configDir +/+ filename;
-
-    if(File.exists(path).not) {
-        "Config file does not exist: %".format(path).error;
+    // Handle nil case gracefully
+    if(jsonObj.isNil) {
         nil;
     } {
+        // Handle different types appropriately
+        if(jsonObj.isKindOf(Dictionary)) {
+            // If it's a dictionary/object, create a new one with symbol keys
+            result = Dictionary.new;
+            try {
+                jsonObj.keysValuesDo { |k, v|
+                    var symKey = k.asSymbol;
+                    // Debug log for key conversion
+                    //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
+
+                    // If the key is \tags, convert its values to symbols
+                    if (symKey == \tags and: { v.isKindOf(Array) }) {
+                        // Convert tags to symbols
+                        result[symKey] = ~convertTagsToSymbols.(v);
+                    } {
+                        // Recursively convert nested objects/arrays
+                        result[symKey] = ~processJSON.(v);
+                    }
+                };
+            } { |error|
+                "Error during key conversion: %".format(error.errorString).error;
+            };
+            result;
+        } {
+            if(jsonObj.isKindOf(SequenceableCollection) && jsonObj.isKindOf(String).not) {
+                // If it's an array/sequence (but not a string), process each element
+                try {
+                    jsonObj.collect { |item|
+                        ~processJSON.(item);
+                    };
+                } { |error|
+                    "Error converting array elements: %".format(error.errorString).error;
+                    jsonObj; // Return original on error
+                };
+            } {
+                // For primitives (strings, numbers, booleans, etc.), return as-is
+                jsonObj;
+            };
+        };
+    };
+};
+
+// Load JSON config file
+~loadJsonConfig = { |filename|
+    var path = configDir +/+ filename;
+    var file, data, result = nil;
+
+    // Check if file exists
+    if(File.exists(path).not) {
+        "Config file does not exist: %".format(path).error;
+    } {
+        // Try to open and read the file
         file = File(path, "r");
 
         if(file.isOpen) {
+            // Read file contents
             data = file.readAllString;
             file.close;
 
+            // Handle empty files
             if(data.size < 2) {
                 "Config file is empty: %".format(path).error;
-                nil;
             } {
-                result = ~processJSON.(data);
+                // Parse the JSON with error handling
+                try {
+                    data = data.parseJSON;
+
+                    // Convert JSON object with string keys to symbols
+                    result = ~processJSON.(data);
+                    "Successfully loaded and converted %".format(filename).postln;
+                } { |error|
+                    "Error parsing JSON in file %: %".format(path, error.errorString).error;
+                };
             };
         } {
             "Could not open config file: %".format(path).error;
-            nil;
         };
     };
+
+    // Return the final result
+    result;
 };
 
 // Load general project configuration from data directory
 ~loadGeneralConfig = { |filename="experimance_config.json"|
-    var path, file, data, result = nil;
+    var path, altPath, file, data, result = nil;
 
+    // Try the specified data directory first
     path = generalConfigDir +/+ filename;
     "Loading general config from: %".format(path).postln;
 
+    // If file doesn't exist in the general config dir, try project root
     if(File.exists(path).not) {
-        "General config file does not exist: %".format(path).error;
-        nil;
-    } {
-        file = File(path, "r");
-
-        if(file.isOpen) {
-            data = file.readAllString;
-            file.close;
-
-            if(data.size < 2) {
-                "General config file is empty: %".format(path).error;
-                nil;
-            } {
-                result = ~processJSON.(data);
-                "Successfully loaded general config".postln;
-            };
+        "General config file not found at %".format(path).warn;
+        
+        // Try alternate location - direct from project root
+        altPath = projectRoot +/+ "data" +/+ filename;
+        "Trying alternate location: %".format(altPath).postln;
+        
+        if(File.exists(altPath).not) {
+            "CRITICAL ERROR: General config file not found at either location:".error;
+            "1. %".format(path).error;
+            "2. %".format(altPath).error;
+            "Please ensure the experimance_config.json file exists in one of these locations.".error;
+            ^nil;
         } {
-            "Could not open general config file: %".format(path).error;
-            nil;
+            path = altPath;
+            "Found config file at alternate location: %".format(path).postln;
         };
+    } {
+        "Found config file at: %".format(path).postln;
     };
 
-    result;
-};
+    // Open and read the file
+    file = File(path, "r");
 
-// Helper function to convert tag arrays to symbols
-~convertStringsToSymbols = { |tagsArray|
-    if(tagsArray.isNil) {
-        [];
-    } {
-        tagsArray.collect { |tag|
-            if(tag.isKindOf(String)) {
-                tag.asSymbol;
-            } {
-                tag;
+    if(file.isOpen) {
+        "Successfully opened config file. Reading content...".postln;
+        data = file.readAllString;
+        file.close;
+
+        if(data.size < 2) {
+            "ERROR: General config file is empty: %".format(path).error;
+            ^nil;
+        } {
+            "Config file contains % bytes of data".format(data.size).postln;
+            try {
+                "Parsing JSON data...".postln;
+                result = data.parseJSON;
+                result = ~processJSON.(result);
+
+                "Successfully parsed general config".postln;
+                result;
+            } { |error|
+                "ERROR: Failed to parse JSON from %: %".format(path, error.errorString).error;
+                nil;
             };
         };
+    } {
+        "ERROR: Could not open general config file: %".format(path).error;
+        nil;
     };
 };
+
 
 // Load all configurations and extract unique values
 ~loadAllConfigs = {
-    var configs = Dictionary.new;
+    var configsDict = Dictionary.new;  // Renamed from configs to configsDict to avoid name conflict
     var generalConfig;
-    var audioSchema;
+    var triggersData;
     var allTags = Set.new;
     var allBiomes = Set.new;
     var allEras = Set.new;
@@ -143,43 +211,70 @@ generalConfigDir = projectRoot +/+ "data";
     // Load general project configuration
     generalConfig = ~loadGeneralConfig.();
     if(generalConfig.isNil) {
-        "Failed to load general configuration".error;
-        ^configs;
+        "CRITICAL ERROR: Failed to load general configuration. No biomes, eras, or tags will be available.".error;
+        "Hint: Make sure experimance_config.json exists in the data directory.".error;
+        "Searched paths: ".error;
+        (generalConfigDir +/+ "experimance_config.json").error;
+        (projectRoot +/+ "data" +/+ "experimance_config.json").error;
+    } {
+        // Store in configs dictionary
+        configsDict.put(\generalConfig, generalConfig);
+
+        "Successfully loaded general config".postln;
+        generalConfig.keysValuesDo { |k, v|
+            "% %: % %".format(k, k.class.name, v, v.class.name).postln;
+        };
+
+        // Extract biomes
+        if(generalConfig[\biomes].notNil) {
+            allBiomes = ~convertStringsToSymbols.(generalConfig[\biomes]).as(Set);
+            "Loaded % biomes".format(allBiomes.size).postln;
+        } {
+            "Warning: No biomes found in general config".warn;
+        };
+
+        // Extract eras
+        if(generalConfig[\eras].notNil) {
+            allEras = ~convertStringsToSymbols.(generalConfig[\eras]).as(Set);
+            "Loaded % eras".format(allEras.size).postln;
+        } {
+            "Warning: No eras found in general config".warn;
+        };
+
+        // Extract common tags
+        if(generalConfig[\commonTags].notNil) {
+            allTags = ~convertStringsToSymbols.(generalConfig[\commonTags]).as(Set);
+            "Loaded % common tags".format(allTags.size).postln;
+        } {
+            "Warning: No common tags found in general config".warn;
+        };
     };
 
-    // Store in configs dictionary
-    configs.put(\generalConfig, generalConfig);
+    // load trigger definitions from config/triggers.json
+    // Load triggers.json (sound effects)
+    triggersData = ~loadJsonConfig.("triggers.json");
 
-    // Extract biomes
-    if(generalConfig[\biomes].notNil) {
-        allBiomes = ~convertStringsToSymbols.(generalConfig[\biomes]).as(Set);
-        "Loaded % biomes".format(allBiomes.size).postln;
-    } {
-        "No biomes found in general config".warn;
-    };
-
-    // Extract eras
-    if(generalConfig[\eras].notNil) {
-        allEras = ~convertStringsToSymbols.(generalConfig[\eras]).as(Set);
-        "Loaded % eras".format(allEras.size).postln;
-    } {
-        "No eras found in general config".warn;
-    };
-
-    // Extract common tags
-    if(generalConfig[\commonTags].notNil) {
-        allTags = ~convertStringsToSymbols.(generalConfig[\commonTags]).as(Set);
-        "Loaded % common tags".format(allTags.size).postln;
-    } {
-        "No common tags found in general config".warn;
+    // Verify file existence for each trigger
+    if(triggersData.notNil) {
+        "Verifying trigger audio files...".postln;
+        triggersData.do { |trigger, i|
+            allTriggers.add(trigger[\trigger].asSymbol);
+        };
     };
 
     // Store extracted data in the configs dictionary
-    configs.put(\allTags, allTags.asArray.sort);
-    configs.put(\allBiomes, allBiomes.asArray.sort);
-    configs.put(\allEras, allEras.asArray.sort);
+    configsDict.put(\allTags, allTags.asArray.sort);
+    configsDict.put(\allBiomes, allBiomes.asArray.sort);
+    configsDict.put(\allEras, allEras.asArray.sort);
+    configsDict.put(\allTriggers, allTriggers.asArray.sort);
+    
+    // Debug output
+    "ConfigsDict contains:".postln;
+    configsDict.keysValuesDo { |k, v|
+        "Key: %, Value type: %, Size: %".format(k, v.class, if(v.isKindOf(Collection)) {v.size} {1}).postln;
+    };
 
-    configs;
+    configsDict;  // Return the dictionary
 };
 
 // OSC sending utility
@@ -234,7 +329,7 @@ generalConfigDir = projectRoot +/+ "data";
 // Create the GUI
 ~createGUI = {
     var margin = 10, buttonHeight = 30, sliderHeight = 25;
-    var windowWidth = 800, windowHeight = 700;
+    var windowWidth = 800, windowHeight = 850; // Increased height from 700 to 900
 	var volumeY = margin + 535;
     var sliderWidth = 200;
 	var volumePresetY = volumeY + 40;
@@ -271,9 +366,15 @@ generalConfigDir = projectRoot +/+ "data";
     reloadButton = Button(window, Rect(margin + 130, margin + 25, 100, buttonHeight))
         .string_("Reload Configs")
         .action_({
-            configs = ~loadAllConfigs;
-            ~updateMenus.();
-            ~sendOSC.('/reload', []);
+            var result = ~loadAllConfigs.();
+            if(result.notNil) {
+                configs = result;  // Properly update the global configs
+                "Configs updated: %".format(configs.class).postln;
+                ~updateMenus.();
+                ~sendOSC.('/reload', []);
+            } {
+                "Failed to load configs".error;
+            };
         });
 
     // Status text
@@ -433,6 +534,7 @@ generalConfigDir = projectRoot +/+ "data";
         musicVolumeLabel.string = slider.value.round(0.01).asString;
     };
 
+    // SFX slider
     volumeY = volumeY + 30;
     StaticText(window, Rect(margin, volumeY, 80, 20)).string_("SFX:");
     sfxVolumeSlider = Slider(window, Rect(margin + 85, volumeY, sliderWidth, sliderHeight))
@@ -443,13 +545,14 @@ generalConfigDir = projectRoot +/+ "data";
         sfxVolumeLabel.string = slider.value.round(0.01).asString;
     };
 
-    // Add volume preset buttons
+    // Move presets below all sliders
+    volumePresetY = volumeY + 40;
     StaticText(window, Rect(margin, volumePresetY, 150, 20))
         .string_("Volume Presets:")
         .font_(Font.default.size_(12).bold_(true));
 
     volumePresetY = volumePresetY + 25;
-    Button(window, Rect(margin, volumePresetY, 80, 20))
+    Button(window, Rect(margin, volumePresetY, 80, buttonHeight))
         .string_("Silent")
         .action_({
             [masterVolumeSlider, envVolumeSlider, musicVolumeSlider, sfxVolumeSlider].do { |slider|
@@ -457,38 +560,42 @@ generalConfigDir = projectRoot +/+ "data";
                 slider.doAction;
             };
         });
-
-    Button(window, Rect(margin + 85, volumePresetY, 80, 20))
+    Button(window, Rect(margin + 85, volumePresetY, 80, buttonHeight))
         .string_("Quiet")
         .action_({
-            masterVolumeSlider.value = 0.3; masterVolumeSlider.doAction;
-            envVolumeSlider.value = 0.5; envVolumeSlider.doAction;
-            musicVolumeSlider.value = 0.2; musicVolumeSlider.doAction;
+            // Default values for "Quiet" preset
+            masterVolumeSlider.value = 0.7; masterVolumeSlider.doAction;
+            envVolumeSlider.value = 0.25; envVolumeSlider.doAction;
+            musicVolumeSlider.value = 0.15; musicVolumeSlider.doAction;
             sfxVolumeSlider.value = 0.4; sfxVolumeSlider.doAction;
         });
-
-    Button(window, Rect(margin + 170, volumePresetY, 80, 20))
+    Button(window, Rect(margin + 170, volumePresetY, 80, buttonHeight))
         .string_("Normal")
         .action_({
-            [masterVolumeSlider, envVolumeSlider, musicVolumeSlider, sfxVolumeSlider].do { |slider|
-                slider.value = 1.0;
-                slider.doAction;
-            };
+            // Default values for "Normal" preset
+            masterVolumeSlider.value = 1.0; masterVolumeSlider.doAction;
+            envVolumeSlider.value = 1.0; envVolumeSlider.doAction;
+            musicVolumeSlider.value = 0.8; musicVolumeSlider.doAction;
+            sfxVolumeSlider.value = 0.8; sfxVolumeSlider.doAction;
         });
-
-    Button(window, Rect(margin + 255, volumePresetY, 80, 20))
+    Button(window, Rect(margin + 255, volumePresetY, 100, buttonHeight)) // wider for last button
         .string_("Music Only")
         .action_({
-            masterVolumeSlider.value = 1.0; masterVolumeSlider.doAction;
-            envVolumeSlider.value = 0.1; envVolumeSlider.doAction;
-            musicVolumeSlider.value = 1.0; musicVolumeSlider.doAction;
-            sfxVolumeSlider.value = 0.2; sfxVolumeSlider.doAction;
+            // Default values for "Music Only" preset
+            masterVolumeSlider.value = 0.8; masterVolumeSlider.doAction;
+            envVolumeSlider.value = 0.0; envVolumeSlider.doAction;
+            musicVolumeSlider.value = 0.7; musicVolumeSlider.doAction;
+            sfxVolumeSlider.value = 0.0; sfxVolumeSlider.doAction;
         });
 
     // Test buttons section
     StaticText(window, Rect(margin + 400, margin + 370, 350, 20))
         .string_("QUICK TESTS")
         .font_(Font.default.size_(14).bold_(true));
+
+    // Widen right column buttons
+    testButtonWidth = 200;
+    testX = margin + 400;
 
     Button(window, Rect(testX, testY, testButtonWidth, buttonHeight))
         .string_("Test Forest/Wild")
@@ -615,11 +722,18 @@ generalConfigDir = projectRoot +/+ "data";
         .string_("Reload Audio Config")
         .background_(Color.yellow(0.6))
         .action_({
+            var result;
             ~sendOSC.('/reload', []);
             // Reload our config too
-            configs = ~loadAllConfigs;
-            ~updateMenus.();
-            "Configuration reloaded".postln;
+            result = ~loadAllConfigs.();
+            if(result.notNil) {
+                configs = result;  // Properly update the global configs
+                "Configs updated: %".format(configs.class).postln;
+                ~updateMenus.();
+                "Configuration reloaded".postln;
+            } {
+                "Failed to load configs".error;
+            };
         });
 
     testY = testY + 35;
@@ -656,234 +770,64 @@ generalConfigDir = projectRoot +/+ "data";
 
 // Update menus with config data
 ~updateMenus = {
-    if(configs.notNil) {
-        if(biomeMenu.notNil and: { configs[\allBiomes].notNil }) {
-            biomeMenu.items = configs[\allBiomes];
-            biomeMenu.value = configs[\allBiomes].indexOf(currentBiome) ? 0;
-        };
-
-        if(eraMenu.notNil and: { configs[\allEras].notNil }) {
-            eraMenu.items = configs[\allEras];
-            eraMenu.value = configs[\allEras].indexOf(currentEra) ? 0;
-        };
-
-        if(tagsList.notNil and: { configs[\allTags].notNil }) {
-            tagsList.items = configs[\allTags];
-        };
-
-        if(triggerMenu.notNil and: { configs[\allTriggers].notNil }) {
-            triggerMenu.items = configs[\allTriggers];
-        };
+    if(configs.isNil) {
+        "Warning: configs is nil, cannot update menus".warn;
+        ^this;
     };
+
+    if(configs.class != Dictionary) {
+        "Error: configs is not a Dictionary (actual type: %)".format(configs.class).error;
+        ^this;
+    };
+
+    "Updating menus with config data...".postln;
+    "Available config keys: %".format(configs.keys).postln;
+    
+    if(biomeMenu.notNil and: { configs[\allBiomes].notNil }) {
+        "Setting % biomes in dropdown".format(configs[\allBiomes].size).postln;
+        biomeMenu.items = configs[\allBiomes];
+        biomeMenu.value = configs[\allBiomes].indexOf(currentBiome.asSymbol) ? 0;
+    } {
+        "Cannot update biome menu: menu=%, allBiomes=%".format(
+            if(biomeMenu.isNil) {"nil"} {"valid"}, 
+            if(configs[\allBiomes].isNil) {"nil"} {configs[\allBiomes].size}
+        ).warn;
+    };
+
+    if(eraMenu.notNil and: { configs[\allEras].notNil }) {
+        "Setting % eras in dropdown".format(configs[\allEras].size).postln;
+        eraMenu.items = configs[\allEras];
+        eraMenu.value = configs[\allEras].indexOf(currentEra.asSymbol) ? 0;
+    } {
+        "Cannot update era menu: menu=%, allEras=%".format(
+            if(eraMenu.isNil) {"nil"} {"valid"}, 
+            if(configs[\allEras].isNil) {"nil"} {configs[\allEras].size}
+        ).warn;
+    };
+
+    if(tagsList.notNil and: { configs[\allTags].notNil }) {
+        "Setting % tags in list".format(configs[\allTags].size).postln;
+        tagsList.items = configs[\allTags];
+    } {
+        "Cannot update tags list: list=%, allTags=%".format(
+            if(tagsList.isNil) {"nil"} {"valid"}, 
+            if(configs[\allTags].isNil) {"nil"} {configs[\allTags].size}
+        ).warn;
+    };
+
+    if(triggerMenu.notNil and: { configs[\allTriggers].notNil }) {
+        "Setting % triggers in dropdown".format(configs[\allTriggers].size).postln;
+        triggerMenu.items = configs[\allTriggers];
+    } {
+        "Cannot update trigger menu: menu=%, allTriggers=%".format(
+            if(triggerMenu.isNil) {"nil"} {"valid"}, 
+            if(configs[\allTriggers].isNil) {"nil"} {configs[\allTriggers].size}
+        ).warn;
+    };
+
+    "Menu update complete".postln;
 };
 
-
-    // -----------------------------------------------------
-    // Configuration loading
-    // -----------------------------------------------------
-
-    // Helper function to convert tag arrays to symbols
-    ~convertTagsToSymbols = { |tagsArray|
-        if(tagsArray.notNil) {
-            tagsArray.collect { |tag|
-                if(tag.isKindOf(String)) {
-                    tag.asSymbol; // Convert each tag to symbol
-                };
-            };
-        } {
-            nil;
-        };
-    };
-
-    // Helper function to:
-    // 1) Convert all keys to symbols
-    // 2) convert all tag strings in all \tags keys to symbols
-    ~processJSON = { |jsonObj|
-        var result;
-
-        // Handle nil case gracefully
-        if(jsonObj.isNil) {
-            nil;
-        } {
-            // Handle different types appropriately
-            if(jsonObj.isKindOf(Dictionary)) {
-                // If it's a dictionary/object, create a new one with symbol keys
-                result = Dictionary.new;
-                try {
-                    jsonObj.keysValuesDo { |k, v|
-                        var symKey = k.asSymbol;
-                        // Debug log for key conversion
-                        //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
-
-                        // If the key is \tags, convert its values to symbols
-                        if (symKey == \tags and: { v.isKindOf(Array) }) {
-                            // Convert tags to symbols
-                            result[symKey] = ~convertTagsToSymbols.(v);
-                        } {
-                            // Recursively convert nested objects/arrays
-                            result[symKey] = ~processJSON.(v);
-                        }
-                    };
-                } { |error|
-                    "Error during key conversion: %".format(error.errorString).error;
-                };
-                result;
-            } {
-                if(jsonObj.isKindOf(SequenceableCollection) && jsonObj.isKindOf(String).not) {
-                    // If it's an array/sequence (but not a string), process each element
-                    try {
-                        jsonObj.collect { |item|
-                            ~processJSON.(item);
-                        };
-                    } { |error|
-                        "Error converting array elements: %".format(error.errorString).error;
-                        jsonObj; // Return original on error
-                    };
-                } {
-                    // For primitives (strings, numbers, booleans, etc.), return as-is
-                    jsonObj;
-                };
-            };
-        };
-    };
-
-    // Load JSON config file
-    ~loadJsonConfig = { |filename|
-        var path = configDir +/+ filename;
-        var file, data, result = nil;
-
-        // Check if file exists
-        if(File.exists(path).not) {
-            "Config file does not exist: %".format(path).error;
-        } {
-            // Try to open and read the file
-            file = File(path, "r");
-
-            if(file.isOpen) {
-                // Read file contents
-                data = file.readAllString;
-                file.close;
-
-                // Handle empty files
-                if(data.size < 2) {
-                    "Config file is empty: %".format(path).error;
-                } {
-                    // Parse the JSON with error handling
-                    try {
-                        data = data.parseJSON;
-
-                        // Convert JSON object with string keys to symbols
-                        result = ~processJSON.(data);
-                        "Successfully loaded and converted %".format(filename).postln;
-                    } { |error|
-                        "Error parsing JSON in file %: %".format(path, error.errorString).error;
-                    };
-                };
-            } {
-                "Could not open config file: %".format(path).error;
-            };
-        };
-
-        // Return the final result
-        result;
-    };
-
-    // Load all configurations
-    ~loadAllConfigs = {
-        var musicConfig;  // Declare all variables at the beginning
-        var i, j, path;
-
-        "Loading audio configurations...".postln;
-
-        // Load layers.json (environmental audio)
-        configurations = Dictionary.new;
-        configurations[\layers] = ~loadJsonConfig.("layers.json");
-
-        // Verify file existence for each environmental layer
-        if(configurations[\layers].notNil) {
-            "Verifying environmental audio files...".postln;
-            configurations[\layers].do { |layer, i|
-                path = layer[\path];
-                if(path.notNil) {
-                    layer[\exists] = File.exists(audioDir +/+ path);
-                    if(layer[\exists].not) {
-                        "WARNING: Environmental audio file not found: %".format(path).warn;
-                    } {
-                        //"Verified environmental audio file: %".format(path).postln;
-                    };
-                };
-            };
-        };
-
-        // Load triggers.json (sound effects)
-        configurations[\triggers] = ~loadJsonConfig.("triggers.json");
-
-        // Verify file existence for each trigger
-        if(configurations[\triggers].notNil) {
-            "Verifying trigger audio files...".postln;
-            configurations[\triggers].do { |trigger, i|
-                path = trigger[\path];
-                if(path.notNil) {
-                    trigger[\exists] = File.exists(audioDir +/+ path);
-                    if(trigger[\exists].not) {
-                        "WARNING: Trigger audio file not found: %".format(path).warn;
-                    } {
-                        "Verified trigger audio file: %".format(path).postln;
-                    };
-                };
-            };
-        };
-
-        // Load music_loops.json (music by era)
-        musicConfig = ~loadJsonConfig.("music_loops.json");
-        if(musicConfig.notNil) {
-            "Loaded music config: %".format(musicConfig.class).postln;
-
-            // Log music config keys for debugging
-            "Music config keys: %".format(musicConfig.keys).postln;
-
-            // Try both symbol and string access to be safe
-            if(musicConfig[\era_loops].notNil) {
-                configurations[\music_loops] = musicConfig[\era_loops];
-            } {
-                "Warning: No era_loops found in music config".warn;
-            };
-
-            // Verify file existence for each music loop in each era
-            if(configurations[\music_loops].notNil) {
-                "Verifying music loop audio files...".postln;
-
-                configurations[\music_loops].keysValuesDo { |era, loops|
-                    "Processing era: % (type: %)".format(era, era.class).postln;
-
-                    loops.do { |loop, i|
-                        path = loop[\path];
-                        if(path.notNil) {
-                            loop[\exists] = File.exists(audioDir +/+ path);
-                            if(loop[\exists].not) {
-                                "WARNING: Music loop file not found: % for era: %".format(path, era).warn;
-                            } {
-                                //"Verified music loop file: % for era: %".format(path, era).postln;
-                            };
-
-                            // Debug - show the keys in this loop
-                            //"Loop % keys: %".format(i, loop.keys).postln;
-                        } {
-                            "WARNING: Loop % in era % has no path".format(i, era).warn;
-                        };
-                    };
-                };
-            };
-        };
-
-        "Configurations loaded and verified.".postln;
-        "Environmental layers".postln;
-        configurations[\layers].postln;
-        "Triggers".postln;
-        configurations[\triggers].postln;
-        "Music".postln;
-        configurations[\music_loops].postln;
-    };
 
 // Initialize everything
 {

@@ -5,18 +5,6 @@
         "lastUpdated": "2025-05-28",
         "generalConfig": "../../../data/experimance_config.json"
     },
-    "audioTags": [
-        "ambient",
-        "music",
-        "effect",
-        "dialogue",
-        "transition_sound",
-        "background",
-        "foreground",
-        "loop",
-        "oneshot",
-        "layered"
-    ],
     "volumeControls": {
         "master": {
             "range": [

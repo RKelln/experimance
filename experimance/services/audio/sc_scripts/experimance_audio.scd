@@ -75,11 +75,11 @@ s.waitForBoot {
     // -----------------------------------------------------
 
     // Helper function to convert tag arrays to symbols
-    ~convertTagsToSymbols = { |tagsArray|
-        if(tagsArray.notNil) {
-            tagsArray.collect { |tag|
-                if(tag.isKindOf(String)) {
-                    tag.asSymbol; // Convert each tag to symbol
+    ~convertStringsToSymbols = { |stringsArray|
+        if(stringsArray.notNil) {
+            stringsArray.collect { |string|
+                if(string.isKindOf(String)) {
+                    string.asSymbol; // Convert each tag to symbol
                 };
             };
         } {
@@ -110,7 +110,7 @@ s.waitForBoot {
                         // If the key is \tags, convert its values to symbols
                         if (symKey == \tags and: { v.isKindOf(Array) }) {
                             // Convert tags to symbols
-                            result[symKey] = ~convertTagsToSymbols.(v);
+                            result[symKey] = ~convertStringsToSymbols.(v);
                         } {
                             // Recursively convert nested objects/arrays
                             result[symKey] = ~processJSON.(v);
