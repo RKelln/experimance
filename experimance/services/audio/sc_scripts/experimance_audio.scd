@@ -92,6 +92,7 @@ s.waitForBoot {
     // 2) convert all tag strings in all \tags keys to symbols
     ~processJSON = { |jsonObj|
         var result;
+        var keysToConvertToSymbols = [\tags, \requires, \requires_any, \requires_none];
 
         // Handle nil case gracefully
         if(jsonObj.isNil) {
@@ -108,7 +109,7 @@ s.waitForBoot {
                         //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
 
                         // If the key is \tags, convert its values to symbols
-                        if (symKey == \tags and: { v.isKindOf(Array) }) {
+                        if (keysToConvertToSymbols.includes(symKey) and: { v.isKindOf(Array) }) {
                             // Convert tags to symbols
                             result[symKey] = ~convertStringsToSymbols.(v);
                         } {
@@ -278,38 +279,112 @@ s.waitForBoot {
     };
 
     // -----------------------------------------------------
+    // Volume helper functions for live parameter access
+    // -----------------------------------------------------
+    
+    // Helper functions to access current volume values from within routines
+    // These are needed because SuperCollider captures variables by value in closures
+    // When a Routine is created, it captures the current values of variables like
+    // masterVolume and environmentVolume. If these change later, the routine still
+    // uses the old captured values. These helper functions allow routines to access
+    // the current live values, enabling real-time volume updates for interval-based sounds.
+    ~getCurrentMasterVolume = {
+        masterVolume;
+    };
+    
+    ~getCurrentEnvironmentVolume = {
+        environmentVolume;
+    };
+    
+    ~getCurrentMusicVolume = {
+        musicVolume;
+    };
+    
+    ~getCurrentSfxVolume = {
+        sfxVolume;
+    };
+
+    // -----------------------------------------------------
     // Audio playback functions
     // -----------------------------------------------------
 
     // Play an environmental sound layer
     ~playEnvironmentLayer = { |layerData|
-        var path, buffer, synth, tags, volume;
-        var fileExists;
+        var path, buffer, synth, tags, volume, interval;
+        var fileExists, routine;
 
         path = layerData[\path];
         tags = layerData[\tags];
         volume = (layerData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
+        interval = layerData[\interval] ? "loop";  // Default to loop if not specified
         fileExists = layerData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
 
         if(fileExists) {
             // Load audio file if it exists
             buffer = Buffer.read(s, audioDir +/+ path);
 
-            // Create synth for looping playback
-            synth = Synth(\loopPlayer, [
-                \buf, buffer,
-                \amp, volume,
-                \fadeTime, 3.0,  // 3 second crossfade
-                \masterVolume, masterVolume,  // Apply current master volume
-                \envVolume, environmentVolume  // Apply current environment volume
-            ], envGroup);
+            // Handle different interval types
+            case { interval == "loop" } {
+                // Create synth for continuous looping playback (existing behavior)
+                synth = Synth(\loopPlayer, [
+                    \buf, buffer,
+                    \amp, volume,
+                    \fadeTime, 3.0,  // 3 second crossfade
+                    \masterVolume, masterVolume,  // Apply current master volume
+                    \envVolume, environmentVolume  // Apply current environment volume
+                ], envGroup);
+                
+                routine = nil;  // No routine needed for continuous loops
+            } {
+                // For non-loop intervals, create a routine that plays the sound periodically
+                var minInterval, maxInterval, nextPlayTime;
+                
+                // Define timing ranges for each interval type
+                case { interval == "frequent" } {
+                    minInterval = 3;   // 3-8 seconds between plays
+                    maxInterval = 8;
+                } { interval == "occasional" } {
+                    minInterval = 15;  // 15-45 seconds between plays  
+                    maxInterval = 45;
+                } { interval == "rare" } {
+                    minInterval = 60;  // 1-3 minutes between plays
+                    maxInterval = 180;
+                } {
+                    // Default fallback to occasional
+                    minInterval = 15;
+                    maxInterval = 45;
+                };
+                
+                // Create routine for periodic playback
+                routine = Routine({
+                    loop {
+                        // Random wait time within the interval range
+                        nextPlayTime = rrand(minInterval, maxInterval);
+                        nextPlayTime.wait;
+                        
+                        // Play the sound once (non-looping)
+                        // Access current live volume values from global scope
+                        Synth(\oneShot, [
+                            \buf, buffer,
+                            \amp, volume,
+                            \masterVolume, ~getCurrentMasterVolume.(),
+                            \envVolume, ~getCurrentEnvironmentVolume.()
+                        ], envGroup);
+                    };
+                });
+                
+                // Start the routine
+                routine.play;
+                
+                synth = nil;  // No persistent synth for periodic sounds
+            };
 
             // Return info about this layer
-            (\synth: synth, \buffer: buffer, \tags: tags, \volume: volume);
+            (\synth: synth, \routine: routine, \buffer: buffer, \tags: tags, \volume: volume, \interval: interval, \routine: routine);
         } {
             // Return empty info for non-existing file (no placeholder for ambient sounds)
             "WARNING: Skipping non-existent environmental audio file: %".format(path).warn;
-            (\synth: nil, \buffer: nil, \tags: tags, \volume: volume);
+            (\synth: nil, \buffer: nil, \tags: tags, \volume: volume, \interval: interval, \routine: nil);
         };
     };
 
@@ -390,6 +465,74 @@ s.waitForBoot {
             nil;
         };
     };
+    
+    // Determine if a layer should be played based on active tags
+    // Implements tag filtering logic:
+    // 1. At least one tag in layer's "tags" must be in active tags
+    // 2. All "requires" tags must be in active tags (if specified)
+    // 3. At least one "requires_any" tag must be in active tags (if specified)
+    // 4. No "requires_none" tag can be in active tags (if specified)
+    ~isLayerEligible = { |layer, validTags|
+        var tags, requiresAll, requiresAny, requiresNone;
+        var debugStatus, allTagsPresent;
+        var result = true; // Start assuming eligible
+        
+        // Get the layer's tag arrays
+        tags = layer[\tags];
+        requiresAll = layer[\requires];
+        requiresAny = layer[\requires_any];
+        requiresNone = layer[\requires_none];
+        
+        // Start debug status with layer info
+        debugStatus = "Layer %".format(layer[\path]);
+        
+        // TEST 1: Basic tag match - at least one tag must be active
+        if(tags.isNil or: { tags.any { |tag| validTags.includes(tag) }.not }) {
+            result = false; // Not eligible
+        } {
+            // Update debug status for passed tag test
+            debugStatus = "% - Tags match: %".format(debugStatus, tags);
+
+            // TEST 2: If requires is specified, ALL of those tags must be present
+            if(requiresAll.notNil and: { result }) {
+                if(requiresAll.every { |tag| validTags.includes(tag) }.not) {
+                    debugStatus = "FAIL: % | missing required_all: %".format(debugStatus, requiresAll);
+                    debugStatus.postln;
+                    result = false; // Not eligible
+                } {
+                    debugStatus = "% | all required tags present: %".format(debugStatus, requiresAll);
+                };
+            };
+
+            // TEST 3: If requires_any is specified, AT LEAST ONE of those tags must be present
+            if(requiresAny.notNil and: { result }) {
+                if(requiresAny.any { |tag| validTags.includes(tag) }.not) {
+                    debugStatus = "FAIL: % | no requires_any tags present: %".format(debugStatus, requiresAny);
+                    debugStatus.postln;
+                    result = false; // Not eligible
+                } {
+                    debugStatus = "% | at least one required tag present: %".format(debugStatus, requiresAny);
+                };
+            };
+            
+            // TEST 4: If requires_none is specified, NONE of those tags can be present
+            if(requiresNone.notNil and: { result }) {
+                if(requiresNone.every { |tag| validTags.includes(tag).not }.not) {
+                    debugStatus = "FAIL: % | forbidden tag present: %".format(debugStatus, requiresNone);
+                    debugStatus.postln;
+                    result = false; // Not eligible
+                } {
+                    debugStatus = "% | no forbidden tags present: %".format(debugStatus, requiresNone);
+                };
+            };
+        };
+        
+        // Only print debug status for passing layers to reduce console clutter
+        if(result) { debugStatus.postln; };
+        
+        // Return the result value - no caret operator
+        result;
+    };
 
     // Update audio based on current context
     ~updateAudioContext = { |biome, era, fadeTime|
@@ -423,25 +566,29 @@ s.waitForBoot {
 
         "Update audio context for biome: %, era: %".format(currentBiome, currentEra).postln;
 
-        // Get layers that match current context (biome + era + active tags)
+        // Get layers that match current context using new eligibility logic
         matchingTags = activeTags.asArray;
-        //"Active tags: %".format(matchingTags).postln;
+        "Active tags: %".format(matchingTags).postln;
+        
         matching = if(configurations[\layers].notNil) {
+            "Evaluating % layers for eligibility".format(configurations[\layers].size).postln;
+            
             configurations[\layers].select { |layer|
-                var layerTags = layer[\tags];
-                var exists = layer[\exists] ? false; // Check if file exists
-                //"Layer path: %, tags: % %, exists: %".format(layer[\path], layerTags, layerTags.collect { |t| t.class.name }, exists).postln;
-                exists and: { layerTags.notNil and: { layerTags.any { |layerTag| matchingTags.any { |activeTag| activeTag == layerTag } } } }
+                ~isLayerEligible.(layer, activeTags);
             };
         } {
+            "No layers configuration found".warn;
             [];
         };
+        
         // debugging, if matching layers are found
         if (matching.size > 0) {
-            //"Matching environmental layers: %".format(matching.size).postln;
+            "Found % matching environmental layers:".format(matching.size).postln;
             matching.do { |layer|
                 "Adding: %, tags: %".format(layer[\path], layer[\tags]).postln;
             };
+        } {
+            "No matching environmental layers found.".warn;
         };
 
         // Handle environment layers - fade out non-matching, fade in matching
@@ -920,6 +1067,15 @@ s.waitForBoot {
             Out.ar(0, sig);
         }).add;
 
+        // One-shot environmental sound player (for periodic intervals)
+        SynthDef(\oneShot, { |buf, amp=1.0, masterVolume=1.0, envVolume=1.0|
+            var sig, env;
+            env = EnvGen.kr(Env.linen(0.01, BufDur.kr(buf), 0.1), doneAction: 2);
+            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), doneAction: 2);
+            sig = sig * env * amp * envVolume * masterVolume; // Apply both environment and master volume
+            Out.ar(0, sig);
+        }).add;
+
         // One-shot trigger player
         SynthDef(\triggerPlayer, { |buf, amp=1.0, masterVolume=1.0, sfxVolume=1.0|
             var sig, env;
@@ -968,6 +1124,8 @@ s.waitForBoot {
 
         // Update audio with default context
         "Initializing audio context with default values...".postln;
+        // Force update with current default biome and era values
+        activeTags.addAll([currentBiome, currentEra]);
         ~updateAudioContext.();
         "Audio context initialization complete.".postln;
 
