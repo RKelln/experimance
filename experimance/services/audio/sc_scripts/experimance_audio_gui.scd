@@ -8,7 +8,7 @@ var configDir, audioDir, projectRoot, generalConfigDir;
 // GUI variables
 var window, oscAddr, configs;
 
-var biomeMenu, eraMenu, tagsList, triggerMenu;
+var biomeMenu, eraMenu, tagsList, activeTagsList, triggerMenu;
 var masterVolumeSlider, envVolumeSlider, musicVolumeSlider, sfxVolumeSlider;
 var statusText, connectionButton, reloadButton;
 var spacetimeButton, listeningButton, speakingButton, transitionButton;
@@ -33,7 +33,7 @@ generalConfigDir = projectRoot +/+ "data";
     if(stringsArray.notNil) {
         stringsArray.collect { |string|
             if(string.isKindOf(String)) {
-                string.asSymbol; // Convert each tag to symbol
+                string.replace(" ", "_").asSymbol; // Replace spaces with underscores and convert to symbol
             };
         };
     } {
@@ -57,14 +57,14 @@ generalConfigDir = projectRoot +/+ "data";
             result = Dictionary.new;
             try {
                 jsonObj.keysValuesDo { |k, v|
-                    var symKey = k.asSymbol;
+                    var symKey = k.replace(" ", "_").asSymbol;
                     // Debug log for key conversion
                     //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
 
                     // If the key is \tags, convert its values to symbols
                     if (symKey == \tags and: { v.isKindOf(Array) }) {
                         // Convert tags to symbols
-                        result[symKey] = ~convertTagsToSymbols.(v);
+                        result[symKey] = ~convertStringsToSymbols.(v);
                     } {
                         // Recursively convert nested objects/arrays
                         result[symKey] = ~processJSON.(v);
@@ -200,7 +200,7 @@ generalConfigDir = projectRoot +/+ "data";
 ~loadAllConfigs = {
     var configsDict = Dictionary.new;  // Renamed from configs to configsDict to avoid name conflict
     var generalConfig;
-    var triggersData;
+    var triggersData, tagsData;
     var allTags = Set.new;
     var allBiomes = Set.new;
     var allEras = Set.new;
@@ -250,6 +250,21 @@ generalConfigDir = projectRoot +/+ "data";
         };
     };
 
+    // load tags from layers.json
+    tagsData = ~loadJsonConfig.("layers.json");
+
+    // Verify file existence for each environmental layer
+    if(tagsData.notNil) {
+        tagsData.do { |layer, i|
+            "layer %: %".format(i, layer).postln;
+            if(layer[\path].notNil) {
+                layer[\tags].do { |tag|
+                    allTags.add(tag);
+                };
+            };
+        };
+    };
+
     // load trigger definitions from config/triggers.json
     // Load triggers.json (sound effects)
     triggersData = ~loadJsonConfig.("triggers.json");
@@ -277,16 +292,44 @@ generalConfigDir = projectRoot +/+ "data";
     configsDict;  // Return the dictionary
 };
 
-// OSC sending utility
-~oscSend = { |netAddr, oscPath, args|
-    netAddr.sendMsg(oscPath, *args);
-};
-
 // Initialize OSC connection
 ~initOSC = {
     oscAddr = NetAddr("127.0.0.1", 5568); // Default experimance_audio.scd port
     isConnected = true;
     "OSC connection initialized to localhost:5568".postln;
+};
+
+// Update active tags list view and mark active tags in the available tags list
+~updateActiveTagsList = {
+    if(activeTagsList.notNil) {
+        var sortedTags = activeTags.asArray.sort;
+        var decoratedTags = sortedTags.collect { |tag|
+            if(tag == currentBiome) {
+                "[BIOME] " ++ tag;
+            } {
+                if(tag == currentEra) {
+                    "[ERA] " ++ tag;
+                } {
+                    tag;
+                };
+            };
+        };
+        activeTagsList.items = decoratedTags;
+        
+        // Update the available tags list to mark which ones are active
+        if(tagsList.notNil and: { configs[\allTags].notNil }) {
+            var allTags = configs[\allTags].collect { |tag|
+                if(activeTags.includes(tag)) {
+                    "✓ " ++ tag;
+                } {
+                    "   " ++ tag;
+                };
+            };
+            tagsList.items = allTags;
+        };
+        
+        "Active tags updated: %".format(sortedTags).postln;
+    };
 };
 
 // Update connection status
@@ -322,8 +365,10 @@ generalConfigDir = projectRoot +/+ "data";
     activeTags.clear;
     activeTags.add(currentBiome);
     activeTags.add(currentEra);
+    "Updating spacetime context: Biome: %, Era: %".format(currentBiome, currentEra).postln;
     ~sendOSC.('/spacetime', [currentBiome, currentEra]);
     ~updateConnectionStatus.();
+    ~updateActiveTagsList.();
 };
 
 // Create the GUI
@@ -412,10 +457,73 @@ generalConfigDir = projectRoot +/+ "data";
         .string_("TAG MANAGEMENT")
         .font_(Font.default.size_(14).bold_(true));
 
-    StaticText(window, Rect(margin, margin + 180, 100, 20)).string_("Available Tags:");
+    StaticText(window, Rect(margin, margin + 180, 300, 20))
+        .string_("Available Tags: (double-click to add)")
+        .align_(\left)
+        .font_(Font.default.size_(12));
+        
+    StaticText(window, Rect(margin + 420, margin + 180, 300, 20))
+        .string_("Active Tags: (double-click to remove)")
+        .align_(\left)
+        .font_(Font.default.size_(12));
+        
+    // Add a note about biome/era tags
+    StaticText(window, Rect(margin + 420, margin + 205 + 155, 300, 20))
+        .string_("Note: Current biome and era tags cannot be removed")
+        .align_(\center)
+        .font_(Font.default.size_(10).italic_(true));
 
     tagsList = ListView(window, Rect(margin, margin + 205, 300, 150))
-        .background_(Color.white);
+        .background_(Color.white)
+        .mouseDownAction_({ |view, x, y, modifiers, buttonNumber, clickCount|
+            if(clickCount == 2) {  // Double-click
+                var selectedIndex = view.value;
+                if(selectedIndex.notNil and: { configs[\allTags].notNil }) {
+                    var displayedTag = view.items[selectedIndex];
+                    var actualTag = configs[\allTags][selectedIndex];
+                    
+                    activeTags.add(actualTag);
+                    ~sendOSC.('/include', [actualTag]);
+                    ~updateConnectionStatus.();
+                    ~updateActiveTagsList.();
+                };
+            };
+        });
+
+    activeTagsList = ListView(window, Rect(margin + 420, margin + 205, 300, 150))
+        .background_(Color.white.alpha_(0.9))
+        .hiliteColor_(Color.blue(0.7, 0.3))
+        .mouseDownAction_({ |view, x, y, modifiers, buttonNumber, clickCount|
+            if(clickCount == 2) {  // Double-click
+                var selectedIndex = view.value;
+                if(selectedIndex.notNil and: { view.items.size > 0 }) {
+                    var displayedTag = view.items[selectedIndex].asString;
+                    var actualTag;
+                    
+                    // Extract the actual tag name by removing any prefixes
+                    if(displayedTag.beginsWith("[BIOME] ")) {
+                        actualTag = displayedTag.replace("[BIOME] ", "");
+                    } {
+                        if(displayedTag.beginsWith("[ERA] ")) {
+                            actualTag = displayedTag.replace("[ERA] ", "");
+                        } {
+                            actualTag = displayedTag;
+                        };
+                    };
+                    actualTag = actualTag.asSymbol; // Ensure it's a symbol
+                    
+                    // Don't remove biome or era on double-click
+                    if((actualTag != currentBiome) && (actualTag != currentEra)) {
+                        activeTags.remove(actualTag);
+                        ~sendOSC.('/exclude', [actualTag]);
+                        ~updateConnectionStatus.();
+                        ~updateActiveTagsList.();
+                    } {
+                        "Cannot remove current biome or era tags".warn;
+                    };
+                };
+            };
+        });
 
     includeTagButton = Button(window, Rect(margin + 320, margin + 205, 80, buttonHeight))
         .string_("Include Tag")
@@ -423,10 +531,11 @@ generalConfigDir = projectRoot +/+ "data";
         .action_({
             var selectedIndex = tagsList.value;
             if(selectedIndex.notNil and: { configs[\allTags].notNil }) {
-                var tag = configs[\allTags][selectedIndex];
-                activeTags.add(tag);
-                ~sendOSC.('/include', [tag]);
+                var actualTag = configs[\allTags][selectedIndex];
+                activeTags.add(actualTag);
+                ~sendOSC.('/include', [actualTag]);
                 ~updateConnectionStatus.();
+                ~updateActiveTagsList.();
             };
         });
 
@@ -436,10 +545,11 @@ generalConfigDir = projectRoot +/+ "data";
         .action_({
             var selectedIndex = tagsList.value;
             if(selectedIndex.notNil and: { configs[\allTags].notNil }) {
-                var tag = configs[\allTags][selectedIndex];
-                activeTags.remove(tag);
-                ~sendOSC.('/exclude', [tag]);
+                var actualTag = configs[\allTags][selectedIndex];
+                activeTags.remove(actualTag);
+                ~sendOSC.('/exclude', [actualTag]);
                 ~updateConnectionStatus.();
+                ~updateActiveTagsList.();
             };
         });
 
@@ -564,17 +674,17 @@ generalConfigDir = projectRoot +/+ "data";
         .string_("Quiet")
         .action_({
             // Default values for "Quiet" preset
-            masterVolumeSlider.value = 0.7; masterVolumeSlider.doAction;
+            masterVolumeSlider.value = 0.5; masterVolumeSlider.doAction;
             envVolumeSlider.value = 0.25; envVolumeSlider.doAction;
-            musicVolumeSlider.value = 0.15; musicVolumeSlider.doAction;
-            sfxVolumeSlider.value = 0.4; sfxVolumeSlider.doAction;
+            musicVolumeSlider.value = 0.6; musicVolumeSlider.doAction;
+            sfxVolumeSlider.value = 0.6; sfxVolumeSlider.doAction;
         });
     Button(window, Rect(margin + 170, volumePresetY, 80, buttonHeight))
         .string_("Normal")
         .action_({
             // Default values for "Normal" preset
-            masterVolumeSlider.value = 1.0; masterVolumeSlider.doAction;
-            envVolumeSlider.value = 1.0; envVolumeSlider.doAction;
+            masterVolumeSlider.value = 0.8; masterVolumeSlider.doAction;
+            envVolumeSlider.value = 0.25; envVolumeSlider.doAction;
             musicVolumeSlider.value = 0.8; musicVolumeSlider.doAction;
             sfxVolumeSlider.value = 0.8; sfxVolumeSlider.doAction;
         });
@@ -584,7 +694,7 @@ generalConfigDir = projectRoot +/+ "data";
             // Default values for "Music Only" preset
             masterVolumeSlider.value = 0.8; masterVolumeSlider.doAction;
             envVolumeSlider.value = 0.0; envVolumeSlider.doAction;
-            musicVolumeSlider.value = 0.7; musicVolumeSlider.doAction;
+            musicVolumeSlider.value = 0.8; musicVolumeSlider.doAction;
             sfxVolumeSlider.value = 0.0; sfxVolumeSlider.doAction;
         });
 
@@ -806,8 +916,15 @@ generalConfigDir = projectRoot +/+ "data";
     };
 
     if(tagsList.notNil and: { configs[\allTags].notNil }) {
+        var allTags = configs[\allTags].collect { |tag|
+            if(activeTags.includes(tag)) {
+                "✓ " ++ tag;
+            } {
+                "   " ++ tag;
+            };
+        };
         "Setting % tags in list".format(configs[\allTags].size).postln;
-        tagsList.items = configs[\allTags];
+        tagsList.items = allTags;
     } {
         "Cannot update tags list: list=%, allTags=%".format(
             if(tagsList.isNil) {"nil"} {"valid"}, 
@@ -824,6 +941,9 @@ generalConfigDir = projectRoot +/+ "data";
             if(configs[\allTriggers].isNil) {"nil"} {configs[\allTriggers].size}
         ).warn;
     };
+
+    // Update the active tags list
+    ~updateActiveTagsList.();
 
     "Menu update complete".postln;
 };

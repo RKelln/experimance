@@ -79,7 +79,7 @@ s.waitForBoot {
         if(stringsArray.notNil) {
             stringsArray.collect { |string|
                 if(string.isKindOf(String)) {
-                    string.asSymbol; // Convert each tag to symbol
+                    string.replace(" ", "_").asSymbol;
                 };
             };
         } {
@@ -103,7 +103,7 @@ s.waitForBoot {
                 result = Dictionary.new;
                 try {
                     jsonObj.keysValuesDo { |k, v|
-                        var symKey = k.asSymbol;
+                        var symKey = k.replace(" ", "_").asSymbol;
                         // Debug log for key conversion
                         //"Converting key: '%' to symbol: '%'".format(k, symKey).postln;
 
@@ -299,7 +299,9 @@ s.waitForBoot {
             synth = Synth(\loopPlayer, [
                 \buf, buffer,
                 \amp, volume,
-                \fadeTime, 3.0  // 3 second crossfade
+                \fadeTime, 3.0,  // 3 second crossfade
+                \masterVolume, masterVolume,  // Apply current master volume
+                \envVolume, environmentVolume  // Apply current environment volume
             ], envGroup);
 
             // Return info about this layer
@@ -338,7 +340,9 @@ s.waitForBoot {
                 \buf, buffer,
                 \amp, volume,
                 \fadeTime, 5.0,  // 5 second crossfade between eras
-                \slotIndex, slotIndex  // Used for ducking specific slots
+                \slotIndex, slotIndex,  // Used for ducking specific slots
+                \masterVolume, masterVolume,  // Apply current master volume
+                \musicVolume, musicVolume  // Apply current music volume
             ], musicGroup);
 
             // Return info about this music loop with standard format
@@ -373,7 +377,9 @@ s.waitForBoot {
             // Create synth for one-shot playback
             synth = Synth(\triggerPlayer, [
                 \buf, buffer,
-                \amp, volume
+                \amp, volume,
+                \masterVolume, masterVolume,  // Apply current master volume
+                \sfxVolume, sfxVolume  // Apply current sfx volume
             ], fxGroup);
 
             // Return the synth
@@ -842,7 +848,9 @@ s.waitForBoot {
             \amp, volume,
             \freq, freq,
             \fadeTime, 1.0,  // 1 second fade for more responsive testing
-            \slotIndex, slotIndex
+            \slotIndex, slotIndex,
+            \masterVolume, masterVolume,  // Apply current master volume
+            \musicVolume, musicVolume  // Apply current music volume (placeholders are music)
         ], musicGroup);
 
         // Return the synth instance
