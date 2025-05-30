@@ -34,7 +34,7 @@
                 "volume": 0.5
             }
         ],
-        "early_inustrial": [
+        "early_industrial": [
             {
                 "path": "music/early_industrial/drone.wav",
                 "prompt": "Early industrial drone, steam and mechanical foundations",
