@@ -389,7 +389,7 @@ s.waitForBoot {
     };
 
     // Play a music loop
-    ~playMusicLoop = { |loopData, slotIndex|
+    ~playMusicLoop = { |loopData, slotIndex, startPos=0|
         var path, buffer, synth, prompt, volume;
         var fileExists;
         var placeholderResult;
@@ -409,29 +409,64 @@ s.waitForBoot {
         if(path.notNil && fileExists) {
             // Load audio file if it exists
             buffer = Buffer.read(s, audioDir +/+ path);
+            
+            // Wait for buffer to load before proceeding
+            s.sync;
+            
+            // Verify buffer was loaded correctly
+            if(buffer.notNil and: {buffer.numFrames.notNil and: {buffer.numFrames > 0}}) {
+                // Ensure startPos is within valid bounds for this buffer
+                startPos = min(max(startPos, 0), buffer.numFrames - 1);
+                "Buffer loaded with % frames, using start position: %"
+                    .format(buffer.numFrames, startPos).postln;
+                    
+                // Create synth for looping playback with startPos
+                synth = Synth(\musicPlayer, [
+                    \buf, buffer,
+                    \amp, volume,
+                    \fadeTime, 5.0,  // 5 second crossfade between eras
+                    \slotIndex, slotIndex,  // Used for ducking specific slots
+                    \masterVolume, masterVolume,  // Apply current master volume
+                    \musicVolume, musicVolume,  // Apply current music volume
+                    \startPos, startPos  // Start position for syncing with previous era
+                ], musicGroup);
+            } {
+                "Error: Failed to load buffer correctly for %".format(path).error;
+                // Create a placeholder instead as fallback
+                synth = nil;
+                placeholderResult = ~createPlaceholderMusic.(currentEra, slotIndex, volume);
+                // We'll return placeholder info below
+            };
 
-            // Create synth for looping playback
-            synth = Synth(\musicPlayer, [
-                \buf, buffer,
-                \amp, volume,
-                \fadeTime, 5.0,  // 5 second crossfade between eras
-                \slotIndex, slotIndex,  // Used for ducking specific slots
-                \masterVolume, masterVolume,  // Apply current master volume
-                \musicVolume, musicVolume  // Apply current music volume
-            ], musicGroup);
-
-            // Return info about this music loop with standard format
-            (\synth: synth, \buffer: buffer, \volume: volume);
+            // Check if we fell back to a placeholder
+            if(synth.isNil and: {placeholderResult.notNil}) {
+                // Return placeholder info
+                (
+                    synth: placeholderResult,
+                    buffer: nil,
+                    volume: volume,
+                    isPlaceholder: true,
+                    startTime: Main.elapsedTime,
+                    bufferDuration: 8.0  // Arbitrary duration for placeholder sounds
+                );
+            } {
+                // Return info about this music loop with standard format plus start time
+                // Make sure buffer.duration exists before using it
+                var duration = if(buffer.notNil) { buffer.duration ?? 8.0 } { 8.0 };
+                (\synth: synth, \buffer: buffer, \volume: volume, \startTime: Main.elapsedTime, \bufferDuration: duration);
+            };
         } {
             // Generate placeholder music based on era and slot
             placeholderResult = ~createPlaceholderMusic.(currentEra, slotIndex, volume);
 
-            // Return info about this music loop
+            // Return info about this music loop (with startTime for consistent tracking)
             (
                 synth: placeholderResult,
                 buffer: nil,
                 volume: volume,
-                isPlaceholder: true
+                isPlaceholder: true,
+                startTime: Main.elapsedTime,
+                bufferDuration: 8.0  // Arbitrary duration for placeholder sounds
             );
         };
     };
@@ -644,12 +679,76 @@ s.waitForBoot {
 
                     // Update music loops for this era
                     eraLoops.do { |loopInfo, i|
-                        // New loop for this slot (note: playMusicLoop handles exists internally)
-                        musicLoops[currentEra][i] = ~playMusicLoop.(loopInfo, i);
-                        "Creating new % music loop for slot %".format(currentEra, i).postln;
+                        // Calculate starting position based on previous era's loop if available
+                        var startPos = 0;
+                        var syncSuccess = false;
+                        
+                        // Check if we need to synchronize with previous era's loop
+                        if(musicLoops.includesKey(prevEra) and: { i < musicLoops[prevEra].size }) {
+                            var prevEraLoop = musicLoops[prevEra][i];
+                            var curTime = Main.elapsedTime;
+                            
+                            // Only sync if prev loop exists, has a synth, and isn't a placeholder
+                            if(prevEraLoop.notNil and: { 
+                                prevEraLoop[\synth].notNil and: 
+                                prevEraLoop[\isPlaceholder].isNil and: 
+                                prevEraLoop[\buffer].notNil and:
+                                prevEraLoop[\startTime].notNil and:
+                                prevEraLoop[\bufferDuration].notNil
+                            }) {
+                                var elapsedTimeSinceStart, playbackPosition, bufferDuration, bufFrames;
+                                
+                                // Calculate how long the sound has been playing
+                                elapsedTimeSinceStart = curTime - prevEraLoop[\startTime];
+                                bufferDuration = prevEraLoop[\bufferDuration];
 
-                        // TODO: if not a placeholder then set the timing to match the previous era
-                        // i.e. new music loops should start at the same time as the current time previous era's loops
+                                "Elapsed: %, prevStart: %, bufferDuration: %"
+                                    .format(elapsedTimeSinceStart.round(0.01), 
+                                            prevEraLoop[\startTime].round(0.01), 
+                                            bufferDuration.round(0.01)).postln;
+                                
+                                // Calculate current position within the loop (accounting for wrapping)
+                                if (bufferDuration > 0) {
+                                    var buffer = prevEraLoop[\buffer];
+                                    
+                                    // Calculate position within the loop based on elapsed time
+                                    playbackPosition = elapsedTimeSinceStart % bufferDuration;
+                                    
+                                    // Make sure buffer exists and has numFrames before doing calculation
+                                    if(buffer.notNil) {
+                                        // Get buffer frames, protecting against nil
+                                        bufFrames = buffer.numFrames;
+                                        
+                                        // Only calculate startPos if we have all the required values
+                                        if(bufFrames.notNil and: {bufFrames > 0} and: {bufferDuration > 0}) {
+                                            startPos = (playbackPosition / bufferDuration * bufFrames).asInteger;
+                                            
+                                            "Syncing era % slot % with previous era at position: % sec (% of % frames)"
+                                                .format(currentEra, i, playbackPosition.round(0.01), 
+                                                        startPos, bufFrames).postln;
+                                            
+                                            syncSuccess = true;
+                                        } {
+                                            "Couldn't calculate sync position: buffer frames is % for slot %"
+                                                .format(bufFrames, i).warn;
+                                        };
+                                    } {
+                                        "Buffer is nil for previous era's slot %".format(i).warn;
+                                    };
+                                };
+                            };
+                        };
+                        
+                        // New loop for this slot with synced position if available
+                        musicLoops[currentEra][i] = ~playMusicLoop.(loopInfo, i, startPos);
+                        
+                        if(syncSuccess) {
+                            "Created new % music loop for slot % synchronized to previous era"
+                                .format(currentEra, i).postln;
+                        } {
+                            "Created new % music loop for slot % (no sync)"
+                                .format(currentEra, i).postln;
+                        }
                     };
 
                     if(musicLoops.includesKey(prevEra)) {
@@ -1006,6 +1105,9 @@ s.waitForBoot {
 
     // Define all synths
     ~defineSynths = {
+        
+        // We'll use a client-side approach instead of this SynthDef
+        // by tracking loop start times and calculating positions
 
         // Simple placeholder SynthDef - provides basic sound when audio files are missing
         SynthDef(\simplePlaceholder, { |freq=220, amp=0.5, fadeTime=5.0, gate=1, slotIndex=0, masterVolume=1.0, musicVolume=1.0|
@@ -1059,10 +1161,20 @@ s.waitForBoot {
         }).add;
 
         // Music loop player (looping with crossfade, ducking by slot)
-        SynthDef(\musicPlayer, { |buf, amp=1.0, fadeTime=5.0, slotIndex=0, gate=1, masterVolume=1.0, musicVolume=1.0|
-            var sig, env;
+        SynthDef(\musicPlayer, { |buf, amp=1.0, fadeTime=5.0, slotIndex=0, gate=1, masterVolume=1.0, musicVolume=1.0, startPos=0|
+            var sig, env, rate, bufFrames, checkedStartPos;
+            
+            // Make sure we have a valid buffer
+            bufFrames = BufFrames.kr(buf);
+            
+            // Ensure startPos is valid and within buffer bounds
+            checkedStartPos = min(max(startPos, 0), bufFrames-1); // Clamp to buffer size and avoid -1
+            
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
-            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
+            rate = BufRateScale.kr(buf);
+            
+            // PlayBuf with checked parameters
+            sig = PlayBuf.ar(2, buf, rate, startPos: checkedStartPos, loop: 1);
             sig = sig * env * amp * musicVolume * masterVolume; // Apply both music and master volume
             Out.ar(0, sig);
         }).add;
