@@ -4,17 +4,15 @@ This GUI interface allows you to easily test and control the Experimance audio s
 
 ## Quick Start
 
-1. **Start SuperCollider** and open the GUI:
-   ```supercollider
-   // In SuperCollider, evaluate this line:
-   "services/audio/sc_scripts/experimance_audio_gui.scd".loadPath;
-   ```
+1. **Start SuperCollider** and open the GUI and open the two files:
+   1. `sc_scripts/experimance_audio.sdc`
+   2. `sc_scripts/experimance_audio_gui.sdc`
+2. Go to the `experimance_audio.sdc` tab.
+3. Menu: **Langauge** > **Evaluate file**
+4. Wait for it to start. On my system it fails to start the first time, repeat (3) until it does.
+5. Go to the `sc_scripts/experimance_audio_gui.sdc` tab.
+6. Menu: **Langauge** > **Evaluate file**
 
-2. **For testing without the main audio system**, you can use:
-   ```supercollider
-   // This creates a simple OSC listener to see what messages are sent:
-   "services/audio/sc_scripts/test_gui.scd".loadPath;
-   ```
 
 ## Interface Sections
 
@@ -79,6 +77,7 @@ Pre-configured scenarios for easy testing.
 - **Reload Audio Config**: Reloads all audio configuration files
 - **Emergency Stop**: Resets all states and reduces volumes to safe levels
 
+
 ## Creative Usage Tips
 
 ### For Composition Testing
@@ -102,6 +101,7 @@ Pre-configured scenarios for easy testing.
 2. Volume sliders allow real-time mixing
 3. Emergency Stop provides safety during live shows
 
+
 ## Audio File Structure
 
 The system automatically detects missing audio files and generates placeholder music:
@@ -110,10 +110,8 @@ The system automatically detects missing audio files and generates placeholder m
 - **Music loops**: Located in `audio/music/`
 - **Sound effects**: Located in `audio/sfx/`
 
-When audio files are missing, the system creates:
-- Era-appropriate synthesized music with proper scales and timbres
-- Smooth transitions between eras
-- Appropriate volume balancing
+When audio files are missing, the system wil warn, and create placeholder music.
+
 
 ## Troubleshooting
 
@@ -137,6 +135,7 @@ When audio files are missing, the system creates:
 - Verify JSON files are properly formatted
 - Look for loading errors in the SuperCollider console
 
+
 ## Configuration Files
 
 The GUI reads from these JSON configuration files:
@@ -144,29 +143,30 @@ The GUI reads from these JSON configuration files:
 - `layers.json`: Environmental audio layers with tags
 - `music_loops.json`: Era-based music loops
 - `triggers.json`: Sound effect triggers
-- `master_schema.json`: Complete list of biomes, eras, and tags
 
-You can edit these files to add new audio content or modify the available options in the GUI dropdowns.
+You must edit these files to add new audio content.
+
+Also note in the root directory the `data` contains `experimance_config.json` with the list of biomes and eras.
+
 
 ## Advanced Features
 
-### Custom OSC Commands
-If you need to send custom OSC messages, you can use the underlying utility functions:
+### Check synth info
 
+You can get some extra info about the currently playing synths if something is going wonky by sending `synth_info` OSC message. In supersollider this looks like:
 ```supercollider
-// Send custom spacetime
-~audioUtils.sendSpacetime.(NetAddr("127.0.0.1", 5568), "custom_biome", "custom_era");
+m = NetAddr("127.0.0.1", 5568); // loopback
+m.sendMsg("/synth_info")
+```
+(Press Control+Enter to execute each line.)
 
-// Send custom volume
-~audioUtils.sendVolume.(NetAddr("127.0.0.1", 5568), "master", 0.75);
+It can be useful to use the same technique as a scratchpad for sending various OSC:
+```supercollider
+m.sendMsg("/spacetime", "forest", "wilderness")
+m.sendMsg("/volume/music", 0)
+m.sendMsg("/exclude", "stadium")
+m.sendMsg("/include", "stadium")
 ```
 
-### Configuration Inspection
-```supercollider
-// See all loaded configurations
-configs[\allBiomes].postln;  // All available biomes
-configs[\allEras].postln;    // All available eras  
-configs[\allTags].postln;    // All available tags
-```
 
 Happy composing! 🎵
