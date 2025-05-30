@@ -5,12 +5,22 @@
                 "path": "music/wilderness/piano_pads.mp3",
                 "prompt": "Wilderness drone layer, organic and natural sounds",
                 "volume": 0.7
+            },
+            {
+                "path": "counting.wav",
+                "prompt": "Test",
+                "volume": 0.7
             }
         ],
         "pre_industrial": [
             {
                 "path": "music/wilderness/piano_pads.mp3",
                 "prompt": "Wilderness drone layer, organic and natural sounds",
+                "volume": 0.7
+            },
+            {
+                "path": "counting.wav",
+                "prompt": "Test",
                 "volume": 0.7
             }
         ],
