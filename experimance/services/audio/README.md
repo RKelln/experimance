@@ -33,7 +33,7 @@ The Experimance Audio Service integrates SuperCollider with the main Experimance
 ```bash
 # From the experimance directory
 cd services/audio
-uv pip install -e .
+uv add -e .
 ```
 
 ### Running the Audio Service

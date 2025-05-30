@@ -1621,7 +1621,4 @@ s.waitForBoot {
     ~init.();
 };
 
-// EOF
-//m = NetAddr("127.0.0.1", 5568); // loopback
-//m.sendMsg("/spacetime", "forest", "wilderness")
 

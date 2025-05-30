@@ -147,7 +147,7 @@ generalConfigDir = projectRoot +/+ "data";
         "General config file not found at %".format(path).warn;
         
         // Try alternate location - direct from project root
-        altPath = projectRoot +/+ "data" +/+ filename;
+        altPath = configDir +/+ filename;
         "Trying alternate location: %".format(altPath).postln;
         
         if(File.exists(altPath).not) {
@@ -354,7 +354,11 @@ generalConfigDir = projectRoot +/+ "data";
 // Send OSC message
 ~sendOSC = { |oscPath, args|
     if(isConnected and: { oscAddr.notNil }) {
-        ~oscSend.(oscAddr, oscPath, args);
+        try {
+            oscAddr.sendMsg(oscPath, *args);
+        } { |error|
+            "Error sending OSC message: %".format(error.errorString).error;
+        };
     } {
         "Not connected to audio system".warn;
     };
@@ -365,8 +369,8 @@ generalConfigDir = projectRoot +/+ "data";
     activeTags.clear;
     activeTags.add(currentBiome);
     activeTags.add(currentEra);
-    "Updating spacetime context: Biome: %, Era: %".format(currentBiome, currentEra).postln;
-    ~sendOSC.('/spacetime', [currentBiome, currentEra]);
+    "Sending spacetime: Biome: %, Era: %".format(currentBiome, currentEra).postln;
+    ~sendOSC.('/spacetime', [currentBiome.asString, currentEra.asString]);
     ~updateConnectionStatus.();
     ~updateActiveTagsList.();
 };
