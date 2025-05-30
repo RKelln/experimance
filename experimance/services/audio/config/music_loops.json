@@ -2,75 +2,47 @@
     "era_loops": {
         "wilderness": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
-            },
-            {
-                "path": "counting.wav",
-                "prompt": "Test",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ],
         "pre_industrial": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
-            },
-            {
-                "path": "counting.wav",
-                "prompt": "Test",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ],
         "early_industrial": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ],
         "late_industrial": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ],
         "modern": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ],
         "current": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ],
         "future": [
             {
-                "path": "music/future/enna_vector_test.wav",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/future/enna_vector_test.wav"
             }
         ],
         "dystopia": [
             {
-                "path": "music/future/enna_vector_test.wav",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/future/enna_vector_test.wav"
             }
         ],
         "ruins": [
             {
-                "path": "music/wilderness/piano_pads.mp3",
-                "prompt": "Wilderness drone layer, organic and natural sounds",
-                "volume": 0.7
+                "path": "music/wilderness/piano_pads.mp3"
             }
         ]
     }

@@ -189,6 +189,7 @@ s.waitForBoot {
     ~loadAllConfigs = {
         var musicConfig;  // Declare all variables at the beginning
         var i, j, path;
+        var envCount = 0, triggerCount = 0, musicCount = 0;
 
         "Loading audio configurations...".postln;
 
@@ -198,7 +199,6 @@ s.waitForBoot {
 
         // Verify file existence for each environmental layer
         if(configurations[\layers].notNil) {
-            "Verifying environmental audio files...".postln;
             configurations[\layers].do { |layer, i|
                 path = layer[\path];
                 if(path.notNil) {
@@ -207,6 +207,7 @@ s.waitForBoot {
                         "Environmental audio file not found: %".format(path).warn;
                     } {
                         //"Verified environmental audio file: %".format(path).postln;
+                        envCount = envCount + 1;  // Count valid layers
                     };
                 };
             };
@@ -217,7 +218,6 @@ s.waitForBoot {
 
         // Verify file existence for each trigger
         if(configurations[\triggers].notNil) {
-            "Verifying trigger audio files...".postln;
             configurations[\triggers].do { |trigger, i|
                 path = trigger[\path];
                 if(path.notNil) {
@@ -225,7 +225,8 @@ s.waitForBoot {
                     if(trigger[\exists].not) {
                         "Trigger audio file not found: %".format(path).warn;
                     } {
-                        "Verified trigger audio file: %".format(path).postln;
+                        //"Verified trigger audio file: %".format(path).postln;
+                        triggerCount = triggerCount + 1;  // Count valid triggers
                     };
                 };
             };
@@ -234,11 +235,6 @@ s.waitForBoot {
         // Load music_loops.json (music by era)
         musicConfig = ~loadJsonConfig.("music_loops.json");
         if(musicConfig.notNil) {
-            "Loaded music config: %".format(musicConfig.class).postln;
-
-            // Log music config keys for debugging
-            "Music config keys: %".format(musicConfig.keys).postln;
-
             // Try both symbol and string access to be safe
             if(musicConfig[\era_loops].notNil) {
                 configurations[\music_loops] = musicConfig[\era_loops];
@@ -248,10 +244,10 @@ s.waitForBoot {
 
             // Verify file existence for each music loop in each era
             if(configurations[\music_loops].notNil) {
-                "Verifying music loop audio files...".postln;
+                //"Verifying music loop audio files...".postln;
 
                 configurations[\music_loops].keysValuesDo { |era, loops|
-                    "Processing era: % (type: %)".format(era, era.class).postln;
+                    //"Processing era: % (type: %)".format(era, era.class).postln;
 
                     loops.do { |loop, i|
                         path = loop[\path];
@@ -261,6 +257,7 @@ s.waitForBoot {
                                 "Music loop file not found: % for era: %".format(path, era).warn;
                             } {
                                 //"Verified music loop file: % for era: %".format(path, era).postln;
+                                musicCount = musicCount + 1;  // Count valid music loops
                             };
 
                             // Debug - show the keys in this loop
@@ -274,12 +271,12 @@ s.waitForBoot {
         };
 
         "Configurations loaded and verified.".postln;
-        "Environmental layers".postln;
-        configurations[\layers].postln;
-        "Triggers".postln;
-        configurations[\triggers].postln;
-        "Music".postln;
-        configurations[\music_loops].postln;
+        "Environmental: %".format(envCount).postln;
+        //configurations[\layers].postln;
+        "Triggers: %".format(triggerCount).postln;
+        //configurations[\triggers].postln;
+        "Music: %".format(musicCount).postln;
+        //configurations[\music_loops].postln;
     };
 
     // -----------------------------------------------------
@@ -610,7 +607,7 @@ s.waitForBoot {
         var eraLoops;
         var prevEra, prevBiome;
 
-        "+++++++++++++++++++++++++++++++++++++++++++++".postln;
+        "++++++++++++++++++++++++++++++++++++++++++++++++++++++++".postln;
         "Update: Biome: %, Era: %".format(biome, era).postln;
 
         if(biome.notNil) { biome = biome.asSymbol; }; // Ensure biome is a symbol
@@ -948,54 +945,50 @@ s.waitForBoot {
 
         // Volume control: /volume/master <value>
         OSCdef(\volume_master, { |msg, time, addr, recvPort|
-            var value = msg[1].asFloat;
+            var value = msg[1].asFloat.clip(0.0, 1.0);
             
-            // Ensure volume is between 0.0 and 1.0
-            masterVolume = value.clip(0.0, 1.0);
-            "Master volume set to: %".format(masterVolume).postln;
-            
-            // Update all groups with new master volume
-            mainGroup.set(\masterVolume, masterVolume);
-            
+            if(masterVolume != value) {
+                // Ensure volume is between 0.0 and 1.0
+                masterVolume = value;
+                "Master volume set to: %".format(masterVolume).postln;
+                // Update all groups with new master volume
+                mainGroup.set(\masterVolume, masterVolume);
+            };
         }, '/volume/master', nil, oscRecvPort);
         
         // Volume control: /volume/environment <value>
         OSCdef(\volume_environment, { |msg, time, addr, recvPort|
-            var value = msg[1].asFloat;
+            var value = msg[1].asFloat.clip(0.0, 1.0);
             
-            // Ensure volume is between 0.0 and 1.0
-            environmentVolume = value.clip(0.0, 1.0);
-            "Environment volume set to: %".format(environmentVolume).postln;
-            
-            // Update environment group
-            envGroup.set(\envVolume, environmentVolume);
+            if(environmentVolume != value) {
+                environmentVolume = value;
+                "Environment volume set to: %".format(environmentVolume).postln;
+                envGroup.set(\envVolume, environmentVolume);
+            };
             
         }, '/volume/environment', nil, oscRecvPort);
         
         // Volume control: /volume/music <value>
         OSCdef(\volume_music, { |msg, time, addr, recvPort|
-            var value = msg[1].asFloat;
+            var value = msg[1].asFloat.clip(0.0, 1.0);
             
-            // Ensure volume is between 0.0 and 1.0
-            musicVolume = value.clip(0.0, 1.0);
-            "Music volume set to: %".format(musicVolume).postln;
-            
-            // Update music group
-            musicGroup.set(\musicVolume, musicVolume);
+            if(musicVolume != value) {
+                musicVolume = value;
+                "Music volume set to: %".format(musicVolume).postln;
+                musicGroup.set(\musicVolume, musicVolume);
+            };
             
         }, '/volume/music', nil, oscRecvPort);
         
         // Volume control: /volume/sfx <value>
         OSCdef(\volume_sfx, { |msg, time, addr, recvPort|
-            var value = msg[1].asFloat;
+            var value = msg[1].asFloat.clip(0.0, 1.0);
             
-            // Ensure volume is between 0.0 and 1.0
-            sfxVolume = value.clip(0.0, 1.0);
-            "SFX volume set to: %".format(sfxVolume).postln;
-            
-            // Update fx group
-            fxGroup.set(\sfxVolume, sfxVolume);
-            
+            if(sfxVolume != value) {
+                sfxVolume = value;
+                "SFX volume set to: %".format(sfxVolume).postln;
+                fxGroup.set(\sfxVolume, sfxVolume);
+            };
         }, '/volume/sfx', nil, oscRecvPort);
 
         // Reload configs: /reload
@@ -1386,11 +1379,11 @@ s.waitForBoot {
         condition.hang;
 
         if(preloadedBuffers.notNil) {
-            "Checking preloaded music buffers...".postln;
+            //"Checking preloaded music buffers...".postln;
             preloadedBuffers.keysValuesDo { |era, eraBuffers|
                 eraBuffers.do { |bufferInfo, i|
                     if(bufferInfo.notNil && bufferInfo[\buffer].notNil) {
-                        "Preloaded buffer % for era %: %".format(i, era, bufferInfo[\path]).postln;
+                        //"Preloaded buffer % for era %: %".format(i, era, bufferInfo[\path]).postln;
                     } {
                         "Missing buffer % for era %".format(i, era).warn;
                     };
@@ -1402,19 +1395,17 @@ s.waitForBoot {
         ~setupOSC.();
 
         // Apply initial volume settings to all groups
-        "Setting up initial volume controls...".postln;
+        //"Setting up initial volume controls...".postln;
         mainGroup.set(\masterVolume, masterVolume);
         envGroup.set(\envVolume, environmentVolume);
         musicGroup.set(\musicVolume, musicVolume);
         fxGroup.set(\sfxVolume, sfxVolume);
-        "Volume controls initialized.".postln;
+        //"Volume controls initialized.".postln;
 
         // Update audio with default context
-        "Initializing audio context with default values...".postln;
         // Force update with current default biome and era values
         activeTags.addAll([currentBiome, currentEra]);
         ~updateAudioContext.();
-        "Audio context initialization complete.".postln;
 
         // Register cleanup function for proper shutdown
         ShutDown.add({ ~cleanup.() });
