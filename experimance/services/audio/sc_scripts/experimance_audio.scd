@@ -41,6 +41,7 @@ s.waitForBoot {
     var musicLoops;            // Dictionary of active music loops
     var triggers;              // Dictionary of trigger samples
     var configurations;        // All configuration data
+    var preloadedBuffers;      // Dictionary of preloaded music buffers
 
     // Mixer buses and groups
     var mainGroup;        // Main audio group
@@ -389,86 +390,79 @@ s.waitForBoot {
     };
 
     // Play a music loop
+    // This function must be called within a Routine when using file loading
     ~playMusicLoop = { |loopData, slotIndex, startPos=0|
-        var path, buffer, synth, prompt, volume;
-        var fileExists;
-        var placeholderResult;
-
-        // path, prompt, and volume are optional
-		path = loopData[\path];
-		volume = (loopData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
-        fileExists = loopData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
-
-        // Log the file status
-        if(path.notNil && fileExists) {
-            "Using existing audio file: %".format(path).postln;
+        var era = currentEra;
+        var synth, path, volume;
+        var bufferInfo, buffer;
+        var result;
+        
+        // Get volume from loop data
+        volume = (loopData[\volume] ? 1.0).asFloat;
+        path = loopData[\path];
+        
+        // Try to get preloaded buffer info
+        if(preloadedBuffers.notNil && preloadedBuffers[era].notNil && 
+          (slotIndex.isNumber && preloadedBuffers[era].size.isNumber && slotIndex < preloadedBuffers[era].size)) {
+            bufferInfo = preloadedBuffers[era][slotIndex];
         } {
-            "Audio file unavailable: %. Using placeholder sound for era % slot %.".format(path, currentEra, slotIndex).warn;
+            bufferInfo = nil;
+            "No preloaded buffer found for era % slot %".format(era, slotIndex).warn;
         };
-
-        if(path.notNil && fileExists) {
-            // Load audio file if it exists
-            buffer = Buffer.read(s, audioDir +/+ path);
+        
+        if(bufferInfo.notNil && bufferInfo[\buffer].notNil) {
+            // We have a preloaded buffer - use it
+            buffer = bufferInfo[\buffer];
             
-            // Wait for buffer to load before proceeding
-            s.sync;
+            // Log that we're using a preloaded buffer
+            "Using preloaded buffer for era % slot %: %".format(era, slotIndex, path).postln;
             
-            // Verify buffer was loaded correctly
-            if(buffer.notNil and: {buffer.numFrames.notNil and: {buffer.numFrames > 0}}) {
-                // Ensure startPos is within valid bounds for this buffer
-                startPos = min(max(startPos, 0), buffer.numFrames - 1);
-                "Buffer loaded with % frames, using start position: %"
-                    .format(buffer.numFrames, startPos).postln;
-                    
-                // Create synth for looping playback with startPos
-                synth = Synth(\musicPlayer, [
-                    \buf, buffer,
-                    \amp, volume,
-                    \fadeTime, 5.0,  // 5 second crossfade between eras
-                    \slotIndex, slotIndex,  // Used for ducking specific slots
-                    \masterVolume, masterVolume,  // Apply current master volume
-                    \musicVolume, musicVolume,  // Apply current music volume
-                    \startPos, startPos  // Start position for syncing with previous era
-                ], musicGroup);
+            // Ensure startPos is within valid bounds
+            if(bufferInfo[\numFrames].notNil && bufferInfo[\numFrames].isNumber) {
+                startPos = min(max(startPos, 0), bufferInfo[\numFrames] - 1);
             } {
-                "Error: Failed to load buffer correctly for %".format(path).error;
-                // Create a placeholder instead as fallback
-                synth = nil;
-                placeholderResult = ~createPlaceholderMusic.(currentEra, slotIndex, volume);
-                // We'll return placeholder info below
+                startPos = 0;
+                "Warning: Invalid buffer numFrames, using startPos = 0".warn;
             };
-
-            // Check if we fell back to a placeholder
-            if(synth.isNil and: {placeholderResult.notNil}) {
-                // Return placeholder info
-                (
-                    synth: placeholderResult,
-                    buffer: nil,
-                    volume: volume,
-                    isPlaceholder: true,
-                    startTime: Main.elapsedTime,
-                    bufferDuration: 8.0  // Arbitrary duration for placeholder sounds
-                );
-            } {
-                // Return info about this music loop with standard format plus start time
-                // Make sure buffer.duration exists before using it
-                var duration = if(buffer.notNil) { buffer.duration ?? 8.0 } { 8.0 };
-                (\synth: synth, \buffer: buffer, \volume: volume, \startTime: Main.elapsedTime, \bufferDuration: duration);
-            };
+            
+            // Create synth with the preloaded buffer
+            synth = Synth(\musicPlayer, [
+                \buf, buffer,
+                \amp, volume,
+                \fadeTime, 5.0,
+                \slotIndex, slotIndex,
+                \masterVolume, masterVolume,
+                \musicVolume, musicVolume,
+                \startPos, startPos
+            ], musicGroup);
+            
+            result = (
+                \synth: synth,
+                \buffer: buffer, 
+                \volume: volume,
+                \startTime: Main.elapsedTime,
+                \bufferDuration: bufferInfo[\duration]
+            );
+            
+            "Started music player with duration: % seconds".format(bufferInfo[\duration]).postln;
         } {
-            // Generate placeholder music based on era and slot
-            placeholderResult = ~createPlaceholderMusic.(currentEra, slotIndex, volume);
-
-            // Return info about this music loop (with startTime for consistent tracking)
-            (
-                synth: placeholderResult,
-                buffer: nil,
-                volume: volume,
-                isPlaceholder: true,
-                startTime: Main.elapsedTime,
-                bufferDuration: 8.0  // Arbitrary duration for placeholder sounds
+            // No preloaded buffer - use placeholder
+            var placeholderSynth = ~createPlaceholderMusic.(era, slotIndex, volume);
+            
+            "Using placeholder sound for era % slot %".format(era, slotIndex).warn;
+            
+            result = (
+                \synth: placeholderSynth,
+                \buffer: nil,
+                \volume: volume,
+                \isPlaceholder: true,
+                \startTime: Main.elapsedTime,
+                \bufferDuration: 8.0 // Fixed duration for placeholders
             );
         };
+        
+        // Return result
+        result;
     };
 
     // Play a trigger sound (one-shot)
@@ -677,79 +671,93 @@ s.waitForBoot {
                     // Initialize array with proper size and nil values
                     musicLoops[currentEra] = Array.fill(eraLoops.size, { nil });
 
-                    // Update music loops for this era
-                    eraLoops.do { |loopInfo, i|
-                        // Calculate starting position based on previous era's loop if available
-                        var startPos = 0;
-                        var syncSuccess = false;
-                        
-                        // Check if we need to synchronize with previous era's loop
-                        if(musicLoops.includesKey(prevEra) and: { i < musicLoops[prevEra].size }) {
-                            var prevEraLoop = musicLoops[prevEra][i];
-                            var curTime = Main.elapsedTime;
+                    // Update music loops for this era - must be done in a Routine for proper synchronization
+                    Routine({
+                        eraLoops.do { |loopInfo, i|
+                            // Calculate starting position based on previous era's loop if available
+                            var startPos = 0;
+                            var syncSuccess = false;
                             
-                            // Only sync if prev loop exists, has a synth, and isn't a placeholder
-                            if(prevEraLoop.notNil and: { 
-                                prevEraLoop[\synth].notNil and: 
-                                prevEraLoop[\isPlaceholder].isNil and: 
-                                prevEraLoop[\buffer].notNil and:
-                                prevEraLoop[\startTime].notNil and:
-                                prevEraLoop[\bufferDuration].notNil
-                            }) {
-                                var elapsedTimeSinceStart, playbackPosition, bufferDuration, bufFrames;
+                            // Check if we need to synchronize with previous era's loop
+                            if(musicLoops.includesKey(prevEra) and: { i < musicLoops[prevEra].size }) {
+                                var prevEraLoop = musicLoops[prevEra][i];
+                                var curTime = Main.elapsedTime;
                                 
-                                // Calculate how long the sound has been playing
-                                elapsedTimeSinceStart = curTime - prevEraLoop[\startTime];
-                                bufferDuration = prevEraLoop[\bufferDuration];
-
-                                "Elapsed: %, prevStart: %, bufferDuration: %"
-                                    .format(elapsedTimeSinceStart.round(0.01), 
-                                            prevEraLoop[\startTime].round(0.01), 
-                                            bufferDuration.round(0.01)).postln;
-                                
-                                // Calculate current position within the loop (accounting for wrapping)
-                                if (bufferDuration > 0) {
-                                    var buffer = prevEraLoop[\buffer];
+                                // Only sync if prev loop has timing information and duration 
+                                if(prevEraLoop.notNil and: { 
+                                    prevEraLoop[\startTime].notNil and:
+                                    prevEraLoop[\bufferDuration].notNil
+                                }) {
+                                    var elapsedTime, playbackPosition, bufferDuration;
+                                    var bufferInfo, numFrames;
                                     
-                                    // Calculate position within the loop based on elapsed time
-                                    playbackPosition = elapsedTimeSinceStart % bufferDuration;
+                                    // Calculate how long the sound has been playing
+                                    elapsedTime = curTime - prevEraLoop[\startTime];
+                                    bufferDuration = prevEraLoop[\bufferDuration];
                                     
-                                    // Make sure buffer exists and has numFrames before doing calculation
-                                    if(buffer.notNil) {
-                                        // Get buffer frames, protecting against nil
-                                        bufFrames = buffer.numFrames;
+                                    "Elapsed: %, prevStart: %, bufferDuration: %"
+                                        .format(elapsedTime.round(0.01), 
+                                                prevEraLoop[\startTime].round(0.01), 
+                                                bufferDuration.round(0.01)).postln;
+                                    
+                                    // Calculate position within the loop only if duration is valid
+                                    if(bufferDuration > 0) {
+                                        playbackPosition = elapsedTime % bufferDuration;
                                         
-                                        // Only calculate startPos if we have all the required values
-                                        if(bufFrames.notNil and: {bufFrames > 0} and: {bufferDuration > 0}) {
-                                            startPos = (playbackPosition / bufferDuration * bufFrames).asInteger;
+                                        // Get current era's buffer info for this slot to get numFrames
+                                        if(preloadedBuffers.notNil && preloadedBuffers[currentEra].notNil && 
+                                           (i.isNumber && preloadedBuffers[currentEra].size.isNumber && 
+                                            i < preloadedBuffers[currentEra].size)) {
+                                            bufferInfo = preloadedBuffers[currentEra][i];
                                             
-                                            "Syncing era % slot % with previous era at position: % sec (% of % frames)"
-                                                .format(currentEra, i, playbackPosition.round(0.01), 
-                                                        startPos, bufFrames).postln;
-                                            
-                                            syncSuccess = true;
+                                            if(bufferInfo.notNil && bufferInfo[\numFrames].notNil && 
+                                               bufferInfo[\numFrames].isNumber && bufferInfo[\numFrames] > 0) {
+                                                var ratio;
+                                                numFrames = bufferInfo[\numFrames];
+                                                
+                                                // Calculate ratio and frames
+                                                if(bufferDuration > 0) {
+                                                    ratio = playbackPosition / bufferDuration;
+                                                    if(ratio.isNaN) { 
+                                                        ratio = 0; 
+                                                        "Warning: NaN ratio in sync calculation".warn;
+                                                    };
+                                                    
+                                                    startPos = (ratio * numFrames).asInteger;
+                                                } {
+                                                    startPos = 0;
+                                                    "Warning: Invalid buffer duration, using startPos = 0".warn;
+                                                };
+                                                
+                                                "Syncing era % slot % using preloaded buffer position: % sec (% of % frames)"
+                                                    .format(currentEra, i, playbackPosition.round(0.01), 
+                                                            startPos, numFrames).postln;
+                                                
+                                                syncSuccess = true;
+                                            };
                                         } {
-                                            "Couldn't calculate sync position: buffer frames is % for slot %"
-                                                .format(bufFrames, i).warn;
+                                            "No valid preloaded buffer info for era % slot %"
+                                                .format(currentEra, i).warn;
                                         };
                                     } {
-                                        "Buffer is nil for previous era's slot %".format(i).warn;
+                                        "Cannot calculate sync position: invalid buffer duration for slot %"
+                                            .format(i).warn;
                                     };
                                 };
                             };
-                        };
                         
                         // New loop for this slot with synced position if available
                         musicLoops[currentEra][i] = ~playMusicLoop.(loopInfo, i, startPos);
                         
-                        if(syncSuccess) {
-                            "Created new % music loop for slot % synchronized to previous era"
-                                .format(currentEra, i).postln;
-                        } {
-                            "Created new % music loop for slot % (no sync)"
-                                .format(currentEra, i).postln;
-                        }
-                    };
+                            if(syncSuccess) {
+                                "Created new % music loop for slot % synchronized to previous era"
+                                    .format(currentEra, i).postln;
+                            } {
+                                "Created new % music loop for slot % (no sync)"
+                                    .format(currentEra, i).postln;
+                            }
+                        };
+                    }).play; // Play the routine
 
                     if(musicLoops.includesKey(prevEra)) {
                         // Fade out loops that aren't in this era
@@ -1204,6 +1212,10 @@ s.waitForBoot {
 
     // Main initialization function
     ~init = {
+        // Create a condition variable for synchronization
+        var condition = Condition.new;
+        var readyFlag = false;
+
         "Initializing Experimance Audio System...".postln;
 
         // Create groups for hierarchical audio organization
@@ -1222,8 +1234,37 @@ s.waitForBoot {
 
         // Define synthesizers
         ~defineSynths.();
+        
+        // Preload all music buffers first, and then continue with initialization
+        "Starting music buffer preloading... System will wait until complete.".postln;
+        
+        // Use fork instead of Routine for better exception handling
+        fork {
+            // Preload all buffers
+            ~preloadMusicBuffers.();
+            "Buffer preloading complete. Continuing initialization...".postln;
+            
+            // Notify the condition that we're done
+            condition.unhang;
+        };
+        
+        // Wait for preloading to finish before proceeding
+        condition.hang;
 
-        // Set up OSC responders
+        if(preloadedBuffers.notNil) {
+            "Checking preloaded music buffers...".postln;
+            preloadedBuffers.keysValuesDo { |era, eraBuffers|
+                eraBuffers.do { |bufferInfo, i|
+                    if(bufferInfo.notNil && bufferInfo[\buffer].notNil) {
+                        "Preloaded buffer % for era %: %".format(i, era, bufferInfo[\path]).postln;
+                    } {
+                        "Warning: Missing buffer % for era %".format(i, era).warn;
+                    };
+                };
+            };
+        };
+        
+        // Set up OSC responders (only after buffers are loaded)
         ~setupOSC.();
 
         // Apply initial volume settings to all groups
@@ -1244,6 +1285,7 @@ s.waitForBoot {
         // Register cleanup function for proper shutdown
         ShutDown.add({ ~cleanup.() });
 
+        // Mark system as ready
         "Experimance Audio System initialized and ready.".postln;
     };
 
@@ -1304,7 +1346,7 @@ s.waitForBoot {
         if(musicLoops.notNil) {
             musicLoops.keysValuesDo { |era, loops|
                 loops.do { |loopInfo, i|
-                    if(loopInfo[\buffer].notNil) { loopInfo[\buffer].free };
+                    // Don't free the buffer - it's now managed by the preloadedBuffers system
                     if(loopInfo[\synth].notNil) {
                         "Stopping music loop % for era %".format(i, era).postln;
                         // Free the synth node whether it's a placeholder or regular buffer player
@@ -1319,16 +1361,19 @@ s.waitForBoot {
     ~cleanup = {
         "Performing proper cleanup of audio resources...".postln;
 
+        // Release all OSC handlers
+        OSCdef.all.do { |def| def.free };
+
         ~stopMusic.();
 
-        // Free all buffers
+        // Free all environment buffers
         if(environmentLayers.notNil) {
             environmentLayers.do { |layerInfo|
                 if(layerInfo[\buffer].notNil) { layerInfo[\buffer].free };
                 if(layerInfo[\synth].notNil) { layerInfo[\synth].free };
             };
         };
-
+        
         // Free all active synths and groups
         if(mainGroup.notNil) { mainGroup.free };
         if(envGroup.notNil) { envGroup.free };
@@ -1339,8 +1384,17 @@ s.waitForBoot {
         if(speakingBus.notNil) { speakingBus.free };
         if(listeningBus.notNil) { listeningBus.free };
 
-        // Release all OSC handlers
-        OSCdef.all.do { |def| def.free };
+        // Free all preloaded music buffers
+        if(preloadedBuffers.notNil) {
+            "Freeing all preloaded music buffers...".postln;
+            preloadedBuffers.keysValuesDo { |era, eraBuffers|
+                eraBuffers.do { |bufferInfo|
+                    if(bufferInfo.notNil && bufferInfo[\buffer].notNil) {
+                        bufferInfo[\buffer].free;
+                    };
+                };
+            };
+        };
 /*
         // Send all-notes-off to ensure no hanging notes
         16.do { |chan| s.sendMsg("/n_set", 1, chan, 0) };
@@ -1361,6 +1415,76 @@ s.waitForBoot {
 */
 
         "Cleanup complete - JACK resources should be properly released.".postln;
+    };
+
+    // Preload all music buffers on initialization to improve reliability
+    ~preloadMusicBuffers = {
+        var bufferCount = 0;
+        
+        "Preloading all music buffers...".postln;
+        preloadedBuffers = Dictionary.new;
+        
+        if(configurations[\music_loops].notNil) {
+            configurations[\music_loops].keysValuesDo { |era, loops|
+                var eraBuffers;
+                
+                // Ensure loops is valid array or collection
+                if(loops.isNil) {
+                    "No loops defined for era %".format(era).warn;
+                } {
+                    // Create buffer array
+                    eraBuffers = Array.newClear(loops.size);
+                    preloadedBuffers[era] = eraBuffers;
+                    
+                    loops.do { |loopData, slotIndex|
+                        var path, buffer, duration, fileExists, bufferInfo;
+                        
+                        // Skip if loopData is nil
+                        if(loopData.isNil) {
+                            "Nil loop data for era % slot %".format(era, slotIndex).warn;
+                        } {
+                            path = loopData[\path];
+                            fileExists = loopData[\exists] ? false;
+                            
+                            // Fix the boolean comparison by checking explicitly if fileExists is true
+                            if(path.notNil && fileExists) {
+                                // Load audio file into buffer
+                                "Preloading buffer for era % slot %: %".format(era, slotIndex, path).postln;
+                                buffer = Buffer.read(s, audioDir +/+ path);
+                                
+                                // Wait for buffer info to be available
+                                s.sync;
+                                
+                                // Store buffer info
+                                duration = buffer.duration;
+                                bufferInfo = (
+                                    \buffer: buffer,
+                                    \path: path,
+                                    \numFrames: buffer.numFrames,
+                                    \duration: duration,
+                                    \volume: (loopData[\volume] ? 1.0).asFloat
+                                );
+                                
+                                // Store in preloaded buffers array for this era
+                                //eraBuffers[slotIndex] = bufferInfo;
+                                preloadedBuffers[era][slotIndex] = bufferInfo;
+                                bufferCount = bufferCount + 1;
+                                
+                                "Loaded buffer for % slot %: % frames, % seconds".format(
+                                    era, slotIndex, buffer.numFrames, duration.round(0.01)).postln;
+                            } {
+                                // Store nil for unavailable buffer
+                                "No valid buffer found for era % slot %, will use placeholder".format(era, slotIndex).warn;
+                                //eraBuffers[slotIndex] = nil;
+                                preloadedBuffers[era][slotIndex] = nil;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        
+        "Preloaded % music buffers successfully.".format(bufferCount).postln;
     };
 
     // Run initialization
