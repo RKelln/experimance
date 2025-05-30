@@ -251,6 +251,24 @@ class OscBridge:
         except Exception as e:
             logger.error(f"Error sending reload OSC message: {e}")
             return False
+            
+    def request_synth_info(self) -> bool:
+        """Request detailed information about currently playing synths.
+        
+        This is a debug endpoint that prints information about all currently active
+        music loops, including their start times, current positions, and buffer details.
+        
+        Returns:
+            bool: True if message was sent successfully
+        """
+        try:
+            assert self.client is not None, "OSC client is not initialized"
+            self.client.send_message("/synth_info", [])
+            logger.debug("Requested synth information from SuperCollider")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending synth_info OSC message: {e}")
+            return False
     
     def start_supercollider(self, sc_script_path: str, sclang_path: str = DEFAULT_SCLANG_PATH, 
                        log_to_file: bool = True, log_to_console: bool = False) -> Optional[str]:

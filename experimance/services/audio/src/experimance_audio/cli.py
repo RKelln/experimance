@@ -142,15 +142,9 @@ class AudioCli(cmd.Cmd):
         
         # Send to SuperCollider
         success = self.osc.send_spacetime(biome, era)
-        
-        # Update active tags
-        self.active_tags.clear()
-        self.active_tags.add(biome)
-        self.active_tags.add(era)
-        
-        # Include the default tags
-        for tag in self.active_tags:
-            self.osc.include_tag(tag)
+        if success:
+            self.active_tags.add(biome)
+            self.active_tags.add(era)
             
         print(f"Spacetime set to biome={biome}, era={era}" + (" (success)" if success else " (failed)"))
     
@@ -318,6 +312,19 @@ class AudioCli(cmd.Cmd):
         success = self.osc.reload_configs()
         
         print("Reloaded audio configurations" + (" (success)" if success else " (failed)"))
+    
+    def do_synth_info(self, arg):
+        """Request detailed information about currently playing music synths.
+        
+        Usage: synth_info
+        
+        This command shows debug information about all currently active music loops, 
+        including their start times, current positions, and buffer details. This is
+        helpful for diagnosing sync and playback issues.
+        """
+        success = self.osc.request_synth_info()
+        print("Requested synth info" + (" (success)" if success else " (failed)"))
+        print("Check SuperCollider logs for detailed output")
     
     def do_status(self, arg):
         """Show current audio system status.
