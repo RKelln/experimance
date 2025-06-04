@@ -447,7 +447,7 @@ s.waitForBoot {
             "No preloaded buffer found for era % slot %".format(era, slotIndex).warn;
         };
         
-        if(bufferInfo.notNil && bufferInfo[\buffer].notNil) {
+        if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
             // We have a preloaded buffer - use it
             buffer = bufferInfo[\buffer];
             
@@ -455,8 +455,9 @@ s.waitForBoot {
             //"Using preloaded buffer for era % slot %: %".format(era, slotIndex, path).postln;
             
             // Ensure startPos is within valid bounds
-            if(bufferInfo[\numFrames].notNil && bufferInfo[\numFrames].isNumber) {
-                startPos = min(max(startPos, 0), bufferInfo[\numFrames] - 1);
+            // Use more defensive validation - checks that numFrames exists and is a number
+            if(bufferInfo[\numFrames].notNil and: { bufferInfo[\numFrames].isNumber }) {
+                startPos = startPos.clip(0, bufferInfo[\numFrames] - 1);
             } {
                 startPos = 0;
                 "Invalid buffer numFrames, using startPos = 0".warn;
@@ -1292,10 +1293,12 @@ s.waitForBoot {
             // Don't do strict validation - the Buffer UGen will handle errors internally
             // and the "Buffer UGen: no buffer data" warning is harmless during loading
             // Use a boolean value (not an integer) for validBuf
-            validBuf = (bufFrames > 0); // Simple check that returns a proper boolean
+            // Ensure we check that bufFrames is a number before comparing
+            validBuf = bufFrames.isNumber and: { bufFrames > 0 }; // Safer check that avoids bool > int error
             
             // Ensure startPos is valid and within buffer bounds
-            checkedStartPos = min(max(startPos, 0), bufFrames.max(1) - 1); // Safer way to clamp startPos
+            // Use a more defensive approach that works when bufFrames might not be a number
+            checkedStartPos = startPos.clip(0, if(bufFrames.isNumber) { bufFrames.max(1) - 1 } { 0 }); // Safer way to clamp startPos
             
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             rate = BufRateScale.kr(buf);
@@ -1577,7 +1580,8 @@ s.waitForBoot {
                             fileExists = loopData[\exists] ? false;
                             
                             // Fix the boolean comparison by checking explicitly if fileExists is true
-                            if(path.notNil && fileExists) {
+                            // Convert fileExists to a proper Boolean to avoid comparison issues
+                            if(path.notNil && (fileExists == true)) {
                                 // Load audio file into buffer
                                 "Preloading buffer for era % slot %: %".format(era, slotIndex, path).postln;
                                 buffer = Buffer.read(s, audioDir +/+ path);
