@@ -1047,21 +1047,6 @@ s.waitForBoot {
                                 } {
                                     "    Type: INVALID (no buffer)".postln;
                                 };
-                            
-                                // Print synth status
-                                if(loopInfo[\synth].notNil) {
-                                    var synth = loopInfo[\synth];
-                                    var nodeID = synth.nodeID;
-                                    
-                                    // More sophisticated check for older synths
-                                    if(nodeID.notNil and: { s.at(nodeID).notNil }) {
-                                        "    Synth: PLAYING (nodeID: %)".format(nodeID).postln;
-                                    } {
-                                        "    Synth: STOPPED (not on server)".postln;
-                                    };
-                                } {
-                                    "    Synth: NIL".postln;
-                                };
                                 
                                 // Print timing information
                                 if(loopInfo[\startTime].notNil) {
