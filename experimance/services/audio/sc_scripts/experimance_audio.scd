@@ -411,40 +411,44 @@ s.waitForBoot {
         // Get volume from loop data
         volume = (loopData[\volume] ? 1.0).asFloat;
         path = loopData[\path];
-        
-        // Try to get preloaded buffer info with extra validation
-        if(preloadedBuffers.isNil) {
-            "ERROR: preloadedBuffers is nil".error;
-            bufferInfo = nil;
-        } {
-            // Verify that the era exists in preloadedBuffers
-            if(preloadedBuffers[era].isNil) {
-                "ERROR: No buffers found for era % in preloadedBuffers".format(era).error;
-                "Available eras: %".format(preloadedBuffers.keys.asArray).postln;
+
+        // If the file exists try to load from preloaded buffers
+        if(path.notNil and: { loopData[\exists] }) {
+
+            // Try to get preloaded buffer info with extra validation
+            if(preloadedBuffers.isNil) {
+                "ERROR: preloadedBuffers is nil".error;
                 bufferInfo = nil;
             } {
-                // Verify slot index is valid
-                if(slotIndex.isNil || slotIndex.isNumber.not) {
-                    "ERROR: Invalid slotIndex: %".format(slotIndex).error;
+                // Verify that the era exists in preloadedBuffers
+                if(preloadedBuffers[era].isNil) {
+                    "ERROR: No buffers found for era % in preloadedBuffers".format(era).error;
+                    "Available eras: %".format(preloadedBuffers.keys.asArray).postln;
                     bufferInfo = nil;
                 } {
-                    // Make sure we're not accessing beyond array bounds
-                    if(preloadedBuffers[era].size.isNil || slotIndex >= preloadedBuffers[era].size) {
-                        "ERROR: slotIndex % out of bounds for era % (size: %)".format(
-                            slotIndex, era, preloadedBuffers[era].size ? "nil").error;
+                    // Verify slot index is valid
+                    if(slotIndex.isNil || slotIndex.isNumber.not) {
+                        "ERROR: Invalid slotIndex: %".format(slotIndex).error;
                         bufferInfo = nil;
                     } {
-                        // All validations passed, get the buffer
-                        bufferInfo = preloadedBuffers[era][slotIndex];
-                        //"DEBUG: Found buffer for era % slot %".format(era, slotIndex).postln;
+                        // Make sure we're not accessing beyond array bounds
+                        if(preloadedBuffers[era].size.isNil || slotIndex >= preloadedBuffers[era].size) {
+                            "ERROR: slotIndex % out of bounds for era % (size: %)".format(
+                                slotIndex, era, preloadedBuffers[era].size ? "nil").error;
+                            bufferInfo = nil;
+                        } {
+                            // All validations passed, get the buffer
+                            bufferInfo = preloadedBuffers[era][slotIndex];
+                            //"DEBUG: Found buffer for era % slot %".format(era, slotIndex).postln;
+                        };
                     };
                 };
             };
-        };
-        
-        // Fallback if no buffer found
-        if(bufferInfo.isNil) {
-            "No preloaded buffer found for era % slot %".format(era, slotIndex).warn;
+            
+            // Fallback if no buffer found
+            if(bufferInfo.isNil) {
+                "No preloaded buffer found for era % slot %".format(era, slotIndex).warn;
+            };
         };
         
         if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
@@ -452,7 +456,7 @@ s.waitForBoot {
             buffer = bufferInfo[\buffer];
             
             // Log that we're using a preloaded buffer
-            //"Using preloaded buffer for era % slot %: %".format(era, slotIndex, path).postln;
+            "Using preloaded buffer for era % slot %: %".format(era, slotIndex, path).postln;
             
             // Ensure startPos is within valid bounds
             // Use more defensive validation - checks that numFrames exists and is a number
@@ -463,6 +467,7 @@ s.waitForBoot {
                 "Invalid buffer numFrames, using startPos = 0".warn;
             };
             
+            "Starting music loop at position: % frames".format(startPos).postln;
             // Don't validate buffer frames here - it may not be fully loaded yet
             // Instead, rely on the preloading process which already syncs with the server
             // The "Buffer UGen: no buffer data" warning is harmless and should resolve itself
@@ -476,7 +481,8 @@ s.waitForBoot {
                 \slotIndex, slotIndex,
                 \masterVolume, masterVolume,
                 \musicVolume, musicVolume,
-                \startPos, startPos
+                \startPos, startPos,
+                \isPlaceholder: false
             ], musicGroup);
             
             result = (
@@ -750,50 +756,59 @@ s.waitForBoot {
                         var bufferDuration = nil;
                         var bufferInfo, numFrames;
                         
-                        // Skip checking the previous era's loop - use preloaded buffers directly
-                        // With global time sync, we don't need to reference previous era data
-                        
-                        // Get buffer duration from preloaded buffers
-                        if(preloadedBuffers.notNil && preloadedBuffers[currentEra].notNil && 
-                           (i.isNumber && preloadedBuffers[currentEra].size.isNumber && i < preloadedBuffers[currentEra].size)) {
-                            bufferInfo = preloadedBuffers[currentEra][i];
-                            if(bufferInfo.notNil && bufferInfo[\duration].notNil) {
-                                bufferDuration = bufferInfo[\duration];
-                            };
-                        };
-                        
-                        // Calculate global position using reference time
-                        if(bufferDuration.notNil && bufferDuration > 0) {
-                            var globalElapsedTime = curTime - musicGlobalStartTime;
-                            var playbackPosition = globalElapsedTime % bufferDuration;
-                            
-                            // "Global elapsed: %, start: %, bufferDuration: %, position: %"
-                            //     .format(globalElapsedTime.round(0.01), 
-                            //             musicGlobalStartTime.round(0.01), 
-                            //             bufferDuration.round(0.01),
-                            //             playbackPosition.round(0.01)).postln;
-                            
-                            // Get current era's buffer info for this slot to get numFrames
-                            if(bufferInfo.notNil && bufferInfo[\numFrames].notNil && 
-                               bufferInfo[\numFrames].isNumber && bufferInfo[\numFrames] > 0) {
-                                // Calculate ratio and frames
-                                var ratio = playbackPosition / bufferDuration;
-                                numFrames = bufferInfo[\numFrames];
-                                if(ratio.isNaN) { 
-                                    ratio = 0; 
-                                    "NaN ratio in sync calculation".warn;
+                        // Don't sync placeholders
+                        if(loopInfo[\exists] ? false) {
+
+                            // Get buffer duration from preloaded buffers
+                            if(
+                                preloadedBuffers.notNil and: {
+                                preloadedBuffers[currentEra].notNil and: {
+                                i.isNumber and: { preloadedBuffers[currentEra].size.isNumber and: { i < preloadedBuffers[currentEra].size } }
+                            }})
+                            {
+                                bufferInfo = preloadedBuffers[currentEra][i];
+                                // only fetch duration if bufferInfo exists
+                                if(bufferInfo.notNil and: { bufferInfo[\duration].notNil }) {
+                                    bufferDuration = bufferInfo[\duration];
                                 };
+                            };
+                            
+                            // Calculate global position using reference time
+                            if(bufferDuration.notNil and: { bufferDuration > 0 }) {
+                                var globalElapsedTime = curTime - musicGlobalStartTime;
+                                var playbackPosition = globalElapsedTime % bufferDuration;
                                 
-                                startPos = (ratio * numFrames).asInteger;
+                                // "Global elapsed: %, start: %, bufferDuration: %, position: %"
+                                //     .format(globalElapsedTime.round(0.01), 
+                                //             musicGlobalStartTime.round(0.01), 
+                                //             bufferDuration.round(0.01),
+                                //             playbackPosition.round(0.01)).postln;
                                 
-                                // "Syncing era % slot % using global reference time. Position: % sec (% of % frames)"
-                                //     .format(currentEra, i, playbackPosition.round(0.01), 
-                                //             startPos, numFrames).postln;
-                                
-                                syncSuccess = true;
-                            } {
-                                "No valid buffer frame count for era % slot %"
-                                    .format(currentEra, i).warn;
+                                // Get current era's buffer info for this slot to get numFrames
+                                if(bufferInfo.notNil and: { 
+                                    bufferInfo[\numFrames].notNil and: {
+                                    bufferInfo[\numFrames].isNumber and: {
+                                    bufferInfo[\numFrames] > 0 }
+                                }}) {
+                                    // Calculate ratio and frames
+                                    var ratio = playbackPosition / bufferDuration;
+                                    numFrames = bufferInfo[\numFrames];
+                                    if(ratio.isNaN) { 
+                                        ratio = 0; 
+                                        "NaN ratio in sync calculation".warn;
+                                    };
+                                    
+                                    startPos = (ratio * numFrames).asInteger;
+                                    
+                                    // "Syncing era % slot % using global reference time. Position: % sec (% of % frames)"
+                                    //     .format(currentEra, i, playbackPosition.round(0.01), 
+                                    //             startPos, numFrames).postln;
+                                    
+                                    syncSuccess = true;
+                                } {
+                                    "No valid buffer frame count for era % slot %"
+                                        .format(currentEra, i).warn;
+                                };
                             };
                         };
 
@@ -1023,48 +1038,6 @@ s.waitForBoot {
                             
                             "  Slot %:".format(slotIndex).postln;
                             
-                            // Print synth status
-                            if(loopInfo[\synth].notNil) {
-                                var synth = loopInfo[\synth];
-                                var nodeID = synth.nodeID;
-                                
-                                // Better way to check if the synth is actually playing
-                                // For SuperCollider, we assume the synth is playing if it's less than 10 minutes old
-                                // This is because nodeID checks can be unreliable during buffer loading
-                                var elapsedSinceStart = currentTime - (loopInfo[\startTime] ? 0);
-                                if(elapsedSinceStart < 600) { // Less than 10 minutes
-                                    "    Synth: PLAYING (nodeID: %)".format(nodeID).postln;
-                                } {
-                                    // More sophisticated check for older synths
-                                    if(nodeID.notNil && {s.nodeAllocator.addresses.includes(nodeID)}) {
-                                        "    Synth: PLAYING (nodeID: %)".format(nodeID).postln;
-                                    } {
-                                        "    Synth: STOPPED (not on server)".postln;
-                                    };
-                                }
-                            } {
-                                "    Synth: NIL".postln;
-                            };
-                            
-                            // Print timing information
-                            if(loopInfo[\startTime].notNil) {
-                                elapsedTime = currentTime - loopInfo[\startTime];
-                                "    Started: % seconds ago".format(elapsedTime.round(0.01)).postln;
-                                
-                                // Calculate current position in loop
-                                bufferDuration = loopInfo[\bufferDuration];
-                                if(bufferDuration.notNil && bufferDuration > 0) {
-                                    position = elapsedTime % bufferDuration;
-                                    "    Duration: % seconds, Current Position: % seconds (% %)".format(
-                                        bufferDuration.round(0.01), 
-                                        position.round(0.01),
-                                        (position / bufferDuration * 100).round(0.1),
-                                        "%"
-                                    ).postln;
-                                };
-                            };
-                            
-                            // Print buffer and placeholder info
                             if(isPlaceholder) {
                                 "    Type: PLACEHOLDER".postln;
                             } {
@@ -1073,6 +1046,39 @@ s.waitForBoot {
                                     "    Type: BUFFER (% frames)".format(numFrames).postln;
                                 } {
                                     "    Type: INVALID (no buffer)".postln;
+                                };
+                            
+                                // Print synth status
+                                if(loopInfo[\synth].notNil) {
+                                    var synth = loopInfo[\synth];
+                                    var nodeID = synth.nodeID;
+                                    
+                                    // More sophisticated check for older synths
+                                    if(nodeID.notNil and: { s.at(nodeID).notNil }) {
+                                        "    Synth: PLAYING (nodeID: %)".format(nodeID).postln;
+                                    } {
+                                        "    Synth: STOPPED (not on server)".postln;
+                                    };
+                                } {
+                                    "    Synth: NIL".postln;
+                                };
+                                
+                                // Print timing information
+                                if(loopInfo[\startTime].notNil) {
+                                    elapsedTime = currentTime - loopInfo[\startTime];
+                                    "    Started: % seconds ago".format(elapsedTime.round(0.01)).postln;
+                                    
+                                    // Calculate current position in loop
+                                    bufferDuration = loopInfo[\bufferDuration];
+                                    if(bufferDuration.notNil and: { bufferDuration > 0 }) {
+                                        position = elapsedTime % bufferDuration;
+                                        "    Duration: % seconds, Current Position: % seconds (% %)".format(
+                                            bufferDuration.round(0.01), 
+                                            position.round(0.01),
+                                            (position / bufferDuration * 100).round(0.1),
+                                            "%"
+                                        ).postln;
+                                    };
                                 };
                             };
                             "    Volume: %".format(loopInfo[\volume] ? "unknown").postln;
@@ -1284,28 +1290,18 @@ s.waitForBoot {
 
         // Music loop player (looping with crossfade, ducking by slot)
         SynthDef(\musicPlayer, { |buf, amp=1.0, fadeTime=5.0, slotIndex=0, gate=1, masterVolume=1.0, musicVolume=1.0, startPos=0|
-            var sig, env, rate, bufFrames, checkedStartPos, validBuf;
+            var sig, env, rate, bufFrames;
             
             // Make sure we have a valid buffer - but be more lenient about buffer readiness
             // We know the buffer is correctly allocated from the preloaded system
             bufFrames = BufFrames.kr(buf);
-            
-            // Don't do strict validation - the Buffer UGen will handle errors internally
-            // and the "Buffer UGen: no buffer data" warning is harmless during loading
-            // Use a boolean value (not an integer) for validBuf
-            // Ensure we check that bufFrames is a number before comparing
-            validBuf = bufFrames.isNumber and: { bufFrames > 0 }; // Safer check that avoids bool > int error
-            
-            // Ensure startPos is valid and within buffer bounds
-            // Use a more defensive approach that works when bufFrames might not be a number
-            checkedStartPos = startPos.clip(0, if(bufFrames.isNumber) { bufFrames.max(1) - 1 } { 0 }); // Safer way to clamp startPos
             
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             rate = BufRateScale.kr(buf);
             
             // Use safer PlayBuf implementation without conditional that could cause boolean errors
             // This avoids the "Non Boolean in test" error
-            sig = PlayBuf.ar(2, buf, rate, startPos: checkedStartPos, loop: 1);
+            sig = PlayBuf.ar(2, buf, rate, startPos: startPos, loop: 1);
             
             // Add silent detection to mute output during initial buffer loading
             // This helps avoid clicks and pops when buffer isn't ready
@@ -1385,7 +1381,7 @@ s.waitForBoot {
             //"Checking preloaded music buffers...".postln;
             preloadedBuffers.keysValuesDo { |era, eraBuffers|
                 eraBuffers.do { |bufferInfo, i|
-                    if(bufferInfo.notNil && bufferInfo[\buffer].notNil) {
+                    if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
                         //"Preloaded buffer % for era %: %".format(i, era, bufferInfo[\path]).postln;
                     } {
                         "Missing buffer % for era %".format(i, era).warn;
