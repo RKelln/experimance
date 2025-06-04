@@ -13,6 +13,9 @@
         "early_industrial": [
             {
                 "path": "music/wilderness/piano_pads.mp3"
+            },
+            {
+                "path": "music/wilderness/piano_pads_1.mp3"
             }
         ],
         "late_industrial": [
