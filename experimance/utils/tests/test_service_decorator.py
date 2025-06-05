@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Set
 
+from experimance_common.constants import TICK
 import pytest
 
 from experimance_common.service import BaseService, ServiceState
@@ -65,7 +66,7 @@ class DecoratedStateService(BaseService):
         self.custom_method_calls.append((method_name, self.state))
         
         # Run some "work"
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(TICK)
         
         # Complete the transition
         self._state_manager.complete_transition(
@@ -162,7 +163,7 @@ class TestServiceDecorators:
         run_task = asyncio.create_task(decorated_service.run())
         
         # Wait a bit for run to change state
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(TICK)
         
         await decorated_service.stop()
         

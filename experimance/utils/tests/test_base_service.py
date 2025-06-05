@@ -20,6 +20,7 @@ import time
 from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from experimance_common.constants import TICK
 import pytest
 
 from experimance_common.service import BaseService, ServiceState, ServiceStatus
@@ -203,7 +204,7 @@ class TestBaseService:
         async def error_task():
             nonlocal task_raised_exception
             logger.info("Error task starting, will raise an exception.")
-            await asyncio.sleep(0.01)  # Give a moment for the task to start
+            await asyncio.sleep(TICK)  # Give a moment for the task to start
             task_raised_exception = True
             raise ValueError("Simulated task error")
 
@@ -254,7 +255,7 @@ class TestBaseService:
         async def error_task():
             nonlocal task_raised_exception
             logger.info("Error task starting, will raise an exception.")
-            await asyncio.sleep(0.01)  # Give a moment for the task to start
+            await asyncio.sleep(TICK)  # Give a moment for the task to start
             task_raised_exception = True
             raise ValueError("Simulated task error for diagnostics")
 
@@ -285,7 +286,7 @@ class TestBaseService:
                     logger.info(f"Service status changed: {last_status} -> {service.status}")
                     last_status = service.status
                     
-                await asyncio.sleep(0.01)  # Short interval to catch all changes
+                await asyncio.sleep(TICK)  # Short interval to catch all changes
         
         # Start monitoring
         monitor_task = asyncio.create_task(monitor_service_state())
@@ -390,7 +391,7 @@ class TestBaseService:
                     if service.state != ServiceState.RUNNING:
                         logger.debug(f"long_running_cancellable_task detected service.state={service.state}, breaking")
                         break
-                    await asyncio.sleep(0.01) 
+                    await asyncio.sleep(TICK) 
             except asyncio.CancelledError:
                 logger.info("long_running_cancellable_task was cancelled")
                 task_cancelled_event.set()

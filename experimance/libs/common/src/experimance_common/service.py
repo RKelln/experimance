@@ -172,6 +172,18 @@ class BaseService:
                                Tasks will be scheduled immediately. Coroutines will be
                                stored and converted to tasks when run() is called.
         """
+        # Make sure we don't add None or invalid objects
+        if task_or_coroutine is None:
+            logger.warning(f"{self.service_name}: Attempted to add None as a task - ignoring")
+            return
+            
+        # Make sure we don't accidentally add the same task/coroutine twice
+        # NOTE: Coroutines get converted to tasks on run() so this wouldn't catch duplciate co-routines if run() has been called
+        # NOTE: But if you are adding tasks after calling run() you are probably doing something wrong
+        if task_or_coroutine in self.tasks:
+            logger.warning(f"{self.service_name}: Task {task_or_coroutine} already registered - ignoring duplicate")
+            return
+            
         self.tasks.append(task_or_coroutine)
     
     async def _sleep_if_running(self, duration: float) -> bool:
@@ -304,17 +316,20 @@ class BaseService:
                 try:
                     if isinstance(task, asyncio.Task) and not task.done():
                         # Cancel any non-completed Task
-                        logger.debug(f"Cancelling uncompleted task in {self.service_name}: {task.get_name() if hasattr(task, 'get_name') else task}")
+                        task_name = task.get_name() if hasattr(task, 'get_name') else str(task)
+                        logger.debug(f"Cancelling uncompleted task in {self.service_name}: {task_name}")
                         task.cancel()
                     elif inspect.iscoroutine(task):
-                        # Ensure coroutine is awaited if needed
+                        # For coroutines, we need to be careful as they might have already been converted to tasks and awaited
+                        # Just close them to prevent resource leaks - don't try to await them
                         try:
-                            await asyncio.wait_for(task, timeout=3.0)
-                        except asyncio.TimeoutError:
-                            logger.warning(f"Task {task} did not complete within timeout during cleanup.")
-                        # Close stored coroutines to prevent resource leaks
-                        logger.debug(f"Closing coroutine in {self.service_name}: {task.__name__ if hasattr(task, '__name__') else task}")
-                        task.close()
+                            # Safely get coroutine name if available
+                            coroutine_name = task.__name__ if hasattr(task, '__name__') else str(task)
+                            logger.debug(f"Closing coroutine in {self.service_name}: {coroutine_name}")
+                            task.close()
+                        except (RuntimeError, AttributeError) as e:
+                            # This can happen if the coroutine was already awaited or closed
+                            logger.debug(f"Could not close coroutine {task} - it may have already been awaited: {e}")
                 except Exception as e:
                     logger.debug(f"Error clearing task {task} in {self.service_name}: {e}", exc_info=False)
             self.tasks = [] # Clear the list after attempting to close
@@ -361,21 +376,39 @@ class BaseService:
             
             # Convert any coroutines to tasks and prepare for execution
             task_objects = []
+            new_task_list = []  # We'll replace self.tasks with this to remove raw coroutines
+            
             for task in self.tasks:
                 if isinstance(task, asyncio.Task):
                     # If it's already a Task, just use it directly
                     task_objects.append(task)
+                    new_task_list.append(task)  # Keep tasks in the list
                 elif inspect.iscoroutine(task):
                     # Convert coroutines to tasks here when run() is called
                     # Check for a stored task name from _register_task
                     task_name = getattr(task, "_task_name", None)
                     if not task_name:
-                        task_name = f"{self.service_name}-{task.__name__ if hasattr(task, '__name__') else 'task'}"
+                        # Safely get coroutine name or use a generic name
+                        if hasattr(task, '__name__'):
+                            coro_name = task.__name__
+                        elif hasattr(task, '__qualname__'):
+                            coro_name = task.__qualname__
+                        else:
+                            coro_name = 'task'
+                        task_name = f"{self.service_name}-{coro_name}"
+                    
                     logger.debug(f"Converting coroutine to task with name: {task_name}")
-                    task_obj = asyncio.create_task(task, name=task_name)
-                    task_objects.append(task_obj)
+                    try:
+                        task_obj = asyncio.create_task(task, name=task_name)
+                        task_objects.append(task_obj)
+                        new_task_list.append(task_obj)  # Replace coroutine with task in list
+                    except RuntimeError as e:
+                        logger.warning(f"Could not convert coroutine to task: {e}. This might be an already used coroutine.")
                 else:
                     logger.warning(f"Unsupported task type found in tasks list: {type(task)}: {task}")
+            
+            # Replace the tasks list with one that contains only Task objects
+            self.tasks = new_task_list
                     
             # Run all tasks concurrently
             # Set up done callbacks to detect errors as they happen
@@ -523,6 +556,34 @@ class BaseService:
         """
         self.status = ServiceStatus.HEALTHY
         logger.info(f"Service {self.service_name} error status reset to HEALTHY")
+        
+    def get_task_names(self) -> List[str]:
+        """Get a list of task names from the current tasks.
+        
+        This method extracts names from both coroutines and Task objects in the tasks list.
+        Task objects will have their name extracted via get_name(), and coroutines via __name__.
+        
+        Returns:
+            List of task name strings
+        """
+        names = []
+        for task in self.tasks:
+            if hasattr(task, 'get_name'):
+                # It's a Task object
+                name = task.get_name()
+                # If the task was named with the service name as prefix (service_name-function_name pattern),
+                # strip it for cleaner output
+                if '-' in name and name.startswith(self.service_name):
+                    names.append(name.split('-', 1)[1])
+                else:
+                    names.append(name)
+            elif hasattr(task, '__name__'):
+                # It's a coroutine function or method
+                names.append(task.__name__)
+            else:
+                # Can't get a name, use string representation
+                names.append(str(task))
+        return names
 
 
 class BaseZmqService(BaseService):

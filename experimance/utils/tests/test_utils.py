@@ -482,13 +482,29 @@ async def active_service(service: T,
 def debug_service_tasks(service: BaseService):
     """
     Print debug information about the service's tasks.
-    
+
     This function is useful for debugging and understanding the state of tasks
     within a service, especially during testing.
-    
+
     Args:
         service: The service whose tasks to debug
     """
     logger.debug(f"Tasks for service {service.service_name}:")
-    for task_coro in service.tasks:
-        logger.debug(f"  - Task Name: {task_coro.__name__}, Qualified Name: {task_coro.__qualname__}, Type: {type(task_coro)}")
+    
+    # Get task names using the helper method
+    task_names = service.get_task_names()
+    
+    # Log more detailed information about each task
+    for i, task_coro in enumerate(service.tasks):
+        name = task_names[i] if i < len(task_names) else str(task_coro)
+        
+        if hasattr(task_coro, 'get_name'):
+            # It's a Task object
+            logger.debug(f"  - Task Name: {name}, Type: {type(task_coro)}")
+        elif hasattr(task_coro, '__name__'):
+            # It's a coroutine function
+            qualified_name = getattr(task_coro, '__qualname__', 'N/A')
+            logger.debug(f"  - Task Name: {name}, Qualified Name: {qualified_name}, Type: {type(task_coro)}")
+        else:
+            # It's something else
+            logger.debug(f"  - Task: {name}, Type: {type(task_coro)}")

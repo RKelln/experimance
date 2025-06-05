@@ -28,7 +28,7 @@ from experimance_common.service import (
     ZmqPublisherSubscriberService, ZmqControllerService, ZmqWorkerService
 )
 from experimance_common.zmq_utils import MessageType
-from utils.tests.test_utils import active_service, wait_for_service_state, wait_for_service_shutdown, debug_service_tasks
+from utils.tests.test_utils import active_service, wait_for_service_state, debug_service_tasks, SIMULATE_NETWORK_DELAY
 
 # Configure test logging
 logging.basicConfig(level=logging.DEBUG, 
@@ -72,7 +72,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     async def publish_async(self, message):
         """Mock publishing a message with timeout."""
         # Simulate a timeout after a short delay, to avoid hanging
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         from experimance_common.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock publishing timeout")
@@ -80,7 +80,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     async def receive_async(self):
         """Mock receiving a message with timeout."""
         # Simulate a timeout after a short delay, to avoid hanging
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         from experimance_common.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock receiving timeout")
@@ -88,7 +88,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     async def push_async(self, message):
         """Mock pushing a message with timeout."""
         # Simulate a timeout after a short delay, to avoid hanging
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         from experimance_common.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock pushing timeout")
@@ -96,7 +96,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     async def pull_async(self):
         """Mock pulling a message with timeout."""
         # Simulate a timeout after a short delay, to avoid hanging
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         from experimance_common.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock pulling timeout")
@@ -113,7 +113,7 @@ class MockZmqSocketWorking(MockZmqSocketBase):
     async def receive_async(self):
         """Mock receiving a message successfully."""
         # Add a small delay to simulate network
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         if not self.messages:
             return self.topic, {"type": "test"}
@@ -127,7 +127,7 @@ class MockZmqSocketWorking(MockZmqSocketBase):
     async def pull_async(self):
         """Mock pulling a message successfully."""
         # Add a small delay to simulate network
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         if not self.messages:
             return {"id": "test-id"}
@@ -151,7 +151,7 @@ class MockZmqSocket(MockZmqSocketBase):
     async def receive_async(self):
         """Mock receiving a message with timeout."""
         # Simulate a timeout after a short delay, to avoid hanging
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         from experimance_common.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock socket timeout")
@@ -164,7 +164,7 @@ class MockZmqSocket(MockZmqSocketBase):
     async def pull_async(self):
         """Mock pulling a message with timeout."""
         # Simulate a timeout after a short delay, to avoid hanging
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
         from experimance_common.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock socket timeout")
@@ -464,10 +464,20 @@ class TestCombinedServices:
             assert s.subscriber is not None
 
             assert len(s.tasks) >= 3
-            task_names = [task.__name__ for task in s.tasks]
-            assert "send_heartbeat" in task_names
-            assert "listen_for_messages" in task_names
-            assert "display_stats" in task_names
+            task_names = []
+            for task in s.tasks:
+                if hasattr(task, '__name__'):
+                    task_names.append(task.__name__)
+                elif hasattr(task, 'get_name'):
+                    name = task.get_name()
+                    # Extract just the function name part if the task was named with service_name-function_name pattern
+                    if '-' in name:
+                        task_names.append(name.split('-', 1)[1])
+            
+            # Check for required task names
+            assert any("send_heartbeat" in name for name in task_names), f"send_heartbeat not found in {task_names}"
+            assert any("listen_for_messages" in name for name in task_names), f"listen_for_messages not found in {task_names}"
+            assert any("display_stats" in name for name in task_names), f"display_stats not found in {task_names}"
             
             message = {"type": "TEST", "content": "test-data"}
             success = await s.publish_message(message)
@@ -494,11 +504,15 @@ class TestCombinedServices:
 
             debug_service_tasks(s)
             assert len(s.tasks) >= 4
-            task_names = [task.__name__ for task in s.tasks]
-            assert "send_heartbeat" in task_names
-            assert "pull_tasks" in task_names
-            assert "listen_for_messages" in task_names
-            assert "display_stats" in task_names
+            
+            # Use the new helper method to get task names
+            task_names = s.get_task_names()
+            
+            # Check for required task names
+            assert any("send_heartbeat" in name for name in task_names), f"send_heartbeat not found in {task_names}"
+            assert any("pull_tasks" in name for name in task_names), f"pull_tasks not found in {task_names}"
+            assert any("listen_for_messages" in name for name in task_names), f"listen_for_messages not found in {task_names}"
+            assert any("display_stats" in name for name in task_names), f"display_stats not found in {task_names}"
             
             message = {"type": "TEST", "content": "test-data"}
             success = await s.publish_message(message)
@@ -521,10 +535,21 @@ class TestCombinedServices:
             assert s.push_socket is not None
             
             assert len(s.tasks) >= 3
-            task_names = [task.__name__ for task in s.tasks]
-            assert "pull_tasks" in task_names
-            assert "listen_for_messages" in task_names
-            assert "display_stats" in task_names
+            
+            task_names = []
+            for task in s.tasks:
+                if hasattr(task, '__name__'):
+                    task_names.append(task.__name__)
+                elif hasattr(task, 'get_name'):
+                    name = task.get_name()
+                    # Extract just the function name part if the task was named with service_name-function_name pattern
+                    if '-' in name:
+                        task_names.append(name.split('-', 1)[1])
+            
+            # Check for required task names
+            assert any("pull_tasks" in name for name in task_names), f"pull_tasks not found in {task_names}"
+            assert any("listen_for_messages" in name for name in task_names), f"listen_for_messages not found in {task_names}"
+            assert any("display_stats" in name for name in task_names), f"display_stats not found in {task_names}"
             
             response = {"type": "RESPONSE", "content": "test-data"}
             success = await s.send_response(response)
