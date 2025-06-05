@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import suppress, asynccontextmanager
 import logging
+from experimance_common.constants import TICK
 import pytest  # For pytest.fail
 import sys
 import time
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Type variable for services
 T = TypeVar('T', bound=BaseService)
 
+SIMULATE_NETWORK_DELAY = 0.1
 
 # ============================================================================
 # ZMQ Mock Classes - Reusable across all service tests
@@ -46,7 +48,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     
     async def publish_async(self, message):
         """Mock publishing a message with timeout."""
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         raise ZmqTimeoutError("Mock publishing timeout")
     
     def publish(self, message):
@@ -55,7 +57,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     
     async def receive_async(self):
         """Mock receiving a message with timeout."""
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         raise ZmqTimeoutError("Mock receiving timeout")
     
     def receive(self):
@@ -64,7 +66,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     
     async def push_async(self, message):
         """Mock pushing a message with timeout."""
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         raise ZmqTimeoutError("Mock pushing timeout")
     
     def push(self, message):
@@ -73,7 +75,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
     
     async def pull_async(self):
         """Mock pulling a message with timeout."""
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         raise ZmqTimeoutError("Mock pulling timeout")
     
     def pull(self):
@@ -87,7 +89,7 @@ class MockZmqSocketWorking(MockZmqSocketBase):
     async def publish_async(self, message):
         """Mock publishing a message successfully."""
         self.messages.append(message)
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         return True
     
     def publish(self, message):
@@ -97,7 +99,7 @@ class MockZmqSocketWorking(MockZmqSocketBase):
     
     async def receive_async(self):
         """Mock receiving a message successfully."""
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         
         if not self.messages:
             # Return a default test message
@@ -113,7 +115,7 @@ class MockZmqSocketWorking(MockZmqSocketBase):
     async def push_async(self, message):
         """Mock pushing a message successfully."""
         self.messages.append(message)
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         return True
     
     def push(self, message):
@@ -123,7 +125,7 @@ class MockZmqSocketWorking(MockZmqSocketBase):
     
     async def pull_async(self):
         """Mock pulling a message successfully."""
-        await asyncio.sleep(0.01)  # Simulate network delay
+        await asyncio.sleep(SIMULATE_NETWORK_DELAY)  # Simulate network delay
         
         if not self.messages:
             return {"id": "test-id", "timestamp": time.time()}

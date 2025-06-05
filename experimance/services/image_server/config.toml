@@ -6,7 +6,7 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # ZeroMQ configuration
 [zmq]
-events_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
+image_request_pub = "tcp://localhost:5555"  # Address to subscribe to events on
 images_pub_address = "tcp://*:5558"         # Address to publish images on
 
 # Generator configuration

@@ -43,7 +43,8 @@ from experimance_common.constants import (
     DEFAULT_RETRY_ATTEMPTS,
     DEFAULT_RETRY_DELAY,
     DEFAULT_RECV_TIMEOUT,
-    HEARTBEAT_TOPIC
+    HEARTBEAT_TOPIC,
+    TICK
 )
 
 from experimance_common.zmq_utils import (
@@ -141,6 +142,11 @@ class BaseService:
         async with self._state_manager.observe_state_change(expected_state, timeout):
             yield
     
+    @property
+    def running(self) -> bool:
+        """Check if the service is currently running."""
+        return self.state == ServiceState.RUNNING
+
     def _signal_handler(self, signum, frame):
         """Handle termination signals in non-asyncio contexts.
         
@@ -812,7 +818,7 @@ class ZmqSubscriberService(BaseZmqService):
                 logger.error(f"Error receiving message: {e}")
                 self.errors += 1
             
-            await asyncio.sleep(0.01)  # Small delay to prevent CPU spinning
+            await asyncio.sleep(TICK)  # Small delay to prevent CPU spinning
 
 
 class ZmqPushService(BaseZmqService):
@@ -946,7 +952,7 @@ class ZmqPullService(BaseZmqService):
                 logger.error(f"Error pulling task: {e}")
                 self.errors += 1
             
-            await asyncio.sleep(0.01)  # Small delay to prevent CPU spinning
+            await asyncio.sleep(TICK)  # Small delay to prevent CPU spinning
 
 
 class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):

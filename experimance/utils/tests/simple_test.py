@@ -51,7 +51,7 @@ packages = [
     "experimance-display",
     "experimance-audio",
     "experimance-agent",
-    "experimance-image-server",
+    "image-server",
     "experimance-transition"
 ]
 

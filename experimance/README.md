@@ -10,7 +10,7 @@ Projected on to a
 This project consists of multiple services that communicate via ZeroMQ:
 - Core service (`experimance_core`) - Central orchestration service
 - Display service (`experimance_display`) - Handles visualization on the sand table
-- Image generation service (`experimance_image_server`) - Creates AI-generated satellite imagery
+- Image generation service (`image_server`) - Creates AI-generated satellite imagery
 - Transition service (`experimance_transition`) - Handles smooth transitions between images
 - Audio service (`experimance_audio`) - Provides audio feedback and soundscapes
 - Agent service (`experimance_agent`) - AI agents that interact with the installation
@@ -51,7 +51,7 @@ experimance/
 │   ├── image_server/
 │   │   ├── pyproject.toml
 │   │   └── src/
-│   │       └── experimance_image_server/
+│   │       └── image_server/
 │   │
 │   └── transition/            # Image transition service
 │       ├── pyproject.toml

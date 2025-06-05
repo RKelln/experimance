@@ -28,7 +28,7 @@ from typing import Dict, Any, List, Optional
 import zmq
 import zmq.asyncio
 
-from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.constants import TICK
 from experimance_common.zmq_utils import (
     MessageType, 
     ZmqTimeoutError, 
@@ -188,7 +188,7 @@ class ExampleController(ZmqControllerService):
                 logger.error(f"Error pulling result: {e}")
                 self.errors += 1
             
-            await asyncio.sleep(0.01)  # Small delay to prevent CPU spinning
+            await asyncio.sleep(TICK)  # Small delay to prevent CPU spinning
     
     async def handle_worker_result(self, result: Dict[str, Any]):
         """Handle worker task results and registrations (via PUSH/PULL)."""
@@ -357,7 +357,7 @@ class ExampleWorker(ZmqWorkerService):
         
         # Periodically re-register
         while self.running:
-            await asyncio.sleep(10.0)  # Register every 10 seconds
+            if await self._sleep_if_running(10.0): break # Re-register every 10 seconds
             await self.register_with_controller()
     
     async def register_with_controller(self):

@@ -410,3 +410,25 @@ async def test_service_lifecycle():
     
     assert service.state == ServiceState.STOPPED
 ```
+
+
+## Tips
+
+Generally in tasks you want to do a while loop:
+```python
+    from experimance_common.constants import
+
+    # in task:
+    while self.running:
+        # do work
+        await asyncio.sleep(TICK) # Small delay to prevent CPU spinning
+```
+
+However if you have work then a delay and more work, use:
+```python
+    while self.running:
+        # do work
+        # break if not running at start or end of sleep
+        if await self._sleep_if_running(5.0): break 
+        # more work
+```

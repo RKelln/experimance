@@ -17,9 +17,9 @@ members = [
     "experimance-common",
     "experimance-core",
     "experimance-display",
-    "experimance-image-server",
     "experimance-project",
     "experimance-transition",
+    "image-server",
 ]
 
 [[package]]
@@ -759,50 +759,6 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "experimance-image-server"
-version = "0.1.0"
-source = { editable = "services/image_server" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "experimance-common" },
-    { name = "fal-client" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "opencv-python" },
-    { name = "pillow" },
-    { name = "python-dotenv" },
-    { name = "pyzmq" },
-    { name = "requests" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp" },
-    { name = "experimance-common", editable = "libs/common" },
-    { name = "fal-client" },
-    { name = "mypy", marker = "extra == 'dev'" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "opencv-python" },
-    { name = "pillow" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'" },
-    { name = "python-dotenv" },
-    { name = "pyzmq" },
-    { name = "requests" },
-    { name = "ruff", marker = "extra == 'dev'" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "experimance-project"
 version = "0.1.0"
 source = { editable = "." }
@@ -813,9 +769,9 @@ dependencies = [
     { name = "experimance-common" },
     { name = "experimance-core" },
     { name = "experimance-display" },
-    { name = "experimance-image-server" },
     { name = "experimance-transition" },
     { name = "fal-client" },
+    { name = "image-server" },
 ]
 
 [package.optional-dependencies]
@@ -844,9 +800,9 @@ requires-dist = [
     { name = "experimance-common", editable = "libs/common" },
     { name = "experimance-core", editable = "services/core" },
     { name = "experimance-display", editable = "services/display" },
-    { name = "experimance-image-server", editable = "services/image_server" },
     { name = "experimance-transition", editable = "services/transition" },
     { name = "fal-client", specifier = ">=0.6.0" },
+    { name = "image-server", editable = "services/image_server" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
@@ -1157,6 +1113,50 @@ sdist = { url = "https://files.pythonhosted.org/packages/f1/70/7703c29685631f5a7
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/c6/c88e154df9c4e1a2a66ccf0005a88dfb2650c1dffb6f5ce603dfbd452ce3/idna-3.10-py3-none-any.whl", hash = "sha256:946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3", size = 70442, upload_time = "2024-09-15T18:07:37.964Z" },
 ]
+
+[[package]]
+name = "image-server"
+version = "0.1.0"
+source = { editable = "services/image_server" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "experimance-common" },
+    { name = "fal-client" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "python-dotenv" },
+    { name = "pyzmq" },
+    { name = "requests" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp" },
+    { name = "experimance-common", editable = "libs/common" },
+    { name = "fal-client" },
+    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'" },
+    { name = "python-dotenv" },
+    { name = "pyzmq" },
+    { name = "requests" },
+    { name = "ruff", marker = "extra == 'dev'" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "imageio"

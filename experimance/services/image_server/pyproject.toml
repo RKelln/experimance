@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "experimance-image-server"
+name = "image-server"
 version = "0.1.0"
 description = "Image server service for the Experimance interactive art installation"
 readme = "README.md"
@@ -39,7 +39,7 @@ dev = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["experimance_image_server"]
+packages = ["image_server"]
 
 [tool.ruff]
 line-length = 100

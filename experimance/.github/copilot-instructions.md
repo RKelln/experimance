@@ -49,7 +49,7 @@ experimance/
 │   ├── image_server/    # Image generation service
 │   │   ├── pyproject.toml
 │   │   └── src/
-│   │       └── experimance_image_server/
+│   │       └── image_server/
 │   │
 │   └── transition/      # Image transition service
 │       ├── pyproject.toml
