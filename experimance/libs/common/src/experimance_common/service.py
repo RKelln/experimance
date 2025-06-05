@@ -158,14 +158,15 @@ class BaseService:
         # Update state to stopping
         self.state = ServiceState.STOPPING
     
-    def _register_task(self, task_coroutine: Coroutine):
+    def add_task(self, task_or_coroutine: Union[asyncio.Task, Coroutine]):
         """Register a task to be executed in the service's run loop.
         
         Args:
-            task_coroutine: Coroutine function to execute
+            task_or_coroutine: Coroutine or asyncio.Task to execute
+                               Tasks will be scheduled immediately. Coroutines will be
+                               stored and converted to tasks when run() is called.
         """
-        # Store the coroutine without awaiting it yet
-        self.tasks.append(task_coroutine)
+        self.tasks.append(task_or_coroutine)
     
     async def _sleep_if_running(self, duration: float) -> bool:
         """Sleep for duration and return whether service is still running.
@@ -237,7 +238,8 @@ class BaseService:
         self.start_time = time.monotonic()
         
         # Always include the stats display task
-        self._register_task(self.display_stats())
+        # This registers the coroutine to be executed when run() is called
+        self.add_task(self.display_stats())
     
     
     async def stop(self):
@@ -249,10 +251,6 @@ class BaseService:
         async with self._stop_lock:
             if self.state == ServiceState.STOPPED:
                 logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring stop call.")
-                return
-            
-            if self.state == ServiceState.STOPPING:
-                logger.debug(f"Service {self.service_name} stop() entered critical section, but already STOPPING (state: {self.state}). Previous stop call should handle/has handled cleanup.")
                 return
 
             logger.info(f"Stopping {self.service_name} (lock acquired)...")
@@ -283,30 +281,36 @@ class BaseService:
             elif not self._run_task_handle:
                 logger.debug(f"No main run task handle found for {self.service_name} to cancel.")
 
-            self._clear_tasks()  # Clear any registered tasks
+            await self._clear_tasks()  # Clear any registered tasks
             
             self.state = ServiceState.STOPPED
             logger.info(f"Service {self.service_name} stopped")
     
-    def _clear_tasks(self):
+    async def _clear_tasks(self):
         """Clear all registered tasks.
         
         This is used to reset the task list after stopping the service.
         """
-        # Clean up any unrun coroutines registered via _register_task
-        # These are coroutines that were added to self.tasks but might not have been
-        # wrapped in an asyncio.Task by asyncio.gather in the run() method yet,
-        # or their tasks were not the _run_task_handle itself.
+        # Clean up all registered tasks
         if self.tasks:
-            logger.debug(f"Cleaning up {len(self.tasks)} registered coroutines for {self.service_name}.")
-            for task_coro in self.tasks:
+            logger.debug(f"Cleaning up {len(self.tasks)} registered tasks for {self.service_name}.")
+            for task in self.tasks:
                 try:
-                    if inspect.iscoroutine(task_coro):
-                        # Close any coroutine that hasn't been awaited
-                        logger.debug(f"Closing unawaited coroutine in {self.service_name}: {task_coro.__name__ if hasattr(task_coro, '__name__') else task_coro}")
-                        task_coro.close()
+                    if isinstance(task, asyncio.Task) and not task.done():
+                        # Cancel any non-completed Task
+                        logger.debug(f"Cancelling uncompleted task in {self.service_name}: {task.get_name() if hasattr(task, 'get_name') else task}")
+                        task.cancel()
+                    elif inspect.iscoroutine(task):
+                        # Ensure coroutine is awaited if needed
+                        try:
+                            await asyncio.wait_for(task, timeout=3.0)
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Task {task} did not complete within timeout during cleanup.")
+                        # Close stored coroutines to prevent resource leaks
+                        logger.debug(f"Closing coroutine in {self.service_name}: {task.__name__ if hasattr(task, '__name__') else task}")
+                        task.close()
                 except Exception as e:
-                    logger.debug(f"Error closing unawaited coroutine {task_coro} in {self.service_name}: {e}", exc_info=False)
+                    logger.debug(f"Error clearing task {task} in {self.service_name}: {e}", exc_info=False)
             self.tasks = [] # Clear the list after attempting to close
 
     async def run(self):
@@ -349,16 +353,23 @@ class BaseService:
                     lambda s=sig: asyncio.create_task(self._handle_signal_async(s))
                 )
             
-            # Create task objects for each coroutine to allow checking for exceptions
-            # even if we don't await them to completion
+            # Convert any coroutines to tasks and prepare for execution
             task_objects = []
-            for coro in self.tasks:
-                if inspect.iscoroutine(coro):  # Ensure it's a coroutine
-                    task_name = f"{self.service_name}-{coro.__name__ if hasattr(coro, '__name__') else 'task'}"
-                    task = asyncio.create_task(coro, name=task_name)
+            for task in self.tasks:
+                if isinstance(task, asyncio.Task):
+                    # If it's already a Task, just use it directly
                     task_objects.append(task)
+                elif inspect.iscoroutine(task):
+                    # Convert coroutines to tasks here when run() is called
+                    # Check for a stored task name from _register_task
+                    task_name = getattr(task, "_task_name", None)
+                    if not task_name:
+                        task_name = f"{self.service_name}-{task.__name__ if hasattr(task, '__name__') else 'task'}"
+                    logger.debug(f"Converting coroutine to task with name: {task_name}")
+                    task_obj = asyncio.create_task(task, name=task_name)
+                    task_objects.append(task_obj)
                 else:
-                    logger.warning(f"Non-coroutine found in tasks list: {coro}")
+                    logger.warning(f"Unsupported task type found in tasks list: {type(task)}: {task}")
                     
             # Run all tasks concurrently
             # Set up done callbacks to detect errors as they happen
@@ -633,8 +644,8 @@ class ZmqPublisherService(BaseZmqService):
         self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
         self.register_socket(self.publisher)
         
-        # Register heartbeat task
-        self._register_task(self.send_heartbeat())
+        # Register heartbeat task - _register_task will automatically create a Task
+        self.add_task(self.send_heartbeat())
         
         await super().start()
     
@@ -653,12 +664,16 @@ class ZmqPublisherService(BaseZmqService):
                     "state": self.state
                 }
                 
-                success = await self.publisher.publish_async(heartbeat) # type: ignore
-                if success:
-                    logger.debug(f"Sent heartbeat: {self.service_name}")
-                    self.messages_sent += 1
+                if self.publisher:
+                    success = await self.publisher.publish_async(heartbeat)
+                    if success:
+                        logger.debug(f"Sent heartbeat: {self.service_name}")
+                        self.messages_sent += 1
+                    else:
+                        logger.warning("Failed to send heartbeat")
+                        self.errors += 1
                 else:
-                    logger.warning("Failed to send heartbeat")
+                    logger.warning("Cannot send heartbeat: publisher not initialized")
                     self.errors += 1
             
             except Exception as e:
@@ -743,8 +758,8 @@ class ZmqSubscriberService(BaseZmqService):
         self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
         self.register_socket(self.subscriber)
         
-        # Register message listening task
-        self._register_task(self.listen_for_messages())
+        # Register message listening task - _register_task will automatically create a Task
+        self.add_task(self.listen_for_messages())
         
         await super().start()
     
@@ -891,7 +906,7 @@ class ZmqPullService(BaseZmqService):
         self.register_socket(self.pull_socket)
         
         # Register message listening task
-        self._register_task(self.pull_tasks())
+        self.add_task(self.pull_tasks())
         
         await super().start()
     
@@ -981,8 +996,8 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
         self.register_socket(self.subscriber)
         
         # Register tasks
-        self._register_task(self.send_heartbeat())
-        self._register_task(self.listen_for_messages())
+        self.add_task(self.send_heartbeat())
+        self.add_task(self.listen_for_messages())
         
         await BaseZmqService.start(self)
 
@@ -1043,9 +1058,9 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService, ZmqPul
         self.register_socket(self.pull_socket)
         
         # Register tasks
-        self._register_task(self.send_heartbeat())
-        self._register_task(self.listen_for_messages())
-        self._register_task(self.pull_tasks())
+        self.add_task(self.send_heartbeat())
+        self.add_task(self.listen_for_messages())
+        self.add_task(self.pull_tasks())
         
         await BaseZmqService.start(self)
 
@@ -1101,8 +1116,8 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
             self.register_socket(self.push_socket)
         
         # Register tasks
-        self._register_task(self.listen_for_messages())
-        self._register_task(self.pull_tasks())
+        self.add_task(self.listen_for_messages())
+        self.add_task(self.pull_tasks())
         
         await BaseZmqService.start(self)
     

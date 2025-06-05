@@ -116,9 +116,9 @@ class ExampleController(ZmqControllerService):
         self.register_socket(self.pull_socket)
         
         # Register tasks
-        self._register_task(self.send_heartbeat())
-        self._register_task(self.listen_for_messages())
-        self._register_task(self.pull_tasks())
+        self.add_task(self.send_heartbeat())
+        self.add_task(self.listen_for_messages())
+        self.add_task(self.pull_tasks())
         
         await BaseZmqService.start(self)
         
@@ -126,10 +126,10 @@ class ExampleController(ZmqControllerService):
         self.task_handler = self.handle_worker_result
         
         # Add task to register workers
-        self._register_task(self.connect_to_workers())
+        self.add_task(self.connect_to_workers())
         
         # Additional custom tasks
-        self._register_task(self.generate_tasks())
+        self.add_task(self.generate_tasks())
         
         logger.info("Controller service started with all handlers registered")
     
@@ -331,8 +331,8 @@ class ExampleWorker(ZmqWorkerService):
             self.register_socket(self.push_socket)
         
         # Register tasks
-        self._register_task(self.listen_for_messages())
-        self._register_task(self.pull_tasks())
+        self.add_task(self.listen_for_messages())
+        self.add_task(self.pull_tasks())
         
         await BaseZmqService.start(self)
         
@@ -343,7 +343,7 @@ class ExampleWorker(ZmqWorkerService):
         self.task_handler = self.process_task
         
         # Register with controller after starting
-        self._register_task(self.register_with_controller_task())
+        self.add_task(self.register_with_controller_task())
         
         logger.info("Worker service started with all handlers registered")
     

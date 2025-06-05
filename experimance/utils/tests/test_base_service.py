@@ -178,7 +178,7 @@ class TestBaseService:
             task_mock.complete()
 
         service.tasks = [] 
-        service._register_task(custom_test_task())
+        service.add_task(custom_test_task())
         
         try:
             # run_service_concurrently will call service.start() (state -> STARTING),
@@ -208,7 +208,7 @@ class TestBaseService:
             raise ValueError("Simulated task error")
 
         await service.start()
-        service._register_task(error_task())
+        service.add_task(error_task())
         
         # Create the run task but don't await it directly - we'll check service state instead
         run_task = asyncio.create_task(service.run(), name=f"{service.service_name}-run-error-test")
@@ -259,7 +259,7 @@ class TestBaseService:
             raise ValueError("Simulated task error for diagnostics")
 
         await service.start()
-        service._register_task(error_task())
+        service.add_task(error_task())
         
         # Create the run task
         run_task = asyncio.create_task(service.run(), name=f"{service.service_name}-run-error-test")
@@ -348,7 +348,7 @@ class TestBaseService:
                 await asyncio.sleep(0.05) 
             logger.debug("update_stats_task task finished")
 
-        service._register_task(update_stats_task())
+        service.add_task(update_stats_task())
         
         stop_event = asyncio.Event()
         async def trigger_stop_task():
@@ -357,7 +357,7 @@ class TestBaseService:
             logger.debug("trigger_stop_task: setting stop_event")
             stop_event.set()
 
-        service._register_task(trigger_stop_task())
+        service.add_task(trigger_stop_task())
 
         # run_service_concurrently calls start() (-> STARTING), then run() (-> RUNNING)
         async with run_service_concurrently(service):
@@ -397,7 +397,7 @@ class TestBaseService:
                 raise 
             logger.debug("long_running_cancellable_task exiting normally (should not happen)")
 
-        service._register_task(long_running_cancellable_task())
+        service.add_task(long_running_cancellable_task())
 
         logger.info("Using run_service_concurrently context manager")
         async with run_service_concurrently(service): 
@@ -432,7 +432,7 @@ class TestBaseService:
         await service.start()
 
         # remove any default tatsks that might have been registered by start()
-        service._clear_tasks()  # Clear tasks using the provided method
+        await service._clear_tasks()  # Clear tasks using the provided method
 
         with pytest.raises(RuntimeError, match="No tasks registered"):
             await service.run()

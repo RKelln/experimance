@@ -50,7 +50,7 @@ class MetricsService(BaseService):
         await super().start()
         
         # Register metrics collection task
-        self._register_task(self.collect_metrics())
+        self.add_task(self.collect_metrics())
         logger.info("Metrics service started")
     
     async def collect_metrics(self):
@@ -90,7 +90,7 @@ class EventPublisher(ZmqPublisherService):
         
         # Register event publishing task
         if self.metrics_service:
-            self._register_task(self.publish_events())
+            self.add_task(self.publish_events())
         
         logger.info("Event publisher service started")
     

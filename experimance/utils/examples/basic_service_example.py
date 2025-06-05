@@ -60,8 +60,8 @@ class ExampleBasicService(BaseService):
         await super().start()
         
         # Add custom tasks
-        self._register_task(self.perform_periodic_operation())
-        self._register_task(self.simulate_random_errors())
+        self.add_task(self.perform_periodic_operation())
+        self.add_task(self.simulate_random_errors())
         
         logger.info(f"Service {self.service_name} started with all tasks registered")
     

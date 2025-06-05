@@ -57,10 +57,15 @@ class SimpleService(BaseService):
                 while self.state == ServiceState.RUNNING:
                     await asyncio.sleep(0.1)  # Short sleep to simulate work
                 logger.debug(f"periodic_check exiting in {self.service_name}")
-                    
-            # Store reference to allow proper cleanup
-            self.periodic_task = periodic_check()
-            self._register_task(self.periodic_task)
+            
+            # Create a task directly rather than storing a coroutine
+            # This prevents the "cannot reuse already awaited coroutine" error
+            self.periodic_task = asyncio.create_task(
+                periodic_check(), 
+                name=f"{self.service_name}_periodic_check"
+            )
+            # Register the task for proper management
+            self.add_task(self.periodic_task)
             await super().run()
         except asyncio.CancelledError:
             logger.debug(f"SimpleService.run() was cancelled for {self.service_name}")
@@ -311,56 +316,64 @@ class TestServiceStateLifecycle:
         # Run should transition STARTED -> RUNNING
         run_task = asyncio.create_task(simple_service.run(), name="simple_service_run_task")
         
-        # Wait for RUNNING state
-        await simple_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
-        
-        # Verify service is running correctly
-        assert simple_service.state == ServiceState.RUNNING
-        assert simple_service.run_called is True
-        
-        # Now stop the service
-        logger.debug("Stopping service after verifying it's RUNNING")
-        await simple_service.stop()
-        
-        # Verify the service has stopped
-        assert simple_service.state == ServiceState.STOPPED
-        
-        # Check if the task is done - it should be after the service is stopped
-        if not run_task.done():
-            logger.warning("Task is not yet done after service stopped, cancelling directly")
-            run_task.cancel()
-            try:
-                await asyncio.wait_for(run_task, timeout=0.5)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-        
-        # The task should be done now
-        assert run_task.done(), "Run task should be completed or cancelled"
+        try:
+            # Wait for RUNNING state
+            await simple_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Verify service is running correctly
+            assert simple_service.state == ServiceState.RUNNING
+            assert simple_service.run_called is True
+            
+            # Now stop the service
+            logger.debug("Stopping service after verifying it's RUNNING")
+            await simple_service.stop()
+            
+            # Verify the service has stopped
+            assert simple_service.state == ServiceState.STOPPED
+            
+        finally:
+            # Ensure proper cleanup even if test assertions fail
+            # Check if the task is done - it should be after the service is stopped
+            if not run_task.done():
+                logger.warning("Task is not yet done after service stopped, cancelling directly")
+                run_task.cancel()
+                try:
+                    # Use a shorter timeout to avoid hanging tests
+                    await asyncio.wait_for(run_task, timeout=0.5)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.debug("Caught expected exception waiting for run_task to finish")
+                    
+            # The task should be done now, either by normal completion or cancellation
+            assert run_task.done(), "Run task should be completed or cancelled"
     
     @pytest.mark.asyncio
     async def test_stop_state_transition(self, simple_service):
         """Test state transition during stop."""
         # Start and run the service first
         await simple_service.start()
-        run_task = asyncio.create_task(simple_service.run())
+        run_task = asyncio.create_task(simple_service.run(), name="simple_service_run_task")
         
-        # Wait for RUNNING state
-        await simple_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
-        
-        # Stop should transition RUNNING -> STOPPING -> STOPPED
-        async with simple_service.observe_state_change(ServiceState.STOPPED):
-            await simple_service.stop()
-        
-        assert simple_service.state == ServiceState.STOPPED
-        assert simple_service.stop_called is True
-        
-        # Clean up run task
-        if not run_task.done():
-            run_task.cancel()
-            try:
-                await run_task
-            except asyncio.CancelledError:
-                pass
+        try:
+            # Wait for RUNNING state
+            await simple_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Stop should transition RUNNING -> STOPPING -> STOPPED
+            async with simple_service.observe_state_change(ServiceState.STOPPED):
+                await simple_service.stop()
+            
+            assert simple_service.state == ServiceState.STOPPED
+            assert simple_service.stop_called is True
+            
+        finally:
+            # Clean up run task if it's still running
+            if not run_task.done():
+                logger.debug("Task is not done after stop, cancelling directly")
+                run_task.cancel()
+                try:
+                    await asyncio.wait_for(run_task, timeout=0.5)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.debug("Caught expected exception waiting for run_task to finish")
+            
     
     @pytest.mark.asyncio
     async def test_call_stop_without_start(self):
@@ -417,62 +430,67 @@ class TestServiceStateInheritance:
         # Run should transition STARTED -> RUNNING
         run_task = asyncio.create_task(child_service.run(), name="child_service_run_task")
         
-        # Wait for RUNNING state
-        await child_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
-        
-        # Both child and parent run methods should be called
-        assert child_service.state == ServiceState.RUNNING
-        assert child_service.child_run_called is True
-        assert child_service.run_called is True
-        
-        # Now stop the service
-        logger.debug("Stopping service after verifying it's RUNNING")
-        await child_service.stop()
-        
-        # Verify the service has stopped
-        assert child_service.state == ServiceState.STOPPED
-
-        # Check if the task is done - it should be after the service is stopped
-        if not run_task.done():
-            logger.warning("Task is not yet done after service stopped, cancelling directly")
-            run_task.cancel()
-            try:
-                await asyncio.wait_for(run_task, timeout=0.5)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-        
-        child_service._clear_tasks()
-
-        # The task should be done now
-        assert run_task.done(), "Run task should be completed or cancelled"
+        try:
+            # Wait for RUNNING state
+            await child_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Both child and parent run methods should be called
+            assert child_service.state == ServiceState.RUNNING
+            assert child_service.child_run_called is True
+            assert child_service.run_called is True
+            
+            # Now stop the service
+            logger.debug("Stopping service after verifying it's RUNNING")
+            await child_service.stop()
+            
+            # Verify the service has stopped
+            assert child_service.state == ServiceState.STOPPED
+            
+        finally:
+            # Ensure proper cleanup even if test assertions fail
+            # Check if the task is done - it should be after the service is stopped
+            if not run_task.done():
+                logger.warning("Task is not yet done after service stopped, cancelling directly")
+                run_task.cancel()
+                try:
+                    # Use a shorter timeout to avoid hanging tests
+                    await asyncio.wait_for(run_task, timeout=0.5)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.debug("Caught expected exception waiting for run_task to finish")
+            
+            # The task should be done now, either by normal completion or cancellation
+            assert run_task.done(), "Run task should be completed or cancelled"
     
     @pytest.mark.asyncio
     async def test_stop_inheritance_chain(self, child_service):
         """Test state transition during stop in inheritance chain."""
         # Start and run the service first
         await child_service.start()
-        run_task = asyncio.create_task(child_service.run())
+        run_task = asyncio.create_task(child_service.run(), name="child_service_run_task")
         
-        # Wait for RUNNING state
-        await child_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
-        
-        # Stop should transition RUNNING -> STOPPING -> STOPPED
-        async with child_service.observe_state_change(ServiceState.STOPPED):
-            await child_service.stop()
-        
-        # Both child and parent stop methods should be called
-        assert child_service.state == ServiceState.STOPPED
-        assert child_service.child_stop_called is True
-        assert child_service.stop_called is True
-        
-        # Clean up run task
-        if not run_task.done():
-            run_task.cancel()
-            try:
-                await run_task
-            except asyncio.CancelledError:
-                pass
-
+        try:
+            # Wait for RUNNING state
+            await child_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Stop should transition RUNNING -> STOPPING -> STOPPED
+            async with child_service.observe_state_change(ServiceState.STOPPED):
+                await child_service.stop()
+            
+            # Both child and parent stop methods should be called
+            assert child_service.state == ServiceState.STOPPED
+            assert child_service.child_stop_called is True
+            assert child_service.stop_called is True
+            
+        finally:
+            # Clean up run task if it's still running
+            if not run_task.done():
+                logger.debug("Task is not done after stop, cancelling directly")
+                run_task.cancel()
+                try:
+                    await asyncio.wait_for(run_task, timeout=0.5)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.debug("Caught expected exception waiting for run_task to finish")
+            
 
 class TestCustomStateTransitions:
     """Tests for custom state transitions using StateManager directly."""

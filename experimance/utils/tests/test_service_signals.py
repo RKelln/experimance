@@ -45,7 +45,7 @@ class TestSimpleService(BaseService):
         await super().start()
         
         # Register a simple task that counts
-        self._register_task(self.count_task())
+        self.add_task(self.count_task())
         logger.info("TestSimpleService started")
     
     async def count_task(self):
@@ -73,7 +73,7 @@ class TestZmqService(ZmqPublisherService):
         await super().start()
         
         # Register a simple task that counts and publishes
-        self._register_task(self.count_and_publish_task())
+        self.add_task(self.count_and_publish_task())
         logger.info("TestZmqService started")
     
     async def count_and_publish_task(self):
