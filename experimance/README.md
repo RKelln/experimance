@@ -180,6 +180,13 @@ uv run -m pytest --cov=experimance_common
 
 # Run specific tests
 uv run -m pytest -v utils/tests/test_zmq_utils.py -k test_name
+
+# Run tests in a specific service
+uv run -m pytest services/audio/tests
+
+# Run tests with specific markers or names
+uv run -m pytest -k "ImageServer"
+
 ```
 
 See [`utils/tests/README.md`](utils/tests/README.md) and [`utils/tests/README_ZMQ_TESTS.md](utils/tests/README_ZMQ_TESTS.md) for more details.

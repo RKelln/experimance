@@ -2,10 +2,12 @@
 Configuration loading and management for Experimance services.
 """
 
+import argparse
 import logging
 import os
+from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Type, TypeVar
 
 import toml
 from pydantic import BaseModel
@@ -20,90 +22,161 @@ class ConfigError(Exception):
     pass
 
 
-def load_config(config_path: Union[str, Path], 
-                default_config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
-    """Load configuration from a TOML file, with optional fallback to default config.
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge two dictionaries, with override values taking precedence.
     
     Args:
-        config_path: Path to the primary configuration file
-        default_config_path: Path to a default configuration file (optional)
+        base: Base dictionary
+        override: Dictionary with values that override base
         
     Returns:
-        Configuration dictionary
-        
-    Raises:
-        ConfigError: If neither config file could be loaded
+        Merged dictionary
     """
-    config_path = Path(config_path)
+    result = deepcopy(base)
     
-    # Try to load primary config
-    if config_path.exists():
-        try:
-            config = toml.load(config_path)
-            logger.info(f"Loaded configuration from {config_path}")
-            return config
-        except Exception as e:
-            logger.error(f"Error loading config from {config_path}: {e}")
-            if default_config_path is None:
-                raise ConfigError(f"Failed to load config from {config_path} and no default provided") from e
-    elif default_config_path is None:
-        raise ConfigError(f"Configuration file {config_path} not found and no default provided")
+    for key, value in override.items():
+        # If both values are dictionaries, recursively merge them
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        # Otherwise, override with the new value
+        else:
+            result[key] = deepcopy(value)
     
-    # Fall back to default config if needed
-    default_config_path = Path(default_config_path)
-    if default_config_path.exists():
-        try:
-            config = toml.load(default_config_path)
-            logger.info(f"Loaded default configuration from {default_config_path}")
-            return config
-        except Exception as e:
-            raise ConfigError(f"Failed to load default config from {default_config_path}") from e
-    else:
-        raise ConfigError(f"Neither config file {config_path} nor default {default_config_path} exists")
+    return result
 
 
+def namespace_to_dict(namespace: argparse.Namespace) -> Dict[str, Any]:
+    """Convert an argparse.Namespace to a nested dictionary.
+    
+    This handles nested keys specified with dots (e.g., 'zmq.port').
+    
+    Args:
+        namespace: Argparse namespace object
+        
+    Returns:
+        Nested dictionary representation
+    """
+    result = {}
+    
+    # Convert namespace to flat dict
+    flat_dict = vars(namespace)
+    
+    for key, value in flat_dict.items():
+        if value is None:
+            continue
+            
+        # Handle nested keys with dots
+        if '.' in key:
+            parts = key.split('.')
+            current = result
+            
+            # Navigate to the deepest level
+            for part in parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+                
+            # Set the value at the deepest level
+            current[parts[-1]] = value
+        else:
+            result[key] = value
+    
+    return result
+
+
+def load_config_with_overrides(
+    override_config: Optional[Dict[str, Any]] = None,
+    config_file: Optional[Union[str, Path]] = None,
+    default_config: Optional[Dict[str, Any]] = None,
+    args: Optional[argparse.Namespace] = None
+) -> Dict[str, Any]:
+    """Load configuration with flexible overrides and defaults.
+    
+    The priority order is:
+    1. Command line args (from args parameter, highest priority)
+    2. Provided override_config dictionary
+    3. Config loaded from config_file
+    4. Default config (lowest priority)
+    
+    Args:
+        override_config: Dictionary with configuration overrides
+        config_file: Path to TOML configuration file
+        default_config: Default configuration dictionary
+        args: Command line arguments as argparse.Namespace
+            
+    Returns:
+        Merged configuration dictionary
+    """
+    # Start with an empty config or the default
+    config = {} if default_config is None else deepcopy(default_config)
+    
+    # Add config from file if available
+    if config_file is not None:
+        config_path = Path(config_file)
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    file_config = toml.load(f)
+                    config = deep_merge(config, file_config)
+                    logger.info(f"Loaded configuration from {config_file}")
+            except Exception as e:
+                logger.warning(f"Error loading config from {config_file}: {e}")
+        else:
+            logger.warning(f"Config file not found: {config_file}")
+    
+    # Add override config if provided
+    if override_config is not None:
+        config = deep_merge(config, override_config)
+    
+    # Add command line args if provided
+    if args is not None:
+        args_dict = namespace_to_dict(args)
+        config = deep_merge(config, args_dict)
+    
+    return config
+
+
+T = TypeVar('T', bound='Config')
 class Config(BaseModel):
     """Base configuration model with loading methods.
     
     Extend this class with specific configuration fields for each service.
     """
-    
+
     @classmethod
-    def from_file(cls, config_path: Union[str, Path], 
-                 default_config_path: Optional[Union[str, Path]] = None) -> "Config":
-        """Create a Config instance from a TOML file.
+    def from_overrides(cls: Type[T], 
+                     override_config: Optional[Dict[str, Any]] = None,
+                     config_file: Optional[Union[str, Path]] = None,
+                     default_config: Optional[Dict[str, Any]] = None,
+                     args: Optional[argparse.Namespace] = None) -> T:
+        """Create a Config instance from multiple sources with flexible overrides.
+        
+        This combines the power of load_config_with_overrides with Pydantic validation.
+        The priority order for configuration is:
+        1. Command line args (from args parameter, highest priority)
+        2. Provided override_config dictionary
+        3. Config loaded from config_file
+        4. Default config (lowest priority)
         
         Args:
-            config_path: Path to the configuration file
-            default_config_path: Path to the default configuration file (optional)
+            override_config: Dictionary with configuration overrides
+            config_file: Path to TOML configuration file
+            default_config: Default configuration dictionary
+            args: Command line arguments as argparse.Namespace
             
         Returns:
-            Config instance
+            Config instance validated by Pydantic
             
         Raises:
-            ConfigError: If configuration couldn't be loaded
+            ValidationError: If the merged configuration doesn't match the model
         """
-        config_dict = load_config(config_path, default_config_path)
-        return cls(**config_dict)
-    
-    @classmethod
-    def from_env(cls, env_var: str, 
-                default_config_path: Optional[Union[str, Path]] = None) -> "Config":
-        """Create a Config instance from a path specified in an environment variable.
+        # First merge all configuration sources
+        merged_config = load_config_with_overrides(
+            override_config=override_config,
+            config_file=config_file,
+            default_config=default_config,
+            args=args
+        )
         
-        Args:
-            env_var: Name of the environment variable containing the config path
-            default_config_path: Path to the default configuration file (optional)
-            
-        Returns:
-            Config instance
-            
-        Raises:
-            ConfigError: If configuration couldn't be loaded
-        """
-        config_path = os.environ.get(env_var)
-        if not config_path:
-            if default_config_path is None:
-                raise ConfigError(f"Environment variable {env_var} not set and no default path provided")
-            return cls.from_file(default_config_path)
-        return cls.from_file(config_path, default_config_path)
+        # Then validate with Pydantic and return instance
+        return cls(**merged_config)

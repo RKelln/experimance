@@ -7,11 +7,209 @@ import time
 from typing import Optional, Any, Callable, Union, TypeVar, List, Dict, AsyncIterator
 
 from experimance_common.service import BaseService, ServiceState, ServiceStatus
+from experimance_common.zmq_utils import ZmqTimeoutError, MessageType
 
 logger = logging.getLogger(__name__)
 
 # Type variable for services
 T = TypeVar('T', bound=BaseService)
+
+
+# ============================================================================
+# ZMQ Mock Classes - Reusable across all service tests
+# ============================================================================
+
+class MockZmqSocketBase:
+    """Base class for mock ZMQ sockets with common setup logic."""
+    
+    def __init__(self, address, topic=None, topics=None, **kwargs):
+        self.closed = False
+        self.messages = []
+        self.address = address
+        self.topic = topic
+        self.topics = topics or ([topic] if topic else [])
+        self.use_asyncio = kwargs.get('use_asyncio', True)
+        
+        # Store any additional kwargs for subclass use
+        self.kwargs = kwargs
+    
+    def close(self):
+        """Close the socket."""
+        self.closed = True
+        
+    def __repr__(self):
+        return f"{self.__class__.__name__}(address='{self.address}', topic='{self.topic}')"
+
+
+class MockZmqSocketTimeout(MockZmqSocketBase):
+    """Mock ZMQ socket that simulates timeouts for all operations."""
+    
+    async def publish_async(self, message):
+        """Mock publishing a message with timeout."""
+        await asyncio.sleep(0.01)  # Simulate network delay
+        raise ZmqTimeoutError("Mock publishing timeout")
+    
+    def publish(self, message):
+        """Sync version of publish with timeout."""
+        raise ZmqTimeoutError("Mock publishing timeout")
+    
+    async def receive_async(self):
+        """Mock receiving a message with timeout."""
+        await asyncio.sleep(0.01)  # Simulate network delay
+        raise ZmqTimeoutError("Mock receiving timeout")
+    
+    def receive(self):
+        """Sync version of receive with timeout."""
+        raise ZmqTimeoutError("Mock receiving timeout")
+    
+    async def push_async(self, message):
+        """Mock pushing a message with timeout."""
+        await asyncio.sleep(0.01)  # Simulate network delay
+        raise ZmqTimeoutError("Mock pushing timeout")
+    
+    def push(self, message):
+        """Sync version of push with timeout."""
+        raise ZmqTimeoutError("Mock pushing timeout")
+    
+    async def pull_async(self):
+        """Mock pulling a message with timeout."""
+        await asyncio.sleep(0.01)  # Simulate network delay
+        raise ZmqTimeoutError("Mock pulling timeout")
+    
+    def pull(self):
+        """Sync version of pull with timeout."""
+        raise ZmqTimeoutError("Mock pulling timeout")
+
+
+class MockZmqSocketWorking(MockZmqSocketBase):
+    """Mock ZMQ socket that works for all operations."""
+    
+    async def publish_async(self, message):
+        """Mock publishing a message successfully."""
+        self.messages.append(message)
+        await asyncio.sleep(0.01)  # Simulate network delay
+        return True
+    
+    def publish(self, message):
+        """Sync version of publish."""
+        self.messages.append(message)
+        return True
+    
+    async def receive_async(self):
+        """Mock receiving a message successfully."""
+        await asyncio.sleep(0.01)  # Simulate network delay
+        
+        if not self.messages:
+            # Return a default test message
+            return self.topic or "test-topic", {"type": "test", "timestamp": time.time()}
+        return self.topic or "test-topic", self.messages.pop(0)
+    
+    def receive(self):
+        """Sync version of receive."""
+        if not self.messages:
+            return self.topic or "test-topic", {"type": "test", "timestamp": time.time()}
+        return self.topic or "test-topic", self.messages.pop(0)
+    
+    async def push_async(self, message):
+        """Mock pushing a message successfully."""
+        self.messages.append(message)
+        await asyncio.sleep(0.01)  # Simulate network delay
+        return True
+    
+    def push(self, message):
+        """Sync version of push."""
+        self.messages.append(message)
+        return True
+    
+    async def pull_async(self):
+        """Mock pulling a message successfully."""
+        await asyncio.sleep(0.01)  # Simulate network delay
+        
+        if not self.messages:
+            return {"id": "test-id", "timestamp": time.time()}
+        return self.messages.pop(0)
+    
+    def pull(self):
+        """Sync version of pull."""
+        if not self.messages:
+            return {"id": "test-id", "timestamp": time.time()}
+        return self.messages.pop(0)
+
+
+class MockZmqPublisher(MockZmqSocketWorking):
+    """Mock publisher for service tests."""
+    
+    def __init__(self, address, topic=None, **kwargs):
+        super().__init__(address=address, topic=topic, **kwargs)
+        self.published_count = 0
+    
+    async def publish_async(self, message):
+        """Track published message count."""
+        result = await super().publish_async(message)
+        self.published_count += 1
+        return result
+    
+    def publish(self, message):
+        """Track published message count."""
+        result = super().publish(message)
+        self.published_count += 1
+        return result
+
+
+class MockZmqSubscriber(MockZmqSocketWorking):
+    """Mock subscriber for service tests."""
+    
+    def __init__(self, address, topics=None, **kwargs):
+        super().__init__(address=address, topics=topics, **kwargs)
+        self.subscription_count = 0
+        
+        # Add default test messages for common message types
+        self.add_test_message(MessageType.HEARTBEAT, {"timestamp": time.time()})
+    
+    def add_test_message(self, message_type, content=None):
+        """Add a test message to be received."""
+        content = content or {}
+        message = {
+            "type": message_type,
+            "timestamp": time.time(),
+            **content
+        }
+        # Find appropriate topic for this message type
+        topic = self.topic or "test-topic"
+        if self.topics and len(self.topics) > 0:
+            # Use first topic that matches or first topic
+            topic = self.topics[0]
+        
+        self.messages.append((topic, message))
+
+
+class MockZmqPushSocket(MockZmqSocketWorking):
+    """Mock push socket for service tests."""
+    
+    def __init__(self, address, **kwargs):
+        super().__init__(address=address, **kwargs)
+
+
+class MockZmqPullSocket(MockZmqSocketWorking):
+    """Mock pull socket for service tests."""
+    
+    def __init__(self, address, **kwargs):
+        super().__init__(address=address, **kwargs)
+
+
+class MockZmqBindingPullSocket(MockZmqPullSocket):
+    """Mock binding pull socket for controller/worker patterns."""
+    pass
+
+
+class MockZmqConnectingPushSocket(MockZmqPushSocket):
+    """Mock connecting push socket for controller/worker patterns."""
+    pass
+
+
+# ============================================================================
+# Service Test Utilities
+# ============================================================================
 
 async def wait_for_service_state(
     service: BaseService, 
@@ -201,7 +399,6 @@ async def wait_for_service_shutdown(
     
     # Extra safety check to ensure proper shutdown
     assert service.state == ServiceState.STOPPED, f"Service {service.service_name} should be in STOPPED state"
-    assert not service.running, f"Service {service.service_name} running flag should be False"
     
     logger.info(f"Service {service.service_name} shutdown confirmed after {time.monotonic() - start_time:.2f}s")
 

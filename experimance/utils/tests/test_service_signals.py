@@ -50,7 +50,7 @@ class TestSimpleService(BaseService):
     
     async def count_task(self):
         """Simple task that counts iterations."""
-        while self.running:
+        while self.state == ServiceState.RUNNING:
             self.iterations += 1
             logger.info(f"Iteration #{self.iterations}")
             await asyncio.sleep(1.0)
@@ -78,7 +78,7 @@ class TestZmqService(ZmqPublisherService):
     
     async def count_and_publish_task(self):
         """Task that counts and publishes the count."""
-        while self.running:
+        while self.state == ServiceState.RUNNING:
             self.iterations += 1
             
             # Publish the count
@@ -119,8 +119,7 @@ async def test_basic_service_signal():
 
     logger.info(f"Service state after SIGINT: {service.state}")
     assert service.state == ServiceState.STOPPED
-    assert not service.running
-    assert service._stopping  # Should have been set by stop()
+    assert service.state in [ServiceState.STOPPING, ServiceState.STOPPED]  # Should be in stopping/stopped state
     logger.info("Basic service signal test completed successfully")
 
 
@@ -150,8 +149,7 @@ async def test_zmq_service_signal():
 
     logger.info(f"Service state after SIGTERM: {service.state}")
     assert service.state == ServiceState.STOPPED
-    assert not service.running
-    assert service._stopping
+    assert service.state in [ServiceState.STOPPING, ServiceState.STOPPED]  # Should be in stopping/stopped state
 
     # Ensure ZMQ resources are cleaned up
     # Depending on mock setup, 'closed' might be an attribute or a method call check
@@ -187,8 +185,7 @@ async def test_zmq_service_sigint_signal():
 
     logger.info(f"Service state after SIGINT: {service.state}")
     assert service.state == ServiceState.STOPPED
-    assert not service.running
-    assert service._stopping
+    assert service.state in [ServiceState.STOPPING, ServiceState.STOPPED]  # Should be in stopping/stopped state
 
     # Ensure ZMQ resources are cleaned up
     # Depending on mock setup, 'closed' might be an attribute or a method call check
@@ -224,8 +221,6 @@ async def test_zmq_service_sigtstp_signal():
 
     logger.info(f"Service state after SIGTSTP: {service.state}")
     assert service.state == ServiceState.STOPPED
-    assert not service.running
-    assert service._stopping
 
     # Ensure ZMQ resources are cleaned up
     assert service.publisher is not None, "Publisher should exist"
@@ -248,7 +243,7 @@ async def test_multiple_signals():
     
     # Wait for the service to be fully running
     await wait_for_service_state(service, ServiceState.RUNNING)
-    assert service.running, "Service should be running before sending signals"
+    assert service.state == ServiceState.RUNNING, "Service should be running before sending signals"
     
     # Send multiple signals
     # The first signal should initiate shutdown. Subsequent signals should be ignored by the handler.
@@ -274,8 +269,6 @@ async def test_multiple_signals():
     # Check that service is in a stopped state
     logger.info(f"Service {service.service_name} state after multiple signals: {service.state}")
     assert service.state == ServiceState.STOPPED, f"Service {service.service_name} expected STOPPED, got {service.state}"
-    assert not service.running, f"Service {service.service_name} should not be running"
-    assert service._stopping, f"Service {service.service_name} _stopping flag should be True"
     logger.info("Multiple signal test completed")
 
 

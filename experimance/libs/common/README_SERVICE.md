@@ -13,6 +13,154 @@ The `experimance_common.service` module provides a set of base classes designed 
 - **Statistics Tracking**: Basic statistics like messages sent/received and uptime.
 - **Configurable Logging**: Consistent logging across services.
 - **Error Handling**: Base error handling and cleanup mechanisms.
+- **State Management**: Consistent service lifecycle state handling across inheritance hierarchies.
+
+## Service State Management
+
+Services in Experimance follow a well-defined lifecycle with the following states:
+
+- `INITIALIZING`: Service is in the process of initialization
+- `INITIALIZED`: Service has been fully instantiated
+- `STARTING`: Service is in the process of starting up
+- `STARTED`: Service has completed startup but not yet running
+- `RUNNING`: Service is fully operational
+- `STOPPING`: Service is in the process of shutting down
+- `STOPPED`: Service has been fully stopped
+
+The state management system ensures consistent state transitions across class inheritance hierarchies:
+
+1. **State Validation**: Each lifecycle method (`start()`, `stop()`, `run()`) validates the current state before execution
+2. **Automatic Transitions**: States change from `STATE` → `STATEing` → `STATEed` during lifecycle operations  
+3. **Inheritance Support**: Base classes set "in progress" states at the beginning of a method and derived classes complete the transitions
+4. **Event-Based Observability**: Services expose events for state transitions to enable waiting for specific states
+5. **Early State Validation**: State validation happens before any code runs in lifecycle methods
+
+The service lifecycle methods follow this pattern:
+- `start()`: INITIALIZED → STARTING → STARTED 
+- `run()`: STARTED → RUNNING (remains RUNNING until stopped)
+- `stop()`: any state → STOPPING → STOPPED
+
+### Implementation Details
+
+The state management system consists of two main components:
+
+1. **`StateManager` class**: Responsible for managing states, transitions, and events
+   - `validate_and_begin_transition()`: Validates the current state and sets the "in progress" state
+   - `complete_transition()`: Sets the completed state at the end of a method
+   - `wait_for_state()`: Asynchronously waits for a specific state
+   - `observe_state_change()`: Context manager for observing state transitions
+
+2. **`@lifecycle_service` decorator**: Class decorator that automatically wraps the service's lifecycle methods
+   - Wraps `start()`, `stop()`, and `run()` methods at class definition time
+   - Handles state validation and transition at the beginning and end of each method call
+   - Preserves proper behavior across inheritance chains
+
+### Using State Management in Custom Services
+
+When building custom services by extending `BaseService` or its ZMQ-specific subclasses, the state management system works automatically. The service moves through the proper state transitions during startup, execution, and shutdown without requiring any additional code.
+
+For custom methods or advanced use cases, you can access the state management system directly:
+
+```python
+# Validate the current state and set the "in progress" state
+self._state_manager.validate_and_begin_transition(
+    'my_method',
+    {ServiceState.RUNNING},  # Valid states
+    ServiceState.STOPPING    # Progress state
+)
+
+# Your method implementation here
+
+# Complete the transition at the end
+self._state_manager.complete_transition(
+    'my_method',
+    ServiceState.STOPPING,   # Progress state
+    ServiceState.STOPPED     # Completed state
+)
+```
+
+You can wait for specific states in tests or in custom logic:
+
+```python
+# Wait for a service to reach the RUNNING state
+await service._state_manager.wait_for_state(ServiceState.RUNNING, timeout=5.0)
+
+# Use context manager for observing transitions
+async with service._state_manager.observe_state_change(ServiceState.STOPPED):
+    # This code should cause the service to stop
+    await service.stop()
+```
+
+### Debugging State Transitions
+
+The state management system provides tools for debugging state transitions:
+
+```python
+# Get the history of all state transitions with timestamps
+state_history = service._state_manager.get_state_history()
+for state, timestamp in state_history:
+    print(f"State: {state}, Timestamp: {timestamp}")
+
+# Current state is always available as a property
+current_state = service.state
+print(f"Current state: {current_state}")
+
+# Enable debug logging to see detailed state transition information
+import logging
+logging.getLogger("experimance_common.service_state").setLevel(logging.DEBUG)
+```
+
+### Extending the State Management System
+
+For specialized services with unique state requirements, you can extend the state management system:
+
+```python
+# Register a callback for a specific state transition
+def on_running():
+    print("Service is now running!")
+    
+service.register_state_callback(ServiceState.RUNNING, on_running)
+
+# Create a custom wrapper method with state transitions
+async def my_custom_operation(self):
+    # Validate current state and set in-progress state
+    self._state_manager.validate_and_begin_transition(
+        'my_custom_operation',
+        {ServiceState.STARTED, ServiceState.RUNNING},  # Valid states
+        ServiceState.CUSTOM_STATE  # Custom progress state
+    )
+    
+    try:
+        # Implement custom operation
+        await some_async_operation()
+    finally:
+        # Always set the completed state in finally block
+        self._state_manager.complete_transition(
+            'my_custom_operation',
+            ServiceState.CUSTOM_STATE,  # Progress state
+            ServiceState.RUNNING  # Completed state
+        )
+```
+
+### Best Practices for Service State Management
+
+1. **Follow the Lifecycle Pattern**: 
+   - Always call `await super().start()` in your overridden `start()` method
+   - Always call `await super().stop()` in your overridden `stop()` method
+   - Always call `await super().run()` in your overridden `run()` method
+
+2. **Handle States in Base Classes**:
+   - Base classes should validate current state and set the "in progress" state
+   - Derived classes generally don't need to manage state themselves
+
+3. **Use Finally Blocks for Cleanup**:
+   - State transitions to error or completed states should happen in `finally` blocks
+   - This ensures proper state transitions even when exceptions occur
+
+4. **Order of Operations**:
+   - In `start()`: Initialize resources first, then call `super().start()`
+   - In `stop()`: Call `super().stop()` first, then clean up resources
+   - In `run()`: Register tasks first, then call `super().run()`
 
 ## Base Service Classes
 
@@ -22,6 +170,7 @@ The fundamental base class for all services. It provides:
 - Signal handling for graceful shutdown.
 - Statistics tracking (uptime, status).
 - Task management for background operations.
+- State management across inheritance hierarchies.
 
 ### 2. `ZmqService`
 Inherits from `BaseService` and adds common ZMQ functionalities:
@@ -71,6 +220,14 @@ Inherits from `ZmqPublisherSubscriberService`, `ZmqPushService`, and `ZmqPullSer
 - **Pulls** results or acknowledgments from worker services.
 - Implements a `_handle_worker_response()` method (meant to be overridden by subclasses) to process messages received on the PULL socket.
 
+### 3. `ZmqWorkerService`
+Inherits from `ZmqSubscriberService`, `ZmqPullService`, and `ZmqPushService`.
+- Designed for worker services that process tasks.
+- **Subscribes** to broadcast notifications.
+- **Pulls** tasks from a controller service.
+- **Pushes** results back to the controller.
+- Override `_handle_task()` to implement custom task processing logic.
+
 ## Usage
 
 To create a new service:
@@ -78,7 +235,7 @@ To create a new service:
 2. Inherit from the chosen class.
 3. Implement the `__init__` method to configure ZMQ addresses, topics, etc.
 4. Override message/task handlers (e.g., `_handle_message` for subscribers, `_handle_task` for pullers, `_handle_worker_response` for `ZmqControllerService`).
-5. Implement any custom logic within the `run()` method or as separate async tasks managed by `add_task()`.
+5. Implement any custom logic within the `run()` method or as separate async tasks managed by `_register_task()`.
 6. Ensure `super().__init__(...)` and `await super().start()` (if overriding `start`) are called.
 
 ### Example: Basic Publisher
@@ -106,7 +263,7 @@ class MyPublisher(ZmqPublisherService):
 
     async def run(self):
         # Add custom logic to the service's tasks
-        self.add_task(self.run_custom_logic())
+        self._register_task(self.run_custom_logic())
         # The base run() method will keep the service alive
         # and manage other tasks like heartbeating.
         # If you don't call super().run(), you need to manage the service loop.
@@ -117,6 +274,7 @@ async def main():
     await service.start()
     # Keep it running until shutdown (e.g., Ctrl+C)
     # The service's signal handlers will manage cleanup.
+    await service.run()
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -172,13 +330,14 @@ class MyController(ZmqControllerService):
         logger.info(f"Pushed task: {task}")
 
     async def run(self):
-        self.add_task(self.perform_control_action())
+        self._register_task(self.perform_control_action())
         await super().run() # Manages listener, puller, heartbeats, etc.
 
 async def main():
     service = MyController()
     await service.start()
     # Service runs until shutdown signal
+    await service.run()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -209,3 +368,45 @@ Services track:
 - `uptime`: Calculated from `start_time`.
 
 These can be accessed via service properties (e.g., `service.stats`). A `display_stats` task can be enabled to periodically log these statistics.
+
+## Testing Services
+
+The state management system enables efficient testing of services. Here's an example test pattern:
+
+```python
+import asyncio
+import pytest
+from experimance_common import ServiceState
+
+async def test_service_lifecycle():
+    # Create the service
+    service = MyService(name="test-service")
+    
+    # Start the service and wait for it to transition to STARTED state
+    await service.start()
+    assert service.state == ServiceState.STARTED
+    
+    # Create a task to run the service
+    run_task = asyncio.create_task(service.run())
+    
+    # Wait for the service to transition to RUNNING state
+    await service._state_manager.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+    assert service.state == ServiceState.RUNNING
+    
+    # Test service functionality here
+    # ...
+    
+    # Stop the service and wait for it to transition to STOPPED state
+    async with service._state_manager.observe_state_change(ServiceState.STOPPED):
+        await service.stop()
+        
+    # Clean up the run task
+    if not run_task.done():
+        run_task.cancel()
+        try:
+            await run_task
+        except asyncio.CancelledError:
+            pass
+    
+    assert service.state == ServiceState.STOPPED
+```

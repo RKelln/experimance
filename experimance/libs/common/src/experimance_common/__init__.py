@@ -34,7 +34,7 @@ from experimance_common.schemas import (
 )
 
 from experimance_common.config import (
-    load_config,
+    load_config_with_overrides,
     Config,
     ConfigError,
 )

@@ -56,18 +56,11 @@ from experimance_common.zmq_utils import (
     ZmqException
 )
 
+from experimance_common.service_state import ServiceState, StateManager
+from experimance_common.service_decorators import lifecycle_service
+
 # Configure logging
 logger = logging.getLogger(__name__)
-
-
-class ServiceState(str, Enum):
-    """Service lifecycle states."""
-    INITIALIZED = "initialized"  # Service has been instantiated but not started
-    STARTING = "starting"        # Service is in the process of starting up
-    RUNNING = "running"          # Service is fully operational
-    STOPPING = "stopping"        # Service is in the process of shutting down
-    STOPPED = "stopped"          # Service has been fully stopped
-
 
 class ServiceStatus(str, Enum):
     """Service health status."""
@@ -77,6 +70,7 @@ class ServiceStatus(str, Enum):
     FATAL = "fatal"        # Service encountered unrecoverable errors
 
 
+@lifecycle_service
 class BaseService:
     """Base class for all services in the Experimance system.
     
@@ -99,9 +93,10 @@ class BaseService:
         """
         self.service_name = service_name
         self.service_type = service_type
-        self.state = ServiceState.INITIALIZED
-        self.status = ServiceStatus.HEALTHY
-        self.running = False
+        
+        # Initialize state management
+        self._state_manager = StateManager(service_name, ServiceState.INITIALIZING)
+        self.status = ServiceStatus.HEALTHY  # Initial status
         self.tasks = []
         
         # Statistics
@@ -112,33 +107,55 @@ class BaseService:
         self.last_stats_time = self.start_time
         
         # State control
-        self._stopping = False  # Flag to prevent multiple stop() calls
         self._stop_lock = asyncio.Lock() # Lock to serialize stop() execution
         self._run_task_handle: Optional[asyncio.Task] = None # Handle to the main run() task
         
         # Set up signal handlers for graceful shutdown
-        # We'll only use these for non-asyncio contexts
-        # Asyncio signal handlers will be set up in the run() method
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGTSTP):
             signal.signal(sig, self._signal_handler)
+            
+        # Set state to INITIALIZED now that initialization is complete
+        self._state_manager.state = ServiceState.INITIALIZED
+    
+    @property
+    def state(self) -> ServiceState:
+        """Get the current service state."""
+        return self._state_manager.state
+    
+    @state.setter
+    def state(self, new_state: ServiceState):
+        """Set the service state."""
+        self._state_manager.state = new_state
+    
+    def register_state_callback(self, state: ServiceState, callback: Callable[[], None]):
+        """Register a callback for state transitions."""
+        self._state_manager.register_state_callback(state, callback)
+    
+    async def wait_for_state(self, state: ServiceState, timeout: Optional[float] = None) -> bool:
+        """Wait for a specific state."""
+        return await self._state_manager.wait_for_state(state, timeout)
+    
+    @asynccontextmanager
+    async def observe_state_change(self, expected_state: ServiceState, timeout: float = 5.0):
+        """Observe a state change."""
+        async with self._state_manager.observe_state_change(expected_state, timeout):
+            yield
     
     def _signal_handler(self, signum, frame):
         """Handle termination signals in non-asyncio contexts.
         
         This ensures proper cleanup on service termination.
         """
-        # Only process the signal if we're not already stopping
-        if self._stopping:
-            logger.debug(f"Signal handler called while already stopping, ignoring")
+        # Only process the signal if we're not already stopping or stopped
+        if self.state in [ServiceState.STOPPING, ServiceState.STOPPED]:
+            logger.debug(f"Signal handler called while in {self.state} state, ignoring")
             return
             
         signal_name = signal.Signals(signum).name
             
         logger.info(f"Received signal {signal_name} ({signum}), shutting down gracefully...")
         
-        # Set stopping flag and update state
-        self._stopping = True
-        self.running = False
+        # Update state to stopping
         self.state = ServiceState.STOPPING
     
     def _register_task(self, task_coroutine: Coroutine):
@@ -150,10 +167,34 @@ class BaseService:
         # Store the coroutine without awaiting it yet
         self.tasks.append(task_coroutine)
     
+    async def _sleep_if_running(self, duration: float) -> bool:
+        """Sleep for duration and return whether service is still running.
+        
+        Use this when you need to sleep in the middle of a loop and want to
+        check if the service should continue running afterward.
+        
+        Args:
+            duration: Time to sleep in seconds
+            
+        Returns:
+            True if service is still running after sleep, False otherwise
+            
+        Example:
+            # In the middle of a loop where you need to continue processing after sleep
+            if not await self._sleep_if_running(1.0):
+                break
+            # Continue with more processing...
+        """
+        if self.state != ServiceState.RUNNING:
+            return False
+        await asyncio.sleep(duration)
+        return self.state == ServiceState.RUNNING
+
     async def display_stats(self):
         """Periodically display service statistics."""
-        while self.running:
-            await asyncio.sleep(10)  # Update stats every 10 seconds
+        while self.state == ServiceState.RUNNING:
+            if not await self._sleep_if_running(10):
+                break
             
             now = time.monotonic()
             elapsed = now - self.start_time
@@ -185,22 +226,19 @@ class BaseService:
             logger.info(f"Stats for {self.service_name}: {stats}")
             self.last_stats_time = now
     
+    
     async def start(self):
         """Start the service.
         
         This method should be extended by subclasses to initialize 
         their specific components before calling super().start().
         """
-        if self.state not in (ServiceState.INITIALIZED, ServiceState.STOPPED):
-            raise RuntimeError(f"Cannot start service in state {self.state}")
-        
         logger.info(f"Starting {self.service_type} service: {self.service_name}")
-        self.running = True
-        self.state = ServiceState.STARTING
         self.start_time = time.monotonic()
         
         # Always include the stats display task
         self._register_task(self.display_stats())
+    
     
     async def stop(self):
         """Stop the service and clean up resources.
@@ -208,22 +246,16 @@ class BaseService:
         This method ensures all tasks are properly cancelled
         and resources are cleaned up.
         """
-        if self.state == ServiceState.STOPPED:
-            logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring stop call.")
-            return
-
         async with self._stop_lock:
             if self.state == ServiceState.STOPPED:
-                logger.debug(f"Service {self.service_name} became STOPPED while awaiting lock. Ignoring stop call.")
+                logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring stop call.")
                 return
             
-            if self._stopping:
-                logger.debug(f"Service {self.service_name} stop() entered critical section, but _stopping is True (state: {self.state}). Previous stop call should handle/has handled cleanup.")
+            if self.state == ServiceState.STOPPING:
+                logger.debug(f"Service {self.service_name} stop() entered critical section, but already STOPPING (state: {self.state}). Previous stop call should handle/has handled cleanup.")
                 return
 
-            self._stopping = True
             logger.info(f"Stopping {self.service_name} (lock acquired)...")
-            self.running = False # Set running to False immediately
             self.state = ServiceState.STOPPING
             
             # Cancel the main run task if it exists and is not this task
@@ -234,7 +266,7 @@ class BaseService:
                     self._run_task_handle.cancel()
                     # We cannot await self._run_task_handle here as it would deadlock.
                     # The task will be cancelled, and its own exception handling (e.g., CancelledError in run())
-                    # will proceed. The finally block in run() should not call stop() again due to _stopping flag.
+                    # will proceed. The finally block in run() should not call stop() again due to state check.
                 else:
                     logger.info(f"Cancelling main run task for {self.service_name}.")
                     self._run_task_handle.cancel()
@@ -251,25 +283,32 @@ class BaseService:
             elif not self._run_task_handle:
                 logger.debug(f"No main run task handle found for {self.service_name} to cancel.")
 
-            # Clean up any unrun coroutines registered via _register_task
-            # These are coroutines that were added to self.tasks but might not have been
-            # wrapped in an asyncio.Task by asyncio.gather in the run() method yet,
-            # or their tasks were not the _run_task_handle itself.
-            if self.tasks:
-                logger.debug(f"Cleaning up {len(self.tasks)} registered coroutines for {self.service_name}.")
-                for task_coro in self.tasks:
-                    try:
-                        if inspect.iscoroutine(task_coro):
-                            # Close any coroutine that hasn't been awaited
-                            logger.debug(f"Closing unawaited coroutine in {self.service_name}: {task_coro.__name__ if hasattr(task_coro, '__name__') else task_coro}")
-                            task_coro.close()
-                    except Exception as e:
-                        logger.debug(f"Error closing unawaited coroutine {task_coro} in {self.service_name}: {e}", exc_info=False)
-                self.tasks = [] # Clear the list after attempting to close
+            self._clear_tasks()  # Clear any registered tasks
             
             self.state = ServiceState.STOPPED
             logger.info(f"Service {self.service_name} stopped")
     
+    def _clear_tasks(self):
+        """Clear all registered tasks.
+        
+        This is used to reset the task list after stopping the service.
+        """
+        # Clean up any unrun coroutines registered via _register_task
+        # These are coroutines that were added to self.tasks but might not have been
+        # wrapped in an asyncio.Task by asyncio.gather in the run() method yet,
+        # or their tasks were not the _run_task_handle itself.
+        if self.tasks:
+            logger.debug(f"Cleaning up {len(self.tasks)} registered coroutines for {self.service_name}.")
+            for task_coro in self.tasks:
+                try:
+                    if inspect.iscoroutine(task_coro):
+                        # Close any coroutine that hasn't been awaited
+                        logger.debug(f"Closing unawaited coroutine in {self.service_name}: {task_coro.__name__ if hasattr(task_coro, '__name__') else task_coro}")
+                        task_coro.close()
+                except Exception as e:
+                    logger.debug(f"Error closing unawaited coroutine {task_coro} in {self.service_name}: {e}", exc_info=False)
+            self.tasks = [] # Clear the list after attempting to close
+
     async def run(self):
         """Run the service until stopped.
         
@@ -279,7 +318,6 @@ class BaseService:
         if not self.tasks:
             raise RuntimeError("No tasks registered for service")
         
-        self.state = ServiceState.RUNNING
         logger.info(f"Service {self.service_name} running")
         
         try:
@@ -374,22 +412,22 @@ class BaseService:
             # Re-raise to indicate a more fundamental issue with the service's run logic itself.
             raise
         finally:
-            logger.debug(f"Service {self.service_name} run() method's finally block reached. Current state: {self.state}, _stopping: {self._stopping}")
-            # Only call stop() from here if a stop operation is NOT already in progress (_stopping is False)
+            logger.debug(f"Service {self.service_name} run() method's finally block reached. Current state: {self.state}")
+            # Only call stop() from here if a stop operation is NOT already in progress
             # AND the service is not already stopped.
             # This handles cases where run() exits due to an error or normal completion of its tasks,
             # without an external stop signal.
-            if not self._stopping and self.state != ServiceState.STOPPED:
-                logger.info(f"Service {self.service_name} run() method ending (state: {self.state}, _stopping: {self._stopping}). "
+            if self.state not in [ServiceState.STOPPING, ServiceState.STOPPED]:
+                logger.info(f"Service {self.service_name} run() method ending (state: {self.state}). "
                             f"Stop not yet initiated by other means. Calling self.stop().")
                 try:
                     await self.stop()
                 except Exception as e:
                     logger.error(f"Error during self.stop() called from run() finally for {self.service_name}: {e}", exc_info=True)
                     self.record_error(e)
-            elif self._stopping and self.state != ServiceState.STOPPED:
+            elif self.state == ServiceState.STOPPING:
                 logger.info(f"Service {self.service_name} run() method's finally block: A stop operation is already in progress "
-                            f"(state: {self.state}, _stopping: {self._stopping}). Letting it complete.")
+                            f"(state: {self.state}). Letting it complete.")
             elif self.state == ServiceState.STOPPED:
                 logger.info(f"Service {self.service_name} run() method's finally block: Service already STOPPED.")
             
@@ -401,12 +439,12 @@ class BaseService:
         logger.info(f"Received signal {signal_name} in asyncio event loop for {self.service_name}")
 
         # Prevent re-entrant calls or acting on signals if already fully stopped.
-        # If stop() is already in progress (_stopping is True), stop() itself is idempotent.
+        # If stop() is already in progress, stop() itself is idempotent.
         if self.state == ServiceState.STOPPED:
             logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring signal {signal_name}.")
             return
 
-        if self._stopping and self.state == ServiceState.STOPPING:
+        if self.state == ServiceState.STOPPING:
             logger.debug(f"Service {self.service_name} is already STOPPING. Signal {signal_name} received again.")
             # Potentially, here you could implement a force stop mechanism if a second signal is received
             # For now, we let the current stop() proceed.
@@ -414,16 +452,13 @@ class BaseService:
 
         logger.info(f"Service {self.service_name} initiating shutdown via stop() due to signal {signal_name}")
         try:
-            # Call stop() directly. stop() is responsible for setting flags
-            # like self._stopping, self.running, and self.state.
+            # Call stop() directly. stop() is responsible for setting the state
             await self.stop()
         except Exception as e:
             logger.error(f"Error during signal-initiated stop for {self.service_name}: {e}", exc_info=True)
             # Ensure the service is in a non-operational state even if stop fails.
             self.state = ServiceState.STOPPED
             self.status = ServiceStatus.ERROR
-            self.running = False
-            self._stopping = True # Mark as stopping even if stop() failed partially
 
     def _task_done_callback(self, task):
         """Callback for completed tasks to immediately detect errors.
@@ -440,7 +475,7 @@ class BaseService:
                     self.record_error(exc)
                     
                     # If the service is still running, schedule a stop
-                    if self.running and not self._stopping:
+                    if self.state == ServiceState.RUNNING:
                         logger.warning(f"Scheduling service {self.service_name} to stop due to task error")
                         # We can't call stop() directly from this callback as it could deadlock,
                         # so we schedule it to run soon in the event loop
@@ -484,6 +519,7 @@ class BaseZmqService(BaseService):
     by extending this class and implementing the necessary methods.
     """
     
+    
     def __init__(self, service_name: str, service_type: str = "zmq-service"):
         """Initialize the base ZMQ service.
         
@@ -505,13 +541,14 @@ class BaseZmqService(BaseService):
         """
         self._sockets.append(socket)
     
+    
     async def stop(self):
         """Stop the service and clean up ZMQ resources.
         
         This method ensures all ZMQ sockets are properly closed
         in addition to the standard service cleanup.
         """
-        logger.debug(f"Entering BaseZmqService.stop() for {self.service_name}. Current state: {self.state}, _stopping: {self._stopping}")
+        logger.debug(f"Entering BaseZmqService.stop() for {self.service_name}. Current state: {self.state}")
 
         # Close ZMQ sockets first. This should happen before tasks that might use them 
         # are cancelled by super().stop(). This needs to be idempotent.
@@ -571,6 +608,7 @@ class ZmqPublisherService(BaseZmqService):
     messages to subscribing services.
     """
     
+    
     def __init__(self, service_name: str, 
                  pub_address: str, 
                  heartbeat_topic: str = HEARTBEAT_TOPIC,
@@ -587,6 +625,7 @@ class ZmqPublisherService(BaseZmqService):
         self.pub_address = pub_address
         self.heartbeat_topic = heartbeat_topic
         self.publisher:Optional[ZmqPublisher] = None
+    
     
     async def start(self):
         """Start the publisher service."""
@@ -605,7 +644,7 @@ class ZmqPublisherService(BaseZmqService):
         Args:
             interval: Time between heartbeats in seconds
         """
-        while self.running:
+        while self.state == ServiceState.RUNNING:
             try:
                 heartbeat = {
                     "type": MessageType.HEARTBEAT,
@@ -678,6 +717,7 @@ class ZmqSubscriberService(BaseZmqService):
     broadcasts from publishing services.
     """
     
+    
     def __init__(self, service_name: str, 
                  sub_address: str, 
                  topics: List[str],
@@ -696,6 +736,7 @@ class ZmqSubscriberService(BaseZmqService):
         self.subscriber = None
         self.message_handlers = {}
     
+    
     async def start(self):
         """Start the subscriber service."""
         logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
@@ -707,12 +748,16 @@ class ZmqSubscriberService(BaseZmqService):
         
         await super().start()
     
-    def register_handler(self, topic: str, handler: Callable[[Dict[str, Any]], None]):
+    def register_handler(self, topic: str, 
+                        handler: Union[Callable[[Dict[str, Any]], None], 
+                                      Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]]):
         """Register a handler for a specific topic.
+        
+        Accepts both synchronous and asynchronous handler functions.
         
         Args:
             topic: Topic to handle messages for
-            handler: Function to call with message data
+            handler: Function to call with message data (can be sync or async)
         """
         if topic not in self.topics:
             logger.warning(f"Registering handler for topic {topic} which is not in subscription list")
@@ -725,7 +770,7 @@ class ZmqSubscriberService(BaseZmqService):
             logger.error("Cannot listen for messages: subscriber not initialized")
             return
             
-        while self.running:
+        while self.state == ServiceState.RUNNING:
             try:
                 topic, message = await self.subscriber.receive_async()
                 logger.debug(f"Received message on {topic}: {message}")
@@ -734,7 +779,13 @@ class ZmqSubscriberService(BaseZmqService):
                 # Process message with registered handler if any
                 if topic in self.message_handlers:
                     try:
-                        self.message_handlers[topic](message)
+                        handler = self.message_handlers[topic]
+                        # Check if the handler is a coroutine function and await if it is
+                        if asyncio.iscoroutinefunction(handler):
+                            await handler(message)
+                        else:
+                            # Call synchronous handler directly
+                            handler(message)
                     except Exception as e:
                         logger.error(f"Error in message handler for topic {topic}: {e}")
                         self.errors += 1
@@ -756,6 +807,7 @@ class ZmqPushService(BaseZmqService):
     tasks to pulling workers.
     """
     
+    
     def __init__(self, service_name: str, 
                  push_address: str,
                  service_type: str = "push"):
@@ -769,6 +821,7 @@ class ZmqPushService(BaseZmqService):
         super().__init__(service_name, service_type)
         self.push_address = push_address
         self.push_socket = None
+    
     
     async def start(self):
         """Start the push service."""
@@ -814,6 +867,7 @@ class ZmqPullService(BaseZmqService):
     tasks from pushing services.
     """
     
+    
     def __init__(self, service_name: str, 
                  pull_address: str,
                  service_type: str = "pull"):
@@ -828,6 +882,7 @@ class ZmqPullService(BaseZmqService):
         self.pull_address = pull_address
         self.pull_socket = None
         self.task_handler = None
+    
     
     async def start(self):
         """Start the pull service."""
@@ -854,7 +909,7 @@ class ZmqPullService(BaseZmqService):
             logger.error("Cannot pull tasks: pull socket not initialized")
             return
             
-        while self.running:
+        while self.state == ServiceState.RUNNING:
             try:
                 task = await self.pull_socket.pull_async()
                 if task:
@@ -886,6 +941,7 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
     both broadcast their state and listen for events from other services.
     """
     
+    
     def __init__(self, service_name: str,
                  pub_address: str,
                  sub_address: str,
@@ -910,6 +966,7 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
         self.publisher = None
         self.subscriber = None
         self.message_handlers = {}
+    
     
     async def start(self):
         """Start the publisher-subscriber service."""
@@ -938,6 +995,7 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService, ZmqPul
     It also pulls responses from workers.
     """
     
+    
     def __init__(self, service_name: str,
                  pub_address: str,
                  sub_address: str,
@@ -960,6 +1018,7 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService, ZmqPul
 
         # Register the handler for messages from the PULL socket
         #self.register_task_handler(self._handle_worker_response)
+    
     
     async def start(self):
         """Start the controller service."""
@@ -998,6 +1057,7 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
     need to listen for control messages and receive tasks to process.
     """
     
+    
     def __init__(self, service_name: str,
                  sub_address: str,
                  pull_address: str,
@@ -1020,6 +1080,7 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
         self.push_address:Optional[str] = push_address
         if self.push_address is not None:
             ZmqPushService.__init__(self, service_name, self.push_address, service_type)
+    
     
     async def start(self):
         """Start the worker service."""
