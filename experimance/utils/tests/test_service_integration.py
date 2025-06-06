@@ -15,15 +15,14 @@ Run with:
 import asyncio
 import logging
 import random
-import signal
 import sys
 import time
 from contextlib import suppress
 
-from experimance_common.service import BaseService, BaseZmqService, ServiceState
+from experimance_common.base_service import BaseService, ServiceState
 from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.zmq.subscriber import ZmqSubscriberService
-from experimance_common.zmq_utils import MessageType
+from experimance_common.zmq.zmq_utils import MessageType
 from utils.tests.test_utils import wait_for_service_state, wait_for_service_shutdown, wait_for_service_state_and_status
 
 # Configure logging

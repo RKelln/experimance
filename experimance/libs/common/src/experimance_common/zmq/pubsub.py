@@ -9,8 +9,8 @@ communication using ZeroMQ.
 import logging
 
 from experimance_common.constants import HEARTBEAT_TOPIC
-from experimance_common.service import BaseZmqService
-from experimance_common.zmq_utils import ZmqPublisher, ZmqSubscriber
+from experimance_common.zmq.base_zmq import BaseZmqService
+from experimance_common.zmq.zmq_utils import ZmqPublisher, ZmqSubscriber
 from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 

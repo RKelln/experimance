@@ -6,8 +6,6 @@ Tests for the configuration utilities in experimance_common.config.
 import argparse
 import os
 import tempfile
-from pathlib import Path
-from typing import Dict, Any, Optional
 
 import pytest
 import toml

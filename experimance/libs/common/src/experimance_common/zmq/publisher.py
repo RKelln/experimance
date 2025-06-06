@@ -11,9 +11,9 @@ import time
 from typing import Any, Dict, Optional
 
 from experimance_common.constants import HEARTBEAT_INTERVAL, HEARTBEAT_TOPIC
-from experimance_common.service import BaseZmqService
 from experimance_common.service_state import ServiceState
-from experimance_common.zmq_utils import MessageType, ZmqPublisher
+from experimance_common.zmq.base_zmq import BaseZmqService
+from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher
 
 logger = logging.getLogger(__name__)
 

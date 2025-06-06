@@ -2,13 +2,11 @@ import asyncio
 from contextlib import suppress, asynccontextmanager
 import logging
 from experimance_common.constants import TICK
-import pytest  # For pytest.fail
-import sys
 import time
 from typing import Optional, Any, Callable, Union, TypeVar, List, Dict, AsyncIterator
 
-from experimance_common.service import BaseService, ServiceState, ServiceStatus
-from experimance_common.zmq_utils import ZmqTimeoutError, MessageType
+from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
+from experimance_common.zmq.zmq_utils import ZmqTimeoutError, MessageType
 
 logger = logging.getLogger(__name__)
 

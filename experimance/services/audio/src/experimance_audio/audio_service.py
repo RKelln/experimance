@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.service import ZmqSubscriberService
+from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.schemas import Era, Biome, EraChanged, AgentControlEvent, IdleStatus
-from experimance_common.zmq_utils import MessageType, ZmqTimeoutError
+from experimance_common.zmq.zmq_utils import MessageType, ZmqTimeoutError
 
 from .config_loader import AudioConfigLoader
 from .osc_bridge import OscBridge, DEFAULT_SCLANG_PATH

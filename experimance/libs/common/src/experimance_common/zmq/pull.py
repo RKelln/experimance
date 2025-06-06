@@ -10,9 +10,9 @@ import logging
 from typing import Any, Callable, Coroutine, Dict
 
 from experimance_common.constants import TICK
-from experimance_common.service import BaseZmqService
+from experimance_common.zmq.base_zmq import BaseZmqService
 from experimance_common.service_state import ServiceState
-from experimance_common.zmq_utils import ZmqPullSocket, ZmqTimeoutError
+from experimance_common.zmq.zmq_utils import ZmqPullSocket, ZmqTimeoutError
 
 logger = logging.getLogger(__name__)
 

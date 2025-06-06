@@ -8,8 +8,8 @@ tasks to workers using the ZeroMQ PUSH pattern.
 import logging
 from typing import Any, Dict
 
-from experimance_common.service import BaseZmqService
-from experimance_common.zmq_utils import ZmqPushSocket
+from experimance_common.zmq.base_zmq import BaseZmqService
+from experimance_common.zmq.zmq_utils import ZmqPushSocket
 
 logger = logging.getLogger(__name__)
 

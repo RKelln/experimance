@@ -16,8 +16,7 @@ from typing import Set
 from experimance_common.constants import TICK
 import pytest
 
-from experimance_common.service import BaseService, ServiceState
-from experimance_common.service_state import StateManager
+from experimance_common.base_service import BaseService, ServiceState
 
 # Configure test logging
 logging.basicConfig(level=logging.DEBUG,

@@ -9,8 +9,8 @@ services that process tasks and report results.
 import logging
 from typing import Any, Dict, List, Optional
 
-from experimance_common.service import BaseZmqService
-from experimance_common.zmq_utils import ZmqSubscriber, ZmqPullSocket, ZmqPushSocket
+from experimance_common.zmq.base_zmq import BaseZmqService
+from experimance_common.zmq.zmq_utils import ZmqSubscriber, ZmqPullSocket, ZmqPushSocket
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.pull import ZmqPullService
 from experimance_common.zmq.push import ZmqPushService

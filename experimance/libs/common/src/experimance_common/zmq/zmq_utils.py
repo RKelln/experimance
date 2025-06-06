@@ -5,8 +5,6 @@ ZMQ utility enhancement module that avoids hanging on socket operations.
 import asyncio
 import json
 import logging
-import selectors
-import time
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 

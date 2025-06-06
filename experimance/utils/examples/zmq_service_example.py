@@ -21,15 +21,11 @@ import argparse
 import asyncio
 import logging
 import random
-import signal
-import sys
 import time
 from typing import Dict, Any, List, Optional
-import zmq
-import zmq.asyncio
 
 from experimance_common.constants import TICK
-from experimance_common.zmq_utils import (
+from experimance_common.zmq.zmq_utils import (
     MessageType, 
     ZmqTimeoutError, 
     ZmqPullSocket,
@@ -39,10 +35,7 @@ from experimance_common.zmq_utils import (
     ZmqBindingPullSocket,
     ZmqConnectingPushSocket
 )
-from experimance_common.service import (
-    ServiceState,
-    BaseZmqService
-)
+from experimance_common.zmq.base_zmq import BaseZmqService
 from experimance_common.zmq.controller import ZmqControllerService
 from experimance_common.zmq.worker import ZmqWorkerService
 

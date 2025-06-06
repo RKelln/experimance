@@ -6,7 +6,7 @@ from experimance_common.constants import (
     DEFAULT_PORTS,
 )
 
-from experimance_common.zmq_utils import (
+from experimance_common.zmq.zmq_utils import (
     ZmqPublisher,
     ZmqSubscriber,
     ZmqPushSocket,
@@ -40,13 +40,13 @@ from experimance_common.config import (
 )
 
 # Import service base classes
-from experimance_common.service import (
+from experimance_common.base_service import (
     BaseService,
-    BaseZmqService,
     ServiceState,
 )
 
 # Import ZMQ service classes
+from experimance_common.zmq.base_zmq import BaseZmqService
 from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.push import ZmqPushService
@@ -61,12 +61,16 @@ __all__ = [
     "ZmqSubscriber",
     "ZmqPushSocket",
     "ZmqPullSocket",
+    "ZmqBindingPullSocket",
+    "ZmqConnectingPushSocket",
     "MessageType",
     "DEFAULT_PORTS",
     "HEARTBEAT_INTERVAL",
     
-    # Service base classes
+    # Base Service
     "BaseService",
+
+    # ZMQWservices
     "BaseZmqService",
     "ServiceState",
     "ZmqPublisherService",
@@ -82,7 +86,7 @@ __all__ = [
     "Biome",
     "TransitionStyle",
     "MessageBase",
-        "EraChanged",
+    "EraChanged",
     "RenderRequest",
     "IdleStatus",
     "ImageReady",

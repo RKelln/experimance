@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example implementation using the basic BaseService class from experimance_common.service.
+Example implementation using the basic BaseService class from experimance_common.service
 
 This example demonstrates how to:
 1. Create services using the BaseService class without ZeroMQ
@@ -17,15 +17,9 @@ import argparse
 import asyncio
 import logging
 import random
-import signal
-import sys
 import time
-from typing import Dict, Any, List, Optional
 
-from experimance_common.service import (
-    BaseService,
-    ServiceState
-)
+from experimance_common.base_service import BaseService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

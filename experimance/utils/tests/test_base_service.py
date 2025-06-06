@@ -13,9 +13,7 @@ Run with:
     uv run -m pytest utils/tests/test_base_service.py -v
 """
 import asyncio
-import inspect
 import logging
-import signal
 import time
 from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from experimance_common.constants import TICK
 import pytest
 
-from experimance_common.service import BaseService, ServiceState, ServiceStatus
+from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
 from utils.tests.test_utils import wait_for_service_shutdown
 
 

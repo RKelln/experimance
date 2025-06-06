@@ -3,15 +3,12 @@ Tests for the non-hanging ZeroMQ utilities module.
 """
 
 import asyncio
-import json
 import logging
 import time
-from typing import Any, Dict, List, Tuple
 
 import pytest
-import zmq
 
-from experimance_common.zmq_utils import (
+from experimance_common.zmq.zmq_utils import (
     ZmqPublisher, 
     ZmqSubscriber, 
     ZmqPushSocket, 

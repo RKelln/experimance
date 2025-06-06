@@ -16,12 +16,11 @@ Run with:
 
 import asyncio
 import logging
-import signal
 import pytest
-from contextlib import suppress
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from experimance_common.service import BaseZmqService, ServiceState, ServiceStatus
+from experimance_common.base_service import ServiceState
+from experimance_common.zmq.base_zmq import BaseZmqService
 from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.push import ZmqPushService
@@ -29,7 +28,7 @@ from experimance_common.zmq.pull import ZmqPullService
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.controller import ZmqControllerService
 from experimance_common.zmq.worker import ZmqWorkerService
-from experimance_common.zmq_utils import MessageType
+from experimance_common.zmq.zmq_utils import MessageType
 from utils.tests.test_utils import active_service, wait_for_service_state, debug_service_tasks, SIMULATE_NETWORK_DELAY
 
 # Configure test logging
@@ -76,7 +75,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
         # Simulate a timeout after a short delay, to avoid hanging
         await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
-        from experimance_common.zmq_utils import ZmqTimeoutError
+        from experimance_common.zmq.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock publishing timeout")
     
     async def receive_async(self):
@@ -84,7 +83,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
         # Simulate a timeout after a short delay, to avoid hanging
         await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
-        from experimance_common.zmq_utils import ZmqTimeoutError
+        from experimance_common.zmq.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock receiving timeout")
     
     async def push_async(self, message):
@@ -92,7 +91,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
         # Simulate a timeout after a short delay, to avoid hanging
         await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
-        from experimance_common.zmq_utils import ZmqTimeoutError
+        from experimance_common.zmq.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock pushing timeout")
     
     async def pull_async(self):
@@ -100,7 +99,7 @@ class MockZmqSocketTimeout(MockZmqSocketBase):
         # Simulate a timeout after a short delay, to avoid hanging
         await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
-        from experimance_common.zmq_utils import ZmqTimeoutError
+        from experimance_common.zmq.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock pulling timeout")
 
 
@@ -155,7 +154,7 @@ class MockZmqSocket(MockZmqSocketBase):
         # Simulate a timeout after a short delay, to avoid hanging
         await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
-        from experimance_common.zmq_utils import ZmqTimeoutError
+        from experimance_common.zmq.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock socket timeout")
     
     async def push_async(self, message):
@@ -168,7 +167,7 @@ class MockZmqSocket(MockZmqSocketBase):
         # Simulate a timeout after a short delay, to avoid hanging
         await asyncio.sleep(SIMULATE_NETWORK_DELAY)
         
-        from experimance_common.zmq_utils import ZmqTimeoutError
+        from experimance_common.zmq.zmq_utils import ZmqTimeoutError
         raise ZmqTimeoutError("Mock socket timeout")
 
 

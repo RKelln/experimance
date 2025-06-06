@@ -9,8 +9,8 @@ control of a distributed system using ZeroMQ.
 import logging
 
 from experimance_common.constants import HEARTBEAT_TOPIC
-from experimance_common.service import BaseZmqService
-from experimance_common.zmq_utils import ZmqPublisher, ZmqSubscriber, ZmqPullSocket, ZmqPushSocket
+from experimance_common.zmq.base_zmq import BaseZmqService
+from experimance_common.zmq.zmq_utils import ZmqPublisher, ZmqSubscriber, ZmqPullSocket, ZmqPushSocket
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.push import ZmqPushService
 from experimance_common.zmq.pull import ZmqPullService

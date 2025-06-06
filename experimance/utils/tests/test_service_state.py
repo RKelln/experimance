@@ -15,13 +15,12 @@ Run with:
 
 import asyncio
 import logging
-import signal
 from typing import Optional, Set
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from experimance_common.service import BaseService, ServiceState
+from experimance_common.base_service import BaseService, ServiceState
 from experimance_common.service_state import StateManager
 from experimance_common.service_decorators import lifecycle_service
 from utils.tests.test_utils import wait_for_service_shutdown, wait_for_service_state
