@@ -16,7 +16,7 @@ timeout_seconds = 10         # Timeout for image generation requests
 
 # FAL.AI configuration
 [fal]
-model_url = "fal.ai/sdxl-lightning"
+model_url = "comfy/RKelln/experimance_hyper_depth_v5"
 dimensions = [1024, 1024]
 num_inference_steps = 4
 

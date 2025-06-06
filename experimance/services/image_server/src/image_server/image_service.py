@@ -20,7 +20,8 @@ from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.config import load_config_with_overrides
 
 from .config import ImageServerConfig
-from .generators import create_generator, ImageGenerator
+from .generators.factory import create_generator
+from .generators.generator import ImageGenerator
 
 logger = logging.getLogger(__name__)
 

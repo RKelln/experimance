@@ -27,7 +27,7 @@ from utils.tests.test_utils import (
 
 # Import the classes we'll test
 from image_server.image_service import ImageServerService
-from image_server.generators import ImageGenerator, MockImageGenerator
+from image_server.generators.generator import ImageGenerator, MockImageGenerator
 
 # Configure logging for tests
 logging.basicConfig(level=logging.DEBUG, 
@@ -73,7 +73,7 @@ class TestImageServerService:
             await service.stop()
 
     @pytest.mark.asyncio
-    async def test_service_initialization(self, image_service):
+    async def test_service_initialization(self, image_service: ImageServerService):
         """Test that the service initializes correctly."""
         assert image_service.service_name == "test-image-server"
         assert image_service.service_type == "image-server"
@@ -81,7 +81,7 @@ class TestImageServerService:
         assert image_service._default_strategy == "mock"
 
     @pytest.mark.asyncio
-    async def test_service_lifecycle(self, image_service):
+    async def test_service_lifecycle(self, image_service: ImageServerService):
         """Test the service start/stop lifecycle."""
         # Service should start in STOPPED state
         assert image_service.state == ServiceState.INITIALIZED
@@ -102,7 +102,7 @@ class TestImageServerService:
         assert image_service.state == ServiceState.STOPPED
 
     @pytest.mark.asyncio
-    async def test_render_request_handler_registration(self, image_service):
+    async def test_render_request_handler_registration(self, image_service: ImageServerService):
         """Test that RenderRequest handler is properly registered."""
         await image_service.start()
         
@@ -131,7 +131,7 @@ class TestImageServerService:
         await image_service.stop()
 
     @pytest.mark.asyncio
-    async def test_render_request_handling(self, image_service):
+    async def test_render_request_handling(self, image_service: ImageServerService):
         """Test handling of RenderRequest messages."""
         await image_service.start()
         
@@ -162,7 +162,7 @@ class TestImageServerService:
         await image_service.stop()
 
     @pytest.mark.asyncio
-    async def test_image_ready_publishing(self, image_service):
+    async def test_image_ready_publishing(self, image_service: ImageServerService):
         """Test publishing of ImageReady messages."""
         await image_service.start()
         
@@ -185,7 +185,7 @@ class TestImageServerService:
         await image_service.stop()
 
     @pytest.mark.asyncio
-    async def test_generator_strategy_selection(self, image_service):
+    async def test_generator_strategy_selection(self, image_service: ImageServerService):
         """Test that the correct generator strategy is selected."""
         await image_service.start()
         
@@ -200,7 +200,7 @@ class TestImageServerService:
         await image_service.stop()
 
     @pytest.mark.asyncio
-    async def test_error_handling_invalid_message(self, image_service):
+    async def test_error_handling_invalid_message(self, image_service: ImageServerService):
         """Test error handling for invalid messages."""
         await image_service.start()
         
