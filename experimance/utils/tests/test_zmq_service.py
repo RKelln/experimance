@@ -21,12 +21,14 @@ import pytest
 from contextlib import suppress
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from experimance_common.service import (
-    BaseZmqService, ServiceState, ServiceStatus,
-    ZmqPublisherService, ZmqSubscriberService,
-    ZmqPushService, ZmqPullService,
-    ZmqPublisherSubscriberService, ZmqControllerService, ZmqWorkerService
-)
+from experimance_common.service import BaseZmqService, ServiceState, ServiceStatus
+from experimance_common.zmq.publisher import ZmqPublisherService
+from experimance_common.zmq.subscriber import ZmqSubscriberService
+from experimance_common.zmq.push import ZmqPushService
+from experimance_common.zmq.pull import ZmqPullService
+from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
+from experimance_common.zmq.controller import ZmqControllerService
+from experimance_common.zmq.worker import ZmqWorkerService
 from experimance_common.zmq_utils import MessageType
 from utils.tests.test_utils import active_service, wait_for_service_state, debug_service_tasks, SIMULATE_NETWORK_DELAY
 
@@ -264,7 +266,7 @@ class TestBaseZmqService:
 
 
 @pytest.mark.asyncio
-@patch('experimance_common.service.ZmqPublisher', MockPublisher)
+@patch('experimance_common.zmq.publisher.ZmqPublisher', MockPublisher)
 class TestPublisherService:
     """Tests for ZmqPublisherService."""
     
@@ -309,7 +311,7 @@ class TestPublisherService:
 
 
 @pytest.mark.asyncio
-@patch('experimance_common.service.ZmqSubscriber', MockSubscriber)
+@patch('experimance_common.zmq.subscriber.ZmqSubscriber', MockSubscriber)
 class TestSubscriberService:
     """Tests for ZmqSubscriberService."""
     
@@ -361,7 +363,7 @@ class TestSubscriberService:
 
 
 @pytest.mark.asyncio
-@patch('experimance_common.service.ZmqPushSocket', MockZmqSocketWithMessages)
+@patch('experimance_common.zmq.push.ZmqPushSocket', MockZmqSocketWithMessages)
 class TestPushService:
     """Tests for ZmqPushService."""
     
@@ -396,7 +398,7 @@ class TestPushService:
 
 
 @pytest.mark.asyncio
-@patch('experimance_common.service.ZmqPullSocket', MockPullSocket)
+@patch('experimance_common.zmq.pull.ZmqPullSocket', MockPullSocket)
 class TestPullService:
     """Tests for ZmqPullService."""
     
@@ -442,10 +444,11 @@ class TestPullService:
 
 
 @pytest.mark.asyncio
-@patch('experimance_common.service.ZmqPublisher', MockPublisher)
-@patch('experimance_common.service.ZmqSubscriber', MockSubscriber)
-@patch('experimance_common.service.ZmqPushSocket', MockZmqSocketWithMessages)
-@patch('experimance_common.service.ZmqPullSocket', MockPullSocket)
+@patch('experimance_common.zmq.publisher.ZmqPublisher', MockPublisher)
+@patch('experimance_common.zmq.subscriber.ZmqSubscriber', MockSubscriber)
+@patch('experimance_common.zmq.push.ZmqPushSocket', MockZmqSocketWithMessages)
+@patch('experimance_common.zmq.pull.ZmqPullSocket', MockPullSocket)
+@patch('experimance_common.zmq.worker.ZmqPushSocket', MockZmqSocketWithMessages)  # Explicitly patch worker's push socket
 class TestCombinedServices:
     """Tests for combined ZMQ service classes."""
     

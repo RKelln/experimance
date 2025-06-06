@@ -20,9 +20,8 @@ import sys
 import time
 from contextlib import suppress
 
-from experimance_common.service import (
-    BaseService, BaseZmqService, ZmqPublisherService, ServiceState
-)
+from experimance_common.service import BaseService, BaseZmqService, ServiceState
+from experimance_common.zmq.publisher import ZmqPublisherService
 
 from utils.tests.test_utils import wait_for_service_shutdown, wait_for_service_state
 

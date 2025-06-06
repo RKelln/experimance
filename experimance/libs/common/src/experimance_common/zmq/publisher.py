@@ -1,0 +1,128 @@
+"""
+ZeroMQ Publisher Service for Experimance.
+
+This module provides the ZmqPublisherService class for broadcasting
+messages to subscribers on specific topics using ZeroMQ.
+"""
+
+import asyncio
+import logging
+import time
+from typing import Any, Dict, Optional
+
+from experimance_common.constants import HEARTBEAT_INTERVAL, HEARTBEAT_TOPIC
+from experimance_common.service import BaseZmqService
+from experimance_common.service_state import ServiceState
+from experimance_common.zmq_utils import MessageType, ZmqPublisher
+
+logger = logging.getLogger(__name__)
+
+class ZmqPublisherService(BaseZmqService):
+    """Service that publishes messages on specific topics.
+    
+    This service type establishes a ZeroMQ PUB socket to broadcast
+    messages to subscribing services.
+    """
+    
+    def __init__(self, service_name: str, 
+                 pub_address: str, 
+                 heartbeat_topic: str = HEARTBEAT_TOPIC,
+                 service_type: str = "publisher"):
+        """Initialize a publisher service.
+        
+        Args:
+            service_name: Unique name for this service instance
+            pub_address: ZeroMQ address to bind publisher to
+            heartbeat_topic: Topic for heartbeat messages
+            service_type: Type of service (for logging and monitoring)
+        """
+        super().__init__(service_name, service_type)
+        self.pub_address = pub_address
+        self.heartbeat_topic = heartbeat_topic
+        self.publisher:Optional[ZmqPublisher] = None
+    
+    async def start(self):
+        """Start the publisher service."""
+        logger.info(f"Initializing publisher on {self.pub_address}")
+        self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
+        self.register_socket(self.publisher)
+        
+        # Register heartbeat task - _register_task will automatically create a Task
+        self.add_task(self.send_heartbeat())
+        
+        await super().start()
+    
+    async def send_heartbeat(self, interval: float = HEARTBEAT_INTERVAL):
+        """Send periodic heartbeat messages.
+        
+        Args:
+            interval: Time between heartbeats in seconds
+        """
+        while self.state == ServiceState.RUNNING:
+            try:
+                heartbeat = {
+                    "type": MessageType.HEARTBEAT,
+                    "timestamp": time.time(),
+                    "service": self.service_name,
+                    "state": self.state
+                }
+                
+                if self.publisher:
+                    success = await self.publisher.publish_async(heartbeat)
+                    if success:
+                        logger.debug(f"Sent heartbeat: {self.service_name}")
+                        self.messages_sent += 1
+                    else:
+                        logger.warning("Failed to send heartbeat")
+                        self.errors += 1
+                else:
+                    logger.warning("Cannot send heartbeat: publisher not initialized")
+                    self.errors += 1
+            
+            except Exception as e:
+                logger.error(f"Error sending heartbeat: {e}")
+                self.errors += 1
+            
+            await asyncio.sleep(interval)
+    
+    async def publish_message(self, message: Dict[str, Any], topic: Optional[str] = None) -> bool:
+        """Publish a message to subscribers.
+        
+        Args:
+            message: Message to publish
+            topic: Topic to publish on (if None, uses the default heartbeat topic)
+            
+        Returns:
+            True if message was sent successfully, False otherwise
+        """
+        if not self.publisher:
+            logger.error("Cannot publish message: publisher not initialized")
+            self.errors += 1
+            return False
+        
+        # If topic provided, create a new publisher or use existing one with that topic
+        publisher = self.publisher
+        if topic is not None and topic != self.heartbeat_topic:
+            publisher = ZmqPublisher(self.pub_address, topic)
+            try:
+                success = await publisher.publish_async(message)
+                if success:
+                    self.messages_sent += 1
+                else:
+                    self.errors += 1
+                return success
+            finally:
+                publisher.close()
+        else:
+            # Use the default publisher
+            try:
+                success = await self.publisher.publish_async(message)
+                if success:
+                    self.messages_sent += 1
+                else:
+                    self.errors += 1
+                return success
+            except Exception as e:
+                logger.error(f"Error publishing message: {e}")
+                self.errors += 1
+                return False

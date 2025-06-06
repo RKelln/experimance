@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example implementation using the new base service classes from experimance_common.service.
+Example implementation using the new base service classes from experimance_common.service
 
 This example demonstrates how to:
 1. Create services using the base service classes
@@ -40,11 +40,11 @@ from experimance_common.zmq_utils import (
     ZmqConnectingPushSocket
 )
 from experimance_common.service import (
-    ZmqControllerService, 
-    ZmqWorkerService,
     ServiceState,
     BaseZmqService
 )
+from experimance_common.zmq.controller import ZmqControllerService
+from experimance_common.zmq.worker import ZmqWorkerService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

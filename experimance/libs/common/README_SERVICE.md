@@ -172,7 +172,7 @@ The fundamental base class for all services. It provides:
 - Task management for background operations.
 - State management across inheritance hierarchies.
 
-### 2. `ZmqService`
+### 2. `BaseZmqService`
 Inherits from `BaseService` and adds common ZMQ functionalities:
 - ZMQ context management.
 - Socket creation and configuration utilities.
@@ -243,7 +243,7 @@ To create a new service:
 ```python
 # In your service module (e.g., my_publisher_service.py)
 import asyncio
-from experimance_common.service import ZmqPublisherService
+from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.zmq_utils import MessageType
 
@@ -286,7 +286,7 @@ if __name__ == "__main__":
 # In your controller service module
 import asyncio
 import logging
-from experimance_common.service import ZmqControllerService
+from experimance_common.zmq.controller import ZmqControllerService
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.zmq_utils import MessageType
 

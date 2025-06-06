@@ -44,14 +44,16 @@ from experimance_common.service import (
     BaseService,
     BaseZmqService,
     ServiceState,
-    ZmqPublisherService,
-    ZmqSubscriberService,
-    ZmqPushService,
-    ZmqPullService,
-    ZmqPublisherSubscriberService,
-    ZmqControllerService,
-    ZmqWorkerService,
 )
+
+# Import ZMQ service classes
+from experimance_common.zmq.publisher import ZmqPublisherService
+from experimance_common.zmq.subscriber import ZmqSubscriberService
+from experimance_common.zmq.push import ZmqPushService
+from experimance_common.zmq.pull import ZmqPullService
+from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
+from experimance_common.zmq.controller import ZmqControllerService
+from experimance_common.zmq.worker import ZmqWorkerService
 
 __all__ = [
     # ZMQ utilities
@@ -91,7 +93,7 @@ __all__ = [
     "LoopRequest",
     
     # Configuration utilities
-    "load_config",
+    "load_config_with_overrides",
     "Config",
     "ConfigError",
 ]

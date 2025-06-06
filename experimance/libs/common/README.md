@@ -399,7 +399,7 @@ if __name__ == "__main__":
 ### Example Usage: ZMQ Service
 
 ```python
-from experimance_common.service import ZmqPublisherService
+from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.constants import DEFAULT_PORTS
 import asyncio
 
