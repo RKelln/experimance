@@ -14,8 +14,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from experimance_common.service import ZmqPublisherSubscriberService
-from experimance_common.zmq_utils import MessageType
+from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
+from experimance_common.zmq.zmq_utils import MessageType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.config import load_config_with_overrides
 

@@ -9,7 +9,6 @@ image generation requests and publishes results via ZeroMQ.
 import asyncio
 import argparse
 import logging
-import signal
 import sys
 from pathlib import Path
 from typing import Optional

@@ -7,28 +7,26 @@ and tests the image server service implementation.
 """
 
 import asyncio
-import json
 import logging
 import pytest
 import tempfile
-import time
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any
 
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.zmq_utils import MessageType, ZmqTimeoutError
-from experimance_common.service import ServiceState
+from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.base_service import ServiceState
 
 # Import reusable test utilities and mocks
 from utils.tests.test_utils import (
-    MockZmqPublisher, MockZmqSubscriber, MockZmqPushSocket, MockZmqPullSocket,
-    active_service, wait_for_service_state
+    MockZmqPublisher, MockZmqSubscriber,
+    wait_for_service_state
 )
 
 # Import the classes we'll test
-from image_server.service import ImageServerService
+from image_server.image_service import ImageServerService
 from image_server.generators import ImageGenerator, MockImageGenerator
 
 # Configure logging for tests
@@ -116,8 +114,8 @@ class TestImageServerService:
         await image_service.stop()
 
     @pytest.mark.asyncio
-    @patch('experimance_common.service.ZmqPublisher', MockZmqPublisher)
-    @patch('experimance_common.service.ZmqSubscriber', MockZmqSubscriber)
+    @patch('experimance_common.zmq.publisher.ZmqPublisher', MockZmqPublisher)
+    @patch('experimance_common.zmq.subscriber.ZmqSubscriber', MockZmqSubscriber)
     async def test_zmq_socket_initialization(self, image_service):
         """Test that ZMQ sockets are properly initialized."""
         await image_service.start()

@@ -5,7 +5,7 @@ This module handles the creation, storage, and delivery of AI-generated
 satellite imagery for the installation.
 """
 
-from .service import ImageServerService
+from .image_service import ImageServerService
 from .generators import (
     ImageGenerator,
     MockImageGenerator,

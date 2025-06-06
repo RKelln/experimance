@@ -7,9 +7,7 @@ for different image generation backends (mock, local, remote APIs).
 """
 
 import asyncio
-import base64
 import logging
-import os
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
