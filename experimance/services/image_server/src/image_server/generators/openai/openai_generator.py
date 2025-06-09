@@ -55,19 +55,4 @@ class OpenAIGenerator(ImageGenerator):
             logger.error(f"OpenAIGenerator: Error generating image: {e}")
             raise RuntimeError(f"OpenAI generation failed: {e}")
     
-    async def _download_image(self, image_url: str) -> str:
-        """Download an image from a URL."""
-        import aiohttp
-        
-        output_path = self._get_output_path("png")
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as response:
-                if response.status == 200:
-                    with open(output_path, "wb") as f:
-                        async for chunk in response.content.iter_chunked(8192):
-                            f.write(chunk)
-                    logger.info(f"OpenAIGenerator: Downloaded image to {output_path}")
-                    return output_path
-                else:
-                    raise RuntimeError(f"Failed to download image: HTTP {response.status}")
+    # Using _download_image from the base ImageGenerator class

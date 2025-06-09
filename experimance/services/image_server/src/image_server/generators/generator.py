@@ -7,6 +7,7 @@ for different image generation backends (mock, local, remote APIs).
 """
 
 import asyncio
+from datetime import datetime
 import logging
 import uuid
 from abc import ABC, abstractmethod
@@ -16,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
+VALID_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 
 class ImageGenerator(ABC):
     """Abstract base class for image generation strategies."""
@@ -61,10 +63,62 @@ class ImageGenerator(ABC):
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
     
-    def _get_output_path(self, extension: str = "png") -> str:
+    def _get_output_path(self, file_or_extension: str = "png") -> str:
         """Generate a unique output path for an image."""
-        image_id = str(uuid.uuid4())
-        return str(self.output_dir / f"generated_{image_id}.{extension}")
+        name = None
+        if file_or_extension in VALID_EXTENSIONS:
+            # If a file extension is provided, use it directly
+            extension = f".{file_or_extension}"
+        elif isinstance(file_or_extension, str):
+            # If a string is provided, assume it's a filename with extension
+            path = Path(file_or_extension)
+            name, extension = path.stem, path.suffix
+
+        if extension[1:] not in VALID_EXTENSIONS:
+            raise ValueError(f"Unsupported image format: {extension}. Must be one of png, jpg, jpeg, webp")
+            
+        # set id as class name and current date time 
+        image_id = f"{self.__class__.__name__.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if name:
+            image_id += f"_{name}"
+        return str(self.output_dir / f"{image_id}{extension}")
+        
+    async def _download_image(self, image_url: str) -> str:
+        """Download the generated image from the provided URL.
+        
+        Args:
+            image_url: URL of the generated image
+        Returns:
+            Path to the downloaded image file   
+        Raises:
+            RuntimeError: If download fails
+        """
+        try:
+            import aiohttp
+            
+            if not image_url:
+                raise ValueError("Image URL cannot be empty")
+            
+            # get extension from URL
+            
+            output_path = self._get_output_path(image_url)
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as response:
+                    if response.status == 200:
+                        with open(output_path, "wb") as f:
+                            async for chunk in response.content.iter_chunked(8192):
+                                f.write(chunk)
+                        logger.info(f"{self.__class__.__name__}: Image downloaded and saved to {output_path}")
+                        return output_path
+                    else:
+                        error_message = f"Failed to download image: HTTP {response.status}"
+                        logger.error(f"{self.__class__.__name__}: {error_message}")
+                        raise RuntimeError(error_message)
+        
+        except Exception as e:
+            logger.error(f"{self.__class__.__name__}: Error downloading image: {e}")
+            raise RuntimeError(f"Failed to download image: {e}")
 
 
 class MockImageGenerator(ImageGenerator):

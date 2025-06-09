@@ -6,14 +6,22 @@ This module defines Pydantic models for validating and accessing
 image server configuration in a type-safe way.
 """
 
-from typing import Dict, Literal, Optional
+from typing import Dict, Literal, Optional, Union, Type, Annotated
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from experimance_common.config import Config
 from experimance_common.constants import DEFAULT_PORTS
+from image_server.generators.config import BaseGeneratorConfig
 
+# Import all generator config types
+from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
+
+# For future use when other generators are implemented:
+#from image_server.generators.mock.mock_generator import MockGeneratorConfig
+#from image_server.generators.sdxl.sdxl_generator import SDXLGeneratorConfig
+#from image_server.generators.openai.openai_generator import OpenAIGeneratorConfig
 
 class ZmqConfig(BaseModel):
     """ZeroMQ configuration for the Image Server service."""
@@ -28,26 +36,17 @@ class ZmqConfig(BaseModel):
         description="Address for publishing image messages"
     )
 
+GeneratorConfigUnion = Union[
+#    MockGeneratorConfig,
+#    SDXLGeneratorConfig,
+    FalComfyGeneratorConfig,
+#    OpenAIGeneratorConfig,
+]
 
 class GeneratorConfig(BaseModel):
-    """Configuration for image generation strategies."""
-    
-    default_strategy: Literal["mock", "sdxl", "falai", "openai"] = Field(
-        default="mock",
-        description="Default image generation strategy"
-    )
-    
-    timeout_seconds: int = Field(
-        default=30,
-        description="Timeout for image generation in seconds",
-        gt=0
-    )
-    
-    # Strategy-specific configuration could go here
-    # For example:
-    # sdxl_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
-    # openai_api_key: Optional[str] = None
-
+    """Configuration for image generator selection and common settings."""
+    default_strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
+    config: GeneratorConfigUnion = Field(..., discriminator="strategy")
 
 class ImageServerConfig(Config):
     """Complete configuration schema for the Image Server service."""
