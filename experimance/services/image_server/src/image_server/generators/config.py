@@ -21,5 +21,5 @@ class SDXLConfig(BaseGeneratorConfig):
     dimensions: list[int] = [1024, 1024]
     num_inference_steps: int = 4
     negative_prompt: str = "distorted, warped, blurry, text, cartoon"
-    ksampler_seed: int = 1
+    seed: int = 1
     prompt: str = "A beautiful landscape"

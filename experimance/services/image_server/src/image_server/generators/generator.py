@@ -15,7 +15,30 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
 
+# Configure logging
 logger = logging.getLogger(__name__)
+
+def configure_external_loggers(level=logging.WARNING):
+    """Configure external library loggers to a specific level.
+    
+    This function sets common HTTP and networking libraries to the specified
+    log level (WARNING by default) to suppress excessive INFO messages.
+    
+    Args:
+        level: The logging level to set for external libraries
+    """
+    for logger_name in [
+        "httpx",           # HTTP client library often used by FAL
+        "aiohttp",         # Async HTTP client
+        "requests",        # Synchronous HTTP client
+        "urllib3",         # Used by requests
+        "fal_client",      # FAL.AI client library
+        "asyncio",         # Asyncio debugging messages
+    ]:
+        logging.getLogger(logger_name).setLevel(level)
+
+# Configure external loggers when module is imported
+configure_external_loggers()
 
 VALID_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 
@@ -183,3 +206,23 @@ class MockImageGenerator(ImageGenerator):
         
         logger.info(f"MockImageGenerator: Saved image to {output_path}")
         return output_path
+
+
+def mock_depth_map(size: tuple = (1024, 1024)) -> Image.Image:
+    """Generate a mock depth map image.
+    
+    Args:
+        size: Size of the depth map image
+        color: Color to fill the depth map (default gray)
+        
+    Returns:
+        PIL Image object representing the depth map
+    """
+    # check for depthmap in mock images
+    mock = Path("services/image_server/images/mocks/depth_map.png")
+    if size == (1024,1024) and mock.exists():
+        return Image.open(mock.resolve()).convert("L")
+    else:
+        depth_map = Image.new("L", size, color=128)  # Create a gray depth map
+
+    return depth_map

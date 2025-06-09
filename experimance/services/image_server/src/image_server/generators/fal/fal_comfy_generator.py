@@ -2,16 +2,18 @@ import asyncio
 import logging
 import requests
 import time
-from typing import Optional
+from typing import Generator, Optional
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path="../../.env", override=True)
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
-from image_server.generators.generator import ImageGenerator
+from image_server.generators.generator import ImageGenerator, configure_external_loggers
 from image_server.generators.config import DEFAULT_GENERATOR_TIMEOUT
-from .fal_comfy_config import FalComfyGeneratorConfig
+from .fal_comfy_config import FalGeneratorConfig, FalComfyGeneratorConfig
+from experimance_common.image_utils import png_to_base64url
 
 
 class FalComfyGenerator(ImageGenerator):
@@ -87,24 +89,22 @@ class FalComfyGenerator(ImageGenerator):
         
         logger.info(f"FalAIGenerator: Generating image with FAL.AI for prompt: {prompt[:50]}...")
         
-        # Use the config's to_args method to get arguments
-        arguments = current_config.to_args()
-        
-        # Add the prompt to the arguments
-        arguments["prompt"] = prompt
-        
+        current_config.prompt = prompt
         # Add depth map if provided
         if depth_map_b64:
-            arguments["depth_map"] = depth_map_b64
+            current_config.depth_map = depth_map_b64
+
+        logger.info(current_config)
 
         try:
+            start_time = time.monotonic()
+
             # Submit the request to FAL.AI
             handler = await fal_client.submit_async(
                 current_config.endpoint,
-                arguments=arguments
+                arguments=current_config.to_args()
             )
             
-            start_time = time.monotonic()
             timeout = getattr(current_config, "timeout", DEFAULT_GENERATOR_TIMEOUT) 
             async for event in handler.iter_events(with_logs=logger.isEnabledFor(logging.DEBUG)):
                 elapsed_time = time.monotonic() - start_time
@@ -116,11 +116,10 @@ class FalComfyGenerator(ImageGenerator):
             response = await handler.get()
 
             # Download the generated image
-            if "images" in response and len(response["images"]) > 0:
-                image_url = response["images"][0]["url"]
+            for image_url in self.falai_image_url_generator(response):
+                # we just need one image URL, so we can break after the first
                 return await self._download_image(image_url)
-            else:
-                raise RuntimeError("No images returned from FAL.AI")
+
                 
         except asyncio.TimeoutError:
             logger.error(f"FalAIGenerator: Generation timed out after {timeout} seconds")
@@ -128,53 +127,131 @@ class FalComfyGenerator(ImageGenerator):
         except Exception as e:
             logger.error(f"FalAIGenerator: Error generating image: {e}")
             raise RuntimeError(f"FAL.AI generation failed: {e}")
+        finally:
+            logger.info(f"FalAIGenerator: Generation completed in {time.monotonic() - start_time:.2f} seconds")
+
     
     # Using _download_image from the base ImageGenerator class
     
+    def falai_image_url_generator(self, response:dict) -> Generator[str, None, None]:
+        """Generator to extract image URLs from FAL.AI response.
+        Args:
+            response: Response dictionary from FAL.AI API
+        Yields:
+            str: URLs of generated images
+        Raises:
+            ValueError: If response format is unknown or unsupported
+        """
+
+        # model endpoint
+        # {'images': [{'url': 'https://fal.media/files/panda/uQsLdbOPox-ntaMxeDzsy.png', 'width': 1024, 'height': 768, 'content_type': 'image/jpeg'}], 'timings': {'inference': 0.3568768650002312}, 'seed': 852971348, 'has_nsfw_concepts': [False], 'prompt': 'test'}
+        if 'images' in response:
+            for image_result in response['images']:
+                yield image_result['url']
+            return
+        
+        # comfy workflow endpoint:
+        # {
+        #     "outputs": {
+        #         "14": {
+        #           "images": [
+        #               {
+        #               "url": "https://fal.media/files/panda/YB89Jz_d95I7_ZeBFhslU_ComfyUI_00003_.png",
+        #               "type": "output",
+        #               "filename": "ComfyUI_00003_.png",
+        #               "subfolder": ""
+        #               }
+        #           ]
+        #         }
+        #     }, ...
+        if 'outputs' in response:
+            # the next key could change based on workflow, but it will always be first index
+            first_output_key = list(response['outputs'].keys())[0]
+            for image_result in response['outputs'][first_output_key]['images']:
+                if 'image_output' not in image_result:
+                    yield image_result['url']
+                else:
+                    yield image_result['image_output']
+            return
+        
+        raise ValueError(f"Unknown response type: {response}")
 
 if __name__ == "__main__":
     # Example usage
     # $ uv run -m image_server.generators.fal.fal_comfy_generator
     
+    # Configure root logger
     logging.basicConfig(level=logging.INFO)
+    # Configure external library loggers
+    configure_external_loggers(logging.WARNING)
+    
     logger.info("Starting FAL.AI image generation example...")
 
     # Example 1: Create a config instance and pass it to the generator
-    config = FalComfyGeneratorConfig(
+    sdxl_config = FalGeneratorConfig(
         strategy="falai",
         endpoint="fal-ai/fast-lightning-sdxl",
         dimensions=[1024, 1024],
         num_inference_steps=4,
         negative_prompt="distorted, warped, blurry, text, cartoon"
     )
-    generator = FalComfyGenerator(config=config)
+    fal_generator = FalComfyGenerator(config=sdxl_config)
     
     # Example 2: Pass configuration directly to constructor
-    # generator = FalComfyGenerator(
-    #     endpoint="fal-ai/sdxl-lightning",
-    #     model_url="https://example.com/model",
-    #     lora_url="https://example.com/lora"
-    # )
+    comfy_config = FalComfyGeneratorConfig(
+        strategy="falai",
+        endpoint="comfy/RKelln/experimance_hyper_depth_v5",
+        model_url="https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16",
+        lora_url="https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor",
+        seed=1,
+        timeout=60,
+    )
+    experimance_generator = FalComfyGenerator(config=comfy_config)
     
-    # Example 3: Override configuration for a specific request
-    config_overrides = {
-        #"dimensions": [512, 512],  # Generate a smaller image
-        "num_inference_steps": 8,  # More steps for better quality
-    }
+    from image_server.generators.generator import mock_depth_map
     
-    # Run an example generation (this would normally be done in an async context)
-    try:
-        # Example with config overrides
-        image_path = asyncio.run(
-            generator.generate_image(
-                "A beautiful landscape with mountains and lakes",
-                config_overrides=config_overrides
+    async def run_examples():
+        """Run all examples in sequence within a single event loop."""
+        results = []
+        
+        # Example 1: Run the fast SDXL model
+        # try:
+        #     logger.info("Running Example 1: Fast SDXL model...")
+        #     image_path = await fal_generator.generate_image(
+        #         "A beautiful landscape with mountains and lakes"
+        #     )
+        #     logger.info(f"Example 1 complete - Generated image saved to: {image_path}")
+        #     results.append(True)
+        # except Exception as e:
+        #     logger.error(f"Example 1 failed: {e}")
+        #     results.append(False)
+        
+        # Example 2: Run the ComfyUI workflow with depth map
+        try:
+            logger.info("Running Example 2: ComfyUI workflow with depth map...")
+            image_path = await experimance_generator.generate_image(
+               "colorful RAW photo modern masterpiece, overhead top down aerial shot, in the style of (Edward Burtynsky:1.2) and (Gerhard Richter:1.2), (dense urban:1.2) dramatic landscape, buildings, farmland, (industrial:1.1), (rivers, lakes:1.1), busy highways, hills, vibrant hyper detailed photorealistic maximum detail, 32k, high resolution ultra HD",
+                depth_map_b64=png_to_base64url(mock_depth_map())
             )
-        )
-        logger.info(f"Generated image saved to: {image_path}")
-    except RuntimeError as e:
-        logger.error(f"Generation failed: {e}")
+            logger.info(f"Example 2 complete - Generated image saved to: {image_path}")
+            results.append(True)
+        except Exception as e:
+            logger.error(f"Example 2 failed: {e}")
+            results.append(False)
+        
+        return results
+    
+    # Run all examples in a single event loop
+    try:
+        results = asyncio.run(run_examples())
+        successful = sum(results)
+        logger.info(f"Test run completed. {successful}/{len(results)} examples completed successfully.")
+    except KeyboardInterrupt:
+        logger.info("Testing interrupted by user")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error in main process: {e}")
     else:
-        logger.info("Image generation completed successfully.")
+        if all(results):
+            logger.info("All examples completed successfully!")
+        else:
+            logger.info("Some examples failed. See logs above for details.")

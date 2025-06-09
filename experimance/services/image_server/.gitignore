@@ -55,3 +55,6 @@ cache/
 *.jpg
 *.jpeg
 *.webp
+
+# include mock depth map image
+!images/mocks/depth_map.png
