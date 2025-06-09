@@ -16,6 +16,7 @@ from experimance_common.constants import DEFAULT_PORTS
 from image_server.generators.config import BaseGeneratorConfig
 
 # Import all generator config types
+from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 
 # For future use when other generators are implemented:
@@ -36,17 +37,14 @@ class ZmqConfig(BaseModel):
         description="Address for publishing image messages"
     )
 
-GeneratorConfigUnion = Union[
-#    MockGeneratorConfig,
-#    SDXLGeneratorConfig,
-    FalComfyGeneratorConfig,
-#    OpenAIGeneratorConfig,
-]
-
 class GeneratorConfig(BaseModel):
     """Configuration for image generator selection and common settings."""
     default_strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
-    config: GeneratorConfigUnion = Field(..., discriminator="strategy")
+    #config: GeneratorConfigType = Field(..., discriminator="strategy")
+    timeout: int = Field(
+        default=60,
+        description="Default timeout for image generation in seconds"
+    )
 
 class ImageServerConfig(Config):
     """Complete configuration schema for the Image Server service."""
@@ -77,13 +75,17 @@ class ImageServerConfig(Config):
     
     # Generator configuration
     generator: GeneratorConfig = Field(
+        # default_factory=lambda: FalComfyGeneratorConfig(
+        #     default_strategy="falai",
+        #     config=FalComfyGeneratorConfig(strategy="falai")
+        # ),
         default_factory=GeneratorConfig,
         description="Image generation settings"
     )
     
     # Strategy-specific configurations
-    mock: Dict = Field(
-        default_factory=dict,
+    mock: MockGeneratorConfig = Field(
+        default_factory=MockGeneratorConfig,
         description="Configuration for mock generator"
     )
     
@@ -92,8 +94,8 @@ class ImageServerConfig(Config):
         description="Configuration for SDXL generator"
     )
     
-    falai: Dict = Field(
-        default_factory=dict,
+    falai: FalComfyGeneratorConfig = Field(
+        default_factory=FalComfyGeneratorConfig,
         description="Configuration for FAL.AI generator"
     )
     
@@ -117,12 +119,13 @@ class ImageServerConfig(Config):
         # Base configuration
         config = {
             "output_dir": str(self.cache_dir),
-            "timeout": self.generator.timeout_seconds
+            "timeout": self.generator.timeout,
         }
         
         # Add strategy-specific configuration
         if hasattr(self, strategy):
             strategy_config = getattr(self, strategy)
-            config.update(strategy_config)
+            if strategy_config:
+                config.update(strategy_config.model_dump())
             
         return config

@@ -1,20 +1,28 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Literal
 
 logger = logging.getLogger(__name__)
 
 from image_server.generators.generator import ImageGenerator
+from image_server.generators.config import BaseGeneratorConfig
+
+class OpenAIGeneratorConfig:
+    model: str = "dall-e-3"
+    quality: Literal['standard', 'hd', 'low', 'medium', 'high', 'auto']
+    size: Literal['auto', '1024x1024', '1536x1024', '1024x1536', '256x256', '512x512', '1792x1024', '1024x1792'] = '1024x1024'
 
 class OpenAIGenerator(ImageGenerator):
     """OpenAI DALL-E image generator implementation."""
     
-    def _configure(self, **kwargs):
-        """Configure OpenAI generator settings."""
-        self.model = kwargs.get("model", "dall-e-3")
-        self.quality = kwargs.get("quality", "standard")
-        self.dimensions = kwargs.get("dimensions", [1024, 1024])
-        self.timeout = kwargs.get("timeout", 60)
+
+    def _configure(self, config:BaseGeneratorConfig, **kwargs):
+        """Configure OpenAI generator settings from kwargs or create default config."""
+        self.config = OpenAIGeneratorConfig(**{
+            **config.model_dump(),
+            **kwargs
+        })
+        logger.info(f"OpenAIGenerator initialized: {self.config}")
     
     async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
         """Generate an image using OpenAI DALL-E API."""
@@ -37,16 +45,18 @@ class OpenAIGenerator(ImageGenerator):
             # Generate image with DALL-E
             response = await asyncio.to_thread(
                 client.images.generate,
-                model=self.model,
+                model=self.config.model,
                 prompt=prompt,
-                size=f"{self.dimensions[0]}x{self.dimensions[1]}",
-                quality=self.quality,
+                size=self.config.size,
+                quality=self.config.quality,
                 n=1
             )
             
             # Download the generated image
             if response.data and len(response.data) > 0:
                 image_url = response.data[0].url
+                if not image_url:
+                    raise RuntimeError("No image URL returned from OpenAI")
                 return await self._download_image(image_url)
             else:
                 raise RuntimeError("No images returned from OpenAI")

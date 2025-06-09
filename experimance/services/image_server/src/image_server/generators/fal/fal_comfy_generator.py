@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import requests
 import time
 from typing import Generator, Optional
 from dotenv import load_dotenv
@@ -11,7 +10,7 @@ load_dotenv(dotenv_path="../../.env", override=True)
 logger = logging.getLogger(__name__)
 
 from image_server.generators.generator import ImageGenerator, configure_external_loggers
-from image_server.generators.config import DEFAULT_GENERATOR_TIMEOUT
+from image_server.generators.config import BaseGeneratorConfig, DEFAULT_GENERATOR_TIMEOUT
 from .fal_comfy_config import FalGeneratorConfig, FalComfyGeneratorConfig
 from experimance_common.image_utils import png_to_base64url
 
@@ -22,35 +21,26 @@ class FalComfyGenerator(ImageGenerator):
     Uses the FAL.AI API for remote image generation.
     """
     
-    # def __init__(self, output_dir: str = "/tmp", **kwargs):
-    #     """Initialize the FAL.AI image generator.
+    def __init__(self, config: BaseGeneratorConfig, output_dir: str = "/tmp",  **kwargs):
+        """Initialize the FAL.AI image generator.
         
-    #     Args:
-    #         output_dir: Directory to save generated images
-    #         **kwargs: Additional configuration options or can be a FalComfyGeneratorConfig instance
-    #     """
-    #     # Check if a config object was passed directly
-    #     config_obj = kwargs.pop("config", None)
-    #     if isinstance(config_obj, FalComfyGeneratorConfig):
-    #         self.config = config_obj
-    #         # Use the provided config object
-    #         super().__init__(output_dir=output_dir, **kwargs)
-    #     else:
-    #         # Initialize normally with kwargs
-    #         super().__init__(output_dir=output_dir, **kwargs)
-    
-    def _configure(self, **kwargs):
+        Args:
+            config: Configuration object for the generator
+            output_dir: Directory to save generated images
+            **kwargs: Additional configuration options
+        """
+        super().__init__(config, output_dir, **kwargs)
+        
+        self._stop_event = asyncio.Event()
+
+    def _configure(self, config:BaseGeneratorConfig, **kwargs):
         """Configure FAL.AI generator settings from kwargs or create default config."""
-        config_obj = kwargs.pop("config", None)
-        if isinstance(config_obj, FalComfyGeneratorConfig):
-            self.config = config_obj
-        
-        if not hasattr(self, 'config'):
-            # Create a new config with kwargs as overrides
-            self.config = FalComfyGeneratorConfig(**kwargs)
-        
+        self.config = FalComfyGeneratorConfig(**{
+            **config.model_dump(),
+            **kwargs
+        })
         logger.info(f"FalComfyGenerator initialized with endpoint: {self.config.endpoint}")
-    
+
     async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, 
                              config_overrides: Optional[FalComfyGeneratorConfig|dict] = None) -> str:
         """Generate an image using FAL.AI API.
@@ -107,19 +97,29 @@ class FalComfyGenerator(ImageGenerator):
             
             timeout = getattr(current_config, "timeout", DEFAULT_GENERATOR_TIMEOUT) 
             async for event in handler.iter_events(with_logs=logger.isEnabledFor(logging.DEBUG)):
+                if self._stop_event.is_set():
+                    raise RuntimeError("FAL.AI generation stopped by user")
                 elapsed_time = time.monotonic() - start_time
                 if elapsed_time > timeout:
                     logger.error(f"FalAIGenerator: Generation timed out after {elapsed_time:.2f} seconds")
                     raise RuntimeError(f"FAL.AI generation timed out after {elapsed_time:.2f} seconds")
                 logger.debug(event)
 
+            if self._stop_event.is_set():
+                raise RuntimeError("FAL.AI generation stopped by user")
+            
             response = await handler.get()
+
+            if self._stop_event.is_set():
+                raise RuntimeError("FAL.AI generation stopped by user")
 
             # Download the generated image
             for image_url in self.falai_image_url_generator(response):
                 # we just need one image URL, so we can break after the first
                 return await self._download_image(image_url)
 
+            # If no image URL was found, raise an error to ensure a str is always returned or an exception is raised
+            raise RuntimeError("No image URL found in FAL.AI response.")
                 
         except asyncio.TimeoutError:
             logger.error(f"FalAIGenerator: Generation timed out after {timeout} seconds")
@@ -131,7 +131,11 @@ class FalComfyGenerator(ImageGenerator):
             logger.info(f"FalAIGenerator: Generation completed in {time.monotonic() - start_time:.2f} seconds")
 
     
-    # Using _download_image from the base ImageGenerator class
+    async def stop(self):
+        """Stop the FAL.AI generator if running."""
+        logger.info("Stopping FAL.AI generator...")
+        self._stop_event.set()
+
     
     def falai_image_url_generator(self, response:dict) -> Generator[str, None, None]:
         """Generator to extract image URLs from FAL.AI response.
@@ -177,9 +181,14 @@ class FalComfyGenerator(ImageGenerator):
         raise ValueError(f"Unknown response type: {response}")
 
 if __name__ == "__main__":
+    import argparse
+
     # Example usage
     # $ uv run -m image_server.generators.fal.fal_comfy_generator
-    
+    parser = argparse.ArgumentParser(description="FAL.AI Image Generation Example")
+    parser.add_argument("--config", type=str, help="Config toml")
+    args = parser.parse_args()
+
     # Configure root logger
     logging.basicConfig(level=logging.INFO)
     # Configure external library loggers
@@ -214,11 +223,13 @@ if __name__ == "__main__":
         """Run all examples in sequence within a single event loop."""
         results = []
         
+        test_prompt = "colorful RAW photo modern masterpiece, overhead top down aerial shot, in the style of (Edward Burtynsky:1.2) and (Gerhard Richter:1.2), (dense urban:1.2) dramatic landscape, buildings, farmland, (industrial:1.1), (rivers, lakes:1.1), busy highways, hills, vibrant hyper detailed photorealistic maximum detail, 32k, high resolution ultra HD"
+        
         # Example 1: Run the fast SDXL model
         # try:
         #     logger.info("Running Example 1: Fast SDXL model...")
         #     image_path = await fal_generator.generate_image(
-        #         "A beautiful landscape with mountains and lakes"
+        #         test_prompt
         #     )
         #     logger.info(f"Example 1 complete - Generated image saved to: {image_path}")
         #     results.append(True)
@@ -226,11 +237,12 @@ if __name__ == "__main__":
         #     logger.error(f"Example 1 failed: {e}")
         #     results.append(False)
         
+
         # Example 2: Run the ComfyUI workflow with depth map
         try:
             logger.info("Running Example 2: ComfyUI workflow with depth map...")
             image_path = await experimance_generator.generate_image(
-               "colorful RAW photo modern masterpiece, overhead top down aerial shot, in the style of (Edward Burtynsky:1.2) and (Gerhard Richter:1.2), (dense urban:1.2) dramatic landscape, buildings, farmland, (industrial:1.1), (rivers, lakes:1.1), busy highways, hills, vibrant hyper detailed photorealistic maximum detail, 32k, high resolution ultra HD",
+            test_prompt,
                 depth_map_b64=png_to_base64url(mock_depth_map())
             )
             logger.info(f"Example 2 complete - Generated image saved to: {image_path}")
@@ -238,7 +250,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Example 2 failed: {e}")
             results.append(False)
-        
+
         return results
     
     # Run all examples in a single event loop

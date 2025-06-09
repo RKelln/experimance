@@ -15,27 +15,11 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
 
+from image_server.generators.config import BaseGeneratorConfig
+from experimance_common.logger import configure_external_loggers
+
 # Configure logging
 logger = logging.getLogger(__name__)
-
-def configure_external_loggers(level=logging.WARNING):
-    """Configure external library loggers to a specific level.
-    
-    This function sets common HTTP and networking libraries to the specified
-    log level (WARNING by default) to suppress excessive INFO messages.
-    
-    Args:
-        level: The logging level to set for external libraries
-    """
-    for logger_name in [
-        "httpx",           # HTTP client library often used by FAL
-        "aiohttp",         # Async HTTP client
-        "requests",        # Synchronous HTTP client
-        "urllib3",         # Used by requests
-        "fal_client",      # FAL.AI client library
-        "asyncio",         # Asyncio debugging messages
-    ]:
-        logging.getLogger(logger_name).setLevel(level)
 
 # Configure external loggers when module is imported
 configure_external_loggers()
@@ -45,7 +29,7 @@ VALID_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 class ImageGenerator(ABC):
     """Abstract base class for image generation strategies."""
     
-    def __init__(self, output_dir: str = "/tmp", **kwargs):
+    def __init__(self, config: BaseGeneratorConfig, output_dir: str = "/tmp",  **kwargs):
         """Initialize the image generator.
         
         Args:
@@ -54,9 +38,10 @@ class ImageGenerator(ABC):
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._configure(**kwargs)
+        self.config = config
+        self._configure(config, **kwargs)
     
-    def _configure(self, **kwargs):
+    def _configure(self, config, **kwargs):
         """Configure generator-specific settings.
         
         Subclasses can override this to handle their specific configuration.
@@ -81,6 +66,14 @@ class ImageGenerator(ABC):
         """
         pass
     
+    @abstractmethod
+    async def stop(self):
+        """Stop any ongoing generation processes.
+        
+        This method should be implemented by subclasses to handle cleanup.
+        """
+        pass
+
     def _validate_prompt(self, prompt: str):
         """Validate the input prompt."""
         if not prompt or not prompt.strip():
@@ -142,70 +135,6 @@ class ImageGenerator(ABC):
         except Exception as e:
             logger.error(f"{self.__class__.__name__}: Error downloading image: {e}")
             raise RuntimeError(f"Failed to download image: {e}")
-
-
-class MockImageGenerator(ImageGenerator):
-    """Mock image generator for testing purposes.
-    
-    Generates simple placeholder images with the prompt text.
-    """
-    
-    def _configure(self, **kwargs):
-        """Configure mock generator settings."""
-        self.image_size = kwargs.get("image_size", (1024, 1024))
-        self.background_color = kwargs.get("background_color", (100, 150, 200))
-        self.text_color = kwargs.get("text_color", (255, 255, 255))
-    
-    async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
-        """Generate a mock image with the prompt text."""
-        self._validate_prompt(prompt)
-        
-        logger.info(f"MockImageGenerator: Generating image for prompt: {prompt[:50]}...")
-        
-        # Simulate some processing time
-        await asyncio.sleep(0.1)
-        
-        # Create a simple image with the prompt text
-        image = Image.new("RGB", self.image_size, self.background_color)
-        draw = ImageDraw.Draw(image)
-        
-        # Try to use a font, fall back to default if not available
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 24)
-        except:
-            font = ImageFont.load_default()
-        
-        # Add prompt text (truncated to fit)
-        text = prompt[:100] + "..." if len(prompt) > 100 else prompt
-        
-        # Calculate text position (center)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        x = (self.image_size[0] - text_width) // 2
-        y = (self.image_size[1] - text_height) // 2
-        
-        draw.text((x, y), text, fill=self.text_color, font=font)
-        
-        # Add era/biome info if provided
-        era = kwargs.get("era", "unknown")
-        biome = kwargs.get("biome", "unknown")
-        info_text = f"Era: {era}, Biome: {biome}"
-        
-        # Add info text at the bottom
-        info_bbox = draw.textbbox((0, 0), info_text, font=font)
-        info_width = info_bbox[2] - info_bbox[0]
-        info_x = (self.image_size[0] - info_width) // 2
-        info_y = self.image_size[1] - 50
-        
-        draw.text((info_x, info_y), info_text, fill=self.text_color, font=font)
-        
-        # Save the image
-        output_path = self._get_output_path("png")
-        image.save(output_path)
-        
-        logger.info(f"MockImageGenerator: Saved image to {output_path}")
-        return output_path
 
 
 def mock_depth_map(size: tuple = (1024, 1024)) -> Image.Image:

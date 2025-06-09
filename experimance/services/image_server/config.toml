@@ -11,14 +11,14 @@ images_pub_address = "tcp://*:5558"         # Address to publish images on
 
 # Generator configuration
 [generator]
-default_strategy = "fal"     # Options: "fal", "openai", "local", "mock"
-timeout_seconds = 10         # Timeout for image generation requests
+default_strategy = "falai"     # Options: "fal", "openai", "local", "mock"
 
 # FAL.AI configuration
-[fal]
-model_url = "comfy/RKelln/experimance_hyper_depth_v5"
-dimensions = [1024, 1024]
-num_inference_steps = 4
+[falai]
+endpoint = "comfy/RKelln/experimance_hyper_depth_v5"
+model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"
+lora_url = "https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor"
+lora_strength = 0.8
 
 # OpenAI configuration (DALLE)
 [openai]

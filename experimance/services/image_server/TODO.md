@@ -4,24 +4,24 @@
 - [x] Analyze current prototype implementation
 - [x] Define service architecture following Experimance patterns
 - [x] Implement main `ImageServerService` class inheriting from `ZmqPublisherSubscriberService`
-- [ ] Create strategy pattern for image generation backends
-- [ ] Design message handling for `RenderRequest` and `ImageReady`
+- [x] Create strategy pattern for image generation backends
+- [x] Design message handling for `RenderRequest` and `ImageReady`
 
 ## Core Service Implementation
-- [ ] Create `ImageServerService` class with proper ZMQ communication
+- [x] Create `ImageServerService` class with proper ZMQ communication
 - [ ] Implement `RenderRequest` message handler
 - [ ] Implement `ImageReady` message publishing
-- [ ] Add configuration management with TOML support
-- [ ] Implement proper async/await patterns
-- [ ] Add graceful shutdown and cleanup
+- [x] Add configuration management with TOML support
+- [x] Implement proper async/await patterns
+- [x] Add graceful shutdown and cleanup
 
 ## Image Generation Strategies
-- [ ] Create abstract `ImageGenerator` base class
-- [ ] Implement `MockImageGenerator` for testing
+- [x] Create abstract `ImageGenerator` base class
+- [x] Implement `MockImageGenerator` for testing
 - [ ] Implement `LocalSDXLGenerator` for local generation
-- [ ] Implement `FalAIGenerator` for remote FAL.AI service
+- [x] Implement `FalAIGenerator` for remote FAL.AI service
 - [ ] Implement `OpenAIGenerator` for DALL-E integration
-- [ ] Add strategy selection and configuration
+- [x] Add strategy selection and configuration
 
 ## Message Schemas & Communication
 - [ ] Define `RenderRequest` message schema validation

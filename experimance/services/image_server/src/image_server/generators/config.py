@@ -1,10 +1,12 @@
-from typing import Literal
+from typing import Literal, Union ,TYPE_CHECKING
 from pydantic import BaseModel, Field
+
+from experimance_common.config import Config
 
 DEFAULT_GENERATOR_TIMEOUT = 30  # Default timeout for image generation in seconds
 
 
-class BaseGeneratorConfig(BaseModel):
+class BaseGeneratorConfig(Config):
     """Base configuration for all image generators.
     
     This class defines common fields and provides a base for all generator configs.
@@ -23,3 +25,15 @@ class SDXLConfig(BaseGeneratorConfig):
     negative_prompt: str = "distorted, warped, blurry, text, cartoon"
     seed: int = 1
     prompt: str = "A beautiful landscape"
+
+
+# Only import and create the union type when type checking
+if TYPE_CHECKING:
+    from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
+    from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
+    
+    # Type for all possible generator configs
+    GeneratorConfigType = Union[
+        MockGeneratorConfig,
+        FalComfyGeneratorConfig,
+    ]

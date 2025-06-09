@@ -2,7 +2,7 @@ import os
 from typing import Optional, Literal
 from dotenv import load_dotenv
 
-from image_server.generators.config import SDXLConfig, BaseGeneratorConfig
+from image_server.generators.config import SDXLConfig
 
 load_dotenv(dotenv_path="../../.env", override=True)
 

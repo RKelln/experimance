@@ -55,6 +55,9 @@ from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.controller import ZmqControllerService
 from experimance_common.zmq.worker import ZmqWorkerService
 
+# logging
+from experimance_common.logger import configure_external_loggers
+
 __all__ = [
     # ZMQ utilities
     "ZmqPublisher",
@@ -100,4 +103,7 @@ __all__ = [
     "load_config_with_overrides",
     "Config",
     "ConfigError",
+
+    # logging utilities
+    "configure_external_loggers",
 ]

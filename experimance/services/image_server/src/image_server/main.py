@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Optional
 
 from image_server import ImageServerService
+from image_server.config import ImageServerConfig
 
 
 def setup_logging(log_level: str = "INFO") -> None:
     """Set up logging configuration."""
+    print(f"Setting up logging with level: {log_level}")
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -34,9 +36,9 @@ def parse_args() -> argparse.Namespace:
         description="Experimance Image Server Service"
     )
     parser.add_argument(
-        "--config",
+        "-c, --config, --config-file",
         type=Path,
-        default="config.toml",
+        default="services/image_server/config.toml",
         dest="config_file",
         help="Path to configuration file (default: config.toml)"
     )
@@ -65,10 +67,13 @@ async def main() -> None:
     
     config = {"generator_type": args.generator}
 
+    config = ImageServerConfig.from_overrides(
+        config_file=args.config_file,
+    )
+
     # Create and configure the service
     service = ImageServerService(
         config=config,
-        config_file=args.config_file,
     )
     
     await service.start()

@@ -8,8 +8,8 @@ satellite imagery for the installation.
 from .image_service import ImageServerService
 from .generators.generator import (
     ImageGenerator,
-    MockImageGenerator,
 )
+from .generators.mock.mock_generator import MockImageGenerator
 from .generators.fal.fal_comfy_generator import FalComfyGenerator
 from .generators.openai.openai_generator import OpenAIGenerator
 from .generators.local.sdxl_generator import LocalSDXLGenerator

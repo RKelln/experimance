@@ -18,13 +18,23 @@ from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.config import load_config_with_overrides
+from experimance_common.logger import configure_external_loggers
 
 from .config import ImageServerConfig
-from .generators.factory import create_generator
+from .generators.factory import create_generator_from_config
 from .generators.generator import ImageGenerator
 
-logger = logging.getLogger(__name__)
+from image_server.generators.mock.mock_generator import MockImageGenerator
+from image_server.generators.fal.fal_comfy_generator import FalComfyGenerator
+from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig, FalGeneratorConfig
 
+# Future generator implementations:
+# from image_server.generators.mock.mock_generator import MockGenerator, MockGeneratorConfig
+# from image_server.generators.openai.openai_generator import OpenAIGenerator, OpenAIGeneratorConfig
+# from image_server.generators.sdxl.sdxl_generator import SDXLGenerator, SDXLGeneratorConfig
+
+
+logger = logging.getLogger(__name__)
 
 class ImageServerService(ZmqPublisherSubscriberService):
     """Main image server service that handles render requests and publishes generated images.
@@ -34,28 +44,31 @@ class ImageServerService(ZmqPublisherSubscriberService):
     - Publishes ImageReady messages to the images channel
     - Supports multiple image generation strategies
     """
+    image_generator: ImageGenerator
+    config: ImageServerConfig
     
     def __init__(
         self,
-        service_name: str = "image-server",
-        config: Optional[Dict[str, Any]] = None,
-        config_file: Optional[str] = None,
-        args: Optional[Any] = None
+        config: ImageServerConfig,
+        service_name: Optional[str] = None,
     ):
         """Initialize the Image Server Service.
         
         Args:
             service_name: Name of this service instance
-            config: Configuration dictionary (overrides config_file)
-            config_file: Path to TOML configuration file
-            args: Command line arguments parsed by argparse
+            config: Service configuration object
         """
-        # Load and validate configuration using Pydantic
-        self.config = self._load_config(service_name, config, config_file, args)
-        
+        self.config = config
+        if service_name is not None:
+            self.config.service_name = service_name
+        if self.config.service_name is None:
+            self.config.service_name = "image-server"
+
         # Create cache directory
         self.config.cache_dir.mkdir(parents=True, exist_ok=True)
         
+        configure_external_loggers(logging.WARNING)
+
         # Initialize the base service
         super().__init__(
             service_name=self.config.service_name,
@@ -68,8 +81,26 @@ class ImageServerService(ZmqPublisherSubscriberService):
         # For compatibility with tests
         self._default_strategy = self.config.generator.default_strategy
         
-        # Generator instances (lazy-loaded)
-        self._generators: Dict[str, ImageGenerator] = {}
+        # Create generator directly from the configuration
+        strategy = config.generator.default_strategy
+        strategy_config = {}
+        
+        # Get strategy-specific config if available
+        if hasattr(config, strategy):
+            strategy_config_obj = getattr(config, strategy)
+            if strategy_config_obj:
+                if hasattr(strategy_config_obj, "model_dump"):
+                    strategy_config = strategy_config_obj.model_dump()
+                else:
+                    strategy_config = dict(strategy_config_obj)
+        
+        # Create the generator
+        self.generator = create_generator_from_config(
+            strategy=strategy,
+            config_data=strategy_config,
+            cache_dir=config.cache_dir,
+            timeout=getattr(config.generator, "timeout", 60)
+        )
         
         logger.info(f"ImageServerService initialized with strategy: {self.config.generator.default_strategy}")
     
@@ -96,7 +127,7 @@ class ImageServerService(ZmqPublisherSubscriberService):
             default_config=default_config,
             args=args
         )
-    
+
     async def start(self):
         """Start the image server service."""
         # Register message handlers
@@ -114,6 +145,8 @@ class ImageServerService(ZmqPublisherSubscriberService):
             message: The RenderRequest message containing generation parameters
         """
         try:
+            logger.debug(f"Received RenderRequest message: {message}")
+            
             # Validate required fields
             if not self._validate_render_request(message):
                 logger.error(f"Invalid RenderRequest message: {message}")
@@ -216,37 +249,16 @@ class ImageServerService(ZmqPublisherSubscriberService):
         if strategy is None:
             strategy = self.config.generator.default_strategy
         
-        # Get or create generator instance
-        generator = self._get_generator(strategy)
-        
         # Generate the image with timeout
         try:
             image_path = await asyncio.wait_for(
-                generator.generate_image(prompt, depth_map_b64, **kwargs),
-                timeout=self.config.generator.timeout_seconds
+                self.generator.generate_image(prompt, depth_map_b64, **kwargs),
+                timeout=self.config.generator.timeout
             )
             return image_path
         except asyncio.TimeoutError:
-            raise RuntimeError(f"Image generation timed out after {self.config.generator.timeout_seconds} seconds")
+            raise RuntimeError(f"Image generation timed out after {self.config.generator.timeout} seconds")
     
-    def _get_generator(self, strategy: Optional[str] = None) -> ImageGenerator:
-        """Get or create an image generator instance.
-        
-        Args:
-            strategy: Generator strategy to use
-            
-        Returns:
-            ImageGenerator instance
-        """
-        if strategy is None:
-            strategy = self.config.generator.default_strategy
-        
-        # Create generator if not cached
-        if strategy not in self._generators:
-            generator_config = self.config.get_generator_config(strategy)
-            self._generators[strategy] = create_generator(strategy, **generator_config)
-        
-        return self._generators[strategy]
     
     async def _publish_image_ready(self, request_id: str, image_path: str):
         """Publish an ImageReady message.
@@ -335,7 +347,7 @@ class ImageServerService(ZmqPublisherSubscriberService):
         logger.info("Stopping ImageServerService...")
         
         # Clean up generators
-        self._generators.clear()
+        await self.generator.stop()
         
         # Stop the base service
         await super().stop()
@@ -350,9 +362,11 @@ async def main():
     
     parser = argparse.ArgumentParser(description="Experimance Image Server Service")
     parser.add_argument(
-        "--config", "-c",
-        type=str,
-        help="Path to configuration file (TOML format)"
+        "-s, --config, --config-file",
+        type=Path,
+        default="services/image_server/config.toml",
+        dest="config_file",
+        help="Path to configuration file (default: config.toml)"
     )
     parser.add_argument(
         "--name", "-n",
@@ -383,7 +397,7 @@ async def main():
         help="Default image generation strategy"
     )
     parser.add_argument(
-        "--generator.timeout_seconds",
+        "--generator.timeout",
         type=int,
         help="Timeout for image generation in seconds"
     )
@@ -405,12 +419,16 @@ async def main():
         level=getattr(logging, args.log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+
+    config = ImageServerConfig.from_overrides(
+        config_file=args.config_file,
+        override_config=vars(args)
+    )
     
     # Create and start the service
     service = ImageServerService(
+        config=config,
         service_name=args.name,
-        config_file=args.config,
-        args=args
     )
 
     await service.start()
