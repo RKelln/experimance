@@ -4,15 +4,15 @@ Default configuration values for Experimance services.
 
 DEFAULT_PORTS = {
     "events_pub": 5555,
-    "events_pull": 5556,
-    "transition_pub": 5557,
-    "transition_pull": 5558,
-    "display_pub": 5559,
-    "display_pull": 5560,
-    "agent_pub": 5561,
-    "agent_pull": 5562,
-    "image_server_pub": 5563,
-    "image_request_pub": 5564,
+    "depth_pub": 5556,
+    "transition_pull": 5557,
+    "images_pub": 5558,
+    "agent_pub": 5559,
+    "display_pub": 5560,
+    "transitions_pull": 5561,
+    "loops_pull": 5562,
+    "image_server_pub": 5558,  # Same as images_pub
+    "core_pub": 5555,  # Same as events_pub
     "audio_pub": 5565,
     "audio_pull": 5566,
     "audio_osc_send_port": 5567,

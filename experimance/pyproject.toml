@@ -28,6 +28,7 @@ dependencies = [
     "experimance-transition>=0.1.0",
     "aiohttp>=3.11.18",
     "fal-client>=0.6.0",
+    "pyglet>=2.1.6",
 ]
 
 [tool.uv.workspace]

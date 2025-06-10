@@ -1,7 +1,8 @@
 ## Display service configuration
 
-# General settings
-fullscreen = true             # Whether to run in fullscreen mode
+# Display settings
+[display]
+fullscreen = false             # Whether to run in fullscreen mode
 monitor = 0                   # Monitor to display on (0 = primary)
 resolution = [1920, 1080]     # Resolution to use if not fullscreen
 fps_limit = 60                # Frame rate limit

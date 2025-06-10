@@ -59,9 +59,6 @@ ruff.toml.swo
 
 # project specific
 logs/
-images/
-saved_data/
-lunar_tools/
 
 # Rust code and artifacts
 *.rs.bk

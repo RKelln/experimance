@@ -772,6 +772,7 @@ dependencies = [
     { name = "experimance-transition" },
     { name = "fal-client" },
     { name = "image-server" },
+    { name = "pyglet" },
 ]
 
 [package.optional-dependencies]
@@ -804,6 +805,7 @@ requires-dist = [
     { name = "fal-client", specifier = ">=0.6.0" },
     { name = "image-server", editable = "services/image_server" },
     { name = "mypy", marker = "extra == 'dev'" },
+    { name = "pyglet", specifier = ">=2.1.6" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },

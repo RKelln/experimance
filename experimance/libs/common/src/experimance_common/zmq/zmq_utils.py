@@ -38,6 +38,10 @@ class MessageType(str, Enum):
     LOOP_REQUEST = "LoopRequest"
     HEARTBEAT = "Heartbeat"
     ALERT = "Alert"
+    # Display service message types
+    TEXT_OVERLAY = "TextOverlay"
+    REMOVE_TEXT = "RemoveText"
+    VIDEO_MASK = "VideoMask"
     # Add more message types as needed
 
 
