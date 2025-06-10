@@ -11,11 +11,12 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # Generator configuration
 [generator]
-default_strategy = "mock"     # Options: "fal", "openai", "local", "mock"
+default_strategy = "falai"     # Options: "falai", "openai", "local", "mock"
 
 # FAL.AI configuration
 [falai]
-endpoint = "comfy/RKelln/experimance_hyper_depth_v5"
+#endpoint = "comfy/RKelln/experimance_hyper_depth_v5"
+endpoint = "comfy/RKelln/experimancexilightningdepth"
 model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"
 lora_url = "https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor"
 lora_strength = 0.8

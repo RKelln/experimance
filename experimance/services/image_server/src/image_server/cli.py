@@ -43,7 +43,7 @@ logger = logging.getLogger("image_server_cli")
 
 # Define some sample prompts
 SAMPLE_PROMPTS = {
-    "aerial_city": "Aerial view of a coastal city with tall skyscrapers and a beautiful beach",
+    "default": "colorful satellite image in the style of experimance, (dense urban:1.2) dramatic landscape, buildings, farmland, (industrial:1.1), (rivers, lakes:1.1), busy highways, hills, vibrant hyper detailed photorealistic maximum detail, 32k, high resolution ultra HD",
     "forest_scene": "Dense forest with ancient trees, sunlight filtering through the canopy",
     "mountain_view": "Majestic snow-capped mountains with a crystal clear lake in the foreground",
     "desert_landscape": "Vast desert landscape with striking sand dunes and a small oasis",

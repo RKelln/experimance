@@ -1,3 +1,8 @@
+"""
+FAL.AI Image Generation using ComfyUI Workflow
+
+$ uv run -m image_server.generators.fal.fal_comfy_generator
+"""
 import asyncio
 import logging
 import time
@@ -187,6 +192,11 @@ if __name__ == "__main__":
     # $ uv run -m image_server.generators.fal.fal_comfy_generator
     parser = argparse.ArgumentParser(description="FAL.AI Image Generation Example")
     parser.add_argument("--config", type=str, help="Config toml")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--output_dir", type=str, default="/tmp", help="Directory to save generated images")
+    parser.add_argument("--timeout", type=int, default=60, help="Timeout for image generation in seconds")
+    parser.add_argument("--endpoint", type=str, default="fal-ai/fast-lightning-sdxl", help="FAL.AI endpoint to use")
+    parser.add_argument("--seed", type=int, default=1, help="Seed for image generation")
     args = parser.parse_args()
 
     # Configure root logger
@@ -209,11 +219,13 @@ if __name__ == "__main__":
     # Example 2: Pass configuration directly to constructor
     comfy_config = FalComfyGeneratorConfig(
         strategy="falai",
-        endpoint="comfy/RKelln/experimance_hyper_depth_v5",
+        #endpoint="comfy/RKelln/experimance_hyper_depth_v5",
+        endpoint="comfy/RKelln/experimancexilightningdepth",
         model_url="https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16",
         lora_url="https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor",
-        seed=1,
-        timeout=60,
+        seed=args.seed,
+        timeout=args.timeout,
+        negative_prompt="distorted, warped, blurry, text, cartoon, illustration, low quality, lowres"
     )
     experimance_generator = FalComfyGenerator(config=comfy_config)
     
