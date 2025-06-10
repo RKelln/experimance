@@ -108,17 +108,18 @@ class ZmqBase:
 
 class ZmqPublisher(ZmqBase):
     """A ZeroMQ publisher that sends messages on a specific topic."""
-    
-    def __init__(self, address: str, topic: str = "", use_asyncio: bool = True):
+    topic: str
+
+    def __init__(self, address: str, topic: str | MessageType = "", use_asyncio: bool = True):
         """Initialize a ZeroMQ publisher.
         
         Args:
             address: ZeroMQ address to bind to
-            topic: Topic to publish on
+            topic: Topic to publish on (can be a string or MessageType enum)
             use_asyncio: Whether to use asyncio
         """
         super().__init__(address, use_asyncio)
-        self.topic = topic
+        self.topic = topic_to_str(topic)  # Convert topic to string
         
         assert self.context is not None, "ZMQ context was not properly initialized"
         
@@ -130,7 +131,7 @@ class ZmqPublisher(ZmqBase):
         if not use_asyncio:
             self.socket.setsockopt(zmq.SNDTIMEO, DEFAULT_TIMEOUT)
         
-        logger.debug(f"Publisher bound to {address} on topic '{topic}'")
+        logger.debug(f"Publisher bound to {address} on topic '{self.topic}'")
     
     def publish(self, message: Dict[str, Any]) -> bool:
         """Publish a message on the topic.
@@ -185,11 +186,15 @@ class ZmqPublisher(ZmqBase):
             logger.error(f"Error publishing message asynchronously: {e}")
             return False
 
+    def __str__(self) -> str:
+        """String representation of the publisher."""
+        return f"ZmqPublisher(address={self.address}, topic={self.topic})"
 
 class ZmqSubscriber(ZmqBase):
     """A ZeroMQ subscriber that receives messages on specific topics."""
-    
-    def __init__(self, address: str, topics: List[str], use_asyncio: bool = True):
+    topics: List[str]
+
+    def __init__(self, address: str, topics: List[str|MessageType], use_asyncio: bool = True):
         """Initialize a ZeroMQ subscriber.
         
         Args:
@@ -198,8 +203,9 @@ class ZmqSubscriber(ZmqBase):
             use_asyncio: Whether to use asyncio
         """
         super().__init__(address, use_asyncio)
-        self.topics = topics
-        
+
+        self.topics = topics_to_strs(topics)  # Convert topics to string representations
+
         # Create the socket
         assert self.context is not None, "ZMQ context was not properly initialized"
         self.socket = self.context.socket(zmq.SUB)
@@ -210,10 +216,10 @@ class ZmqSubscriber(ZmqBase):
             self.socket.setsockopt(zmq.RCVTIMEO, DEFAULT_TIMEOUT)
         
         # Subscribe to topics
-        for topic in topics:
+        for topic in self.topics:
             self.socket.setsockopt_string(zmq.SUBSCRIBE, topic)
         
-        logger.debug(f"Subscriber connected to {address} with topics {topics}")
+        logger.debug(f"Subscriber connected to {address} with topics {self.topics}")
     
     def receive(self) -> Tuple[str, Dict[str, Any]]:
         """Receive a message from the subscribed topics.
@@ -291,6 +297,10 @@ class ZmqSubscriber(ZmqBase):
         except Exception as e:
             logger.error(f"Error receiving message: {e}")
             return "", {}
+        
+    def __str__(self) -> str:
+        """String representation of the subscriber."""
+        return f"ZmqSubscriber(address={self.address}, topics={self.topics})"
 
 
 class ZmqPushSocket(ZmqBase):
@@ -627,3 +637,21 @@ class ZmqConnectingPushSocket(ZmqBase):
         except Exception as e:
             logger.error(f"Error pushing message: {e}")
             return False
+
+
+def topic_to_str(topic: str | MessageType) -> str:
+    """Convert a topic to their string representation."""
+    if isinstance(topic, MessageType):
+        return topic.value
+    return str(topic)
+
+def topics_to_strs(topics: List[str | MessageType]) -> List[str]:
+    """Convert a list of topics to their string representations.
+    
+    Args:
+        topics: List of topics to convert (can contain strings or MessageType enums)
+        
+    Returns:
+        List of string representations of the topics
+    """
+    return [topic_to_str(topic) for topic in topics]

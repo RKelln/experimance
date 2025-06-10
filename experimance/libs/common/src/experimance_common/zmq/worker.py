@@ -50,8 +50,8 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
     async def start(self):
         """Start the worker service."""
         # Initialize subscriber for receiving control messages
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
-        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.subscribe_topics}")
+        self.subscriber = ZmqSubscriber(self.sub_address, self.subscribe_topics)
         self.register_socket(self.subscriber)
         
         # Initialize pull socket for receiving tasks

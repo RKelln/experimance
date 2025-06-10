@@ -95,7 +95,7 @@ class AudioService(ZmqSubscriberService):
     async def start(self):
         """Start the audio service."""
         # Initialize the subscriber
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.subscribe_topics}")
         await super().start()
         
         # Resolve SuperCollider script path if auto-start is enabled

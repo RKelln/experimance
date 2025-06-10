@@ -57,17 +57,17 @@ class MockImageGenerator(ImageGenerator):
         draw.text((x, y), text, fill=self.config.text_color, font=font)
         
         # Add era/biome info if provided
-        era = kwargs.get("era", "unknown")
-        biome = kwargs.get("biome", "unknown")
-        info_text = f"Era: {era}, Biome: {biome}"
+        #era = kwargs.get("era", "unknown")
+        #biome = kwargs.get("biome", "unknown")
+        #info_text = f"Era: {era}, Biome: {biome}"
         
         # Add info text at the bottom
-        info_bbox = draw.textbbox((0, 0), info_text, font=font)
-        info_width = info_bbox[2] - info_bbox[0]
-        info_x = (self.config.image_size[0] - info_width) // 2
-        info_y = self.config.image_size[1] - 50
+        #info_bbox = draw.textbbox((0, 0), info_text, font=font)
+        #info_width = info_bbox[2] - info_bbox[0]
+        #info_x = (self.config.image_size[0] - info_width) // 2
+        #info_y = self.config.image_size[1] - 50
         
-        draw.text((info_x, info_y), info_text, fill=self.config.text_color, font=font)
+        #draw.text((info_x, info_y), info_text, fill=self.config.text_color, font=font)
         
         # Save the image
         output_path = self._get_output_path("png")

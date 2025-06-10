@@ -38,8 +38,8 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService, ZmqPul
             service_name=service_name,
             pub_address=pub_address,
             sub_address=sub_address,
-            topics=topics,
-            heartbeat_topic=heartbeat_topic,
+            subscribe_topics=topics,
+            publish_topic=heartbeat_topic,
             service_type=service_type
         )
         ZmqPushService.__init__(self, service_name=service_name, push_address=push_address, service_type=service_type)
@@ -52,12 +52,12 @@ class ZmqControllerService(ZmqPublisherSubscriberService, ZmqPushService, ZmqPul
         """Start the controller service."""
         # Initialize publisher for broadcasting
         logger.info(f"Initializing publisher on {self.pub_address}")
-        self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
+        self.publisher = ZmqPublisher(self.pub_address, self.publish_topic)
         self.register_socket(self.publisher)
         
         # Initialize subscriber for receiving responses
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
-        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.subscribe_topics}")
+        self.subscriber = ZmqSubscriber(self.sub_address, self.subscribe_topics)
         self.register_socket(self.subscriber)
         
         # Initialize push socket for distributing tasks

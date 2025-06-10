@@ -10,7 +10,7 @@ import logging
 
 from experimance_common.constants import HEARTBEAT_TOPIC
 from experimance_common.zmq.base_zmq import BaseZmqService
-from experimance_common.zmq.zmq_utils import ZmqPublisher, ZmqSubscriber
+from experimance_common.zmq.zmq_utils import ZmqPublisher, ZmqSubscriber, topics_to_strs, topic_to_str
 from experimance_common.zmq.publisher import ZmqPublisherService
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 
@@ -26,8 +26,8 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
     def __init__(self, service_name: str,
                  pub_address: str,
                  sub_address: str,
-                 topics: list,
-                 heartbeat_topic: str = HEARTBEAT_TOPIC,
+                 subscribe_topics: list,
+                 publish_topic: str = HEARTBEAT_TOPIC,
                  service_type: str = "pubsub"):
         """Initialize a publisher-subscriber service.
         
@@ -36,14 +36,14 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
             pub_address: ZeroMQ address to bind publisher to
             sub_address: ZeroMQ address to connect subscriber to
             topics: List of topics to subscribe to
-            heartbeat_topic: Topic for heartbeat messages
+            topic: Topic for messages
             service_type: Type of service (for logging and monitoring)
         """
         BaseZmqService.__init__(self, service_name, service_type)
         self.pub_address = pub_address
         self.sub_address = sub_address
-        self.topics = topics
-        self.heartbeat_topic = heartbeat_topic
+        self.subscribe_topics = topics_to_strs(subscribe_topics)
+        self.publish_topic = topic_to_str(publish_topic)
         self.publisher = None
         self.subscriber = None
         self.message_handlers = {}
@@ -51,13 +51,13 @@ class ZmqPublisherSubscriberService(ZmqPublisherService, ZmqSubscriberService):
     async def start(self):
         """Start the publisher-subscriber service."""
         # Initialize publisher
-        logger.info(f"Initializing publisher on {self.pub_address}")
-        self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
+        self.publisher = ZmqPublisher(self.pub_address, self.publish_topic)
+        logger.info(f"Initialized {self.publisher}")
         self.register_socket(self.publisher)
         
         # Initialize subscriber
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
-        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        self.subscriber = ZmqSubscriber(self.sub_address, self.subscribe_topics)
+        logger.info(f"Initialized {self.subscriber}")
         self.register_socket(self.subscriber)
         
         # Register tasks

@@ -274,7 +274,7 @@ class TestPublisherService:
         service = ZmqPublisherService(
             service_name="test-publisher", 
             pub_address="tcp://*:5555",
-            heartbeat_topic="test.heartbeat"
+            topic="test.heartbeat"
         )
         
         async with active_service(service) as s:
@@ -457,8 +457,8 @@ class TestCombinedServices:
             service_name="test-pubsub",
             pub_address="tcp://*:5555",
             sub_address="tcp://localhost:5556",
-            topics=["test.topic"],
-            heartbeat_topic="test.heartbeat"
+            subscribe_topics=["test.topic"],
+            publish_topic="test.heartbeat"
         )
         
         async with active_service(service) as s:

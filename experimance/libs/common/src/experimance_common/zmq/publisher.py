@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 from experimance_common.constants import HEARTBEAT_INTERVAL, HEARTBEAT_TOPIC
 from experimance_common.service_state import ServiceState
 from experimance_common.zmq.base_zmq import BaseZmqService
-from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher
+from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher, topic_to_str, topics_to_strs
 
 logger = logging.getLogger(__name__)
 
@@ -26,25 +26,25 @@ class ZmqPublisherService(BaseZmqService):
     
     def __init__(self, service_name: str, 
                  pub_address: str, 
-                 heartbeat_topic: str = HEARTBEAT_TOPIC,
+                 topic: str = HEARTBEAT_TOPIC,
                  service_type: str = "publisher"):
         """Initialize a publisher service.
         
         Args:
             service_name: Unique name for this service instance
             pub_address: ZeroMQ address to bind publisher to
-            heartbeat_topic: Topic for heartbeat messages
+            topic: Topic for messages
             service_type: Type of service (for logging and monitoring)
         """
         super().__init__(service_name, service_type)
         self.pub_address = pub_address
-        self.heartbeat_topic = heartbeat_topic
+        self.topic = topic_to_str(topic)
         self.publisher:Optional[ZmqPublisher] = None
     
     async def start(self):
         """Start the publisher service."""
-        logger.info(f"Initializing publisher on {self.pub_address}")
-        self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
+        self.publisher = ZmqPublisher(self.pub_address, self.topic)
+        logger.info(f"Initialized {self.publisher}")
         self.register_socket(self.publisher)
         
         # Register heartbeat task - _register_task will automatically create a Task
@@ -100,9 +100,14 @@ class ZmqPublisherService(BaseZmqService):
             self.errors += 1
             return False
         
+        if topic is not None:
+            topic = topic_to_str(topic)
+            logger.debug(f"Publishing message to custom topic: {topic}")
+            
         # If topic provided, create a new publisher or use existing one with that topic
         publisher = self.publisher
-        if topic is not None and topic != self.heartbeat_topic:
+        if topic is not None and topic != self.topic:
+            logger.warning(f"Publishing to custom topic {topic}, not the default {self.topic}")
             publisher = ZmqPublisher(self.pub_address, topic)
             try:
                 success = await publisher.publish_async(message)

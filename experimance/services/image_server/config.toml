@@ -5,13 +5,13 @@ cache_dir = "images"         # Directory to cache generated images
 max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # ZeroMQ configuration
-[zmq]
-image_request_pub = "tcp://localhost:5555"  # Address to subscribe to events on
-images_pub_address = "tcp://*:5558"         # Address to publish images on
+#[zmq]
+#image_request_pub = "tcp://localhost:5555"  # Address to subscribe to events on
+#images_pub_address = "tcp://*:5558"         # Address to publish images on
 
 # Generator configuration
 [generator]
-default_strategy = "falai"     # Options: "fal", "openai", "local", "mock"
+default_strategy = "mock"     # Options: "fal", "openai", "local", "mock"
 
 # FAL.AI configuration
 [falai]

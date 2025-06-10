@@ -62,7 +62,7 @@ class TestZmqService(ZmqPublisherService):
         super().__init__(
             service_name=name,
             pub_address="tcp://*:15555",
-            heartbeat_topic="test.signal"
+            topic="test.signal"
         )
         self.iterations = 0
     

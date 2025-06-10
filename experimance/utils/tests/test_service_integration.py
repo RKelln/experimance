@@ -77,7 +77,7 @@ class EventPublisher(ZmqPublisherService):
         super().__init__(
             service_name=name,
             pub_address="tcp://*:16555",
-            heartbeat_topic="events.heartbeat"
+            topic="events.heartbeat"
         )
         self.metrics_service = metrics_service
         self.event_count = 0

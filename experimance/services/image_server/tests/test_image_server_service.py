@@ -4,6 +4,8 @@ Unit tests for the ImageServerService using TDD approach.
 
 This test file follows the established patterns from the experimance common library
 and tests the image server service implementation.
+
+$ uv run -m services.image_server.tests.test_image_server_service
 """
 
 import asyncio
@@ -18,6 +20,8 @@ from typing import Dict, Any
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.zmq.zmq_utils import MessageType
 from experimance_common.base_service import ServiceState
+from image_server.config import ImageServerConfig
+from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 
 # Import reusable test utilities and mocks
 from utils.tests.test_utils import (
@@ -27,7 +31,8 @@ from utils.tests.test_utils import (
 
 # Import the classes we'll test
 from image_server.image_service import ImageServerService
-from image_server.generators.generator import ImageGenerator, MockImageGenerator
+from image_server.generators.generator import ImageGenerator
+from image_server.generators.mock.mock_generator import MockImageGenerator
 
 # Configure logging for tests
 logging.basicConfig(level=logging.DEBUG, 
@@ -45,26 +50,30 @@ class TestImageServerService:
             yield Path(temp_dir)
 
     @pytest.fixture
-    def mock_config(self, temp_config_dir):
+    def mock_config(self, temp_config_dir: Path):
         """Create a mock configuration for testing."""
-        return {
-            "cache_dir": str(temp_config_dir / "images"),
-            "max_cache_size_gb": 1.0,
-            "zmq": {
-                "events_sub_address": "tcp://localhost:5555",
-                "images_pub_address": "tcp://*:5558"
-            },
-            "generator": {
-                "default_strategy": "mock",
-                "timeout_seconds": 5
-            }
-        }
+        from image_server.config import ImageServerConfig, ZmqConfig, GeneratorConfig
+        from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
+        
+        return ImageServerConfig(
+            service_name="test-image-server",
+            cache_dir=temp_config_dir / "images",
+            max_cache_size_gb=1.0,
+            zmq=ZmqConfig(
+                events_sub_address="tcp://localhost:5555",
+                images_pub_address="tcp://*:5558"
+            ),
+            generator=GeneratorConfig(
+                default_strategy="mock",
+                timeout=5
+            ),
+            mock=MockGeneratorConfig()
+        )
 
     @pytest.fixture
-    async def image_service(self, mock_config):
+    async def image_service(self, mock_config: ImageServerConfig):
         """Create an ImageServerService instance for testing."""
         service = ImageServerService(
-            service_name="test-image-server",
             config=mock_config
         )
         yield service
@@ -116,7 +125,7 @@ class TestImageServerService:
     @pytest.mark.asyncio
     @patch('experimance_common.zmq.publisher.ZmqPublisher', MockZmqPublisher)
     @patch('experimance_common.zmq.subscriber.ZmqSubscriber', MockZmqSubscriber)
-    async def test_zmq_socket_initialization(self, image_service):
+    async def test_zmq_socket_initialization(self, image_service: ImageServerService):
         """Test that ZMQ sockets are properly initialized."""
         await image_service.start()
         
@@ -190,11 +199,7 @@ class TestImageServerService:
         await image_service.start()
         
         # Test default strategy
-        generator = image_service._get_generator()
-        assert isinstance(generator, MockImageGenerator)
-        
-        # Test strategy override
-        generator = image_service._get_generator("mock")
+        generator = image_service.generator
         assert isinstance(generator, MockImageGenerator)
         
         await image_service.stop()
@@ -219,30 +224,32 @@ class TestImageServerService:
         await image_service.stop()
 
     @pytest.mark.asyncio
-    async def test_cache_directory_creation(self, temp_config_dir):
+    async def test_cache_directory_creation(self, temp_config_dir: Path):
         """Test that cache directory is created if it doesn't exist."""
         # Use a different subdirectory to avoid conflicts with other tests
+        from image_server.config import ImageServerConfig, ZmqConfig, GeneratorConfig
+        from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
+        
         cache_dir = temp_config_dir / "test_cache"
         assert not cache_dir.exists()
         
         # Create service with this specific cache directory
-        config = {
-            "cache_dir": str(cache_dir),
-            "max_cache_size_gb": 1.0,
-            "zmq": {
-                "events_sub_address": "tcp://localhost:5555",
-                "images_pub_address": "tcp://*:5558"
-            },
-            "generator": {
-                "default_strategy": "mock",
-                "timeout_seconds": 5
-            }
-        }
-        
-        service = ImageServerService(
+        config = ImageServerConfig(
             service_name="test-cache-service",
-            config=config
+            cache_dir=cache_dir,
+            max_cache_size_gb=1.0,
+            zmq=ZmqConfig(
+                events_sub_address="tcp://localhost:5555",
+                images_pub_address="tcp://*:5558"
+            ),
+            generator=GeneratorConfig(
+                default_strategy="mock",
+                timeout=5
+            ),
+            mock=MockGeneratorConfig()
         )
+        
+        service = ImageServerService(config=config)
         
         try:
             await service.start()
@@ -264,16 +271,28 @@ class TestImageGenerators:
         with tempfile.TemporaryDirectory() as temp_dir:
             yield Path(temp_dir)
 
+    @pytest.fixture
+    def mock_generator_config(self):
+        """Create mock generator configuration for testing."""
+        from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
+        return MockGeneratorConfig()
+
     @pytest.mark.asyncio
-    async def test_mock_generator_initialization(self):
+    async def test_mock_generator_initialization(self, mock_generator_config: MockGeneratorConfig):
         """Test MockImageGenerator initialization."""
-        generator = MockImageGenerator()
+        generator = MockImageGenerator(
+            config=mock_generator_config, 
+            output_dir="/tmp"
+        )
         assert isinstance(generator, ImageGenerator)
 
     @pytest.mark.asyncio
-    async def test_mock_generator_generate_image(self, temp_dir):
+    async def test_mock_generator_generate_image(self, temp_dir: Path, mock_generator_config: MockGeneratorConfig):
         """Test image generation with MockImageGenerator."""
-        generator = MockImageGenerator(output_dir=str(temp_dir))
+        generator = MockImageGenerator(
+            config=mock_generator_config,
+            output_dir=str(temp_dir)
+        )
         
         prompt = "A test image"
         depth_map = "mock_base64_data"
@@ -286,9 +305,12 @@ class TestImageGenerators:
         assert Path(image_path).suffix in ['.png', '.jpg', '.jpeg']
 
     @pytest.mark.asyncio
-    async def test_generator_error_handling(self, temp_dir):
+    async def test_generator_error_handling(self, temp_dir: Path, mock_generator_config: MockGeneratorConfig):
         """Test error handling in generators."""
-        generator = MockImageGenerator(output_dir=str(temp_dir))
+        generator = MockImageGenerator(
+            config=mock_generator_config,
+            output_dir=str(temp_dir)
+        )
         
         # Test with invalid parameters
         with pytest.raises(ValueError):
@@ -301,24 +323,28 @@ class TestImageServerIntegration:
     @pytest.fixture
     def integration_config(self):
         """Configuration for integration testing."""
-        return {
-            "cache_dir": "/tmp/test_images",
-            "max_cache_size_gb": 0.1,  # Small cache for testing
-            "zmq": {
-                "events_sub_address": "tcp://localhost:15555",  # Use different ports for testing
-                "images_pub_address": "tcp://*:15558"
-            },
-            "generator": {
-                "default_strategy": "mock",
-                "timeout_seconds": 2
-            }
-        }
+        from image_server.config import ImageServerConfig, ZmqConfig, GeneratorConfig
+        from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
+        
+        return ImageServerConfig(
+            service_name="integration-test-server",
+            cache_dir=Path("/tmp/test_images"),
+            max_cache_size_gb=0.1,  # Small cache for testing
+            zmq=ZmqConfig(
+                events_sub_address="tcp://localhost:15555",  # Use different ports for testing
+                images_pub_address="tcp://*:15558"
+            ),
+            generator=GeneratorConfig(
+                default_strategy="mock",
+                timeout=2
+            ),
+            mock=MockGeneratorConfig()
+        )
 
     @pytest.mark.asyncio
-    async def test_end_to_end_image_generation(self, integration_config):
+    async def test_end_to_end_image_generation(self, integration_config: ImageServerConfig):
         """Test end-to-end image generation flow."""
         service = ImageServerService(
-            service_name="integration-test-server",
             config=integration_config
         )
         
@@ -361,11 +387,12 @@ class TestImageServerIntegration:
             await service.stop()
 
     @pytest.mark.asyncio
-    async def test_concurrent_request_handling(self, integration_config):
+    async def test_concurrent_request_handling(self, integration_config: ImageServerConfig):
         """Test handling multiple concurrent requests."""
+        # Use the existing integration_config but update the service name
+        updated_config = integration_config.model_copy(update={"service_name": "concurrent-test-server"})
         service = ImageServerService(
-            service_name="concurrent-test-server",
-            config=integration_config
+            config=updated_config
         )
         
         try:

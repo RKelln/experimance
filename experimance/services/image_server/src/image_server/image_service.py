@@ -75,7 +75,8 @@ class ImageServerService(ZmqPublisherSubscriberService):
             service_type="image-server",
             pub_address=self.config.zmq.images_pub_address,
             sub_address=self.config.zmq.events_sub_address,
-            topics=[MessageType.RENDER_REQUEST]
+            subscribe_topics=[MessageType.RENDER_REQUEST],
+            publish_topic=MessageType.IMAGE_READY,
         )
         
         # For compatibility with tests
@@ -146,23 +147,23 @@ class ImageServerService(ZmqPublisherSubscriberService):
         """
         try:
             logger.debug(f"Received RenderRequest message: {message}")
-            
+
             # Validate required fields
             if not self._validate_render_request(message):
                 logger.error(f"Invalid RenderRequest message: {message}")
                 return
             
             request_id = message["request_id"]
-            era = message["era"]
-            biome = message["biome"]
+            #era = message["era"]
+            #biome = message["biome"]
             prompt = message["prompt"]
             depth_map_b64 = message.get("depth_map_png")
             
-            logger.info(f"Processing RenderRequest {request_id} for era={era}, biome={biome}")
+            logger.info(f"Processing RenderRequest {request_id}")
             
             # Generate image asynchronously
             asyncio.create_task(self._process_render_request(
-                request_id, era, biome, prompt, depth_map_b64
+                request_id, prompt, depth_map_b64
             ))
             
         except Exception as e:
@@ -177,7 +178,7 @@ class ImageServerService(ZmqPublisherSubscriberService):
         Returns:
             True if message is valid, False otherwise
         """
-        required_fields = ["request_id", "era", "biome", "prompt"]
+        required_fields = ["request_id", "prompt"]
         
         for field in required_fields:
             if field not in message or not message[field]:
@@ -194,8 +195,6 @@ class ImageServerService(ZmqPublisherSubscriberService):
     async def _process_render_request(
         self,
         request_id: str,
-        era: str,
-        biome: str,
         prompt: str,
         depth_map_b64: Optional[str] = None
     ):
@@ -213,8 +212,6 @@ class ImageServerService(ZmqPublisherSubscriberService):
             image_path = await self._generate_image(
                 prompt=prompt,
                 depth_map_b64=depth_map_b64,
-                era=era,
-                biome=biome
             )
             
             # Publish ImageReady message

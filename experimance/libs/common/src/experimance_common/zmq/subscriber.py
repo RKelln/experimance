@@ -37,14 +37,14 @@ class ZmqSubscriberService(BaseZmqService):
         """
         super().__init__(service_name, service_type)
         self.sub_address = sub_address
-        self.topics = topics
+        self.subscribe_topics = topics
         self.subscriber = None
         self.message_handlers = {}
     
     async def start(self):
         """Start the subscriber service."""
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
-        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        self.subscriber = ZmqSubscriber(self.sub_address, self.subscribe_topics)
+        logger.info(f"Initialized {self.subscriber}")
         self.register_socket(self.subscriber)
         
         # Register message listening task - _register_task will automatically create a Task
@@ -63,7 +63,7 @@ class ZmqSubscriberService(BaseZmqService):
             topic: Topic to handle messages for
             handler: Function to call with message data (can be sync or async)
         """
-        if topic not in self.topics:
+        if topic not in self.subscribe_topics:
             logger.warning(f"Registering handler for topic {topic} which is not in subscription list")
         
         self.message_handlers[topic] = handler

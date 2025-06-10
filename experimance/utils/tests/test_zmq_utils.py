@@ -34,11 +34,14 @@ class TestZmqPubSub:
     """Tests for Publisher-Subscriber pattern."""
 
     @pytest.fixture
-    async def setup_pubsub_async(self):
+    async def setup_pubsub_async(self, request):
         """Setup and teardown for async pub/sub tests."""
+        # Get topic from request.param if available, otherwise use default
+        topic = getattr(request, "param", "test-topic")
+        
         # Create publisher and subscriber
-        publisher = ZmqPublisher(f"tcp://*:{TEST_PUB_SUB_PORT}", "test-topic")
-        subscriber = ZmqSubscriber(f"tcp://localhost:{TEST_PUB_SUB_PORT}", ["test-topic"])
+        publisher = ZmqPublisher(f"tcp://*:{TEST_PUB_SUB_PORT}", topic)
+        subscriber = ZmqSubscriber(f"tcp://localhost:{TEST_PUB_SUB_PORT}", [topic])
         
         # Allow time for connection to establish
         await asyncio.sleep(0.5)
@@ -75,6 +78,32 @@ class TestZmqPubSub:
         except ZmqTimeoutError:
             pytest.fail("Timed out waiting for message")
     
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("setup_pubsub_async", [MessageType.RENDER_REQUEST], indirect=True)
+    async def test_pub_sub_messagetype_async(self, setup_pubsub_async):
+        """Test asynchronous publish-subscribe communication with MessageType topic."""
+        publisher, subscriber = setup_pubsub_async
+        
+        # Test message
+        test_message = {"type": MessageType.HEARTBEAT, "timestamp": time.time()}
+        
+        # Publish message
+        success = await publisher.publish_async(test_message)
+        assert success, "Failed to publish message"
+        
+        # Give some time for message to be delivered
+        await asyncio.sleep(0.5)
+        
+        try:
+            # Receive message with timeout built into the implementation
+            topic, message = await subscriber.receive_async()
+            
+            # Verify
+            assert topic == MessageType.RENDER_REQUEST.value, f"Unexpected topic: {topic}"
+            assert message["type"] == test_message["type"], "Message content mismatch"
+        except ZmqTimeoutError:
+            pytest.fail("Timed out waiting for message")
+
     @pytest.fixture
     def setup_pubsub_sync(self):
         """Setup and teardown for sync pub/sub tests."""

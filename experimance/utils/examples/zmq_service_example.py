@@ -90,12 +90,12 @@ class ExampleController(ZmqControllerService):
         """Start the controller service with additional tasks."""
         # Initialize publisher for broadcasting
         logger.info(f"Initializing publisher on {self.pub_address}")
-        self.publisher = ZmqPublisher(self.pub_address, self.heartbeat_topic)
+        self.publisher = ZmqPublisher(self.pub_address, self.publish_topic)
         self.register_socket(self.publisher)
         
         # Initialize subscriber for receiving responses (dummy since not used)
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
-        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.subscribe_topics}")
+        self.subscriber = ZmqSubscriber(self.sub_address, self.subscribe_topics)
         self.register_socket(self.subscriber)
         
         # Initialize push socket for distributing tasks
@@ -308,8 +308,8 @@ class ExampleWorker(ZmqWorkerService):
     async def start(self):
         """Start the worker service with additional handlers."""
         # Initialize subscriber for receiving control messages
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.topics}")
-        self.subscriber = ZmqSubscriber(self.sub_address, self.topics)
+        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.subscribe_topics}")
+        self.subscriber = ZmqSubscriber(self.sub_address, self.subscribe_topics)
         self.register_socket(self.subscriber)
         
         # Initialize pull socket for receiving tasks
