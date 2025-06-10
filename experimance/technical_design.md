@@ -17,15 +17,15 @@ Soft music plays from nearby speakers along with environmental audio that matche
 ### Eras
 The piece has different states, based of eras of human development:
 
-Wilderness (no humans)
-Pre-industrial (villages)
-Early industrial (1600s)
-Late industrial (1800s)
-Early modern (1900-1960)
-Modern (2000-2020)
-AI (2030+)
-Post-apocalyptic
-Ruins
+**Wilderness** (no humans)
+**Pre-industrial** (villages)
+**Early industrial** (1600s)
+**Late industrial** (1800s)
+**Early modern** (1900-1960)
+**Modern** (2000-2020)
+**AI/Future** (2030+)
+**Post-apocalyptic**
+**Ruins**
 
 ### Typical interaction Flow
 
@@ -45,14 +45,14 @@ Ruins
 
 **Message Bus**: ZeroMQ PUB/SUB (JSON packets).
 
-| Channel / Port                      | Pattern       | From (socket)                                                         | To (socket)                                                     | Notes                                                                                                                               |
-| ----------------------------------- | ------------- | --------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `depth/heightmap` (`tcp://*:5556`)  | PUB ▶ SUB     | `depth_proc` *(PUB)*                                                  | `experimance` *(SUB)*                                           | ~15 Hz JSON: `{ "hand_detected": bool, "depth_map_png": "<base64_optional>" }`. PNG only if changed & no hand.                   |
-| `events` (`tcp://*:5555`)           | PUB ▶ SUB     | `experimance` *(PUB)*                                                 | `prompter` (if separate), `image_server`, `display`, `audio`, `agent` *(SUB)* | Topics: `EraChanged` (includes `era`, `biome`), `RenderRequest`, `Idle`.                                                            |
-| `images` (`tcp://*:5558`)           | PUB ▶ SUB     | `image_server (PUB)`, `transition_worker (PUB)`, `animate_worker (PUB)` | `display` *(SUB)*                                               | JSON payloads with a `type` field (e.g., "ImageReady", "TransitionReady", "LoopReady") for dispatching. PNG/URL meta per frame. |
-| `agent_ctrl` (`tcp://*:5559`)       | PUB ▶ SUB     | `agent` *(PUB)*                                                       | `experimance`, `audio` *(SUB)*                                  | JSON: `AgentControlEvent` (e.g., `sub_type: "SuggestBiome"`, `sub_type: "AudiencePresent"`).                                     |
-| `transitions` (`tcp://*:5561`)      | PUSH ▶ PULL   | `experimance` *(PUSH)*                                                | `transition_worker.rs` *(PULL)*                                 | `TransitionRequest` (see schema)                                                                                                    |
-| `loops` (`tcp://*:5562`)            | PUSH ▶ PULL   | `experimance` *(PUSH)*                                                | `animate_worker` (optional) *(PULL)*                           | `LoopRequest` (see schema)                                                                                                          |
+| Channel / Port                     | Pattern     | From (socket)                                                           | To (socket)                                                                   | Notes                                                                                                                           |
+| ---------------------------------- | ----------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `depth/heightmap` (`tcp://*:5556`) | PUB ▶ SUB   | `depth_proc` *(PUB)*                                                    | `experimance` *(SUB)*                                                         | ~15 Hz JSON: `{ "hand_detected": bool, "depth_map_png": "<base64_optional>" }`. PNG only if changed & no hand.                  |
+| `events` (`tcp://*:5555`)          | PUB ▶ SUB   | `experimance` *(PUB)*                                                   | `prompter` (if separate), `image_server`, `display`, `audio`, `agent` *(SUB)* | Topics: `EraChanged` (includes `era`, `biome`), `RenderRequest`, `Idle`.                                                        |
+| `images` (`tcp://*:5558`)          | PUB ▶ SUB   | `image_server (PUB)`, `transition_worker (PUB)`, `animate_worker (PUB)` | `display` *(SUB)*                                                             | JSON payloads with a `type` field (e.g., "ImageReady", "TransitionReady", "LoopReady") for dispatching. PNG/URL meta per frame. |
+| `agent_ctrl` (`tcp://*:5559`)      | PUB ▶ SUB   | `agent` *(PUB)*                                                         | `experimance`, `audio` *(SUB)*                                                | JSON: `AgentControlEvent` (e.g., `sub_type: "SuggestBiome"`, `sub_type: "AudiencePresent"`).                                    |
+| `transitions` (`tcp://*:5561`)     | PUSH ▶ PULL | `experimance` *(PUSH)*                                                  | `transition_worker.rs` *(PULL)*                                               | `TransitionRequest` (see schema)                                                                                                |
+| `loops` (`tcp://*:5562`)           | PUSH ▶ PULL | `experimance` *(PUSH)*                                                  | `animate_worker` (optional) *(PULL)*                                          | `LoopRequest` (see schema)                                                                                                      |
 
 > All sockets use `ZMQ_CONFLATE=1` where only the latest message matters (e.g., `depth/heightmap`).
 > Heartbeats (`ZMQ_HEARTBEAT_IVL=3000`) keep connections resilient over the month‑long run.
@@ -313,7 +313,7 @@ Complete schema definitions live at `/schemas`.
 
 | Component      | Model / Spec                    | Interface     | Notes                                           |
 | -------------- | ------------------------------- | ------------- | ----------------------------------------------- |
-| Projector   | 1920×1080                          | HDMI / NDI    |                                                 |
+| Projector      | 1920×1080                       | HDMI / NDI    |                                                 |
 | Depth Camera   | Intel RealSense D415            | USB 3.2       |                                                 |
 | Vibe Sensors   | Piezo + HX711 amp (edge mounts) | Arduino → OSC | `experimance` service listens for OSC messages. |
 | GPU            | NVIDIA RTX 4090 (VRAM 24 GB)    | PCIe 4.0      |                                                 |
@@ -321,12 +321,12 @@ Complete schema definitions live at `/schemas`.
 
 ## 7 Transition & Animation Pipeline — Design Sketch
 
-| Phase                       | What happens                                                                                                                                                                                                                                                                                                                                                                                                                               | Why this variant is fast & flexible                                                                                                                                                   |
+| Phase                         | What happens                                                                                                                                                                                                                                                                                                                                                                                                                   | Why this variant is fast & flexible                                                                                                                                                           |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1 Stable-frame render**     | `experimance` requests still image from `image_server` by publishing `RenderRequest` on `events` bus → `image_server` eventually publishes `ImageReady` (PNG) on `images` bus. | Same path you already have; one high-quality key-frame per era step. Non-blocking. |
+| **1 Stable-frame render**     | `experimance` requests still image from `image_server` by publishing `RenderRequest` on `events` bus → `image_server` eventually publishes `ImageReady` (PNG) on `images` bus.                                                                                                                                                                                                                                                 | Same path you already have; one high-quality key-frame per era step. Non-blocking.                                                                                                            |
 | **2 Transition job**          | `experimance` immediately publishes`TransitionRequest {from_uri, to_uri, style, frames}` on a new ZeroMQ **PUSH** queue (`tcp://*:5561`).`transition_worker.rs` (compiled with SIMD + WGPU) runs **PULL** workers (1 GPU thread each) that generate e.g. 32- or 64-frame morphs and write them to `/var/cache/experimance/transitions/uuid_%04d.avif` *or* a single H.265 (`-tune zerolatency`) clip.                          | *PUSH/PULL* lets you add more workers or move them to another host without touching the rest of the graph. Rust/WGPU can blend two 1024² textures → 60 fps on even modest GPUs.               |
-| **3 Display swap**            | Worker publishes `TransitionReady {uri, is_video, loop=false}` on the `images` PUB channel (`tcp://*:5558`).`display` sees it, preloads the file/frames, cross-fades to the transition, then auto-plays the sequence.                                                                                                                                                                                                                      | Keeps all media deliveries unified on one PUB topic; display remains stateless beyond “what’s current/next?”.                                                                                 |
-| **4 Idle era drift**          | If `experimance` decides to drift eras (no depth activity, maybe voice), *repeat steps 1-3*. The *from_uri* for the next transition is simply the *to_uri* of the last one.                                                                                                                                                                                                                                                  |                                                                                                                                                                                               |
+| **3 Display swap**            | Worker publishes `TransitionReady {uri, is_video, loop=false}` on the `images` PUB channel (`tcp://*:5558`).`display` sees it, preloads the file/frames, cross-fades to the transition, then auto-plays the sequence.                                                                                                                                                                                                          | Keeps all media deliveries unified on one PUB topic; display remains stateless beyond “what’s current/next?”.                                                                                 |
+| **4 Idle era drift**          | If `experimance` decides to drift eras (no depth activity, maybe voice), *repeat steps 1-3*. The *from_uri* for the next transition is simply the *to_uri* of the last one.                                                                                                                                                                                                                                                    |                                                                                                                                                                                               |
 | **5 Optional loop animation** | When hardware budget allows: • `experimance` publishes `LoopRequest {still_uri, style}` on another PUSH queue (`tcp://*:5562`). • `animate_worker` (either a small SD-video model or cloud service) returns `LoopReady {video_uri, duration_s}` on `images` channel. • `display` switches its texture source from “last still” to looping video (ffmpeg → GL texture or Godot’s VideoPlayer) until the next `TransitionReady`. | Isolation means you can add fancy generative loops later without re-wiring the main display logic. If the loop service isn’t running, nothing breaks—`display` just stays on the still image. |
 
 ## 8  Dev & Ops
@@ -369,11 +369,11 @@ experimance/                # monorepo root (git)
 
 Consolidated deployment strategy:
 
-| Host               | Role / Expected Load                                                                    | Method                                                       | Notes                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------- |
-| **Mini‑PC x86**    | GPU‑bound tasks: `image_server` (local SDXL), `transition_worker`, `animate_worker`, optional heavy LLM for `agent`, optional `depth_proc` (CUDA). | Docker (NVIDIA Container Runtime)                            | Primary compute node.                                                 |
-| **Raspberry Pi5**  | Orchestration & I/O: `experimance`, `display` (if lightweight), `audio` (if local to agent), `depth_proc` (if lightweight), OSC listener for vibe sensors. | Bare‑metal Python via `systemd` or lightweight Docker.       | Handles real-time interaction and less intensive services.            |
-| **Cloud (fal.ai)** | Primary remote image generation (fallback/alternative for `image_server`), primary STT/TTS/LLM for `agent`. | HTTPS API                                                    | For heavy lifting if local GPU is insufficient or for specific models. |
+| Host               | Role / Expected Load                                                                                                                                       | Method                                                 | Notes                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| **Mini‑PC x86**    | GPU‑bound tasks: `image_server` (local SDXL), `transition_worker`, `animate_worker`, optional heavy LLM for `agent`, optional `depth_proc` (CUDA).         | Docker (NVIDIA Container Runtime)                      | Primary compute node.                                                  |
+| **Raspberry Pi5**  | Orchestration & I/O: `experimance`, `display` (if lightweight), `audio` (if local to agent), `depth_proc` (if lightweight), OSC listener for vibe sensors. | Bare‑metal Python via `systemd` or lightweight Docker. | Handles real-time interaction and less intensive services.             |
+| **Cloud (fal.ai)** | Primary remote image generation (fallback/alternative for `image_server`), primary STT/TTS/LLM for `agent`.                                                | HTTPS API                                              | For heavy lifting if local GPU is insufficient or for specific models. |
 
 * `compose.yaml` can be used for local development to simulate the multi-host setup or to deploy a full stack on a single powerful machine.
 * Production will likely mix bare-metal/`systemd` for Pi services and Docker for GPU-heavy services on the Mini-PC to balance ease of deployment and resource access.
@@ -423,7 +423,7 @@ Consolidated deployment strategy:
 
 ```bash
 # Example test command
-pytest -xvs services/experimance/tests/
+uv run pytest -xvs services/experimance/tests/
 ```
 
 ### 10.3 Mocking Strategy
@@ -475,30 +475,30 @@ if __name__ == "__main__":
 
 ### 11.1 Multiple Users & Disruptions
 
-| Edge Case | Detection Method | Response |
-|-----------|------------------|----------|
-| Multiple users at once | Face detection count > 1 | Normal operation; agent addresses group |
-| Hand covering depth camera | 100% of depth map within hand detection range | Pause image generation, log warning, continue with previous stable image |
-| Sand surface covered/obscured | Depth map variance below threshold | Maintain current era, log warning |
-| Excessive/violent interaction | user_interaction_score > 0.95 | Cap interaction effect, potentially accelerate to post-apocalyptic |
+| Edge Case                     | Detection Method                              | Response                                                                 |
+| ----------------------------- | --------------------------------------------- | ------------------------------------------------------------------------ |
+| Multiple users at once        | Face detection count > 1                      | Normal operation; agent addresses group                                  |
+| Hand covering depth camera    | 100% of depth map within hand detection range | Pause image generation, log warning, continue with previous stable image |
+| Sand surface covered/obscured | Depth map variance below threshold            | Maintain current era, log warning                                        |
+| Excessive/violent interaction | user_interaction_score > 0.95                 | Cap interaction effect, potentially accelerate to post-apocalyptic       |
 
 ### 11.2 Technical Failures
 
-| Failure Type | Detection | Recovery |
-|--------------|-----------|----------|
-| Image generation timeout | No response after 10s | Log error, retry once, then fall back to nearest cached image for era |
-| ZeroMQ message loss | Heartbeat failure | Automatic reconnection via ZMQ_RECONNECT_IVL |
-| GPU out of memory | CUDA error in logs | Reset `image_server` service, fall back to remote generation |
-| Depth camera disconnection | Device error | Log critical error, continue with last valid depth map, show alert on admin dashboard |
+| Failure Type               | Detection             | Recovery                                                                              |
+| -------------------------- | --------------------- | ------------------------------------------------------------------------------------- |
+| Image generation timeout   | No response after 10s | Log error, retry once, then fall back to nearest cached image for era                 |
+| ZeroMQ message loss        | Heartbeat failure     | Automatic reconnection via ZMQ_RECONNECT_IVL                                          |
+| GPU out of memory          | CUDA error in logs    | Reset `image_server` service, fall back to remote generation                          |
+| Depth camera disconnection | Device error          | Log critical error, continue with last valid depth map, show alert on admin dashboard |
 
 ### 11.3 Resource Management
 
-| Resource | Estimated Usage | Management Strategy |
-|----------|-----------------|---------------------|
-| GPU Memory | 8-12GB for local SDXL | Reserve 10-15GB for generation; 2GB for display; 1GB for transition rendering |
-| Disk Space | ~500MB/hour of operation | Implement rolling cleanup of old images and convert to video |
-| Network (if using remote API) | ~2-5 MB per image | Compress depth maps before transmission; cache frequent generations |
-| CPU (Pi) | ~40-60% | Monitor thermal throttling; consider cooling solution |
+| Resource                      | Estimated Usage          | Management Strategy                                                           |
+| ----------------------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| GPU Memory                    | 8-12GB for local SDXL    | Reserve 10-15GB for generation; 2GB for display; 1GB for transition rendering |
+| Disk Space                    | ~500MB/hour of operation | Implement rolling cleanup of old images and convert to video                  |
+| Network (if using remote API) | ~2-5 MB per image        | Compress depth maps before transmission; cache frequent generations           |
+| CPU (Pi)                      | ~40-60%                  | Monitor thermal throttling; consider cooling solution                         |
 
 ### 11.4 Performance Targets
 
