@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import zmq
 
 from experimance_common.base_service import BaseService
+from experimance_common.service_state import ServiceState
 
 # Configure logging
 logger = logging.getLogger(__name__)

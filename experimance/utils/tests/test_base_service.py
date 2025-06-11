@@ -19,10 +19,11 @@ from contextlib import asynccontextmanager, suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from experimance_common.constants import TICK
+from experimance_common.test_utils import wait_for_service_state
 import pytest
 
 from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
-from utils.tests.test_utils import wait_for_service_shutdown
+from experimance_common.test_utils import wait_for_service_shutdown
 
 
 # Configure test logging
@@ -236,7 +237,7 @@ class TestBaseService:
             logger.info("test_error_during_task_execution completed successfully!")
         finally:
             # Ensure the run_task is cleaned up if it's still running
-            if not run_task.done():
+            if 'run_task' in locals() and not run_task.done():
                 logger.info(f"Cancelling run_task for {service.service_name}")
                 run_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -458,3 +459,349 @@ class TestBaseService:
         assert base_service.state == ServiceState.STOPPED
         # Further assertions could be made if display_stats had observable side effects,
         # e.g., checking logs if it logs something specific. For now, just ensuring it runs and stops.
+
+
+class TestServiceErrorHandling:
+    """Tests for service error handling and automatic shutdown functionality."""
+    
+    @pytest.fixture
+    async def error_service(self):
+        """Create a service that can simulate different types of errors."""
+        
+        class ErrorTestService(BaseService):
+            def __init__(self):
+                super().__init__("error-test-service", "test")
+                self.task_error_count = 0
+                self.fatal_error_triggered = False
+                
+            async def error_prone_task(self):
+                """A task that can raise different types of errors."""
+                while self.running:
+                    await asyncio.sleep(0.1)
+                    if self.task_error_count > 0:
+                        if self.task_error_count == 1:
+                            self.task_error_count += 1
+                            raise ValueError("Non-fatal test error")
+                        elif self.task_error_count == 2:
+                            self.task_error_count += 1
+                            raise RuntimeError("Fatal test error")
+                    
+            async def start(self):
+                self.add_task(self.error_prone_task())
+                await super().start()
+        
+        service = ErrorTestService()
+        yield service
+        if service.state != ServiceState.STOPPED:
+            await service.stop()
+    
+    @pytest.mark.asyncio
+    async def test_record_error_non_fatal(self, error_service):
+        """Test recording non-fatal errors."""
+        await error_service.start()
+        
+        # Record a non-fatal error
+        test_error = ValueError("Test non-fatal error")
+        error_service.record_error(test_error, is_fatal=False)
+        
+        # Service should continue running
+        assert error_service.status == ServiceStatus.ERROR
+        assert error_service.errors == 1
+        assert error_service.state == ServiceState.STARTED  # Still operational
+    
+    @pytest.mark.asyncio
+    async def test_record_error_fatal_auto_shutdown(self, error_service):
+        """Test that fatal errors automatically trigger shutdown."""
+        await error_service.start()
+        
+        # Start the service running
+        run_task = asyncio.create_task(error_service.run())
+        
+        try:
+            # Wait for service to be running
+            await error_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Record a fatal error
+            test_error = RuntimeError("Test fatal error")
+            error_service.record_error(test_error, is_fatal=True)
+            
+            # Service should automatically stop
+            assert error_service.status == ServiceStatus.FATAL
+            assert error_service.errors == 1
+            
+            # Wait for automatic shutdown
+            await error_service.wait_for_state(ServiceState.STOPPED, timeout=2.0)
+            assert error_service.state == ServiceState.STOPPED
+            
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+    
+    @pytest.mark.asyncio
+    async def test_reset_error_status(self, error_service):
+        """Test resetting error status after recovery."""
+        # Record an error
+        test_error = ValueError("Recoverable error")
+        error_service.record_error(test_error, is_fatal=False)
+        
+        assert error_service.status == ServiceStatus.ERROR
+        assert error_service.errors == 1
+        
+        # Reset error status
+        error_service.reset_error_status()
+        
+        assert error_service.status == ServiceStatus.HEALTHY
+        assert error_service.errors == 1  # Error count remains
+    
+    @pytest.mark.asyncio
+    async def test_task_error_auto_shutdown(self, error_service):
+        """Test that task errors automatically trigger shutdown."""
+        await error_service.start()
+        
+        # Start the service running
+        run_task = asyncio.create_task(error_service.run())
+        
+        try:
+            # Wait for service to be running
+            await error_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Trigger an error in the task
+            error_service.task_error_count = 1
+            
+            # Wait for the service to detect the error and stop
+            await error_service.wait_for_state(ServiceState.STOPPED, timeout=3.0)
+            assert error_service.state == ServiceState.STOPPED
+            assert error_service.errors >= 1
+            
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+
+
+class TestServiceShutdownMethods:
+    """Tests for different service shutdown methods."""
+    
+    @pytest.fixture
+    async def shutdown_service(self):
+        """Create a service for testing shutdown methods."""
+        
+        class ShutdownTestService(BaseService):
+            def __init__(self):
+                super().__init__("shutdown-test-service", "test")
+                self.stop_reason = None
+                self.custom_task_running = False
+                
+            async def custom_background_task(self):
+                """A background task for testing shutdown."""
+                self.custom_task_running = True
+                try:
+                    while self.running:
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    self.custom_task_running = False
+                    raise
+                finally:
+                    self.custom_task_running = False
+                    
+            async def start(self):
+                self.add_task(self.custom_background_task())
+                await super().start()
+        
+        service = ShutdownTestService()
+        yield service
+        if service.state != ServiceState.STOPPED:
+            await service.stop()
+    
+    @pytest.mark.asyncio
+    async def test_direct_stop_method(self, shutdown_service):
+        """Test direct call to stop() method."""
+        await shutdown_service.start()
+        
+        # Start the service running
+        run_task = asyncio.create_task(shutdown_service.run())
+        
+        try:
+            # Wait for service to be running
+            await shutdown_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            assert shutdown_service.custom_task_running
+            
+            # Call stop() directly
+            await shutdown_service.stop()
+            
+            # Service should be stopped
+            assert shutdown_service.state == ServiceState.STOPPED
+            assert not shutdown_service.custom_task_running
+            
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+    
+    @pytest.mark.asyncio
+    async def test_request_stop_method(self, shutdown_service):
+        """Test request_stop() method for non-blocking shutdown."""
+        await shutdown_service.start()
+        
+        # Start the service running
+        run_task = asyncio.create_task(shutdown_service.run())
+        
+        try:
+            # Wait for service to be running
+            await shutdown_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            assert shutdown_service.custom_task_running
+            
+            # Call request_stop() - should be non-blocking
+            shutdown_service.request_stop()
+            
+            # Wait for the service to stop automatically
+            await shutdown_service.wait_for_state(ServiceState.STOPPED, timeout=2.0)
+            assert shutdown_service.state == ServiceState.STOPPED
+            assert not shutdown_service.custom_task_running
+            
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+    
+    @pytest.mark.asyncio
+    async def test_request_stop_idempotent(self, shutdown_service):
+        """Test that request_stop() is idempotent."""
+        await shutdown_service.start()
+        
+        # Start the service running
+        run_task = asyncio.create_task(shutdown_service.run())
+        
+        try:
+            # Wait for service to be running
+            await shutdown_service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+            
+            # Call request_stop() multiple times
+            shutdown_service.request_stop()
+            shutdown_service.request_stop()
+            shutdown_service.request_stop()
+            
+            # Should still stop cleanly
+            await shutdown_service.wait_for_state(ServiceState.STOPPED, timeout=2.0)
+            assert shutdown_service.state == ServiceState.STOPPED
+            
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+    
+    @pytest.mark.asyncio
+    async def test_stop_from_task(self, shutdown_service):
+        """Test calling stop() from within a service task."""
+        
+        class SelfStoppingService(BaseService):
+            def __init__(self):
+                super().__init__("self-stopping-service", "test")
+                self.stop_after_iterations = 3
+                self.iterations = 0
+                
+            async def self_stopping_task(self):
+                """A task that stops the service after a few iterations."""
+                while self.running:
+                    self.iterations += 1
+                    if self.iterations >= self.stop_after_iterations:
+                        # Stop the service from within the task
+                        self.request_stop()  # Now non-async, no await needed
+                        break
+                    await asyncio.sleep(0.1)
+                    
+            async def start(self):
+                self.add_task(self.self_stopping_task())
+                await super().start()
+        
+        service = SelfStoppingService()
+        
+        try:
+            await service.start()
+            
+            # Start the service running in a background task
+            run_task = asyncio.create_task(service.run())
+            
+            # Wait for service to be running
+            await service.wait_for_state(ServiceState.RUNNING, timeout=2.0)
+            
+            # Wait for the service to stop itself
+            await service.wait_for_state(ServiceState.STOPPED, timeout=5.0)
+            
+            # Verify that the task ran long enough
+            assert service.iterations >= service.stop_after_iterations
+            
+            # Wait for run task to complete
+            await run_task
+            
+        finally:
+            # Clean up
+            if not run_task.done():
+                run_task.cancel()
+            
+            # Only call stop() if the service isn't already stopping or stopped
+            if service.state not in [ServiceState.STOPPING, ServiceState.STOPPED]:
+                await service.stop()
+
+
+class TestServiceShutdownTaskNaming:
+    """Tests for service shutdown task naming and debugging."""
+    
+    @pytest.mark.asyncio
+    async def test_shutdown_task_names(self):
+        """Test that shutdown tasks have descriptive names."""
+        service = BaseService("task-name-test-service", "test")
+        await service.start()
+        
+        # Mock asyncio.create_task to capture task names
+        original_create_task = asyncio.create_task
+        created_tasks = []
+        
+        def mock_create_task(coro, **kwargs):
+            task = original_create_task(coro, **kwargs)
+            created_tasks.append((task, kwargs.get('name', 'no-name')))
+            return task
+        
+        try:
+            with patch('asyncio.create_task', side_effect=mock_create_task):
+                # Test different shutdown methods
+                service.request_stop()
+                
+                # Record a fatal error
+                service.record_error(RuntimeError("test fatal"), is_fatal=True)
+                
+                # Brief delay to let tasks be created
+                await asyncio.sleep(0.1)
+            
+            # Check that tasks were created with expected names
+            task_names = [name for _, name in created_tasks]
+            
+            expected_patterns = [
+                "task-name-test-service-requested-stop",
+                "task-name-test-service-fatal-error-stop"
+            ]
+            
+            for pattern in expected_patterns:
+                assert any(pattern in name for name in task_names), \
+                    f"Expected task name pattern '{pattern}' not found in {task_names}"
+            
+        finally:
+            # Restore original function
+            if service.state != ServiceState.STOPPED:
+                await service.stop()

@@ -41,7 +41,27 @@ uv run -m pytest -v
 uv run -m pytest -v --log-cli-level=DEBUG -s 
 ```
 
-For more detailed information about the ZMQ service base classes and their testing, see [README_ZMQ_TESTS.md](./README_ZMQ_TESTS.md) and `libs/common/README_SERVICE.md`.
+## Testing Documentation
+
+For more detailed information about testing in the Experimance project:
+
+- [Service Testing Best Practices](./README_SERVICE_TESTING.md) - How to use `active_service()` and other test utilities (now available from `experimance_common.test_utils`)
+- [ZMQ Testing Guide](./README_ZMQ_TESTS.md) - Details about testing ZMQ services
+- [Service Architecture](../common/README_SERVICE.md) - General information about the service base classes
+
+### Test Utilities Import
+
+The shared test utilities are now part of the common library for easy importing:
+
+```python
+from experimance_common.test_utils import (
+    active_service,           # Context manager for service lifecycle
+    wait_for_service_state,   # Wait for specific service states
+    MockZmqPublisher,         # Mock ZMQ sockets
+    MockZmqSubscriber,
+    # ... other utilities
+)
+```
 
 
 ## Example Code

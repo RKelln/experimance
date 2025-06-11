@@ -106,4 +106,7 @@ __all__ = [
 
     # logging utilities
     "configure_external_loggers",
+    
+    # Test utilities - imported separately to avoid dependencies in production
+    # Use: from experimance_common.test_utils import active_service, wait_for_service_state
 ]

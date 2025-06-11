@@ -280,6 +280,34 @@ class BaseService:
             self.state = ServiceState.STOPPED
             logger.info(f"Service {self.service_name} stopped")
     
+    def _request_stop(self, suffix: str):
+        """Internal method to request a graceful shutdown with a specific task name suffix.
+        
+        This method schedules a stop operation without blocking the caller and creates
+        a task with a descriptive name for debugging purposes.
+        
+        Args:
+            suffix: Suffix to append to create the task name: "{service_name}-{suffix}-stop"
+        """
+        if self.state in [ServiceState.STOPPING, ServiceState.STOPPED]:
+            logger.debug(f"Stop already requested/completed for {self.service_name}")
+            return
+            
+        logger.info(f"Shutdown requested for {self.service_name} ({suffix})")
+        # Schedule the stop operation to run soon
+        asyncio.create_task(self.stop(), name=f"{self.service_name}-{suffix}-stop")
+    
+    def request_stop(self):
+        """Request a graceful shutdown of the service.
+        
+        This method schedules a stop operation without blocking the caller.
+        It's useful when you want to initiate shutdown from within a service task
+        or callback without blocking the current operation.
+        
+        Returns immediately after scheduling the stop operation.
+        """
+        self._request_stop("requested")
+    
     async def _clear_tasks(self):
         """Clear all registered tasks.
         
@@ -503,27 +531,36 @@ class BaseService:
                     # If the service is still running, schedule a stop
                     if self.state == ServiceState.RUNNING:
                         logger.warning(f"Scheduling service {self.service_name} to stop due to task error")
-                        # We can't call stop() directly from this callback as it could deadlock,
-                        # so we schedule it to run soon in the event loop
-                        asyncio.create_task(self.stop(), name=f"{self.service_name}-error-stop")
+                        self._request_stop("task-error")
         except (asyncio.CancelledError, asyncio.InvalidStateError):
             # Task was cancelled or not done, just skip
             pass
             
-    def record_error(self, error: Exception, is_fatal: bool = False):
+    def record_error(self, error: Exception, is_fatal: bool = False, custom_message: Optional[str] = None):
         """Record an error and update service status.
         
         Args:
             error: The exception that occurred
             is_fatal: Whether this error should mark the service as fatally errored
+            custom_message: Optional custom message to log instead of default format
         """
         self.errors += 1
+        
+        # Use custom message if provided, otherwise use default format
+        if custom_message:
+            log_message = custom_message
+        else:
+            log_message = f"{'Fatal error' if is_fatal else 'Error'} in service {self.service_name}: {error!r}"
+        
         if is_fatal:
             self.status = ServiceStatus.FATAL
-            logger.error(f"Fatal error in service {self.service_name}: {error!r}", exc_info=True)
+            logger.error(log_message, exc_info=True)
+            
+            # Automatically initiate shutdown for fatal errors
+            self._request_stop("fatal-error")
         else:
             self.status = ServiceStatus.ERROR
-            logger.error(f"Error in service {self.service_name}: {error!r}", exc_info=True)
+            logger.error(log_message, exc_info=True)
             
     def reset_error_status(self):
         """Reset the service's error status to HEALTHY.

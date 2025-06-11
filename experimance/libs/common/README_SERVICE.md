@@ -8,12 +8,444 @@ The `experimance_common.service` module provides a set of base classes designed 
 
 - **Asynchronous Operations**: Built on `asyncio` for non-blocking I/O.
 - **Lifecycle Management**: Standard `start()`, `stop()`, and `run()` methods.
-- **Graceful Shutdown**: Signal handlers for `SIGINT` and `SIGTERM`.
+- **Graceful Shutdown**: Signal handlers for `SIGINT` and `SIGTERM` with multiple shutdown mechanisms.
 - **Heartbeating**: Automatic heartbeat messages for service discovery and monitoring (for publisher services).
 - **Statistics Tracking**: Basic statistics like messages sent/received and uptime.
 - **Configurable Logging**: Consistent logging across services.
-- **Error Handling**: Base error handling and cleanup mechanisms.
+- **Error Handling**: Comprehensive error handling with automatic shutdown for fatal errors.
 - **State Management**: Consistent service lifecycle state handling across inheritance hierarchies.
+
+## Shutdown and Error Handling Best Practices
+
+### Graceful Shutdown Options
+
+Services provide multiple ways to initiate graceful shutdown:
+
+#### 1. `await service.stop()` - Immediate Shutdown
+Use when you need to stop the service immediately and can wait for completion:
+```python
+# ✅ RECOMMENDED: For immediate, blocking shutdown
+await service.stop()
+```
+
+#### 2. `service.request_stop()` - Non-blocking Shutdown Request  
+Use when you want to schedule a shutdown but continue current operations:
+```python
+# ✅ RECOMMENDED: For non-blocking shutdown requests
+service.request_stop()
+# Continue with cleanup or current operations...
+```
+
+#### 3. **❌ DON'T set state directly**
+Setting `self.state = ServiceState.STOPPING` only changes the state but doesn't perform cleanup:
+```python
+# ❌ BAD: This doesn't actually stop the service!
+self.state = ServiceState.STOPPING  # Only changes state, no cleanup
+```
+
+### Error Handling Best Practices
+
+#### Always Record Errors with Context
+```python
+# ✅ GOOD: Record all errors for monitoring with custom context
+try:
+    result = await risky_operation(request_id)
+except Exception as e:
+    # Use custom_message for context-specific error details
+    self.record_error(e, is_fatal=False, 
+                     custom_message=f"Error processing request {request_id}: {e}")
+```
+
+#### Avoid Duplicate Logging
+```python
+# ❌ BAD: Duplicate logging creates noise
+try:
+    await operation()
+except Exception as e:
+    logger.error(f"Operation failed: {e}", exc_info=True)  # First log
+    self.record_error(e, is_fatal=False)  # Second log (duplicate!)
+
+# ✅ GOOD: Single, contextual error recording
+try:
+    await operation()
+except Exception as e:
+    self.record_error(e, is_fatal=False, 
+                     custom_message=f"Operation failed: {e}")  # Single log with context
+```
+
+#### record_error() Method Signature
+```python
+def record_error(self, error: Exception, is_fatal: bool = False, custom_message: Optional[str] = None):
+    """Record an error and update service status.
+    
+    Args:
+        error: The exception that occurred
+        is_fatal: Whether this error should mark the service as fatally errored
+        custom_message: Optional custom message to log instead of default format
+    """
+```
+
+#### Fatal Errors Automatically Stop Services
+```python
+# ✅ GOOD: Fatal errors automatically trigger shutdown
+try:
+    critical_operation()
+except CriticalError as e:
+    self.record_error(e, is_fatal=True, 
+                     custom_message=f"Critical system failure in {operation_name}: {e}")
+    # No need to manually call stop() - it's automatic!
+```
+
+#### Error Status Management
+```python
+# Reset error status after recovery
+try:
+    recovery_operation()
+    self.reset_error_status()  # Mark service as healthy again
+except Exception as e:
+    self.record_error(e, custom_message=f"Recovery failed: {e}")
+```
+
+### Common Shutdown Patterns
+
+#### From Service Tasks
+```python
+async def main_work_loop(self):
+    while self.running:
+        try:
+            result = await do_work()
+            if should_shutdown(result):
+                # ✅ Non-blocking shutdown from within a task
+                self.request_stop()
+                break
+        except FatalError as e:
+            # ✅ Fatal error auto-stops, just record it
+            self.record_error(e, is_fatal=True)
+            break
+        except RecoverableError as e:
+            # ✅ Non-fatal error, service continues
+            self.record_error(e, is_fatal=False)
+```
+
+#### External Shutdown
+```python
+# ✅ From outside the service (tests, main, etc.)
+await service.stop()
+
+# ✅ Or request shutdown and let it complete naturally
+service.request_stop()
+```
+
+#### Signal Handling
+Signal handlers are automatically set up and will call `stop()` gracefully:
+- `SIGINT` (Ctrl+C): Graceful shutdown
+- `SIGTERM`: Graceful shutdown  
+- `SIGTSTP`: Graceful shutdown
+
+### Task Naming and Debugging
+
+The service framework automatically creates descriptive task names for shutdown operations:
+- `{service_name}-requested-stop`: Manual shutdown requests
+- `{service_name}-fatal-error-stop`: Fatal error triggered shutdown
+- `{service_name}-task-error-stop`: Task error triggered shutdown
+
+These names help with debugging and monitoring.
+
+## Comprehensive Best Practices for Service Development
+
+### 1. Service Initialization and Setup
+
+#### Always Call Parent Constructors
+```python
+class MyService(BaseService):
+    def __init__(self, custom_param: str):
+        # ✅ GOOD: Always call parent constructor first
+        super().__init__("my_service", "worker")
+        self.custom_param = custom_param
+```
+
+#### Initialize Resources in start() Method
+```python
+async def start(self):
+    # ✅ GOOD: Initialize resources before calling super().start()
+    self.database = await connect_to_database()
+    self.cache = create_cache()
+    
+    # Register tasks for background operations
+    self.add_task(self.background_worker())
+    self.add_task(self.health_monitor())
+    
+    # Always call parent start() last
+    await super().start()
+```
+
+### 2. Task Management Best Practices
+
+#### Use add_task() for Background Operations
+```python
+async def start(self):
+    # ✅ GOOD: Register all background tasks
+    self.add_task(self.process_queue())
+    self.add_task(self.monitor_health())
+    self.add_task(self.periodic_cleanup())
+    await super().start()
+```
+
+#### Proper Task Loop Patterns
+```python
+# ✅ GOOD: Simple continuous work
+async def background_worker(self):
+    while self.running:
+        await do_work()
+        await asyncio.sleep(1.0)  # Prevent CPU spinning
+
+# ✅ GOOD: Work with delays and state checking
+async def complex_worker(self):
+    while self.running:
+        await do_first_work()
+        
+        # Use _sleep_if_running for state-aware sleeping
+        if not await self._sleep_if_running(5.0):
+            break  # Service stopped during sleep
+            
+        await do_second_work()
+```
+
+#### Task Error Handling
+```python
+async def background_task(self):
+    while self.running:
+        try:
+            await risky_operation()
+        except RetryableError as e:
+            # ✅ GOOD: Log and continue for retryable errors
+            self.record_error(e, is_fatal=False)
+            await asyncio.sleep(1.0)  # Brief backoff
+        except FatalError as e:
+            # ✅ GOOD: Fatal errors auto-stop the service
+            self.record_error(e, is_fatal=True)
+            break  # Exit the task
+```
+
+### 3. Resource Management and Cleanup
+
+#### Implement Proper Cleanup in stop()
+```python
+async def stop(self):
+    # ✅ GOOD: Call parent stop() first to handle framework cleanup
+    await super().stop()
+    
+    # Then clean up your specific resources
+    if hasattr(self, 'database'):
+        await self.database.close()
+    if hasattr(self, 'cache'):
+        self.cache.clear()
+```
+
+#### Use Context Managers for Resources
+```python
+async def handle_request(self, request):
+    try:
+        async with self.get_database_connection() as conn:
+            result = await process_with_db(conn, request)
+            return result
+    except Exception as e:
+        self.record_error(e, is_fatal=False, 
+                         custom_message=f"Database operation failed: {e}")
+        raise
+```
+
+### 4. Error Handling Patterns
+
+#### Categorize Errors Appropriately
+```python
+async def process_data(self, data):
+    try:
+        result = await complex_operation(data)
+        return result
+    except NetworkTimeout as e:
+        # ✅ Transient error - retry possible
+        self.record_error(e, is_fatal=False, 
+                         custom_message=f"Network timeout during data processing (retry possible): {e}")
+        raise
+    except InvalidConfiguration as e:
+        # ✅ Fatal error - service cannot continue
+        self.record_error(e, is_fatal=True,
+                         custom_message=f"Invalid configuration detected, service cannot continue: {e}")
+        raise
+    except DataValidationError as e:
+        # ✅ Non-fatal - log and return error response
+        self.record_error(e, is_fatal=False,
+                         custom_message=f"Data validation failed for input: {e}")
+        return {"error": "Invalid data"}
+```
+
+#### Error Recovery Patterns
+```python
+async def resilient_operation(self):
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries and self.running:
+        try:
+            return await potentially_failing_operation()
+        except RetryableError as e:
+            retry_count += 1
+            self.record_error(e, is_fatal=False,
+                             custom_message=f"Retryable error (attempt {retry_count}/{max_retries}): {e}")
+            
+            if retry_count >= max_retries:
+                self.record_error(e, is_fatal=True,
+                                 custom_message=f"Max retries ({max_retries}) exceeded, operation failed: {e}")
+                raise
+                
+            await asyncio.sleep(2 ** retry_count)  # Exponential backoff
+```
+
+### 5. State and Lifecycle Management
+
+#### Respect Service States in Custom Methods
+```python
+async def process_request(self, request):
+    # ✅ GOOD: Check service state before processing
+    if not self.running:
+        raise ServiceNotRunningError("Service is not running")
+        
+    return await handle_request(request)
+```
+
+#### Use State Callbacks for Custom Logic
+```python
+def __init__(self, name: str):
+    super().__init__(name)
+    
+    # ✅ GOOD: Register callbacks for state transitions
+    self.register_state_callback(ServiceState.RUNNING, self._on_running)
+    self.register_state_callback(ServiceState.STOPPED, self._on_stopped)
+
+def _on_running(self):
+    logger.info("Service is now fully operational")
+    
+def _on_stopped(self):
+    logger.info("Service has been stopped")
+```
+
+### 6. Logging and Monitoring Best Practices
+
+#### Use Consistent Logging Patterns
+```python
+async def important_operation(self):
+    logger.info(f"Starting important operation for {self.service_name}")
+    
+    try:
+        result = await do_operation()
+        logger.info(f"Operation completed successfully: {result}")
+        return result
+    except Exception as e:
+        # ✅ GOOD: Single contextual error recording (no duplicate logging)
+        self.record_error(e, is_fatal=False, 
+                         custom_message=f"Operation failed: {e}")
+        raise
+```
+
+#### Track Custom Metrics
+```python
+def __init__(self, name: str):
+    super().__init__(name)
+    self.requests_processed = 0
+    self.custom_metric = 0
+
+async def process_request(self, request):
+    self.requests_processed += 1
+    # Process request...
+    self.messages_sent += 1  # Update base class counters
+```
+
+### 7. Testing Service Implementation
+
+#### Test Lifecycle Transitions
+```python
+async def test_service_startup():
+    service = MyService("test")
+    
+    # Test state transitions
+    assert service.state == ServiceState.INITIALIZED
+    
+    await service.start()
+    assert service.state == ServiceState.STARTED
+    
+    # Test running state
+    run_task = asyncio.create_task(service.run())
+    await service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+    
+    # Test shutdown
+    await service.stop()
+    assert service.state == ServiceState.STOPPED
+```
+
+#### Test Error Handling
+```python
+async def test_error_handling():
+    service = MyService("test")
+    await service.start()
+    
+    # Test non-fatal error
+    service.record_error(ValueError("test"), is_fatal=False)
+    assert service.status == ServiceStatus.ERROR
+    assert service.state == ServiceState.RUNNING  # Still running
+    
+    # Test fatal error
+    service.record_error(RuntimeError("fatal"), is_fatal=True)
+    assert service.status == ServiceStatus.FATAL
+    # Service should be stopping automatically
+```
+
+### 8. Common Anti-Patterns to Avoid
+
+#### ❌ Don't Block the Event Loop
+```python
+# ❌ BAD: Blocking operations
+def blocking_operation(self):
+    time.sleep(5)  # Blocks the entire event loop
+    
+# ✅ GOOD: Use async operations
+async def async_operation(self):
+    await asyncio.sleep(5)  # Non-blocking
+```
+
+#### ❌ Don't Ignore Exceptions
+```python
+# ❌ BAD: Silent exception handling
+try:
+    await risky_operation()
+except Exception:
+    pass  # Silent failure
+
+# ✅ GOOD: Proper exception handling
+try:
+    await risky_operation()
+except Exception as e:
+    self.record_error(e, is_fatal=False, 
+                     custom_message=f"Risky operation failed: {e}")
+```
+
+#### ❌ Don't Manage State Manually
+```python
+# ❌ BAD: Manual state management
+self.state = ServiceState.STOPPING  # Bypasses cleanup
+
+# ✅ GOOD: Use proper shutdown methods
+await self.stop()  # Proper cleanup
+```
+
+#### ❌ Don't Create Tasks Without Registration
+```python
+# ❌ BAD: Unmanaged background tasks
+asyncio.create_task(self.background_work())  # Not tracked
+
+# ✅ GOOD: Register tasks with the service
+self.add_task(self.background_work())  # Properly managed
+```
 
 ## Service State Management
 
@@ -412,23 +844,404 @@ async def test_service_lifecycle():
 ```
 
 
-## Tips
+## Service Development Tips and Patterns
 
-Generally in tasks you want to do a while loop:
+### 1. Task Loop Patterns
+
+#### Simple Continuous Work Pattern
 ```python
-    from experimance_common.constants import
+from experimance_common.constants import TICK
 
-    # in task:
+async def background_worker(self):
+    """Simple continuous work with consistent timing."""
     while self.running:
-        # do work
-        await asyncio.sleep(TICK) # Small delay to prevent CPU spinning
+        await do_work()
+        await asyncio.sleep(TICK)  # Small delay to prevent CPU spinning
 ```
 
-However if you have work then a delay and more work, use:
+#### Work-Sleep-Work Pattern
 ```python
+async def complex_worker(self):
+    """Pattern for work followed by delay followed by more work."""
     while self.running:
-        # do work
-        # break if not running at start or end of sleep
-        if await self._sleep_if_running(5.0): break 
-        # more work
+        await do_first_batch_of_work()
+        
+        # Use _sleep_if_running for state-aware sleeping
+        if not await self._sleep_if_running(5.0):
+            break  # Service stopped during sleep
+            
+        await do_second_batch_of_work()
+```
+
+#### Periodic Task Pattern
+```python
+async def periodic_maintenance(self):
+    """Pattern for tasks that run periodically."""
+    while self.running:
+        try:
+            await perform_maintenance()
+        except Exception as e:
+            self.record_error(e, is_fatal=False, 
+                             custom_message=f"Maintenance task failed: {e}")
+            
+        # Sleep for maintenance interval
+        if not await self._sleep_if_running(300):  # 5 minutes
+            break
+```
+
+### 2. Performance and Resource Management
+
+#### Batch Processing Pattern
+```python
+async def batch_processor(self):
+    """Process items in batches for efficiency."""
+    batch = []
+    batch_size = 10
+    
+    while self.running:
+        try:
+            # Collect items for batch
+            item = await self.get_next_item(timeout=1.0)
+            if item:
+                batch.append(item)
+                
+            # Process batch when full or on timeout
+            if len(batch) >= batch_size or not item:
+                if batch:
+                    await self.process_batch(batch)
+                    batch.clear()
+                    
+        except TimeoutError:
+            # Process partial batch on timeout
+            if batch:
+                await self.process_batch(batch)
+                batch.clear()
+        except Exception as e:
+            self.record_error(e, is_fatal=False, 
+                             custom_message=f"Batch processing failed: {e}")
+            batch.clear()  # Clear batch on error
+```
+
+#### Resource Pool Pattern
+```python
+class PooledResourceService(BaseService):
+    def __init__(self, name: str, pool_size: int = 5):
+        super().__init__(name)
+        self.pool_size = pool_size
+        self.resource_pool = []
+        
+    async def start(self):
+        # Initialize resource pool
+        for _ in range(self.pool_size):
+            resource = await create_expensive_resource()
+            self.resource_pool.append(resource)
+            
+        await super().start()
+        
+    async def get_resource(self):
+        """Get a resource from the pool."""
+        while self.running and not self.resource_pool:
+            await asyncio.sleep(0.1)  # Wait for available resource
+            
+        if self.resource_pool:
+            return self.resource_pool.pop()
+        return None
+        
+    def return_resource(self, resource):
+        """Return a resource to the pool."""
+        self.resource_pool.append(resource)
+```
+
+### 3. Error Resilience Patterns
+
+#### Circuit Breaker Pattern
+```python
+class CircuitBreakerService(BaseService):
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.failure_count = 0
+        self.failure_threshold = 5
+        self.recovery_timeout = 30
+        self.last_failure_time = None
+        self.circuit_open = False
+        
+    async def call_external_service(self):
+        # Check circuit breaker state
+        if self.circuit_open:
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.circuit_open = False
+                self.failure_count = 0
+                logger.info("Circuit breaker reset")
+            else:
+                raise CircuitBreakerOpenError("Circuit breaker is open")
+                
+        try:
+            result = await external_service_call()
+            self.failure_count = 0  # Reset on success
+            return result
+        except Exception as e:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            
+            if self.failure_count >= self.failure_threshold:
+                self.circuit_open = True
+                logger.warning("Circuit breaker opened due to failures")
+                
+            self.record_error(e, is_fatal=False)
+            raise
+```
+
+#### Retry with Backoff Pattern
+```python
+async def resilient_operation(self, max_retries: int = 3):
+    """Perform an operation with exponential backoff retry."""
+    for attempt in range(max_retries):
+        try:
+            return await potentially_failing_operation()
+        except RetryableError as e:
+            if attempt == max_retries - 1:
+                # Last attempt failed
+                self.record_error(e, is_fatal=True)
+                raise
+                
+            self.record_error(e, is_fatal=False)
+            backoff_time = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Attempt {attempt + 1} failed, retrying in {backoff_time:.1f}s")
+            
+            if not await self._sleep_if_running(backoff_time):
+                raise ServiceStoppingError("Service stopped during retry")
+```
+
+### 4. Monitoring and Observability
+
+#### Custom Metrics Pattern
+```python
+class MetricsTrackingService(BaseService):
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.custom_metrics = {
+            'requests_processed': 0,
+            'errors_recovered': 0,
+            'last_success_time': None,
+            'processing_times': []
+        }
+        
+    async def process_request(self, request):
+        start_time = time.time()
+        try:
+            result = await handle_request(request)
+            
+            # Track success metrics
+            self.custom_metrics['requests_processed'] += 1
+            self.custom_metrics['last_success_time'] = time.time()
+            
+            processing_time = time.time() - start_time
+            self.custom_metrics['processing_times'].append(processing_time)
+            
+            # Keep only recent processing times
+            if len(self.custom_metrics['processing_times']) > 100:
+                self.custom_metrics['processing_times'] = \
+                    self.custom_metrics['processing_times'][-50:]
+                    
+            return result
+        except Exception as e:
+            self.record_error(e, is_fatal=False)
+            self.custom_metrics['errors_recovered'] += 1
+            raise
+            
+    def get_average_processing_time(self):
+        times = self.custom_metrics['processing_times']
+        return sum(times) / len(times) if times else 0
+```
+
+#### Health Check Pattern
+```python
+async def health_monitor(self):
+    """Monitor service health and report status."""
+    while self.running:
+        try:
+            # Check various health indicators
+            database_ok = await self.check_database_health()
+            external_service_ok = await self.check_external_services()
+            resource_usage_ok = self.check_resource_usage()
+            
+            if all([database_ok, external_service_ok, resource_usage_ok]):
+                if self.status != ServiceStatus.HEALTHY:
+                    self.reset_error_status()
+            else:
+                logger.warning("Health check failed")
+                self.status = ServiceStatus.WARNING
+                
+        except Exception as e:
+            self.record_error(e, is_fatal=False)
+            
+        await self._sleep_if_running(30)  # Check every 30 seconds
+```
+
+### 5. Configuration and Environment
+
+#### Environment-Aware Configuration
+```python
+class ConfigurableService(BaseService):
+    def __init__(self, name: str):
+        super().__init__(name)
+        
+        # Load configuration based on environment
+        env = os.getenv('ENVIRONMENT', 'development')
+        self.config = self.load_config(env)
+        
+        # Validate required configuration
+        self.validate_config()
+        
+    def load_config(self, env: str) -> dict:
+        config_file = f"config/{env}.toml"
+        with open(config_file, 'r') as f:
+            return toml.load(f)
+            
+    def validate_config(self):
+        required_keys = ['database_url', 'api_key', 'max_connections']
+        for key in required_keys:
+            if key not in self.config:
+                raise ConfigurationError(f"Missing required config: {key}")
+```
+
+### 6. Testing Patterns
+
+#### Service Testing Utilities
+```python
+class ServiceTestBase:
+    """Base class for service testing with common utilities."""
+    
+    async def start_service_for_test(self, service):
+        """Start a service and wait for it to be running."""
+        await service.start()
+        
+        # Run the service in background
+        self.run_task = asyncio.create_task(service.run())
+        
+        # Wait for it to be fully running
+        await service.wait_for_state(ServiceState.RUNNING, timeout=5.0)
+        
+    async def stop_service_after_test(self, service):
+        """Cleanly stop a service after testing."""
+        if service.state != ServiceState.STOPPED:
+            await service.stop()
+            
+        # Clean up the run task
+        if hasattr(self, 'run_task') and not self.run_task.done():
+            self.run_task.cancel()
+            try:
+                await self.run_task
+            except asyncio.CancelledError:
+                pass
+                
+    @contextmanager
+    def expect_error_logged(self, error_type):
+        """Context manager to verify that an error was logged."""
+        initial_error_count = service.errors
+        yield
+        assert service.errors > initial_error_count
+        assert service.status in [ServiceStatus.ERROR, ServiceStatus.FATAL]
+```
+
+### 7. Memory Management and Performance
+
+#### Avoiding Memory Leaks
+```python
+async def process_large_dataset(self, dataset):
+    """Process large datasets without memory accumulation."""
+    # Process in chunks to avoid memory buildup
+    chunk_size = 1000
+    
+    for i in range(0, len(dataset), chunk_size):
+        if not self.running:
+            break
+            
+        chunk = dataset[i:i + chunk_size]
+        
+        try:
+            await self.process_chunk(chunk)
+        except Exception as e:
+            self.record_error(e, is_fatal=False)
+            
+        # Explicitly clear chunk reference
+        del chunk
+        
+        # Yield control to prevent blocking
+        await asyncio.sleep(0)
+```
+
+## Quick Reference
+
+### Essential Service Patterns
+
+```python
+# Service structure template
+class MyService(BaseService):
+    def __init__(self, name: str):
+        super().__init__(name, "service_type")
+        # Initialize service-specific attributes
+        
+    async def start(self):
+        # Initialize resources
+        self.add_task(self.background_task())
+        await super().start()
+        
+    async def stop(self):
+        await super().stop()
+        # Clean up resources
+        
+    async def background_task(self):
+        while self.running:
+            try:
+                await do_work()
+            except FatalError as e:
+                self.record_error(e, is_fatal=True)
+                break
+            except RetryableError as e:
+                self.record_error(e, is_fatal=False)
+            
+            await self._sleep_if_running(1.0)
+```
+
+### Shutdown Methods Quick Reference
+
+| Method                                   | Use Case                      | Blocks Caller | Auto Cleanup |
+| ---------------------------------------- | ----------------------------- | ------------- | ------------ |
+| `await service.stop()`                   | Immediate shutdown needed     | ✅ Yes         | ✅ Yes        |
+| `service.request_stop()`                 | Non-blocking shutdown request | ❌ No          | ✅ Yes        |
+| `service.record_error(e, is_fatal=True)` | Error-triggered shutdown      | ❌ No          | ✅ Yes        |
+
+### Error Handling Quick Reference
+
+| Error Type           | `is_fatal` | Service Behavior  | Use Case                                      |
+| -------------------- | ---------- | ----------------- | --------------------------------------------- |
+| `RecoverableError`   | `False`    | Continues running | Network timeouts, temporary failures          |
+| `ConfigurationError` | `True`     | Auto-stops        | Invalid config, missing resources             |
+| `ValidationError`    | `False`    | Continues running | Bad input data, recoverable issues            |
+| `SystemError`        | `True`     | Auto-stops        | System resource exhaustion, critical failures |
+
+### State Checking Patterns
+
+```python
+# Check if service should continue
+if not self.running:
+    return
+
+# State-aware sleeping
+if not await self._sleep_if_running(5.0):
+    break  # Service stopped during sleep
+
+# Wait for specific state in tests
+await service.wait_for_state(ServiceState.RUNNING, timeout=5.0)
+```
+
+### Common Imports
+
+```python
+import asyncio
+import logging
+from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.service_state import ServiceState
+from experimance_common.constants import TICK
 ```
