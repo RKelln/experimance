@@ -9,6 +9,9 @@ This test suite covers:
 - Direct interface testing
 - Configuration validation
 - Error handling scenarios
+
+Uses the active_service() context manager from utils/tests/test_utils.py for proper
+service lifecycle management.
 """
 
 import asyncio
@@ -29,7 +32,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from experimance_display.display_service import DisplayService
 from experimance_display.config import DisplayServiceConfig, DisplayConfig
-
+from experimance_common.base_service import ServiceState, ServiceStatus
+from experimance_common.config import Config
+from experimance_common.test_utils import active_service
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
@@ -85,14 +90,15 @@ class TestDisplayServiceConfig:
 
 @pytest.fixture
 def test_config():
-    """Create a test configuration for windowed mode."""
+    """Create a test configuration for headless mode testing."""
     return DisplayServiceConfig(
         service_name="test-display",
         display=DisplayConfig(
             fullscreen=False,
             resolution=(800, 600),
             debug_overlay=True,
-            vsync=False  # Disable for faster testing
+            vsync=False,  # Disable for faster testing
+            headless=True  # Use headless mode for testing to avoid window issues
         )
     )
 
@@ -154,15 +160,17 @@ class TestDisplayServiceBasics:
             mock_window.return_value = mock_window_instance
             
             service = DisplayService(config=test_config)
-            await service.start()
             
-            assert service.config.service_name == "test-display"
-            assert service.layer_manager is not None
-            assert service.image_renderer is not None
-            assert service.text_overlay_manager is not None
-            assert service.video_overlay_renderer is not None
-            
-            await service.stop()
+            # Using active_service context manager for proper lifecycle management
+            async with active_service(service) as active:
+                # Service is now properly started and running
+                assert active.config.service_name == "test-display"
+                assert active.layer_manager is not None
+                assert active.image_renderer is not None
+                assert active.text_overlay_manager is not None
+                assert active.video_overlay_renderer is not None
+                
+            # Service is automatically stopped by active_service when exiting the context
     
     @pytest.mark.asyncio
     async def test_service_shutdown(self, test_config):
@@ -174,13 +182,14 @@ class TestDisplayServiceBasics:
             mock_window.return_value = mock_window_instance
             
             service = DisplayService(config=test_config)
-            await service.start()
             
-            # Test shutdown
-            await service.stop()
-            
-            assert service._shutdown_requested is True
-            assert service._running is False
+            # Start service using active_service
+            async with active_service(service):
+                # Service is running here
+                pass
+                
+            # After context exits, service should be stopped
+            assert service.state == ServiceState.STOPPED
 
 
 class TestTextOverlays:
@@ -539,23 +548,22 @@ class TestImageDisplay:
             mock_window.return_value = mock_window_instance
             
             service = DisplayService(config=test_config)
-            await service.start()
             
-            # Try to load non-existent image
-            invalid_message = {
-                "image_id": "invalid_image",
-                "uri": "file:///non/existent/path.jpg",
-                "image_type": "satellite_landscape"
-            }
-            
-            # Should not crash the service
-            service.trigger_display_update("image_ready", invalid_message)
-            await asyncio.sleep(0.2)
-            
-            # Service should still be running
-            assert service._running is True
-            
-            await service.stop()
+            # Use active_service for proper lifecycle management
+            async with active_service(service) as active:
+                # Try to load non-existent image
+                invalid_message = {
+                    "image_id": "invalid_image",
+                    "uri": "file:///non/existent/path.jpg",
+                    "image_type": "satellite_landscape"
+                }
+                
+                # Should not crash the service
+                active.trigger_display_update("image_ready", invalid_message)
+                await asyncio.sleep(0.2)
+                
+                # Service should still be running
+                assert active.state == ServiceState.RUNNING
 
 
 class TestVideoOverlay:
@@ -689,23 +697,22 @@ class TestMessageValidation:
             mock_window.return_value = mock_window_instance
             
             service = DisplayService(config=test_config)
-            await service.start()
             
-            # Missing required fields
-            invalid_message = {
-                "text_id": "test",
-                # Missing "content" field
-                "speaker": "agent"
-            }
-            
-            # Should handle gracefully without crashing
-            service.trigger_display_update("text_overlay", invalid_message)
-            await asyncio.sleep(0.1)
-            
-            # Service should still be running
-            assert service._running is True
-            
-            await service.stop()
+            # Use active_service for proper lifecycle management
+            async with active_service(service) as active:
+                # Missing required fields
+                invalid_message = {
+                    "text_id": "test",
+                    # Missing "content" field
+                    "speaker": "agent"
+                }
+                
+                # Should handle gracefully without crashing
+                active.trigger_display_update("text_overlay", invalid_message)
+                await asyncio.sleep(0.1)
+                
+                # Service should still be running
+                assert active.state == ServiceState.RUNNING
     
     @pytest.mark.asyncio
     async def test_invalid_image_message(self, test_config):
@@ -717,21 +724,18 @@ class TestMessageValidation:
             mock_window.return_value = mock_window_instance
             
             service = DisplayService(config=test_config)
-            await service.start()
-            
-            # Missing required fields
-            invalid_message = {
-                "image_id": "test",
-                # Missing "uri" field
-            }
-            
-            # Should handle gracefully
-            service.trigger_display_update("image_ready", invalid_message)
-            await asyncio.sleep(0.1)
-            
-            assert service._running is True
-            
-            await service.stop()
+            async with active_service(service) as active:
+                # Missing required fields
+                invalid_message = {
+                    "image_id": "test",
+                    # Missing "uri" field
+                }
+                
+                # Should handle gracefully
+                active.trigger_display_update("image_ready", invalid_message)
+                await asyncio.sleep(0.1)
+                
+                assert active.state == ServiceState.RUNNING
 
 
 class TestDirectInterface:
@@ -775,25 +779,13 @@ class TestDirectInterface:
             mock_window.return_value = mock_window_instance
             
             service = DisplayService(config=test_config)
-            await service.start()
-            
-            # Try unknown update type
-            service.trigger_display_update("unknown_type", {"data": "test"})
-            await asyncio.sleep(0.1)
-            
-            # Should handle gracefully
-            assert service._running is True
-            
-            await service.stop()
-
-
-# Pytest configuration for async tests
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+            async with active_service(service) as active:
+                # Try unknown update type
+                active.trigger_display_update("unknown_type", {"data": "test"})
+                await asyncio.sleep(0.1)
+                
+                # Should handle gracefully
+                assert active.state == ServiceState.RUNNING
 
 
 if __name__ == "__main__":

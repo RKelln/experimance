@@ -55,55 +55,64 @@ class ImageServerService(ZmqPublisherSubscriberService):
         """Initialize the Image Server Service.
         
         Args:
-            service_name: Name of this service instance
             config: Service configuration object
+            service_name: Name of this service instance
+            
+        Raises:
+            RuntimeError: If initialization fails
         """
-        self.config = config
-        if service_name is not None:
-            self.config.service_name = service_name
-        if self.config.service_name is None:
-            self.config.service_name = "image-server"
+        try:
+            self.config = config
+            if service_name is not None:
+                self.config.service_name = service_name
+            if self.config.service_name is None:
+                self.config.service_name = "image-server"
 
-        # Create cache directory
-        self.config.cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        configure_external_loggers(logging.WARNING)
+            # Create cache directory
+            self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+            
+            configure_external_loggers(logging.WARNING)
 
-        # Initialize the base service
-        super().__init__(
-            service_name=self.config.service_name,
-            service_type="image-server",
-            pub_address=self.config.zmq.images_pub_address,
-            sub_address=self.config.zmq.events_sub_address,
-            subscribe_topics=[MessageType.RENDER_REQUEST],
-            publish_topic=MessageType.IMAGE_READY,
-        )
-        
-        # For compatibility with tests
-        self._default_strategy = self.config.generator.default_strategy
-        
-        # Create generator directly from the configuration
-        strategy = config.generator.default_strategy
-        strategy_config = {}
-        
-        # Get strategy-specific config if available
-        if hasattr(config, strategy):
-            strategy_config_obj = getattr(config, strategy)
-            if strategy_config_obj:
-                if hasattr(strategy_config_obj, "model_dump"):
-                    strategy_config = strategy_config_obj.model_dump()
-                else:
-                    strategy_config = dict(strategy_config_obj)
-        
-        # Create the generator
-        self.generator = create_generator_from_config(
-            strategy=strategy,
-            config_data=strategy_config,
-            cache_dir=config.cache_dir,
-            timeout=getattr(config.generator, "timeout", 60)
-        )
-        
-        logger.info(f"ImageServerService initialized with strategy: {self.config.generator.default_strategy}")
+            # Initialize the base service
+            super().__init__(
+                service_name=self.config.service_name,
+                service_type="image-server",
+                pub_address=self.config.zmq.images_pub_address,
+                sub_address=self.config.zmq.events_sub_address,
+                subscribe_topics=[MessageType.RENDER_REQUEST],
+                publish_topic=MessageType.IMAGE_READY,
+            )
+            
+            # For compatibility with tests
+            self._default_strategy = self.config.generator.default_strategy
+            
+            # Create generator directly from the configuration
+            strategy = config.generator.default_strategy
+            strategy_config = {}
+            
+            # Get strategy-specific config if available
+            if hasattr(config, strategy):
+                strategy_config_obj = getattr(config, strategy)
+                if strategy_config_obj:
+                    if hasattr(strategy_config_obj, "model_dump"):
+                        strategy_config = strategy_config_obj.model_dump()
+                    else:
+                        strategy_config = dict(strategy_config_obj)
+            
+            # Create the generator
+            self.generator = create_generator_from_config(
+                strategy=strategy,
+                config_data=strategy_config,
+                cache_dir=config.cache_dir,
+                timeout=getattr(config.generator, "timeout", 60)
+            )
+            
+            logger.info(f"ImageServerService initialized with strategy: {self.config.generator.default_strategy}")
+        except Exception as e:
+            error_msg = f"Failed to initialize ImageServerService: {e}"
+            logger.error(error_msg, exc_info=True)
+            # We can't record an error here yet because super() hasn't been initialized
+            raise RuntimeError(error_msg) from e
     
     def _load_config(self, service_name: str, config: Optional[Dict[str, Any]], 
                    config_file: Optional[str], args: Optional[Any]) -> ImageServerConfig:
@@ -131,13 +140,20 @@ class ImageServerService(ZmqPublisherSubscriberService):
 
     async def start(self):
         """Start the image server service."""
-        # Register message handlers
-        self.register_handler(MessageType.RENDER_REQUEST, self._handle_render_request)
-        
-        # Start the base service
-        await super().start()
-        
-        logger.info(f"ImageServerService started, listening for {MessageType.RENDER_REQUEST} messages")
+        try:
+            # Register message handlers
+            self.register_handler(MessageType.RENDER_REQUEST, self._handle_render_request)
+            
+            # Register periodic cache cleanup task (run every 10 minutes)
+            self.add_task(self._periodic_cache_cleanup(interval=600))
+            
+            # Start the base service
+            await super().start()
+            
+            logger.info(f"ImageServerService started, listening for {MessageType.RENDER_REQUEST} messages")
+        except Exception as e:
+            self.record_error(e, is_fatal=True, custom_message=f"Failed to start ImageServerService: {e}")
+            raise
     
     async def _handle_render_request(self, message: Dict[str, Any]):
         """Handle incoming RenderRequest messages.
@@ -150,24 +166,26 @@ class ImageServerService(ZmqPublisherSubscriberService):
 
             # Validate required fields
             if not self._validate_render_request(message):
-                logger.error(f"Invalid RenderRequest message: {message}")
+                # Record validation error but continue service operation
+                self.record_error(
+                    ValueError(f"Invalid RenderRequest message: {message}"), 
+                    is_fatal=False,
+                    custom_message=f"Invalid RenderRequest message: {message}"
+                )
                 return
             
             request_id = message["request_id"]
-            #era = message["era"]
-            #biome = message["biome"]
             prompt = message["prompt"]
             depth_map_b64 = message.get("depth_map_png")
             
             logger.info(f"Processing RenderRequest {request_id}")
             
-            # Generate image asynchronously
-            asyncio.create_task(self._process_render_request(
-                request_id, prompt, depth_map_b64
-            ))
+            # Create and properly register image generation task
+            task = self._process_render_request(request_id, prompt, depth_map_b64)
+            self.add_task(task)
             
         except Exception as e:
-            logger.error(f"Error handling RenderRequest: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False, custom_message=f"Error handling RenderRequest: {e}")
     
     def _validate_render_request(self, message: Dict[str, Any]) -> bool:
         """Validate a RenderRequest message.
@@ -182,12 +200,12 @@ class ImageServerService(ZmqPublisherSubscriberService):
         
         for field in required_fields:
             if field not in message or not message[field]:
-                logger.error(f"Missing or empty required field: {field}")
+                # Note: We don't log here since the caller will use record_error
                 return False
         
         # Validate message type
         if message.get("type") != MessageType.RENDER_REQUEST:
-            logger.error(f"Invalid message type: {message.get('type')}")
+            # Note: We don't log here since the caller will use record_error
             return False
         
         return True
@@ -202,8 +220,6 @@ class ImageServerService(ZmqPublisherSubscriberService):
         
         Args:
             request_id: Unique identifier for this request
-            era: Era context for the image
-            biome: Biome context for the image
             prompt: Text prompt for image generation
             depth_map_b64: Optional base64-encoded depth map
         """
@@ -220,9 +236,10 @@ class ImageServerService(ZmqPublisherSubscriberService):
             logger.info(f"Successfully processed RenderRequest {request_id}")
             
         except Exception as e:
-            logger.error(f"Error processing RenderRequest {request_id}: {e}", exc_info=True)
+            # Record error but don't stop service (non-fatal)
+            self.record_error(e, is_fatal=False, custom_message=f"Error processing RenderRequest {request_id}: {e}")
             
-            # Optionally publish an error message
+            # Publish an error message to notify other services
             await self._publish_image_error(request_id, str(e))
     
     async def _generate_image(
@@ -242,6 +259,9 @@ class ImageServerService(ZmqPublisherSubscriberService):
             
         Returns:
             Path to the generated image file
+            
+        Raises:
+            RuntimeError: If image generation fails or times out
         """
         if strategy is None:
             strategy = self.config.generator.default_strategy
@@ -254,7 +274,11 @@ class ImageServerService(ZmqPublisherSubscriberService):
             )
             return image_path
         except asyncio.TimeoutError:
-            raise RuntimeError(f"Image generation timed out after {self.config.generator.timeout} seconds")
+            error_msg = f"Image generation timed out after {self.config.generator.timeout} seconds"
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            error_msg = f"Image generation failed: {e}"
+            raise RuntimeError(error_msg) from e
     
     
     async def _publish_image_ready(self, request_id: str, image_path: str):
@@ -263,28 +287,39 @@ class ImageServerService(ZmqPublisherSubscriberService):
         Args:
             request_id: The original request ID
             image_path: Path to the generated image
+            
+        Raises:
+            RuntimeError: If publishing the message fails
         """
-        # Convert path to URI format
-        image_uri = f"file://{Path(image_path).absolute()}"
-        
-        # Generate unique image ID
-        image_id = str(uuid.uuid4())
-        
-        # Create ImageReady message
-        message = {
-            "type": MessageType.IMAGE_READY,
-            "request_id": request_id,
-            "image_id": image_id,
-            "uri": image_uri
-        }
-        
-        # Publish the message
-        success = await self.publish_message(message)
-        
-        if success:
-            logger.info(f"Published ImageReady message for request {request_id}")
-        else:
-            logger.error(f"Failed to publish ImageReady message for request {request_id}")
+        try:
+            # Convert path to URI format
+            image_uri = f"file://{Path(image_path).absolute()}"
+            
+            # Generate unique image ID
+            image_id = str(uuid.uuid4())
+            
+            # Create ImageReady message
+            message = {
+                "type": MessageType.IMAGE_READY,
+                "request_id": request_id,
+                "image_id": image_id,
+                "uri": image_uri
+            }
+            
+            # Publish the message
+            success = await self.publish_message(message)
+            
+            if success:
+                logger.info(f"Published ImageReady message for request {request_id}")
+            else:
+                error_msg = f"Failed to publish ImageReady message for request {request_id}"
+                # Record non-fatal error but continue service operation
+                self.record_error(RuntimeError(error_msg), is_fatal=False, custom_message=error_msg)
+        except Exception as e:
+            error_msg = f"Error publishing ImageReady message for request {request_id}: {e}"
+            # Record non-fatal error but continue service operation
+            self.record_error(e, is_fatal=False, custom_message=error_msg)
+            raise RuntimeError(error_msg) from e
     
     async def _publish_image_error(self, request_id: str, error_message: str):
         """Publish an error message for a failed request.
@@ -293,21 +328,27 @@ class ImageServerService(ZmqPublisherSubscriberService):
             request_id: The original request ID
             error_message: Description of the error
         """
-        # Create error message (using ALERT type)
-        message = {
-            "type": MessageType.ALERT,
-            "request_id": request_id,
-            "severity": "error",
-            "message": f"Image generation failed: {error_message}"
-        }
-        
-        # Publish the message
-        success = await self.publish_message(message)
-        
-        if success:
-            logger.info(f"Published error message for request {request_id}")
-        else:
-            logger.error(f"Failed to publish error message for request {request_id}")
+        try:
+            # Create error message (using ALERT type)
+            message = {
+                "type": MessageType.ALERT,
+                "request_id": request_id,
+                "severity": "error",
+                "message": f"Image generation failed: {error_message}"
+            }
+            
+            # Publish the message
+            success = await self.publish_message(message)
+            
+            if success:
+                logger.info(f"Published error message for request {request_id}")
+            else:
+                log_msg = f"Failed to publish error message for request {request_id}"
+                logger.error(log_msg)
+                # We don't record this as an error since it's already handling another error
+        except Exception as e:
+            # Just log this error since we're already in an error handling path
+            logger.error(f"Error publishing error message for request {request_id}: {e}", exc_info=True)
     
     async def _cleanup_cache(self):
         """Clean up old cached images if cache size exceeds limit."""
@@ -337,25 +378,49 @@ class ImageServerService(ZmqPublisherSubscriberService):
                 logger.info(f"Cache cleanup completed, new size: {total_size / 1024 / 1024 / 1024:.2f} GB")
                 
         except Exception as e:
-            logger.error(f"Error during cache cleanup: {e}", exc_info=True)
+            # Non-fatal error, record but don't stop service
+            self.record_error(e, is_fatal=False, custom_message=f"Error during cache cleanup: {e}")
+            
+    async def _periodic_cache_cleanup(self, interval: float = 600):
+        """Run cache cleanup periodically.
+        
+        Args:
+            interval: Time between cleanups in seconds (default: 10 minutes)
+        """
+        try:
+            while self.running:
+                await self._cleanup_cache()
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            logger.debug("Periodic cache cleanup task cancelled")
+            raise
+        except Exception as e:
+            self.record_error(e, is_fatal=False, custom_message=f"Error in periodic cache cleanup: {e}")
+            raise
     
     async def stop(self):
         """Stop the image server service."""
         logger.info("Stopping ImageServerService...")
         
-        # Clean up generators
-        await self.generator.stop()
-        
-        # Stop the base service
-        await super().stop()
-        
-        logger.info("ImageServerService stopped")
+        try:
+            # Clean up generators
+            if hasattr(self, 'generator'):
+                await self.generator.stop()
+            
+            # Stop the base service
+            await super().stop()
+            
+            logger.info("ImageServerService stopped")
+        except Exception as e:
+            self.record_error(e, is_fatal=True, custom_message=f"Error during ImageServerService shutdown: {e}")
+            raise  # Re-raise to ensure calling code knows there was an issue
 
 
 async def main():
     """Main entry point for running the image server service."""
     import argparse
     import sys
+    import signal
     
     parser = argparse.ArgumentParser(description="Experimance Image Server Service")
     parser.add_argument(
@@ -417,22 +482,35 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    config = ImageServerConfig.from_overrides(
-        config_file=args.config_file,
-        override_config=vars(args)
-    )
-    
-    # Create and start the service
-    service = ImageServerService(
-        config=config,
-        service_name=args.name,
-    )
+    try:
+        # Load configuration
+        config = ImageServerConfig.from_overrides(
+            config_file=args.config_file,
+            override_config=vars(args)
+        )
+        
+        # Create the service
+        service = ImageServerService(
+            config=config,
+            service_name=args.name,
+        )
 
-    await service.start()
-    logger.info(f"Image server service '{args.name}' started successfully")
-    
-    # Run the service
-    await service.run()
+        # Start the service
+        await service.start()
+        logger.info(f"Image server service '{args.name}' started successfully")
+        
+        # Run the service
+        await service.run()
+        
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt. Shutting down...")
+    except Exception as e:
+        logger.error(f"Fatal error in main: {e}", exc_info=True)
+        sys.exit(1)
+    finally:
+        # Service cleanup will be handled by the BaseService class
+        # since we're using run() which handles shutdown on exceptions
+        logger.info("Image server service exiting")
 
 
 if __name__ == "__main__":

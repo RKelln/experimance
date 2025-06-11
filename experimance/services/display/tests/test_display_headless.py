@@ -96,8 +96,8 @@ def mock_zmq_subscriber():
             mock_instance.service_name = service_name
             mock_instance.subscribe_topics = subscribe_topics if isinstance(subscribe_topics, list) else [subscribe_topics]
             mock_instance.handlers = {}
-            mock_instance._running = False
-            mock_instance._shutdown_requested = False
+            mock_instance.running = False
+            mock_instance.state = "STOPPED"  # Use state instead of _shutdown_requested
             
             # Create async mock methods
             mock_instance.start = AsyncMock()
@@ -153,14 +153,15 @@ class TestDisplayServiceBasic:
         # Check initial state
         assert service.config.service_name == 'test-display'
         assert service.window is None
-        assert service._running is False
-        assert service._shutdown_requested is False
+        assert hasattr(service, 'running')  # Check service has running property
+        assert service.state  # Check service has state property
     
     @pytest.mark.asyncio
     async def test_service_start_stop(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test service start and stop lifecycle."""
         # Import here after mocking is set up
         from services.display.src.experimance_display.display_service import DisplayService
+        from experimance_common.service_state import ServiceState
         
         service = DisplayService(config=test_config)
         
@@ -171,17 +172,16 @@ class TestDisplayServiceBasic:
         mock_pyglet['window_class'].assert_called_once()
         mock_pyglet['clock'].schedule_interval.assert_called()
         
-        # Verify service state
-        assert service._running is True
+        # Verify service state - after start() it should be STARTED, not RUNNING
+        assert service.state == ServiceState.STARTED
         assert service.window is not None
         assert service.layer_manager is not None
         
         # Stop service
         await service.stop()
         
-        # Verify cleanup
-        assert service._running is False
-        assert service._shutdown_requested is True
+        # Verify cleanup - check that service is stopped
+        assert service.state == ServiceState.STOPPED
 
 
 class TestDisplayServiceMessaging:
@@ -191,93 +191,87 @@ class TestDisplayServiceMessaging:
     async def test_text_overlay_direct(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test text overlay functionality via direct interface."""
         from services.display.src.experimance_display.display_service import DisplayService
+        from experimance_common.test_utils import active_service
         
         service = DisplayService(config=test_config)
-        await service.start()
-        
-        # Mock the text overlay manager
-        service.text_overlay_manager = Mock()
-        service.text_overlay_manager.handle_text_overlay = AsyncMock()
-        
-        # Test text overlay message
-        text_message = {
-            'text_id': 'test-1',
-            'content': 'Hello, World!',
-            'speaker': 'agent',
-            'duration': 5.0
-        }
-        
-        # Trigger via direct interface
-        service.trigger_display_update('text_overlay', text_message)
-        
-        # Wait a bit for the scheduled task
-        await asyncio.sleep(0.1)
-        
-        # Verify the handler was called (would be in next frame)
-        # Note: In real implementation, this would be scheduled via pyglet clock
-        
-        await service.stop()
+        async with active_service(service) as active:
+            # Mock the text overlay manager
+            active.text_overlay_manager = Mock()
+            active.text_overlay_manager.handle_text_overlay = AsyncMock()
+            
+            # Test text overlay message
+            text_message = {
+                'text_id': 'test-1',
+                'content': 'Hello, World!',
+                'speaker': 'agent',
+                'duration': 5.0
+            }
+            
+            # Trigger via direct interface
+            active.trigger_display_update('text_overlay', text_message)
+            
+            # Wait a bit for the scheduled task
+            await asyncio.sleep(0.1)
+            
+            # Verify the handler was called (would be in next frame)
+            # Note: In real implementation, this would be scheduled via pyglet clock
     
     @pytest.mark.asyncio
     async def test_image_ready_message(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test image ready message handling."""
         from services.display.src.experimance_display.display_service import DisplayService
+        from experimance_common.test_utils import active_service
         
         service = DisplayService(config=test_config)
-        await service.start()
-        
-        # Mock the image renderer
-        service.image_renderer = Mock()
-        service.image_renderer.handle_image_ready = AsyncMock()
-        
-        # Test image message
-        image_message = {
-            'image_id': 'test-image-1',
-            'uri': 'file:///tmp/test.jpg',
-            'image_type': 'satellite_landscape'
-        }
-        
-        # Test validation
-        assert service._validate_image_ready(image_message) is True
-        
-        # Test handling
-        await service._handle_image_ready(image_message)
-        
-        # Verify the handler was called
-        service.image_renderer.handle_image_ready.assert_called_once_with(image_message)
-        
-        await service.stop()
+        async with active_service(service) as active:
+            # Mock the image renderer
+            active.image_renderer = Mock()
+            active.image_renderer.handle_image_ready = AsyncMock()
+            
+            # Test image message
+            image_message = {
+                'image_id': 'test-image-1',
+                'uri': 'file:///tmp/test.jpg',
+                'image_type': 'satellite_landscape'
+            }
+            
+            # Test validation
+            assert active._validate_image_ready(image_message) is True
+            
+            # Test handling
+            await active._handle_image_ready(image_message)
+            
+            # Verify the handler was called
+            active.image_renderer.handle_image_ready.assert_called_once_with(image_message)
     
     @pytest.mark.asyncio
     async def test_video_mask_message(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test video mask message handling."""
         from services.display.src.experimance_display.display_service import DisplayService
+        from experimance_common.test_utils import active_service
         
         service = DisplayService(config=test_config)
-        await service.start()
-        
-        # Mock the video overlay renderer
-        service.video_overlay_renderer = Mock()
-        service.video_overlay_renderer.handle_video_mask = AsyncMock()
-        
-        # Create a simple test mask (8x8 grayscale)
-        test_mask = np.random.randint(0, 255, (8, 8), dtype=np.uint8)
-        
-        # Test video mask message
-        mask_message = {
-            'mask_data': base64.b64encode(test_mask.tobytes()).decode(),
-            'mask_width': 8,
-            'mask_height': 8,
-            'fade_in_duration': 0.5
-        }
-        
-        # Test handling
-        await service._handle_video_mask(mask_message)
-        
-        # Verify the handler was called
-        service.video_overlay_renderer.handle_video_mask.assert_called_once_with(mask_message)
-        
-        await service.stop()
+        async with active_service(service) as active:
+            # Mock the video overlay renderer
+            active.video_overlay_renderer = Mock()
+            active.video_overlay_renderer.handle_video_mask = AsyncMock()
+            
+            # Create a simple test mask (8x8 grayscale)
+            test_mask = np.random.randint(0, 255, (8, 8), dtype=np.uint8)
+            
+            # Test video mask message
+            mask_message = {
+                'mask_data': base64.b64encode(test_mask.tobytes()).decode(),
+                'mask_width': 8,
+                'mask_height': 8,
+                'fade_in_duration': 0.5
+            }
+            
+            # Test handling
+            await active._handle_video_mask(mask_message)
+            
+            # Verify the handler was called
+            active.video_overlay_renderer.handle_video_mask.assert_called_once_with(mask_message)
 
 
 class TestMessageValidation:
@@ -422,19 +416,17 @@ class TestErrorHandling:
     async def test_invalid_message_handling(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test that invalid messages are handled gracefully."""
         from services.display.src.experimance_display.display_service import DisplayService
+        from experimance_common.test_utils import active_service
         
         service = DisplayService(config=test_config)
-        await service.start()
-        
-        # Test with completely invalid message
-        invalid_message = {"invalid": "data"}
-        
-        # These should not raise exceptions
-        await service._handle_image_ready(invalid_message)
-        await service._handle_text_overlay(invalid_message)
-        await service._handle_video_mask(invalid_message)
-        
-        await service.stop()
+        async with active_service(service) as active:
+            # Test with completely invalid message
+            invalid_message = {"invalid": "data"}
+            
+            # These should not raise exceptions
+            await active._handle_image_ready(invalid_message)
+            await active._handle_text_overlay(invalid_message)
+            await active._handle_video_mask(invalid_message)
     
     @pytest.mark.asyncio
     async def test_missing_renderer_handling(self, test_config, mock_pyglet, mock_zmq_subscriber):
@@ -465,27 +457,25 @@ class TestDirectInterface:
     async def test_trigger_display_update(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test direct interface for triggering updates."""
         from services.display.src.experimance_display.display_service import DisplayService
+        from experimance_common.test_utils import active_service
         
         service = DisplayService(config=test_config)
-        await service.start()
-        
-        # Mock handlers
-        service._direct_handlers = {
-            'test_update': AsyncMock()
-        }
-        
-        test_data = {'test': 'data'}
-        
-        # This should schedule the handler
-        service.trigger_display_update('test_update', test_data)
-        
-        # Verify scheduling was attempted
-        mock_pyglet['clock'].schedule_once.assert_called()
-        
-        # Test unknown update type
-        service.trigger_display_update('unknown_type', test_data)
-        
-        await service.stop()
+        async with active_service(service) as active:
+            # Mock handlers
+            active._direct_handlers = {
+                'test_update': AsyncMock()
+            }
+            
+            test_data = {'test': 'data'}
+            
+            # This should schedule the handler
+            active.trigger_display_update('test_update', test_data)
+            
+            # Verify scheduling was attempted
+            mock_pyglet['clock'].schedule_once.assert_called()
+            
+            # Test unknown update type
+            active.trigger_display_update('unknown_type', test_data)
 
 
 if __name__ == "__main__":

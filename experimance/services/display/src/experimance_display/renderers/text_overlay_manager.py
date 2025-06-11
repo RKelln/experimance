@@ -13,12 +13,13 @@ Supports:
 
 import logging
 import time
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 
-import pyglet
 from pyglet.text import Label
 
 from .layer_manager import LayerRenderer
+
+from pyglet.customtypes import AnchorX, AnchorY
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class TextItem:
         content: str,
         label: Label,
         duration: Optional[float] = None,
-        creation_time: float = None
+        creation_time: Optional[float] = None
     ):
         """Initialize a text item.
         
@@ -375,7 +376,7 @@ class TextOverlayManager(LayerRenderer):
         
         return "\n".join(lines)
     
-    def _get_anchor_x(self, anchor: str) -> str:
+    def _get_anchor_x(self, anchor: str) -> AnchorX:
         """Get pyglet anchor_x value from position anchor.
         
         Args:
@@ -391,7 +392,7 @@ class TextOverlayManager(LayerRenderer):
         else:
             return "center"
     
-    def _get_anchor_y(self, anchor: str) -> str:
+    def _get_anchor_y(self, anchor: str) -> AnchorY:
         """Get pyglet anchor_y value from position anchor.
         
         Args:
@@ -400,10 +401,13 @@ class TextOverlayManager(LayerRenderer):
         Returns:
             Pyglet anchor_y value
         """
+        # AnchorY = "top", "bottom", "center", "baseline"
         if "top" in anchor:
             return "top"
         elif "bottom" in anchor:
             return "bottom"
+        elif "baseline" in anchor:
+            return "baseline"
         else:
             return "center"
     

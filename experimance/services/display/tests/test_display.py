@@ -24,8 +24,9 @@ sys.path.insert(0, str(project_root))
 # when this module is imported by pytest without --no-headless flag
 pyglet = None
 
-from services.display.src.experimance_display.display_service import DisplayService
-from services.display.src.experimance_display.config import DisplayServiceConfig, DisplayConfig
+from experimance_common.test_utils import active_service
+from experimance_display.display_service import DisplayService
+from experimance_display.config import DisplayServiceConfig, DisplayConfig
 
 
 @pytest.mark.skip(reason="Test requires a display. Run manually with: pytest -xvs tests/test_display.py::test_display_service")
@@ -56,11 +57,7 @@ async def test_display_service():
     # Create service
     service = DisplayService(config=config)
     
-    try:
-        # Start service
-        await service.start()
-        logger.info("Display service started")
-        
+    async with active_service(service):
         # Schedule some test updates
         pyglet.clock.schedule_once(schedule_test_text, 2.0, service)
         pyglet.clock.schedule_once(schedule_test_image, 4.0, service)
@@ -69,11 +66,6 @@ async def test_display_service():
         
         # Run pyglet main loop
         pyglet.app.run()
-        
-    except Exception as e:
-        logger.error(f"Error in test: {e}", exc_info=True)
-    finally:
-        await service.stop()
 
 
 def schedule_test_text(dt, service):

@@ -25,6 +25,7 @@ import sys
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from experimance_common.test_utils import active_service
 from experimance_display.display_service import DisplayService
 from experimance_display.config import DisplayServiceConfig, DisplayConfig
 

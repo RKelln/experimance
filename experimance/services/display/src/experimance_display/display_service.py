@@ -26,6 +26,7 @@ from pyglet.window import key
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
 from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.base_service import ServiceState
 
 from .config import DisplayServiceConfig
 from .renderers.layer_manager import LayerManager
@@ -90,10 +91,6 @@ class DisplayService(ZmqSubscriberService):
         self.frame_count = 0
         self.fps_display_timer = 0.0
         
-        # Shutdown coordination
-        self._shutdown_requested = False
-        self._running = False
-        
         # Direct interface for testing (non-ZMQ control)
         self._direct_handlers: Dict[str, Callable] = {}
         
@@ -115,84 +112,146 @@ class DisplayService(ZmqSubscriberService):
         # Register direct interface handlers for testing
         self._register_direct_handlers()
         
+        # Register background tasks before calling super().start()
+        self.add_task(self._run_pyglet_loop())
+        
         # Start the base ZMQ service
         await super().start()
         
         # Schedule pyglet clock for frame updates
         clock.schedule_interval(self._update_frame, 1.0 / self.target_fps)
         
-        self._running = True
-        
         logger.info(f"DisplayService started on {self.window.width}x{self.window.height}" if self.window else "DisplayService started (no window)")
     
     def _initialize_window(self):
         """Initialize the pyglet window."""
-        if self.config.display.fullscreen:
-            # Get primary monitor for fullscreen
-            display = pyglet.display.get_display()
-            screen = display.get_default_screen()
-            self.window = pyglet.window.Window(
-                fullscreen=True,
-                screen=screen,
-                vsync=self.config.display.vsync
-            )
-        else:
-            # Windowed mode
-            width, height = self.config.display.resolution
-            self.window = pyglet.window.Window(
-                width=width,
-                height=height,
-                caption=f"Experimance Display - {self.config.service_name}",
-                vsync=self.config.display.vsync
-            )
+        try:
+            # Skip window creation in headless mode
+            if self.config.display.headless:
+                logger.info("Running in headless mode - no window will be created")
+                # Create a mock window object for headless mode
+                self.window = self._create_headless_window()
+                return
+            
+            if self.config.display.fullscreen:
+                # Get primary monitor for fullscreen
+                display = pyglet.display.get_display()
+                screen = display.get_default_screen()
+                self.window = pyglet.window.Window(
+                    fullscreen=True,
+                    screen=screen,
+                    vsync=self.config.display.vsync
+                )
+            else:
+                # Windowed mode
+                width, height = self.config.display.resolution
+                self.window = pyglet.window.Window(
+                    width=width,
+                    height=height,
+                    caption=f"Experimance Display - {self.config.service_name}",
+                    vsync=self.config.display.vsync
+                )
+            
+            # Register window event handlers
+            self.window.on_draw = self._on_draw
+            self.window.on_key_press = self._on_key_press
+            self.window.on_close = self._on_close
+            
+            logger.info(f"Window initialized: {self.window.width}x{self.window.height}, fullscreen={self.config.display.fullscreen}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize window: {e}", exc_info=True)
+            self.record_error(e, is_fatal=True)
+            raise
+    
+    def _create_headless_window(self):
+        """Create a mock window object for headless mode."""
+        class HeadlessWindow:
+            def __init__(self, width: int, height: int):
+                self.width = width
+                self.height = height
+                self.fullscreen = False
+                self.has_exit = False
+                
+            def clear(self):
+                """Mock clear operation."""
+                pass
+                
+            def close(self):
+                """Mock close operation."""
+                self.has_exit = True
+                
+            def flip(self):
+                """Mock flip operation."""
+                pass
+                
+            def switch_to(self):
+                """Mock switch_to operation."""
+                pass
+                
+            def dispatch_events(self):
+                """Mock dispatch_events operation."""
+                pass
+                
+            def dispatch_event(self, event_name, *args):
+                """Mock dispatch_event operation."""
+                pass
+                
+            def set_fullscreen(self, fullscreen: bool):
+                """Mock set_fullscreen operation."""
+                self.fullscreen = fullscreen
         
-        # Register window event handlers
-        self.window.on_draw = self._on_draw
-        self.window.on_key_press = self._on_key_press
-        self.window.on_close = self._on_close
-        
-        logger.info(f"Window initialized: {self.window.width}x{self.window.height}, fullscreen={self.config.display.fullscreen}")
+        width, height = self.config.display.resolution
+        return HeadlessWindow(width, height)
     
     def _initialize_renderers(self):
         """Initialize all rendering components."""
-        # Ensure window is created first
-        if not self.window:
-            logger.error("Cannot initialize renderers without window")
-            return
+        try:
+            # Ensure window is created first
+            if not self.window:
+                error_msg = "Cannot initialize renderers without window"
+                logger.error(error_msg)
+                self.record_error(RuntimeError(error_msg), is_fatal=True)
+                return
+                
+            window_size = (self.window.width, self.window.height)
             
-        window_size = (self.window.width, self.window.height)
-        
-        # Create layer manager to coordinate rendering order
-        self.layer_manager = LayerManager(
-            window_size=window_size,
-            config=self.config
-        )
-        
-        # Create individual renderers
-        self.image_renderer = ImageRenderer(
-            window_size=window_size,
-            config=self.config.rendering,
-            transitions_config=self.config.transitions
-        )
-        
-        self.video_overlay_renderer = VideoOverlayRenderer(
-            window_size=window_size,
-            config=self.config.rendering,
-            transitions_config=self.config.transitions
-        )
-        
-        self.text_overlay_manager = TextOverlayManager(
-            window_size=window_size,
-            config=self.config.text_styles,
-            transitions_config=self.config.transitions
-        )
-        
-        # Register renderers with layer manager
-        self.layer_manager.register_renderer("background", self.image_renderer)
-        self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
-        self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
-        
-        logger.info("Rendering components initialized")
+            # Create layer manager to coordinate rendering order
+            self.layer_manager = LayerManager(
+                window_size=window_size,
+                config=self.config
+            )
+            
+            # Create individual renderers
+            self.image_renderer = ImageRenderer(
+                window_size=window_size,
+                config=self.config.rendering,
+                transitions_config=self.config.transitions
+            )
+            
+            self.video_overlay_renderer = VideoOverlayRenderer(
+                window_size=window_size,
+                config=self.config.rendering,
+                transitions_config=self.config.transitions
+            )
+            
+            self.text_overlay_manager = TextOverlayManager(
+                window_size=window_size,
+                config=self.config.text_styles,
+                transitions_config=self.config.transitions
+            )
+            
+            # Register renderers with layer manager
+            self.layer_manager.register_renderer("background", self.image_renderer)
+            self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
+            self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
+            
+            logger.info("Rendering components initialized")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize renderers: {e}", exc_info=True)
+            self.record_error(e, is_fatal=True)
+            raise
     
     def _register_zmq_handlers(self):
         """Register ZMQ message handlers."""
@@ -236,6 +295,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling ImageReady: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     async def _handle_transition_ready(self, message: Dict[str, Any]):
         """Handle TransitionReady messages."""
@@ -248,6 +308,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling TransitionReady: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     async def _handle_loop_ready(self, message: Dict[str, Any]):
         """Handle LoopReady messages (future enhancement)."""
@@ -261,6 +322,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling LoopReady: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     async def _handle_text_overlay(self, message: Dict[str, Any]):
         """Handle TextOverlay messages."""
@@ -277,6 +339,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling TextOverlay: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     async def _handle_remove_text(self, message: Dict[str, Any]):
         """Handle RemoveText messages."""
@@ -289,6 +352,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling RemoveText: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     async def _handle_video_mask(self, message: Dict[str, Any]):
         """Handle VideoMask messages."""
@@ -301,6 +365,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling VideoMask: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     async def _handle_era_changed(self, message: Dict[str, Any]):
         """Handle EraChanged messages."""
@@ -312,6 +377,7 @@ class DisplayService(ZmqSubscriberService):
             
         except Exception as e:
             logger.error(f"Error handling EraChanged: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
     
     # Direct Interface for Testing
     
@@ -384,9 +450,8 @@ class DisplayService(ZmqSubscriberService):
         if symbol == key.ESCAPE or symbol == key.Q:
             # Graceful shutdown
             logger.info("Exit key pressed, shutting down...")
-            self._shutdown_requested = True
-            if self.window:
-                self.window.close()
+            # Schedule shutdown in the next frame to avoid blocking the event handler
+            clock.schedule_once(lambda dt: self.request_stop(), 0)
         elif symbol == key.F11:
             # Toggle fullscreen (for testing)
             if self.window:
@@ -399,7 +464,8 @@ class DisplayService(ZmqSubscriberService):
     def _on_close(self):
         """Pyglet window close handler."""
         logger.info("Window close event, shutting down...")
-        self._shutdown_requested = True
+        # Schedule shutdown in the next frame to avoid blocking the event handler
+        clock.schedule_once(lambda dt: self.request_stop(), 0)
     
     # Service Lifecycle
     
@@ -408,41 +474,38 @@ class DisplayService(ZmqSubscriberService):
         logger.info("Starting display service main loop...")
         
         try:
-            # Create a task for the ZMQ subscriber
-            zmq_task = asyncio.create_task(super().run())
-            
-            # Create a task for the pyglet event loop
-            pyglet_task = asyncio.create_task(self._run_pyglet_loop())
-            
-            # Wait for either task to complete (shutdown requested)
-            done, pending = await asyncio.wait(
-                [zmq_task, pyglet_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-            
-            # Cancel any remaining tasks
-            for task in pending:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+            # Start the base service (which manages our registered tasks)
+            await super().run()
             
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt")
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)
-        finally:
-            # Only call stop if not already stopping
-            if not self._shutdown_requested:
-                await self.stop()
+            self.record_error(e, is_fatal=True)
     
     async def _run_pyglet_loop(self):
         """Run the pyglet event loop in an async-friendly way."""
         logger.info("Starting pyglet event loop...")
         
         try:
-            while self._running and not self._shutdown_requested:
+            while self.running:
+                # In headless mode, just run a simple update loop
+                if self.config.display.headless:
+                    # Update components without rendering
+                    if self.layer_manager:
+                        self.layer_manager.update(0.001)  # Simulate 1ms time step
+                    
+                    # Check for headless shutdown conditions
+                    if self.window and hasattr(self.window, 'has_exit') and self.window.has_exit:
+                        logger.info("Headless window marked for exit, shutting down...")
+                        self.request_stop()
+                        break
+                        
+                    # Small delay to prevent busy waiting
+                    await asyncio.sleep(0.001)
+                    continue
+                
+                # Regular pyglet loop for windowed mode
                 # Process pyglet events
                 pyglet.clock.tick()
                 
@@ -459,7 +522,7 @@ class DisplayService(ZmqSubscriberService):
                 # Check if all windows are closed
                 if not pyglet.app.windows or all(w.has_exit for w in pyglet.app.windows):
                     logger.info("All windows closed, shutting down...")
-                    self._shutdown_requested = True
+                    self.request_stop()
                     break
                 
                 # Small delay to prevent busy waiting
@@ -467,43 +530,36 @@ class DisplayService(ZmqSubscriberService):
                 
         except Exception as e:
             logger.error(f"Error in pyglet loop: {e}", exc_info=True)
-            self._shutdown_requested = True
+            self.record_error(e, is_fatal=True)
         
         logger.info("Pyglet event loop finished")
     
     async def stop(self):
         """Stop the display service."""
-        if self._shutdown_requested:
-            logger.debug("Stop already requested, skipping duplicate stop call")
-            return
-            
         logger.info("Stopping DisplayService...")
         
-        # Signal shutdown
-        self._running = False
-        self._shutdown_requested = True
-        
-        # Stop clock updates
-        clock.unschedule(self._update_frame)
-        
-        # Clean up rendering components
-        if self.layer_manager:
-            await self.layer_manager.cleanup()
-        
-        # Close pyglet window
-        if self.window:
-            self.window.close()
-        
-        # Stop ZMQ service (only if not already stopping)
         try:
+            # Stop clock updates
+            clock.unschedule(self._update_frame)
+            
+            # Clean up rendering components
+            if self.layer_manager:
+                await self.layer_manager.cleanup()
+            
+            # Close pyglet window
+            if self.window:
+                self.window.close()
+                self.window = None
+            
+            # Stop ZMQ service
             await super().stop()
-        except RuntimeError as e:
-            if "STOPPING" in str(e):
-                logger.debug(f"Service already stopping: {e}")
-            else:
-                raise
-        
-        logger.info("DisplayService stopped")
+            
+            logger.info("DisplayService stopped")
+            
+        except Exception as e:
+            logger.error(f"Error during DisplayService shutdown: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
+            raise
 
 
 async def main():
@@ -531,6 +587,11 @@ async def main():
         "--windowed", "-w",
         action="store_true",
         help="Run in windowed mode (overrides config)"
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run in headless mode (no window, for testing)"
     )
     parser.add_argument(
         "--debug",
@@ -562,6 +623,11 @@ async def main():
         config.display.fullscreen = False
         logger.info(f"Windowed mode requested: fullscreen={config.display.fullscreen}")
     
+    # Override headless mode if requested
+    if args.headless:
+        config.display.headless = True
+        logger.info(f"Headless mode enabled: headless={config.display.headless}")
+    
     # Override debug if requested
     if args.debug:
         config.display.debug_overlay = True
@@ -573,13 +639,8 @@ async def main():
         service_name=args.name,
     )
     
-    # Set up signal handling for graceful shutdown
-    def signal_handler(signum, frame):
-        logger.info(f"Received signal {signum}, requesting shutdown...")
-        service._shutdown_requested = True
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    # Signal handlers are automatically set up by the base service
+    # No custom signal handling needed - the base service handles SIGINT/SIGTERM properly
     
     try:
         await service.start()
@@ -594,7 +655,7 @@ async def main():
     except Exception as e:
         logger.error(f"Failed to start display service: {e}", exc_info=True)
         # Ensure cleanup on error
-        if not service._shutdown_requested:
+        if service.state not in [ServiceState.STOPPING, ServiceState.STOPPED]:
             await service.stop()
 
 

@@ -66,6 +66,11 @@ class DisplayConfig(BaseModel):
         default=False,
         description="Whether to show debug overlay"
     )
+    
+    headless: bool = Field(
+        default=False,
+        description="Whether to run in headless mode (no window creation)"
+    )
 
 
 class RenderingConfig(BaseModel):

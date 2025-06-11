@@ -105,7 +105,7 @@ class VideoOverlayRenderer(LayerRenderer):
                     
                 # Update video texture
                 if hasattr(self.video_player, 'get_texture'):
-                    self.video_texture = self.video_player.get_texture()
+                    self.video_texture = self.video_player.texture
                     
             except Exception as e:
                 logger.error(f"Error updating video: {e}", exc_info=True)

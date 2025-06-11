@@ -20,7 +20,8 @@ import sys
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from services.display.src.experimance_display import DisplayService, DisplayServiceConfig
+from experimance_common.test_utils import active_service
+from experimance_display import DisplayService, DisplayServiceConfig
 
 # Configure logging
 logging.basicConfig(
@@ -43,10 +44,7 @@ async def test_display_service():
     logger.info("Creating DisplayService...")
     service = DisplayService(config=config, service_name="test-display")
     
-    try:
-        logger.info("Starting DisplayService...")
-        await service.start()
-        
+    async with active_service(service) as service:
         # Test text overlay
         logger.info("Testing text overlay...")
         text_message = {
@@ -112,15 +110,7 @@ async def test_display_service():
         # Run for a while to see the display in action
         logger.info("Display service running... Press Ctrl+C to stop")
         await asyncio.sleep(10)
-        
-    except KeyboardInterrupt:
-        logger.info("Received interrupt signal")
-    except Exception as e:
-        logger.error(f"Error during test: {e}", exc_info=True)
-    finally:
-        logger.info("Stopping DisplayService...")
-        await service.stop()
-
+    
 
 if __name__ == "__main__":
     # When running directly, ignore the pytest skip decorator

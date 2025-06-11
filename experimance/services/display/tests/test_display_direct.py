@@ -102,7 +102,9 @@ def mock_zmq_subscriber():
             mock_instance.subscribe_topics = subscribe_topics if isinstance(subscribe_topics, list) else [subscribe_topics]
             mock_instance.handlers = {}
             mock_instance._running = False
-            mock_instance._shutdown_requested = False
+            mock_instance.config = Mock()
+            mock_instance.config.display = Mock()
+            mock_instance.config.display.headless = True
             
             # Create async mock methods
             mock_instance.start = AsyncMock()
