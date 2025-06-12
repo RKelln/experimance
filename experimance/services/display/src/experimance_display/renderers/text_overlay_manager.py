@@ -140,25 +140,29 @@ class TextOverlayManager(LayerRenderer):
         """Get the layer opacity (0.0 to 1.0)."""
         return self._opacity
     
-    def _create_position_map(self) -> Dict[str, Tuple[int, int, str]]:
-        """Create mapping from position names to (x, y, anchor) coordinates.
+    def _create_position_map(self) -> Dict[str, Tuple[int, int]]:
+        """Create mapping from position names to (x, y) coordinates.
         
         Returns:
-            Dictionary mapping position names to (x, y, anchor_position)
+            Dictionary mapping position names to (x, y)
         """
         width, height = self.window_size
         margin = 20  # Margin from edges
+
+        logger.debug(f"Creating position map for window size: {self.window_size}")
+        print("Creating position map with margin:", margin)
+        print("Window size:", self.window_size)
         
         return {
-            "top_left": (margin, height - margin, "top_left"),
-            "top_center": (width // 2, height - margin, "top_center"),
-            "top_right": (width - margin, height - margin, "top_right"),
-            "center_left": (margin, height // 2, "center_left"),
-            "center": (width // 2, height // 2, "center"),
-            "center_right": (width - margin, height // 2, "center_right"),
-            "bottom_left": (margin, margin, "bottom_left"),
-            "bottom_center": (width // 2, margin, "bottom_center"),
-            "bottom_right": (width - margin, margin, "bottom_right"),
+            "top_left": (margin, height - margin),
+            "top_center": (width // 2, height - margin,),
+            "top_right": (width - margin, height - margin),
+            "center_left": (margin, height // 2),
+            "center": (width // 2, height // 2),
+            "center_right": (width - margin, height // 2),
+            "bottom_left": (margin, margin),
+            "bottom_center": (width // 2, margin),
+            "bottom_right": (width - margin, margin),
         }
     
     def update(self, dt: float):
@@ -213,13 +217,20 @@ class TextOverlayManager(LayerRenderer):
             duration = message.get("duration")
             style_overrides = message.get("style", {})
             
-            logger.info(f"Adding text overlay: {text_id} ({speaker})")
+            logger.info(f"Adding text overlay: {text_id} ({speaker}): {content}")
             
             # Get base style for speaker
             style = self._get_style_for_speaker(speaker)
             
             # Apply style overrides
             style.update(style_overrides)
+            
+            # If position was changed, update anchor and align to match
+            if "position" in style_overrides:
+                if "anchor" not in style_overrides:
+                    style["anchor"] = self._get_anchor_for_position(style["position"])
+                if "align" not in style_overrides:
+                    style["align"] = self._get_align_for_position(style["position"])
             
             # Create label
             label = self._create_label(content, style)
@@ -263,7 +274,7 @@ class TextOverlayManager(LayerRenderer):
         """Get style configuration for a speaker.
         
         Args:
-            speaker: Speaker name (e.g., "agent", "system", "debug")
+            speaker: Speaker name (e.g., "agent", "system", "debug", "title")
             
         Returns:
             Style configuration dictionary
@@ -274,11 +285,13 @@ class TextOverlayManager(LayerRenderer):
             return {
                 "font_size": style_config.font_size,
                 "color": style_config.color,
+                "anchor": style_config.anchor,
                 "position": style_config.position,
                 "background": style_config.background,
                 "background_color": style_config.background_color,
                 "padding": style_config.padding,
                 "max_width": style_config.max_width,
+                "align": style_config.align,
             }
         else:
             # Fallback to system style
@@ -287,11 +300,13 @@ class TextOverlayManager(LayerRenderer):
             return {
                 "font_size": style_config.font_size,
                 "color": style_config.color,
+                "anchor": style_config.anchor,
                 "position": style_config.position,
                 "background": style_config.background,
                 "background_color": style_config.background_color,
                 "padding": style_config.padding,
                 "max_width": style_config.max_width,
+                "align": style_config.align,
             }
     
     def _create_label(self, content: str, style: Dict[str, Any]) -> Label:
@@ -307,38 +322,69 @@ class TextOverlayManager(LayerRenderer):
         # Get position
         position_name = style.get("position", "bottom_center")
         if position_name in self.position_map:
-            x, y, anchor = self.position_map[position_name]
+            x, y = self.position_map[position_name]
         else:
             logger.warning(f"Unknown position '{position_name}', using bottom_center")
-            x, y, anchor = self.position_map["bottom_center"]
+            x, y = self.position_map["bottom_center"]
         
-        # Handle text wrapping
-        max_width = style.get("max_width")
-        if max_width:
-            # Simple word wrapping (could be enhanced)
-            content = self._wrap_text(content, max_width, style["font_size"])
-        
+        print(content)
+        print(self.position_map)
+        print(x, y)
+
         # Create label
         color = style.get("color", (255, 255, 255, 255))
         font_size = style.get("font_size", 24)
         
-        # Set default width for multiline text if not provided
-        if max_width is None:
-            # Use a reasonable default based on window width (80% of window width)
-            max_width = int(self.window_size[0] * 0.8)
+        # Handle text wrapping only if max_width is explicitly provided
+        max_width = style.get("max_width")
+        use_width = None
         
-        label = Label(
-            text=content,
-            font_name="Arial",  # Could be configurable
-            font_size=font_size,
-            color=color,
-            x=x,
-            y=y,
-            anchor_x=self._get_anchor_x(anchor),
-            anchor_y=self._get_anchor_y(anchor),
-            multiline=True,
-            width=max_width
-        )
+        if max_width:
+            # Simple word wrapping (could be enhanced)
+            content = self._wrap_text(content, max_width, font_size)
+            use_width = max_width
+        
+        # Determine if we need multiline support
+        is_multiline = "\n" in content
+        
+        # Create label with appropriate parameters
+        if is_multiline:
+            # For multiline text, we need a width parameter
+            if max_width and max_width > 0:
+                # Use the specified max_width
+                content = self._wrap_text(content, max_width, font_size)
+                use_width = max_width
+            else:
+                # No max_width specified, use a reasonable default based on window size
+                default_width = int(self.window_size[0] * 0.8)  # 80% of window width
+                use_width = default_width
+            
+            label = Label(
+                text=content,
+                font_name="Arial",  # Could be configurable
+                font_size=font_size,
+                color=color,
+                x=x,
+                y=y,
+                anchor_x=self._get_anchor_x(style.get("anchor", "baseline_center")),
+                anchor_y=self._get_anchor_y(style.get("anchor", "baseline_center")),
+                align=style.get("align", "center"),
+                multiline=True,
+                width=use_width
+            )
+        else:
+            # For single line text or when no width constraint is needed
+            label = Label(
+                text=content,
+                font_name="Arial",  # Could be configurable
+                font_size=font_size,
+                color=color,
+                x=x,
+                y=y,
+                anchor_x=self._get_anchor_x(style.get("anchor", "baseline_center")),
+                anchor_y=self._get_anchor_y(style.get("anchor", "baseline_center")),
+                multiline=is_multiline
+            )
         
         return label
     
@@ -385,6 +431,8 @@ class TextOverlayManager(LayerRenderer):
         Returns:
             Pyglet anchor_x value
         """
+        # NOTE because "center" is valid for x and y, we need to handle it separately
+        # it currently acts as a default if no other x anchors are specified
         if "left" in anchor:
             return "left"
         elif "right" in anchor:
@@ -402,6 +450,8 @@ class TextOverlayManager(LayerRenderer):
             Pyglet anchor_y value
         """
         # AnchorY = "top", "bottom", "center", "baseline"
+        # NOTE because "center" is valid for x and y, we need to handle it separately
+        # it currently acts as a default if no other y anchors are specified
         if "top" in anchor:
             return "top"
         elif "bottom" in anchor:
@@ -410,6 +460,49 @@ class TextOverlayManager(LayerRenderer):
             return "baseline"
         else:
             return "center"
+    
+    def _get_anchor_for_position(self, position: str) -> str:
+        """Determine the appropriate anchor based on position name.
+        
+        Args:
+            position: Position name (e.g., "top_right", "center_left")
+            
+        Returns:
+            Anchor string (e.g., "top_right", "center_left")
+        """
+        # For positions, the anchor should typically match the position
+        # This ensures text is aligned correctly relative to the coordinates
+        position_to_anchor = {
+            "top_left": "top_left",
+            "top_center": "top_center", 
+            "top_right": "top_right",
+            "center_left": "center_left",
+            "center": "center_center",
+            "center_right": "center_right", 
+            "bottom_left": "bottom_left",
+            "bottom_center": "bottom_center",
+            "bottom_right": "bottom_right"
+        }
+        
+        return position_to_anchor.get(position, "baseline_center")
+    
+    def _get_align_for_position(self, position: str) -> str:
+        """Determine the appropriate text alignment based on position name.
+        
+        Args:
+            position: Position name (e.g., "top_right", "center_left")
+            
+        Returns:
+            Align string ("left", "center", "right")
+        """
+        if "left" in position:
+            return "left"
+        elif "right" in position:
+            return "right"
+        elif "center" in position:
+            return "center"
+        else:
+            return "center"  # Default to center alignment
     
     def resize(self, new_size: Tuple[int, int]):
         """Handle window resize.

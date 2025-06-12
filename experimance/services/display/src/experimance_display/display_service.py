@@ -33,6 +33,7 @@ from .renderers.layer_manager import LayerManager
 from .renderers.image_renderer import ImageRenderer
 from .renderers.video_overlay_renderer import VideoOverlayRenderer
 from .renderers.text_overlay_manager import TextOverlayManager
+from .renderers.debug_overlay_renderer import DebugOverlayRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +121,15 @@ class DisplayService(ZmqSubscriberService):
         
         # Schedule pyglet clock for frame updates
         clock.schedule_interval(self._update_frame, 1.0 / self.target_fps)
-        
+
         logger.info(f"DisplayService started on {self.window.width}x{self.window.height}" if self.window else "DisplayService started (no window)")
+        
+        # Show title screen if enabled
+        await self._show_title_screen()
+        
+        # Show debug text if enabled
+        if self.config.display.debug_text:
+            await self._show_debug_text()
     
     def _initialize_window(self):
         """Initialize the pyglet window."""
@@ -241,10 +249,18 @@ class DisplayService(ZmqSubscriberService):
                 transitions_config=self.config.transitions
             )
             
+            # Create debug overlay renderer
+            self.debug_overlay_renderer = DebugOverlayRenderer(
+                window_size=window_size,
+                config=self.config,
+                layer_manager=self.layer_manager
+            )
+            
             # Register renderers with layer manager
             self.layer_manager.register_renderer("background", self.image_renderer)
             self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
             self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
+            self.layer_manager.register_renderer("debug_overlay", self.debug_overlay_renderer)
             
             logger.info("Rendering components initialized")
             
@@ -559,6 +575,80 @@ class DisplayService(ZmqSubscriberService):
             logger.error(f"Error during DisplayService shutdown: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
             raise
+    
+    async def _show_title_screen(self):
+        """Display the title screen if enabled in configuration."""
+        if not self.config.title_screen.enabled:
+            logger.debug("Title screen disabled in configuration")
+            return
+        
+        if not self.text_overlay_manager:
+            logger.warning("Cannot show title screen: TextOverlayManager not initialized")
+            return
+        
+        try:
+            logger.info(f"Showing title screen: '{self.config.title_screen.text}'")
+            
+            # Create title screen text message (positioning is handled by the "title" text style)
+            title_message = {
+                "text_id": "_title_screen",
+                "content": self.config.title_screen.text,
+                "speaker": "title",
+                "duration": self.config.title_screen.duration
+            }
+            
+            logger.debug(f"Title message: {title_message}")
+            
+            # Display the title text
+            await self.text_overlay_manager.handle_text_overlay(title_message)
+            
+            logger.debug(f"Title screen will be visible for {self.config.title_screen.duration} seconds")
+            
+        except Exception as e:
+            logger.error(f"Error showing title screen: {e}", exc_info=True)
+            # Don't let title screen errors prevent startup
+    
+    async def _show_debug_text(self):
+        """Display debug text in all positions with different speakers."""
+        if not self.text_overlay_manager:
+            logger.warning("Cannot show debug text: TextOverlayManager not initialized")
+            return
+        
+        try:
+            logger.info("Showing debug text in all positions")
+            
+            # Get all available positions from text overlay manager
+            positions = [
+                "top_left", "top_center", "top_right",
+                "center_left", "center", "center_right", 
+                "bottom_left", "bottom_center", "bottom_right"
+            ]
+            
+            # Different speakers to test
+            speakers = ["agent", "system", "debug", "title"]
+            
+            # Create debug text for each position
+            for i, position in enumerate(positions):
+                speaker = speakers[i % len(speakers)]  # Cycle through speakers
+                
+                debug_message = {
+                    "text_id": f"debug_{position}",
+                    "content": f"{speaker.upper()}\n{position}",
+                    "speaker": speaker,
+                    "duration": None,  # Infinite duration
+                    "style": {
+                        "position": position,
+                        "max_width": None  # Clear max_width to prevent layout issues
+                    }
+                }
+                
+                logger.debug(f"Adding debug text: {position} ({speaker})")
+                await self.text_overlay_manager.handle_text_overlay(debug_message)
+            
+            logger.info(f"Debug text displayed in {len(positions)} positions")
+            
+        except Exception as e:
+            logger.error(f"Error showing debug text: {e}", exc_info=True)
 
 
 async def main():
@@ -597,6 +687,11 @@ async def main():
         action="store_true",
         help="Enable debug overlay"
     )
+    parser.add_argument(
+        "--debug-text",
+        action="store_true",
+        help="Show test text in all positions with different speakers"
+    )
     
     args = parser.parse_args()
     
@@ -631,6 +726,11 @@ async def main():
     if args.debug:
         config.display.debug_overlay = True
         logger.info(f"Debug overlay enabled: debug_overlay={config.display.debug_overlay}")
+    
+    # Override debug text if requested
+    if args.debug_text:
+        config.display.debug_text = True
+        logger.info("Debug text enabled: will show test text in all positions")
     
     # Create and start the service
     service = DisplayService(

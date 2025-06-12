@@ -67,6 +67,11 @@ class DisplayConfig(BaseModel):
         description="Whether to show debug overlay"
     )
     
+    debug_text: bool = Field(
+        default=False,
+        description="Whether to show debug text in all positions"
+    )
+    
     headless: bool = Field(
         default=False,
         description="Whether to run in headless mode (no window creation)"
@@ -149,6 +154,14 @@ class TextStyleConfig(BaseModel):
         description="Text color as RGBA tuple"
     )
     
+    anchor: Literal["top_left", "top_center", "top_right", 
+                     "center_left", "center", "center_right",
+                     "bottom_left", "bottom_center", "bottom_right",
+                     "baseline_left", "baseline_center", "baseline_right"] = Field(
+        default="baseline_center",
+        description="Text anchor position"
+    )
+
     position: Literal["top_left", "top_center", "top_right", 
                      "center_left", "center", "center_right",
                      "bottom_left", "bottom_center", "bottom_right"] = Field(
@@ -175,6 +188,11 @@ class TextStyleConfig(BaseModel):
         default=None,
         description="Maximum text width before wrapping (None = no limit)"
     )
+    
+    align: Literal["left", "center", "right"] = Field(
+        default="left",
+        description="Text alignment within the label ('left', 'center', 'right')"
+    )
 
 
 class TextStylesConfig(BaseModel):
@@ -184,6 +202,7 @@ class TextStylesConfig(BaseModel):
         default_factory=lambda: TextStyleConfig(
             font_size=28,
             color=(255, 255, 255, 255),
+            anchor="baseline_center",
             position="bottom_center",
             background=True,
             background_color=(0, 0, 0, 128)
@@ -195,6 +214,7 @@ class TextStylesConfig(BaseModel):
         default_factory=lambda: TextStyleConfig(
             font_size=24,
             color=(200, 200, 200, 255),
+            anchor="baseline_center",
             position="top_right",
             background=False
         ),
@@ -205,10 +225,46 @@ class TextStylesConfig(BaseModel):
         default_factory=lambda: TextStyleConfig(
             font_size=16,
             color=(255, 255, 0, 255),
-            position="top_left",
+            anchor="baseline_center",
+            position="top_center",
             background=False
         ),
         description="Style for debug text"
+    )
+    
+    title: TextStyleConfig = Field(
+        default_factory=lambda: TextStyleConfig(
+            font_size=72,
+            color=(255, 255, 255, 255),
+            anchor="baseline_center",
+            position="center",
+            background=False
+        ),
+        description="Style for title screen text"
+    )
+
+
+class TitleScreenConfig(BaseModel):
+    """Configuration for the startup title screen."""
+    
+    enabled: bool = Field(
+        default=True,
+        description="Whether to show the title screen on startup"
+    )
+    
+    text: str = Field(
+        default="Experimance",
+        description="Text to display on the title screen"
+    )
+    
+    duration: float = Field(
+        default=5.0,
+        description="Duration to show title screen in seconds"
+    )
+    
+    fade_out_duration: float = Field(
+        default=3.0,
+        description="Duration of fade out animation in seconds"
     )
 
 
@@ -223,3 +279,4 @@ class DisplayServiceConfig(Config):
     rendering: RenderingConfig = Field(default_factory=RenderingConfig)
     transitions: TransitionsConfig = Field(default_factory=TransitionsConfig)
     text_styles: TextStylesConfig = Field(default_factory=TextStylesConfig)
+    title_screen: TitleScreenConfig = Field(default_factory=TitleScreenConfig)
