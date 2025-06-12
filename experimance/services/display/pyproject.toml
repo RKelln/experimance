@@ -43,6 +43,9 @@ dev = [
     "ruff>=0.1.6",
 ]
 
+[project.scripts]
+experimance-display-cli = "experimance_display.cli:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = ["experimance_display"]

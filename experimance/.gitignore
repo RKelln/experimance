@@ -59,6 +59,7 @@ ruff.toml.swo
 
 # project specific
 logs/
+media/
 
 # Rust code and artifacts
 *.rs.bk
