@@ -86,6 +86,7 @@ class BaseService:
         # State control
         self._stop_lock = asyncio.Lock() # Lock to serialize stop() execution
         self._run_task_handle: Optional[asyncio.Task] = None # Handle to the main run() task
+        self._stop_requested = False # Flag to prevent multiple stop requests
         
         # Set up signal handlers for graceful shutdown
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGTSTP):
@@ -289,10 +290,17 @@ class BaseService:
         Args:
             suffix: Suffix to append to create the task name: "{service_name}-{suffix}-stop"
         """
+        # Check if stop has already been requested to prevent multiple stop tasks
+        if self._stop_requested:
+            logger.debug(f"Stop already requested for {self.service_name} ({suffix})")
+            return
+            
         if self.state in [ServiceState.STOPPING, ServiceState.STOPPED]:
             logger.debug(f"Stop already requested/completed for {self.service_name}")
             return
             
+        # Set the flag to prevent additional stop requests
+        self._stop_requested = True
         logger.info(f"Shutdown requested for {self.service_name} ({suffix})")
         # Schedule the stop operation to run soon
         asyncio.create_task(self.stop(), name=f"{self.service_name}-{suffix}-stop")
