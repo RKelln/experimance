@@ -290,13 +290,13 @@ class BaseService:
         Args:
             suffix: Suffix to append to create the task name: "{service_name}-{suffix}-stop"
         """
+        if self.state in [ServiceState.STOPPING, ServiceState.STOPPED]:
+            logger.debug(f"Stop already requested/completed for {self.service_name}")
+            return
+    
         # Check if stop has already been requested to prevent multiple stop tasks
         if self._stop_requested:
             logger.debug(f"Stop already requested for {self.service_name} ({suffix})")
-            return
-            
-        if self.state in [ServiceState.STOPPING, ServiceState.STOPPED]:
-            logger.debug(f"Stop already requested/completed for {self.service_name}")
             return
             
         # Set the flag to prevent additional stop requests

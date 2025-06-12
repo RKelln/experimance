@@ -537,6 +537,8 @@ class DisplayService(ZmqSubscriberService):
     async def stop(self):
         """Stop the display service."""
         logger.info("Stopping DisplayService...")
+        # Stop ZMQ service (must be first)
+        await super().stop()
         
         try:
             # Stop clock updates
@@ -550,10 +552,7 @@ class DisplayService(ZmqSubscriberService):
             if self.window:
                 self.window.close()
                 self.window = None
-            
-            # Stop ZMQ service
-            await super().stop()
-            
+        
             logger.info("DisplayService stopped")
             
         except Exception as e:
@@ -639,24 +638,11 @@ async def main():
         service_name=args.name,
     )
     
-    # Signal handlers are automatically set up by the base service
-    # No custom signal handling needed - the base service handles SIGINT/SIGTERM properly
+    await service.start()
+    logger.info(f"Display service '{args.name}' started successfully")
     
-    try:
-        await service.start()
-        logger.info(f"Display service '{args.name}' started successfully")
-        
-        # Run the main service loop (handles both ZMQ and pyglet)
-        await service.run()
-        
-    except KeyboardInterrupt:
-        logger.info("Received Ctrl+C, shutting down...")
-        # stop() will be called in the finally block of run()
-    except Exception as e:
-        logger.error(f"Failed to start display service: {e}", exc_info=True)
-        # Ensure cleanup on error
-        if service.state not in [ServiceState.STOPPING, ServiceState.STOPPED]:
-            await service.stop()
+    # Run the main service loop (handles both ZMQ and pyglet)
+    await service.run()
 
 
 def main_sync():

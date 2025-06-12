@@ -768,8 +768,10 @@ class MyController(ZmqControllerService):
 async def main():
     service = MyController()
     await service.start()
-    # Service runs until shutdown signal
-    await service.run()
+    
+    # IMPORTANT: do NOT add try: and catch on KeyboardInterrupt and Exception, 
+    # these are handled for you
+    await service.run() # Service runs until shutdown signal
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -1188,7 +1190,7 @@ class MyService(BaseService):
         await super().start()
         
     async def stop(self):
-        await super().stop()
+        await super().stop() # do this first before stopping your own resources
         # Clean up resources
         
     async def background_task(self):
