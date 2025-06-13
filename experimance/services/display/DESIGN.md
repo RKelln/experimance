@@ -9,8 +9,7 @@ The Display Service is responsible for rendering the visual output of the Experi
 ### Service Pattern
 - **Type**: ZmqSubscriberService (no publishing required)
 - **Subscription Channels**:
-  - `images` (tcp://localhost:5558) - Images, transitions, loops from image_server
-  - `events` (tcp://localhost:5555) - Control events from experimance core
+  - `events` (tcp://localhost:5555) - Unified events channel for all inter-service communication
   - `display_ctrl` (tcp://localhost:5560) - Text overlays and display commands
 
 ### Message Types
@@ -161,7 +160,7 @@ vsync = true
 debug_overlay = false
 
 [zmq]
-images_sub_address = "tcp://localhost:5558"
+images_sub_address = "tcp://localhost:5555"
 events_sub_address = "tcp://localhost:5555" 
 display_ctrl_sub_address = "tcp://localhost:5560"
 

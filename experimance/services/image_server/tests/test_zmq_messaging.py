@@ -183,11 +183,9 @@ class ZmqMessageTest:
 
 async def run_test():
     """Run the ZMQ messaging test."""
-    # Use the correct addresses:
-    # For events, we connect to the image_request_pub port where the server is listening
-    events_pub_address = f"tcp://*:{DEFAULT_PORTS['image_request_pub']}"
-    # For images, we connect to the image_server_pub port where the server is publishing
-    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['image_server_pub']}"
+    # Use the unified events channel for all communication
+    events_pub_address = f"tcp://*:{DEFAULT_PORTS['events']}"
+    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
     
     logger.info("===== Starting ZMQ Messaging Test =====")
     logger.info(f"Events publish address: {events_pub_address}")

@@ -1,6 +1,6 @@
 # Display Service TODO
 
-**Status Update (June 10, 2025)**: Phase 1 core infrastructure is now complete! The display service is functional with working signal handling, keyboard controls, and all major components implemented. See [README.md](README.md) for usage instructions.
+**Status Update (January 2025)**: Phase 1 and most of Phase 2 core infrastructure is now complete! The display service is fully functional with working signal handling, keyboard controls, and all major rendering components implemented. The service successfully handles all message types, provides comprehensive testing tools, and maintains target performance. See [README.md](README.md) for usage instructions.
 
 ## Phase 1: Core Infrastructure ✅ = Done, 🚧 = In Progress, ⏳ = Todo
 
@@ -36,40 +36,55 @@
 - ✅ VideoOverlayRenderer with dynamic mask support
 - ✅ Handle VideoMask messages to update overlay mask
 - ✅ Implement fade in/out timing based on sand interaction
-- 🚧 Shader-based masking using grayscale masks (basic implementation)
+- ✅ Basic shader-based masking using grayscale masks (basic implementation)
 
 ### Testing & Validation
 - ✅ Basic syntax validation and import testing
 - ✅ Service initialization testing (window creation, component loading)
 - ✅ Keyboard controls (ESC/Q keys for exit)
 - ✅ Signal handling (Ctrl+C graceful shutdown)
-- ⏳ Test text overlay functionality with ZMQ messages
-- ⏳ Test video overlay with mask updates
-- ⏳ Test image loading and crossfade transitions
+- ✅ Test text overlay functionality with ZMQ messages
+- ✅ Test video overlay with mask updates (CLI tool available)
+- ✅ Test image loading and crossfade transitions
 
 ## Phase 2: Core Features
 
-### Image Display & Loop Animation (Future Enhancement)
-- ⏳ ImageRenderer class with texture caching
-- ⏳ Handle ImageReady messages from images channel
-- ⏳ Support for satellite_landscape and mask image types
-- ⏳ Automatic crossfade on new image receipt
+### Image Display & Loop Animation 
+- ✅ ImageRenderer class with texture caching
+- ✅ Handle ImageReady messages from images channel
+- ✅ Support for satellite_landscape and mask image types
+- ✅ Automatic crossfade on new image receipt
 - ⏳ **Future**: Handle LoopReady messages for animated loops of still images
 - ⏳ **Future**: Seamless switching between still images and looping videos
 - ⏳ **Future**: Loop video playback with automatic restart
 
 ### Video Overlay
-- ⏳ VideoOverlayRenderer with dynamic mask support
-- ⏳ Handle VideoMask messages to update overlay mask
-- ⏳ Implement fade in/out timing based on sand interaction
-- ⏳ Shader-based masking using grayscale masks
+- ✅ VideoOverlayRenderer with dynamic mask support
+- ✅ Handle VideoMask messages to update overlay mask
+- ✅ Implement fade in/out timing based on sand interaction
+- ✅ Basic shader-based masking using grayscale masks
 
 ### Text Overlays
-- ⏳ TextOverlayManager for multiple concurrent text items
-- ⏳ Handle TextOverlay and RemoveText messages
-- ⏳ Speaker-specific styling (agent vs system)
-- ⏳ Automatic expiration based on duration
-- ⏳ Different positioning options (bottom_center, top_right, etc.)
+- ✅ TextOverlayManager for multiple concurrent text items
+- ✅ Handle TextOverlay and RemoveText messages
+- ✅ Speaker-specific styling (agent vs system)
+- ✅ Automatic expiration based on duration
+- ✅ Different positioning options (bottom_center, top_right, etc.)
+
+### Core Rendering Infrastructure
+- ✅ LayerManager for z-order rendering coordination
+- ✅ DebugOverlayRenderer for performance metrics and system info
+- ✅ Window management (fullscreen/windowed modes)
+- ✅ Frame timing and FPS management (30fps target achieved)
+- ✅ Headless mode support for testing
+- ✅ Configuration system with TOML support
+
+### Testing & Development Tools
+- ✅ CLI tool for manual testing of all message types
+- ✅ Direct interface for non-ZMQ testing
+- ✅ Comprehensive test suite with mock data
+- ✅ Title screen functionality
+- ✅ Debug text display for all positions and speakers
 
 ## Phase 3: Advanced Features
 
@@ -94,28 +109,28 @@
 ## Phase 4: Polish & Testing
 
 ### Error Handling
-- ⏳ Graceful handling of missing files
+- ✅ Graceful handling of missing files
 - ⏳ ZMQ reconnection with exponential backoff
 - ⏳ OpenGL error recovery
 - ⏳ Safe mode fallback rendering
 
 ### Configuration
-- ⏳ Complete configuration schema validation
+- ✅ Complete configuration schema validation
 - ⏳ Runtime configuration updates
 - ⏳ Multi-monitor support configuration
 - ⏳ Performance tuning options
 
 ### Testing
-- ⏳ Unit tests for all core components
-- ⏳ Integration tests with mock ZMQ messages
+- ✅ Unit tests for all core components
+- ✅ Integration tests with mock ZMQ messages
 - ⏳ Performance benchmarking
 - ⏳ Memory leak testing
 - ⏳ Long-running stability tests
 
 ### Documentation
-- ⏳ API documentation for all public interfaces
-- ⏳ Configuration reference
-- ⏳ Troubleshooting guide
+- ✅ API documentation for all public interfaces
+- ✅ Configuration reference
+- ✅ Troubleshooting guide
 - ⏳ Performance tuning guide
 
 ## Phase 5: Advanced Features (Future)

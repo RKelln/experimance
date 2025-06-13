@@ -28,13 +28,13 @@ class ZmqConfig(BaseModel):
     """ZeroMQ configuration for the Image Server service."""
     
     events_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['image_request_pub']}",
-        description="Address for subscribing to event messages"
+        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
+        description="Address for subscribing to event messages (unified events channel)"
     )
     
-    images_pub_address: str = Field(
-        default=f"tcp://*:{DEFAULT_PORTS['image_server_pub']}",
-        description="Address for publishing image messages"
+    events_pub_address: str = Field(
+        default=f"tcp://*:{DEFAULT_PORTS['events']}",
+        description="Address for publishing responses to unified events channel"
     )
 
 class GeneratorConfig(BaseModel):

@@ -18,9 +18,9 @@ from experimance_common.constants import DEFAULT_PORTS
 class ZmqConfig(BaseModel):
     """ZeroMQ configuration for the Display Service."""
     
-    core_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['core']}",
-        description="Address for subscribing to messages"
+    events_sub_address: str = Field(
+        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
+        description="Address for subscribing to unified events channel"
     )
 
 

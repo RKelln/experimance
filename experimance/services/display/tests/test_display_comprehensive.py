@@ -261,6 +261,9 @@ class TestTextOverlays:
                 await service.text_overlay_manager.handle_text_overlay(message) # type: ignore
             service._handle_text_overlay = mock_handle_text
             
+            assert service.text_overlay_manager is not None
+            initial_active_text_count = len(service.text_overlay_manager.active_texts)
+
             # Create initial text
             initial_message = {
                 "text_id": "streaming_1",
@@ -271,6 +274,8 @@ class TestTextOverlays:
             # Call handler directly
             await service._handle_text_overlay(initial_message)
             
+            assert initial_active_text_count + 1 == len(service.text_overlay_manager.active_texts)
+
             # Replace with new text (same ID)
             updated_message = {
                 "text_id": "streaming_1",
@@ -285,7 +290,8 @@ class TestTextOverlays:
             # Should still have only one text with the same ID
             assert service.text_overlay_manager is not None
             assert "streaming_1" in service.text_overlay_manager.active_texts
-            assert len(service.text_overlay_manager.active_texts) == 1
+            assert len(service.text_overlay_manager.active_texts) == initial_active_text_count + 1, f"Should only have one active text, have {service.text_overlay_manager.active_texts}"
+            assert service.text_overlay_manager.active_texts["streaming_1"].content == "Updated text content"
             
             await service.stop()
     
@@ -737,7 +743,7 @@ class TestMessageValidation:
                 
                 assert active.state == ServiceState.RUNNING
 
-
+  
 class TestDirectInterface:
     """Test the direct (non-ZMQ) interface for development."""
     

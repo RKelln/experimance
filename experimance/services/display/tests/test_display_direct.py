@@ -58,7 +58,6 @@ def mock_pyglet():
         mock_pyglet_module.clock.tick = Mock()
         
         # Mock clock functions  
-        mock_clock.schedule_interval = Mock()
         mock_clock.unschedule = Mock()
         mock_clock.tick = Mock()
         mock_clock.schedule_once = Mock()

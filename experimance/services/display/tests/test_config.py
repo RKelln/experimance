@@ -46,7 +46,6 @@ class TestConfigurationSchemas:
     def test_zmq_config_defaults(self):
         """Test ZmqConfig default values."""
         config = ZmqConfig()
-        assert "tcp://localhost:" in config.images_sub_address
         assert "tcp://localhost:" in config.events_sub_address
     
     def test_complete_config_defaults(self):
@@ -132,7 +131,6 @@ events_sub_address = "tcp://localhost:8888"
             assert config.text_styles.agent.position == "top_center"
             assert config.text_styles.system.color == (0, 255, 0, 255)
             
-            assert config.zmq.images_sub_address == "tcp://localhost:9999"
             assert config.zmq.events_sub_address == "tcp://localhost:8888"
         
         # Clean up

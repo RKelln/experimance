@@ -11,8 +11,7 @@ debug_overlay = true          # Whether to show debug overlay
 
 # ZeroMQ configuration
 [zmq]
-#core_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
-#images_sub_address = "tcp://localhost:5558"  # Address to subscribe to images on
+#events_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
 
 # Transitions
 [transitions]

@@ -28,7 +28,7 @@ from .osc_bridge import OscBridge, DEFAULT_SCLANG_PATH
 logger = logging.getLogger(__name__)
 
 # Constants
-EVENTS_CHANNEL_PORT = DEFAULT_PORTS["coordinator_pub"]  
+EVENTS_CHANNEL_PORT = DEFAULT_PORTS["events"]  # Unified events channel  
 
 class AudioService(ZmqSubscriberService):
     """

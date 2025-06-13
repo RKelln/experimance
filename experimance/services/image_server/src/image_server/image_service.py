@@ -77,7 +77,7 @@ class ImageServerService(ZmqPublisherSubscriberService):
             super().__init__(
                 service_name=self.config.service_name,
                 service_type="image-server",
-                pub_address=self.config.zmq.images_pub_address,
+                pub_address=self.config.zmq.events_pub_address,
                 sub_address=self.config.zmq.events_sub_address,
                 subscribe_topics=[MessageType.RENDER_REQUEST],
                 publish_topic=MessageType.IMAGE_READY,

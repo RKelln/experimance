@@ -78,7 +78,7 @@ debug_overlay = false          # Show debug information
 
 # ZeroMQ addresses
 [zmq]
-images_sub_address = "tcp://localhost:5558"  # Image messages
+images_sub_address = "tcp://localhost:5555"  # Unified events channel
 events_sub_address = "tcp://localhost:5555"  # Event messages
 
 # Performance
@@ -99,7 +99,7 @@ shader_path = "shaders/"      # Path to custom shaders
 
 The display service subscribes to these ZMQ message types:
 
-### Images Channel (port 5558)
+### Events Channel (port 5555)
 - **ImageReady**: New satellite landscape images
 - **TransitionReady**: Custom transition videos
 - **LoopReady**: Animated loop videos (future enhancement)
@@ -263,7 +263,7 @@ uv run -m experimance_display --windowed --log-level INFO
 
 **ZMQ connection issues**
 - Verify port configuration matches other services
-- Check if ZMQ services are running: `ss -tlnp | grep 5558`
+- Check if ZMQ services are running: `ss -tlnp | grep 5555`
 - Review log output for connection errors
 
 **Configuration issues**

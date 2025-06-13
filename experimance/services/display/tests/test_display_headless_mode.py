@@ -119,7 +119,6 @@ class TestHeadlessMode:
              patch('services.display.src.experimance_display.display_service.clock') as mock_clock:
             
             # Mock clock functions
-            mock_clock.schedule_interval = Mock()
             mock_clock.unschedule = Mock()
             
             # Mock renderer instances

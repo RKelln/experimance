@@ -21,15 +21,12 @@ The Image Server Service follows the Experimance star topology pattern:
 
 ### Addresses and Ports
 
-The service uses the following ZeroMQ addresses:
+The service uses the unified events channel for all communication:
 
-- **Events Channel (Input)**
-  - Server binds to: `tcp://*:5564` (image_request_pub)
-  - Clients connect to: `tcp://localhost:5564`
-
-- **Images Channel (Output)**
-  - Server binds to: `tcp://*:5563` (image_server_pub)  
-  - Clients connect to: `tcp://localhost:5563`
+- **Events Channel (Unified)**
+  - Server subscribes to: `tcp://localhost:5555` (events)
+  - Server publishes to: `tcp://*:5555` (events)
+  - All message types use the unified channel with message type filtering
 
 ### Message Types
 

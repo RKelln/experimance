@@ -67,7 +67,7 @@ class DisplayService(ZmqSubscriberService):
         super().__init__(
             service_name=self.config.service_name,
             service_type="display",
-            sub_address=self.config.zmq.core_sub_address,
+            sub_address=self.config.zmq.events_sub_address,
             topics=[
                 MessageType.IMAGE_READY,
                 MessageType.TRANSITION_READY,

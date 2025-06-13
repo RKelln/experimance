@@ -61,7 +61,7 @@ class DisplayCLI:
     async def setup_publishers(self):
         """Setup ZMQ publishers for different channels."""
         self.context = zmq.asyncio.Context()
-        self.publisher = ZmqPublisher(f"tcp://*:{DEFAULT_PORTS['core']}")
+        self.publisher = ZmqPublisher(f"tcp://*:{DEFAULT_PORTS['events']}")
         # Give ZMQ time to establish connections
         await asyncio.sleep(0.2)
         logger.info("ZMQ publishers initialized")

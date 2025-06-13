@@ -315,11 +315,9 @@ async def run_basic_test(
 
 async def run_test_suite():
     """Run a comprehensive test suite for RenderRequest and ImageReady messages."""
-    # Use the correct addresses:
-    # For events, we connect to the image_request_pub port where the server is listening
-    events_pub_address = f"tcp://*:{DEFAULT_PORTS['image_request_pub']}"
-    # For images, we connect to the image_server_pub port where the server is publishing
-    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['image_server_pub']}"
+    # Use the unified events channel for all communication
+    events_pub_address = f"tcp://*:{DEFAULT_PORTS['events']}"
+    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
     
     logger.info("===== Starting ZMQ RenderRequest Test Suite =====")
     logger.info(f"Events publish address: {events_pub_address}")

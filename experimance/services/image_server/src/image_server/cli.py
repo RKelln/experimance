@@ -237,10 +237,10 @@ class ImageServerClient:
 async def interactive_mode(debug: bool = False):
     """Run the client in interactive mode with a menu-based interface."""
     # Default settings - connecting to server's binding addresses
-    # For events, we connect to the image_request_pub port (5564)
-    events_pub_address = f"tcp://localhost:{DEFAULT_PORTS['image_request_pub']}"
-    # For images, we connect to the image_server_pub port (5558)
-    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['image_server_pub']}"
+    # For events, we connect to the unified events channel
+    events_pub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
+    # For images, we connect to the unified events channel
+    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
     
     print("\n=== Image Server Test Client ===\n")
     print("ZMQ Configuration:")
@@ -428,14 +428,14 @@ def main():
     parser.add_argument(
         "--events-address", "--events_address",
         type=str,
-        default=f"tcp://localhost:{DEFAULT_PORTS['image_request_pub']}",
-        help=f"ZMQ address for publishing events (default: tcp://localhost:{DEFAULT_PORTS['image_request_pub']})"
+        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
+        help=f"ZMQ address for publishing events (default: tcp://localhost:{DEFAULT_PORTS['events']})"
     )
     parser.add_argument(
         "--images-address", "--images_address",
         type=str,
-        default=f"tcp://localhost:{DEFAULT_PORTS['image_server_pub']}",
-        help=f"ZMQ address for subscribing to images (default: tcp://localhost:{DEFAULT_PORTS['image_server_pub']})"
+        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
+        help=f"ZMQ address for subscribing to images (default: tcp://localhost:{DEFAULT_PORTS['events']})"
     )
     parser.add_argument(
         "--debug", "-D",

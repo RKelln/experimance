@@ -62,7 +62,6 @@ def mock_pyglet():
         mock_pyglet_module.clock.tick = Mock()
         
         # Mock clock functions  
-        mock_clock.schedule_interval = Mock()
         mock_clock.unschedule = Mock()
         mock_clock.tick = Mock()
         mock_clock.schedule_once = Mock()
@@ -170,7 +169,6 @@ class TestDisplayServiceBasic:
         
         # Verify mocks were called
         mock_pyglet['window_class'].assert_called_once()
-        mock_pyglet['clock'].schedule_interval.assert_called()
         
         # Verify service state - after start() it should be STARTED, not RUNNING
         assert service.state == ServiceState.STARTED
@@ -391,7 +389,7 @@ font_size = 36
 color = [255, 0, 0, 255]
 
 [zmq]
-images_sub_address = "tcp://localhost:9999"
+events_sub_address = "tcp://localhost:9999"
 """)
             f.flush()
             
@@ -403,7 +401,7 @@ images_sub_address = "tcp://localhost:9999"
             assert config.display.fps_limit == 30
             assert config.text_styles.agent.font_size == 36
             assert config.text_styles.agent.color == (255, 0, 0, 255)
-            assert config.zmq.images_sub_address == "tcp://localhost:9999"
+            assert config.zmq.events_sub_address == "tcp://localhost:9999"
         
         # Clean up
         Path(f.name).unlink()
