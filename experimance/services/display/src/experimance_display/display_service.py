@@ -15,7 +15,7 @@ a direct interface for triggering display updates.
 import asyncio
 import logging
 import argparse
-import signal
+import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
@@ -25,7 +25,7 @@ from pyglet.window import key
 
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
-from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.constants import DEFAULT_PORTS, TICK
 from experimance_common.base_service import ServiceState
 
 from .config import DisplayServiceConfig
@@ -67,7 +67,7 @@ class DisplayService(ZmqSubscriberService):
         super().__init__(
             service_name=self.config.service_name,
             service_type="display",
-            sub_address=self.config.zmq.images_sub_address,
+            sub_address=self.config.zmq.core_sub_address,
             topics=[
                 MessageType.IMAGE_READY,
                 MessageType.TRANSITION_READY,
@@ -119,8 +119,8 @@ class DisplayService(ZmqSubscriberService):
         # Start the base ZMQ service
         await super().start()
         
-        # Schedule pyglet clock for frame updates
-        clock.schedule_interval(self._update_frame, 1.0 / self.target_fps)
+        # DON'T schedule pyglet clock for frame updates - we'll handle this manually
+        # clock.schedule_interval(self._update_frame, 1.0 / self.target_fps)
 
         logger.info(f"DisplayService started on {self.window.width}x{self.window.height}" if self.window else "DisplayService started (no window)")
         
@@ -157,7 +157,7 @@ class DisplayService(ZmqSubscriberService):
                     width=width,
                     height=height,
                     caption=f"Experimance Display - {self.config.service_name}",
-                    vsync=self.config.display.vsync
+                    vsync=self.config.display.vsync  # Re-enable V-sync
                 )
             
             # Register window event handlers
@@ -256,7 +256,7 @@ class DisplayService(ZmqSubscriberService):
                 layer_manager=self.layer_manager
             )
             
-            # Register renderers with layer manager
+            # Register renderers with layer manager (re-enable all renderers)
             self.layer_manager.register_renderer("background", self.image_renderer)
             self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
             self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
@@ -343,15 +343,22 @@ class DisplayService(ZmqSubscriberService):
     async def _handle_text_overlay(self, message: Dict[str, Any]):
         """Handle TextOverlay messages."""
         try:
-            logger.debug(f"Received TextOverlay: {message}")
+            logger.info(f"Processing TextOverlay message: {message}")
             
             # Validate message
             if not self._validate_text_overlay(message):
+                logger.error("TextOverlay validation failed")
                 return
+            
+            logger.info("TextOverlay validation passed")
             
             # Pass to text overlay manager
             if self.text_overlay_manager:
+                logger.info("Passing to text overlay manager")
                 await self.text_overlay_manager.handle_text_overlay(message)
+                logger.info("Text overlay manager processed message")
+            else:
+                logger.error("Text overlay manager not initialized")
             
         except Exception as e:
             logger.error(f"Error handling TextOverlay: {e}", exc_info=True)
@@ -438,6 +445,16 @@ class DisplayService(ZmqSubscriberService):
     
     def _update_frame(self, dt):
         """Update frame timing and components."""
+
+        if not self.config.display.profile:
+            # fast path
+            if self.layer_manager:
+                self.layer_manager.update(dt)
+            return
+        
+        # slow with timing analysis
+        frame_start = time.perf_counter()
+        
         self.frame_timer += dt
         self.frame_count += 1
         self.fps_display_timer += dt
@@ -446,20 +463,64 @@ class DisplayService(ZmqSubscriberService):
         if self.layer_manager:
             self.layer_manager.update(dt)
         
-        # Display FPS every second if debug is enabled
-        if self.config.display.debug_overlay and self.fps_display_timer >= 1.0:
+        frame_time = time.perf_counter() - frame_start
+        
+        # Track frame processing times for adaptive timing analysis
+        if hasattr(self, 'processing_times'):
+            self.processing_times.append(frame_time)
+            # Keep only last 100 measurements for rolling average
+            if len(self.processing_times) > 100:
+                self.processing_times.pop(0)
+        else:
+            self.processing_times = [frame_time]
+    
+        # Display FPS every second (always log, not just in debug mode)
+        if self.fps_display_timer >= 1.0:
             fps = self.frame_count / self.fps_display_timer
-            logger.debug(f"FPS: {fps:.1f}")
+            
+            # Calculate timing statistics
+            avg_time = sum(self.processing_times) / len(self.processing_times)
+            max_time = max(self.processing_times)
+            min_time = min(self.processing_times)
+            
+            # Calculate adaptive timing statistics if available
+            adaptive_info = ""
+            if hasattr(self, 'adaptive_stats') and self.adaptive_stats['processing_times']:
+                avg_proc = sum(self.adaptive_stats['processing_times']) / len(self.adaptive_stats['processing_times'])
+                avg_sleep = sum(self.adaptive_stats['sleep_times']) / len(self.adaptive_stats['sleep_times'])
+                target_frame_time = 1.0 / self.target_fps
+                adaptive_info = f" - Adaptive: proc={avg_proc*1000:.2f}ms, sleep={avg_sleep*1000:.2f}ms, target={target_frame_time*1000:.2f}ms"
+            
+            logger.info(f"FPS: {fps:.1f} (target: {self.target_fps}, headless: {self.config.display.headless}) - "
+                    f"Frame time: avg={avg_time*1000:.2f}ms, max={max_time*1000:.2f}ms, min={min_time*1000:.2f}ms{adaptive_info}")
             self.fps_display_timer = 0.0
             self.frame_count = 0
     
     def _on_draw(self):
         """Pyglet draw handler."""
+        import time
+
+        draw_start = time.perf_counter()
+        
         if self.window:
             self.window.clear()
         
+        render_start = time.perf_counter()
         if self.layer_manager:
             self.layer_manager.render()
+        render_time = time.perf_counter() - render_start
+        
+        total_draw_time = time.perf_counter() - draw_start
+        
+        # Log draw times occasionally for performance analysis
+        if hasattr(self, '_draw_count'):
+            self._draw_count += 1
+        else:
+            self._draw_count = 1
+            
+        # Log every 30 frames (once per second at 30fps)
+        if self.config.display.profile and self._draw_count % 30 == 0:
+            logger.debug(f"Draw timing - Total: {total_draw_time*1000:.2f}ms, Render: {render_time*1000:.2f}ms")
     
     def _on_key_press(self, symbol, modifiers):
         """Pyglet key press handler."""
@@ -483,47 +544,61 @@ class DisplayService(ZmqSubscriberService):
         # Schedule shutdown in the next frame to avoid blocking the event handler
         clock.schedule_once(lambda dt: self.request_stop(), 0)
     
-    # Service Lifecycle
-    
-    async def run(self):
-        """Run the display service main loop."""
-        logger.info("Starting display service main loop...")
-        
-        try:
-            # Start the base service (which manages our registered tasks)
-            await super().run()
-            
-        except KeyboardInterrupt:
-            logger.info("Received keyboard interrupt")
-        except Exception as e:
-            logger.error(f"Error in main loop: {e}", exc_info=True)
-            self.record_error(e, is_fatal=True)
-    
     async def _run_pyglet_loop(self):
         """Run the pyglet event loop in an async-friendly way."""
+        import time
         logger.info("Starting pyglet event loop...")
-        
+
         try:
             while self.running:
+                frame_start = time.perf_counter()
+                
                 # In headless mode, just run a simple update loop
                 if self.config.display.headless:
-                    # Update components without rendering
-                    if self.layer_manager:
-                        self.layer_manager.update(0.001)  # Simulate 1ms time step
+                    # Calculate frame time for target FPS
+                    frame_dt = 1.0 / self.target_fps  # e.g., 1/30 = 0.033 seconds per frame
+                    
+                    # Manually call update frame for FPS measurement
+                    self._update_frame(frame_dt)
                     
                     # Check for headless shutdown conditions
                     if self.window and hasattr(self.window, 'has_exit') and self.window.has_exit:
                         logger.info("Headless window marked for exit, shutting down...")
                         self.request_stop()
                         break
-                        
-                    # Small delay to prevent busy waiting
-                    await asyncio.sleep(0.001)
+                    
+                    # Calculate actual processing time and adaptive sleep
+                    processing_time = time.perf_counter() - frame_start
+                    sleep_time = max(0, frame_dt - processing_time)
+                    
+                    # Track adaptive timing for analysis
+                    if self.config.display.profile:
+                        if hasattr(self, 'adaptive_stats'):
+                            self.adaptive_stats['processing_times'].append(processing_time)
+                            self.adaptive_stats['sleep_times'].append(sleep_time)
+                            # Keep only last 100 measurements
+                            if len(self.adaptive_stats['processing_times']) > 100:
+                                self.adaptive_stats['processing_times'].pop(0)
+                                self.adaptive_stats['sleep_times'].pop(0)
+                        else:
+                            self.adaptive_stats = {
+                                'processing_times': [processing_time],
+                                'sleep_times': [sleep_time]
+                            }
+                    
+                    # Sleep for remaining time to maintain target FPS
+                    await asyncio.sleep(sleep_time)
                     continue
                 
                 # Regular pyglet loop for windowed mode
+                # Calculate frame time for target FPS
+                frame_dt = 1.0 / self.target_fps
+                
                 # Process pyglet events
                 pyglet.clock.tick()
+                
+                # Manually handle frame updates at target FPS
+                self._update_frame(frame_dt)
                 
                 # Create a copy of the windows list to avoid iteration issues during window closure
                 windows = list(pyglet.app.windows)
@@ -534,15 +609,34 @@ class DisplayService(ZmqSubscriberService):
                     window.dispatch_events()
                     window.dispatch_event('on_draw')
                     window.flip()
-                
+
                 # Check if all windows are closed
                 if not pyglet.app.windows or all(w.has_exit for w in pyglet.app.windows):
                     logger.info("All windows closed, shutting down...")
                     self.request_stop()
                     break
                 
-                # Small delay to prevent busy waiting
-                await asyncio.sleep(0.001)
+                # Calculate actual processing time and adaptive sleep
+                processing_time = time.perf_counter() - frame_start
+                sleep_time = max(0.0001, frame_dt - processing_time)
+                
+                if self.config.display.profile:
+                    # Track adaptive timing for analysis
+                    if hasattr(self, 'adaptive_stats'):
+                        self.adaptive_stats['processing_times'].append(processing_time)
+                        self.adaptive_stats['sleep_times'].append(sleep_time)
+                        # Keep only last 100 measurements
+                        if len(self.adaptive_stats['processing_times']) > 100:
+                            self.adaptive_stats['processing_times'].pop(0)
+                            self.adaptive_stats['sleep_times'].pop(0)
+                    else:
+                        self.adaptive_stats = {
+                            'processing_times': [processing_time],
+                            'sleep_times': [sleep_time]
+                        }
+                
+                # Sleep for remaining time to maintain target FPS
+                await asyncio.sleep(sleep_time)
                 
         except Exception as e:
             logger.error(f"Error in pyglet loop: {e}", exc_info=True)
@@ -594,7 +688,9 @@ class DisplayService(ZmqSubscriberService):
                 "text_id": "_title_screen",
                 "content": self.config.title_screen.text,
                 "speaker": "title",
-                "duration": self.config.title_screen.duration
+                "duration": self.config.title_screen.duration,
+                # Use title screen specific fade out duration
+                "fade_duration": self.config.title_screen.fade_duration
             }
             
             logger.debug(f"Title message: {title_message}")
@@ -692,6 +788,11 @@ async def main():
         action="store_true",
         help="Show test text in all positions with different speakers"
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Record and display profiling/performance info"
+    )
     
     args = parser.parse_args()
     
@@ -727,6 +828,10 @@ async def main():
         config.display.debug_overlay = True
         logger.info(f"Debug overlay enabled: debug_overlay={config.display.debug_overlay}")
     
+    if args.profile:
+        config.display.profile = True
+        logger.info(f"Profiling enabled: profile={config.display.profile}")
+
     # Override debug text if requested
     if args.debug_text:
         config.display.debug_text = True

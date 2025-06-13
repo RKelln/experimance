@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeAlias, Union, cast
 
 import zmq
 import zmq.asyncio
@@ -54,6 +54,7 @@ class ZmqTimeoutError(ZmqException):
     """Exception raised when a ZMQ operation times out."""
     pass
 
+TopicType: TypeAlias = str | MessageType
 
 class ZmqBase:
     """Base class for ZMQ socket wrappers."""
@@ -114,7 +115,7 @@ class ZmqPublisher(ZmqBase):
     """A ZeroMQ publisher that sends messages on a specific topic."""
     topic: str
 
-    def __init__(self, address: str, topic: str | MessageType = "", use_asyncio: bool = True):
+    def __init__(self, address: str, topic: TopicType = "", use_asyncio: bool = True):
         """Initialize a ZeroMQ publisher.
         
         Args:
@@ -137,7 +138,7 @@ class ZmqPublisher(ZmqBase):
         
         logger.debug(f"Publisher bound to {address} on topic '{self.topic}'")
     
-    def publish(self, message: Dict[str, Any]) -> bool:
+    def publish(self, message: Dict[str, Any], topic: Optional[TopicType] = None) -> bool:
         """Publish a message on the topic.
         
         Args:
@@ -153,7 +154,8 @@ class ZmqPublisher(ZmqBase):
         try:
             assert self.socket is not None, "ZMQ socket was not properly initialized"
             json_message = json.dumps(message)
-            self.socket.send_string(f"{self.topic} {json_message}")
+            topic = topic_to_str(topic) if topic else self.topic
+            self.socket.send_string(f"{topic} {json_message}")
             return True
         except zmq.error.Again:
             logger.warning("Publish operation timed out")
@@ -162,7 +164,7 @@ class ZmqPublisher(ZmqBase):
             logger.error(f"Error publishing message: {e}")
             return False
     
-    async def publish_async(self, message: Dict[str, Any]) -> bool:
+    async def publish_async(self, message: Dict[str, Any], topic: Optional[TopicType] = None) -> bool:
         """Publish a message asynchronously on the topic.
         
         Args:
@@ -177,9 +179,10 @@ class ZmqPublisher(ZmqBase):
             
         try:
             json_message = json.dumps(message)
+            topic = topic_to_str(topic) if topic else self.topic
             # Use wait_for to add a timeout
             await asyncio.wait_for(
-                self.socket.send_string(f"{self.topic} {json_message}"), # type: ignore
+                self.socket.send_string(f"{topic} {json_message}"), # type: ignore
                 timeout=DEFAULT_RECV_TIMEOUT
             )
             return True
@@ -195,10 +198,13 @@ class ZmqPublisher(ZmqBase):
         return f"ZmqPublisher(address={self.address}, topic={self.topic})"
 
 class ZmqSubscriber(ZmqBase):
-    """A ZeroMQ subscriber that receives messages on specific topics."""
+    """A ZeroMQ subscriber that receives messages on specific topics.
+
+        subscriber = ZmqSubscriber("tcp://localhost:5555", ["status-updates"])
+    """
     topics: List[str]
 
-    def __init__(self, address: str, topics: List[str|MessageType], use_asyncio: bool = True):
+    def __init__(self, address: str, topics: List[str|MessageType] = ["*"], use_asyncio: bool = True):
         """Initialize a ZeroMQ subscriber.
         
         Args:

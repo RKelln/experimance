@@ -13,8 +13,9 @@ Supports:
 
 import logging
 import time
-from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING, List
 
+from experimance_display.config import TextStylesConfig, TransitionsConfig, FadeDurationType
 from pyglet.text import Label
 
 from .layer_manager import LayerRenderer
@@ -26,14 +27,28 @@ logger = logging.getLogger(__name__)
 
 class TextItem:
     """Represents a single text overlay item."""
-    
+    text_id: str
+    content: str
+    label: Label
+    duration: Optional[float] = None # Duration in seconds (None for infinite)
+    creation_time: float  # Time when this text was created
+    # Duration for fade in/out animations
+    # If tuple then in and out durations can be different
+    _fade_duration: Optional[FadeDurationType] = None
+    opacity: float  # Current opacity (0.0 to 1.0)
+    fade_in_progress: float  # Progress of fade in (0.0 to 1.0)
+    fade_out_progress: float  # Progress of fade out (0.0 to 1.0)
+    is_fading_in: bool  # Whether currently fading in
+    is_fading_out: bool  # Whether currently fading out
+
     def __init__(
         self,
         text_id: str,
         content: str,
         label: Label,
         duration: Optional[float] = None,
-        creation_time: Optional[float] = None
+        creation_time: Optional[float] = None,
+        fade_duration: Optional[FadeDurationType] = None
     ):
         """Initialize a text item.
         
@@ -43,15 +58,16 @@ class TextItem:
             label: Pyglet label for rendering
             duration: Duration in seconds (None for infinite)
             creation_time: Time when text was created
+            fade_duration: Duration for fade in/out animations
         """
         self.text_id = text_id
         self.content = content
         self.label = label
         self.duration = duration
         self.creation_time = creation_time or time.time()
-        
+        self._fade_duration = fade_duration
         # Animation state
-        self.opacity = 1.0
+        self.opacity = 0.0 # start hidden
         self.fade_in_progress = 0.0
         self.fade_out_progress = 0.0
         self.is_fading_in = True
@@ -72,20 +88,30 @@ class TextItem:
         """
         # Handle fade in
         if self.is_fading_in:
-            self.fade_in_progress += dt / fade_duration
-            if self.fade_in_progress >= 1.0:
-                self.fade_in_progress = 1.0
+            if fade_duration == 0:
+                # If fade duration is 0, set opacity to 1 immediately
+                self.opacity = 1.0
                 self.is_fading_in = False
-            self.opacity = self.fade_in_progress
+                self.fade_in_progress = 1.0
+            else:
+                self.fade_in_progress += dt / fade_duration
+                if self.fade_in_progress >= 1.0:
+                    self.fade_in_progress = 1.0
+                    self.is_fading_in = False
+                self.opacity = self.fade_in_progress
         
         # Handle fade out
         elif self.is_fading_out:
+            # Debug fading out state
             self.fade_out_progress += dt / fade_duration
             if self.fade_out_progress >= 1.0:
                 self.fade_out_progress = 1.0
                 self.opacity = 0.0
             else:
                 self.opacity = 1.0 - self.fade_out_progress
+        
+        else:
+            self.opacity = 1.0
         
         # Update label opacity
         self.label.color = (*self.label.color[:3], int(self.opacity * 255))
@@ -97,11 +123,35 @@ class TextItem:
             self.is_fading_in = False
             self.fade_out_progress = 0.0
 
+    @property
+    def fade_duration(self) -> float|None:
+        """Get fade duration for this text item based on whether it is fading in or out"""
+        if self._fade_duration is None:
+            # Use default fade duration from transitions config
+            return None
+        if isinstance(self._fade_duration, tuple):
+            # If fade_duration is a tuple, use the first value for fade in
+            if self.is_fading_in:
+                return self._fade_duration[0]
+            elif self.is_fading_out:
+                return self._fade_duration[1]
+            else:
+                return 0.0
+        return self._fade_duration
+
+    @fade_duration.setter
+    def fade_duration(self, value: FadeDurationType):
+        self._fade_duration = value
 
 class TextOverlayManager(LayerRenderer):
     """Manages multiple text overlays with different styles and positions."""
-    
-    def __init__(self, window_size: Tuple[int, int], config: Any, transitions_config: Any):
+    config : TextStylesConfig
+    transitions_config: TransitionsConfig
+    window_size: Tuple[int, int]
+    text_items: Dict[str, TextItem]
+    position_map: Dict[str, Tuple[int, int]]
+
+    def __init__(self, window_size: Tuple[int, int], config: TextStylesConfig, transitions_config: TransitionsConfig):
         """Initialize the text overlay manager.
         
         Args:
@@ -114,7 +164,7 @@ class TextOverlayManager(LayerRenderer):
         self.transitions_config = transitions_config
         
         # Active text items
-        self.text_items: Dict[str, TextItem] = {}
+        self.text_items = {}
         
         # Positioning calculations
         self.position_map = self._create_position_map()
@@ -149,10 +199,6 @@ class TextOverlayManager(LayerRenderer):
         width, height = self.window_size
         margin = 20  # Margin from edges
 
-        logger.debug(f"Creating position map for window size: {self.window_size}")
-        print("Creating position map with margin:", margin)
-        print("Window size:", self.window_size)
-        
         return {
             "top_left": (margin, height - margin),
             "top_center": (width // 2, height - margin,),
@@ -172,26 +218,22 @@ class TextOverlayManager(LayerRenderer):
             dt: Time elapsed since last update in seconds
         """
         # Update animation states
-        items_to_remove = []
-        fade_duration = self.transitions_config.text_fade_duration
-        
+        items_to_remove: List[str] = []
         for text_id, item in self.text_items.items():
-            # Check for expiration
+            fade_dur = item.fade_duration or self.transitions_config.text_fade_duration
+            # Check for expiration and start fade-out
             if item.is_expired() and not item.is_fading_out:
                 item.start_fade_out()
-            
-            # Update animation
-            item.update(dt, fade_duration)
-            
+            # Update animation with item-specific fade_duration
+            item.update(dt, fade_dur)
             # Mark for removal if fully faded out
             if item.is_fading_out and item.fade_out_progress >= 1.0:
                 items_to_remove.append(text_id)
-        
         # Remove fully faded items
         for text_id in items_to_remove:
             del self.text_items[text_id]
             logger.debug(f"Removed expired text: {text_id}")
-    
+
     def render(self):
         """Render all visible text items."""
         if not self.is_visible:
@@ -236,11 +278,14 @@ class TextOverlayManager(LayerRenderer):
             label = self._create_label(content, style)
             
             # Create text item
+            # Determine per-item fade duration override
+            fade_override = message.get("fade_duration")
             text_item = TextItem(
                 text_id=text_id,
                 content=content,
                 label=label,
-                duration=duration
+                duration=duration,
+                fade_duration=fade_override
             )
             
             # If text with same ID exists, replace it (for streaming text)
@@ -327,10 +372,6 @@ class TextOverlayManager(LayerRenderer):
             logger.warning(f"Unknown position '{position_name}', using bottom_center")
             x, y = self.position_map["bottom_center"]
         
-        print(content)
-        print(self.position_map)
-        print(x, y)
-
         # Create label
         color = style.get("color", (255, 255, 255, 255))
         font_size = style.get("font_size", 24)

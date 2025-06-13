@@ -18,12 +18,10 @@ Usage:
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import random
 import sys
-import time
 import uuid
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -40,7 +38,7 @@ from experimance_common.constants import (
     MOCK_IMAGES_DIR_ABS, 
     VIDEOS_DIR_ABS
 )
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -63,33 +61,16 @@ class DisplayCLI:
     async def setup_publishers(self):
         """Setup ZMQ publishers for different channels."""
         self.context = zmq.asyncio.Context()
-        
-        # Images channel (for ImageReady, TransitionReady, LoopReady)
-        self.images_pub = self.context.socket(zmq.PUB)
-        self.images_pub.bind(f"tcp://*:{DEFAULT_PORTS['images_pub']}")
-        
-        # Events channel (for EraChanged, etc.)
-        self.events_pub = self.context.socket(zmq.PUB)
-        self.events_pub.bind(f"tcp://*:{DEFAULT_PORTS['events_pub']}")
-        
-        # Display control channel (for TextOverlay, VideoMask, etc.)
-        self.display_pub = self.context.socket(zmq.PUB)
-        self.display_pub.bind(f"tcp://*:{DEFAULT_PORTS['display_pub']}")
-        
+        self.publisher = ZmqPublisher(f"tcp://*:{DEFAULT_PORTS['core']}")
         # Give ZMQ time to establish connections
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
         logger.info("ZMQ publishers initialized")
     
     async def cleanup(self):
         """Cleanup ZMQ resources."""
-        if self.images_pub:
-            self.images_pub.close()
-        if self.events_pub:
-            self.events_pub.close()
-        if self.display_pub:
-            self.display_pub.close()
-        if self.context:
-            self.context.term()
+        if self.publisher:
+            self.publisher.close()
+
     
     async def send_image_ready(self, image_path: str, image_type: str = "satellite_landscape"):
         """Send an ImageReady message."""
@@ -110,8 +91,9 @@ class DisplayCLI:
                 "image_type": image_type
             }
         }
+        logger.debug(f"Sending ImageReady: {message}")
         
-        await self.images_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.IMAGE_READY)
         logger.info(f"Sent ImageReady: {os.path.basename(image_path)}")
     
     async def send_text_overlay(self, text_id: str, content: str, speaker: str = "system", 
@@ -127,8 +109,9 @@ class DisplayCLI:
                 "position": position
             }
         }
+        print(message)
         
-        await self.display_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.TEXT_OVERLAY)
         logger.info(f"Sent TextOverlay: {text_id} - '{content[:50]}...'")
     
     async def send_remove_text(self, text_id: str):
@@ -138,7 +121,7 @@ class DisplayCLI:
             "text_id": text_id
         }
         
-        await self.display_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.REMOVE_TEXT)
         logger.info(f"Sent RemoveText: {text_id}")
     
     async def send_video_mask(self, mask_path: str, fade_in_duration: float = 0.2, 
@@ -160,7 +143,7 @@ class DisplayCLI:
             "fade_out_duration": fade_out_duration
         }
         
-        await self.display_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.VIDEO_MASK)
         logger.info(f"Sent VideoMask: {os.path.basename(mask_path)}")
     
     async def send_era_changed(self, era: str, biome: str):
@@ -171,7 +154,7 @@ class DisplayCLI:
             "biome": biome
         }
         
-        await self.events_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.ERA_CHANGED)
         logger.info(f"Sent EraChanged: {era}/{biome}")
     
     async def send_transition_ready(self, transition_path: str, from_image: str, to_image: str):
@@ -193,7 +176,7 @@ class DisplayCLI:
             "to_image": to_image
         }
         
-        await self.images_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.TRANSITION_READY)
         logger.info(f"Sent TransitionReady: {os.path.basename(transition_path)}")
     
     async def send_loop_ready(self, loop_path: str, still_uri: str, loop_type: str = "idle_animation"):
@@ -217,7 +200,7 @@ class DisplayCLI:
             }
         }
         
-        await self.images_pub.send_string(json.dumps(message))
+        await self.publisher.publish_async(message, topic=MessageType.LOOP_READY)
         logger.info(f"Sent LoopReady: {os.path.basename(loop_path)}")
 
 
@@ -426,11 +409,25 @@ def main():
     # List command
     subparsers.add_parser("list", help="List available test resources")
     
+    parser.add_argument("-vv", "--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--quiet", action="store_true", help="Suppress all output except errors")
+    
     args = parser.parse_args()
     
     if args.command is None:
         parser.print_help()
         return
+    
+    # Set logging level based on flags
+    if args.quiet:
+        logging.getLogger().setLevel(logging.ERROR)
+    elif args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    elif args.verbose:
+        logging.getLogger().setLevel(logging.INFO)
+    else:
+        logging.getLogger().setLevel(logging.WARNING)
     
     async def run_command():
         cli = DisplayCLI()

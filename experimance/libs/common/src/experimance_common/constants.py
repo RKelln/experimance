@@ -9,15 +9,14 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 
 DEFAULT_PORTS = {
     "events_pub": 5555,
+    "core": 5555,  # Same as events_pub
     "depth_pub": 5556,
     "transition_pull": 5557,
     "images_pub": 5558,
     "agent_pub": 5559,
-    "display_pub": 5560,
     "transitions_pull": 5561,
     "loops_pull": 5562,
     "image_server_pub": 5558,  # Same as images_pub
-    "core_pub": 5555,  # Same as events_pub
     "audio_pub": 5565,
     "audio_pull": 5566,
     "audio_osc_send_port": 5567,

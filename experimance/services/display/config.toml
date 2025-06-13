@@ -5,14 +5,14 @@
 fullscreen = false             # Whether to run in fullscreen mode
 monitor = 0                   # Monitor to display on (0 = primary)
 resolution = [1920, 1080]     # Resolution to use if not fullscreen
-fps_limit = 60                # Frame rate limit
+fps_limit = 30                # Frame rate limit
 vsync = true                  # Whether to use vertical sync
-debug_overlay = false         # Whether to show debug overlay
+debug_overlay = true          # Whether to show debug overlay
 
 # ZeroMQ configuration
 [zmq]
-events_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
-images_sub_address = "tcp://localhost:5558"  # Address to subscribe to images on
+#core_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
+#images_sub_address = "tcp://localhost:5558"  # Address to subscribe to images on
 
 # Transitions
 [transitions]
@@ -24,3 +24,17 @@ max_preload_mb = 500          # Maximum memory to use for preloading in MB
 [rendering]
 shader_path = "shaders/"      # Path to shader files
 backend = "opengl"            # Options: "opengl", "SDL", "godot"
+
+# Title screen
+[title_screen]
+enabled = true                # Whether to show title screen on startup
+text = "Experimance"          # Text to display
+duration = 5.0                # Duration in seconds
+fade_out_duration = 10.0      # Fade out duration in seconds
+
+# Text styles for different speakers
+[text_styles.title]
+font_size = 72                # Large font for title
+color = [255, 255, 255, 255]  # White color
+position = "center"           
+background = false            # No background for title

@@ -26,31 +26,12 @@ from pyglet.gl import (
 )
 from pyglet.graphics.shader import Shader, ShaderProgram
 
-# ── Command-line Arguments ───────────────────────────────────────────────────
-parser = argparse.ArgumentParser(description="Pyglet Display Application")
-parser.add_argument(
-    '-f', '--fullscreen',
-    action='store_true',
-    help='Enable fullscreen mode'
-)
-parser.add_argument(
-    '-M', '--mask',
-    required=False,
-    help='Path to grayscale mask image (defines the overlay shape)'
-)
-parser.add_argument(
-    '-v', '--video',
-    required=False,
-    help='Path to video file for overlay'
-)
-args = parser.parse_args()
-
 # ── Configuration ─────────────────────────────────────────────────────────────
-IMAGE_FOLDER    = "services/image_server/images/generated"      # directory for background images
+IMAGE_FOLDER    = "media/images/generated"      # directory for background images
 IMAGE_DURATION  = 5.0            # seconds per image (including fades)
 IMAGE_FADE_TIME = 1.0            # seconds to fade in/out each image
 
-VIDEO_PATH      = "services/image_server/images/video_overlay.mp4" # video file path
+VIDEO_PATH      = "media/video/video_overlay.mp4" # video file path
 VIDEO_FADE_TIME = 1.0            # seconds fade in/out video overlay
 VIDEO_HOLD_TIME = 3.0            # seconds fully visible
 
@@ -73,6 +54,14 @@ class ImageCycler:
     def __init__(self, folder, duration, fade):
         self.images = []
         self.sprites = []  # We'll use sprites for better opacity control
+        # Initialize core attributes to ensure they exist even if early return occurs
+        self.duration = duration
+        self.fade = fade
+        self.timer = 0.0
+        self.index = 0
+        self.next_index = 0  # For cross-fading to next image
+        self.last_size = None
+
         print(f"Loading images from: {folder} from {os.getcwd()}")
         folder_path = Path(folder)
         
@@ -103,13 +92,6 @@ class ImageCycler:
                 self.sprites.append(sprite)
         
         print(f"Loaded {len(self.images)} images")
-        
-        self.duration = duration
-        self.fade = fade
-        self.timer = 0.0
-        self.index = 0
-        self.next_index = 0  # For cross-fading to next image
-        self.last_size = None
 
     def update(self, dt):
         self.timer += dt
@@ -574,7 +556,7 @@ class VideoOverlay:
 
 # ── Main Window ──────────────────────────────────────────────────────────────
 class MainWindow(pyglet.window.Window):
-    def __init__(self, fullscreen=False):
+    def __init__(self, video=None, mask=None, fullscreen=False):
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, caption="Pyglet Display", fullscreen=fullscreen)
 
         print("Initializing Pyglet Display Application...")
@@ -586,18 +568,18 @@ class MainWindow(pyglet.window.Window):
         
         # Initialize video overlay only if both video and mask are available
         self.video = None
-        video_path = args.video or VIDEO_PATH
+        video_path = video or VIDEO_PATH
         
-        if video_path and args.mask:
+        if video_path and mask:
             try:
-                self.video = VideoOverlay(video_path, args.mask, VIDEO_FADE_TIME, VIDEO_HOLD_TIME)
+                self.video = VideoOverlay(video_path, mask, VIDEO_FADE_TIME, VIDEO_HOLD_TIME)
                 # schedule video update loop
                 clock.schedule_interval(self.video.update, 1/60.0)
             except Exception as e:
                 print(f"Error initializing video overlay: {e}")
                 self.video = None
         else:
-            print(f"Video overlay disabled. Video path: {video_path}, Mask: {args.mask}")
+            print(f"Video overlay disabled. Video path: {video_path}, Mask: {mask}")
 
         # schedule image update loop
         clock.schedule_interval(self.images.update, 1/60.0)
@@ -700,6 +682,25 @@ class MainWindow(pyglet.window.Window):
 if __name__ == "__main__":
     print("Starting Pyglet Display Application...")
     
+    # ── Command-line Arguments ───────────────────────────────────────────────────
+    parser = argparse.ArgumentParser(description="Pyglet Display Application")
+    parser.add_argument(
+        '-f', '--fullscreen',
+        action='store_true',
+        help='Enable fullscreen mode'
+    )
+    parser.add_argument(
+        '-M', '--mask',
+        required=False,
+        help='Path to grayscale mask image (defines the overlay shape)'
+    )
+    parser.add_argument(
+        '-v', '--video',
+        required=False,
+        help='Path to video file for overlay'
+    )
+    args = parser.parse_args()
+
     # Setup initial OpenGL configuration
     # Enable alpha blending for proper transparency
     glEnable(GL_BLEND)
@@ -707,7 +708,7 @@ if __name__ == "__main__":
     
     try:
         print("Creating main window...")
-        window = MainWindow(fullscreen=args.fullscreen)
+        window = MainWindow(video=args.video, mask=args.mask, fullscreen=args.fullscreen)
         print("Window created successfully. Running application...")
         print("Press 'F' to toggle FPS display")
         print("Press 'P' to print framerate statistics")

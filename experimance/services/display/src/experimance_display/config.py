@@ -6,7 +6,7 @@ This module defines Pydantic models for validating and accessing
 display service configuration in a type-safe way.
 """
 
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple, TypeAlias
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -18,20 +18,11 @@ from experimance_common.constants import DEFAULT_PORTS
 class ZmqConfig(BaseModel):
     """ZeroMQ configuration for the Display Service."""
     
-    images_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['image_server_pub']}",
-        description="Address for subscribing to image messages"
+    core_sub_address: str = Field(
+        default=f"tcp://localhost:{DEFAULT_PORTS['core']}",
+        description="Address for subscribing to messages"
     )
-    
-    events_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['events_pub']}",
-        description="Address for subscribing to event messages"
-    )
-    
-    display_ctrl_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['display_pub']}",
-        description="Address for subscribing to display control messages"
-    )
+
 
 
 class DisplayConfig(BaseModel):
@@ -70,6 +61,11 @@ class DisplayConfig(BaseModel):
     debug_text: bool = Field(
         default=False,
         description="Whether to show debug text in all positions"
+    )
+
+    profile: bool = Field(
+        default=False,
+        description="Whether to enable profiling for performance analysis"
     )
     
     headless: bool = Field(
@@ -243,6 +239,7 @@ class TextStylesConfig(BaseModel):
         description="Style for title screen text"
     )
 
+FadeDurationType: TypeAlias = float | tuple[float, float]
 
 class TitleScreenConfig(BaseModel):
     """Configuration for the startup title screen."""
@@ -258,13 +255,13 @@ class TitleScreenConfig(BaseModel):
     )
     
     duration: float = Field(
-        default=5.0,
+        default=3.0,
         description="Duration to show title screen in seconds"
     )
-    
-    fade_out_duration: float = Field(
-        default=3.0,
-        description="Duration of fade out animation in seconds"
+
+    fade_duration: FadeDurationType = Field(
+        default=(2.0, 5.0),
+        description="Duration of fade in animation in seconds"
     )
 
 
