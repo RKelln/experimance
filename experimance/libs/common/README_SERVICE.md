@@ -2,6 +2,127 @@
 
 This document describes the base service classes provided in `experimance_common.service` for building distributed applications with ZeroMQ.
 
+## Quick Start Guide for New Services
+
+**TL;DR: The fastest way to create a working service:**
+
+1. **Choose your base class**: `BaseService` for simple services, `ZmqPublisherService`/`ZmqSubscriberService` for messaging
+2. **Use the centralized config system**: Create a Pydantic config class and use `Config.from_overrides()`
+3. **Follow the lifecycle pattern**: Initialize in `start()`, add tasks, call `super().start()` last
+4. **Use TDD**: Write tests first using the state management system for reliable testing
+5. **Handle errors properly**: Use `record_error()` with appropriate `is_fatal` flags
+6. **Use TOML for config**: Human-readable, supports comments, integrates with Pydantic
+
+### Essential Service Template
+
+```python
+# src/my_service/my_service.py
+import asyncio
+import logging
+from experimance_common.base_service import BaseService
+from experimance_common.config import Config
+from .config import MyServiceConfig
+
+logger = logging.getLogger(__name__)
+
+class MyService(BaseService):
+    def __init__(self, config_overrides: dict = None):
+        super().__init__("my_service", "worker")
+        
+        # Load config using centralized system
+        self.config: MyServiceConfig = Config.from_overrides(
+            MyServiceConfig, 
+            config_overrides or {}
+        )
+        
+    async def start(self):
+        """Initialize resources before starting."""
+        # Initialize your resources here
+        self.my_resource = await create_resource()
+        
+        # Register background tasks
+        self.add_task(self.main_work_loop())
+        self.add_task(self.health_monitor())
+        
+        # ALWAYS call super().start() LAST
+        await super().start()
+        
+    async def stop(self):
+        """Clean up resources after stopping."""
+        # ALWAYS call super().stop() FIRST
+        await super().stop()
+        
+        # Clean up your resources
+        if hasattr(self, 'my_resource'):
+            await self.my_resource.close()
+            
+    async def main_work_loop(self):
+        """Main service logic."""
+        while self.running:
+            try:
+                await self.do_work()
+            except RetryableError as e:
+                self.record_error(e, is_fatal=False)
+                await self._sleep_if_running(1.0)
+            except FatalError as e:
+                self.record_error(e, is_fatal=True)
+                break
+                
+            await self._sleep_if_running(0.1)  # Prevent CPU spinning
+```
+
+### Essential Config Template
+
+```python
+# src/my_service/config.py
+from pydantic import BaseModel, Field
+from experimance_common.config import Config
+
+class MyServiceConfig(Config):
+    """Configuration for MyService."""
+    
+    # Service-specific settings
+    work_interval: float = Field(default=1.0, description="Interval between work cycles")
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    
+    # Override base config defaults if needed
+    log_level: str = Field(default="INFO", description="Logging level")
+    
+    class Config:
+        config_file = "config.toml"  # Default config file name
+```
+
+### Essential Test Template
+
+```python
+# tests/test_my_service.py
+import pytest
+import asyncio
+from experimance_common.service_state import ServiceState
+from my_service.my_service import MyService
+
+class TestMyService:
+    async def test_service_lifecycle(self):
+        """Test basic service lifecycle."""
+        service = MyService()
+        
+        # Test startup
+        await service.start()
+        assert service.state == ServiceState.STARTED
+        
+        # Start running and wait for RUNNING state
+        run_task = asyncio.create_task(service.run())
+        await service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+        
+        # Test shutdown
+        await service.stop()
+        assert service.state == ServiceState.STOPPED
+        
+        # Clean up
+        if not run_task.done():
+            run_task.cancel()
+```
+
 ## Core Concepts
 
 The `experimance_common.service` module provides a set of base classes designed to simplify the creation of services that communicate using ZeroMQ. These classes handle common patterns such as:
@@ -14,6 +135,337 @@ The `experimance_common.service` module provides a set of base classes designed 
 - **Configurable Logging**: Consistent logging across services.
 - **Error Handling**: Comprehensive error handling with automatic shutdown for fatal errors.
 - **State Management**: Consistent service lifecycle state handling across inheritance hierarchies.
+- **Centralized Configuration**: Pydantic-based config system with TOML support and validation.
+
+## Configuration System Deep Dive
+
+### Using the Centralized Config System
+
+**Why use the centralized config system?**
+- Single source of truth for configuration patterns
+- Automatic TOML loading with fallbacks
+- Pydantic validation and type safety
+- Environment variable overrides
+- Consistent config structure across services
+
+**Step-by-step config implementation:**
+
+1. **Create your config schema** (inherit from `Config`):
+```python
+# src/my_service/config.py
+from typing import List, Optional
+from pydantic import BaseModel, Field, validator
+from experimance_common.config import Config
+
+class DatabaseConfig(BaseModel):
+    """Database connection settings."""
+    host: str = Field(default="localhost")
+    port: int = Field(default=5432, ge=1, le=65535)
+    name: str = Field(...)  # Required field
+
+class MyServiceConfig(Config):
+    """Configuration for MyService."""
+    
+    # Service-specific settings
+    work_interval: float = Field(default=1.0, gt=0, description="Work loop interval")
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    features: List[str] = Field(default_factory=list)
+    
+    # Environment-specific overrides
+    debug_mode: bool = Field(default=False, description="Enable debug logging")
+    
+    @validator('work_interval')
+    def validate_work_interval(cls, v):
+        if v < 0.1:
+            raise ValueError('work_interval must be at least 0.1 seconds')
+        return v
+    
+    class Config:
+        config_file = "config.toml"  # Default filename
+```
+
+2. **Create your TOML config file**:
+```toml
+# config.toml
+log_level = "INFO"
+work_interval = 2.0
+debug_mode = false
+features = ["feature_a", "feature_b"]
+
+[database]
+host = "prod-db.example.com"
+port = 5432
+name = "my_service_db"
+```
+
+3. **Load config in your service**:
+```python
+# In your service __init__
+class MyService(BaseService):
+    def __init__(self, config_overrides: dict = None):
+        super().__init__("my_service", "worker")
+        
+        # Load with overrides (useful for testing)
+        self.config: MyServiceConfig = Config.from_overrides(
+            MyServiceConfig, 
+            config_overrides or {}
+        )
+        
+        # Access config values
+        logger.info(f"Database host: {self.config.database.host}")
+        logger.info(f"Work interval: {self.config.work_interval}")
+```
+
+### Config Override Patterns
+
+**For testing:**
+```python
+# Test with custom config
+test_config = {
+    "work_interval": 0.1,  # Faster for tests
+    "database": {"host": "localhost", "name": "test_db"},
+    "debug_mode": True
+}
+service = MyService(config_overrides=test_config)
+```
+
+**For different environments:**
+```python
+# Production overrides
+prod_config = {
+    "log_level": "WARNING",
+    "database": {"host": "prod-db.example.com"}
+}
+service = MyService(config_overrides=prod_config)
+```
+
+## Testing Patterns and Best Practices
+
+### Essential Test Structure
+
+**Use the service state system for reliable testing:**
+
+```python
+# tests/test_my_service.py
+import pytest
+import asyncio
+from experimance_common.service_state import ServiceState
+from my_service.my_service import MyService
+
+@pytest.fixture
+async def service():
+    """Create a test service with fast config."""
+    test_config = {
+        "work_interval": 0.01,  # Very fast for tests
+        "log_level": "DEBUG"
+    }
+    service = MyService(config_overrides=test_config)
+    yield service
+    
+    # Cleanup
+    if service.state != ServiceState.STOPPED:
+        await service.stop()
+
+class TestMyService:
+    async def test_service_startup(self, service):
+        """Test service starts correctly."""
+        await service.start()
+        assert service.state == ServiceState.STARTED
+        
+        # Start running in background
+        run_task = asyncio.create_task(service.run())
+        
+        # Wait for RUNNING state with timeout
+        await service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+        assert service.state == ServiceState.RUNNING
+        
+        # Clean shutdown
+        await service.stop()
+        assert service.state == ServiceState.STOPPED
+        
+        # Clean up background task
+        if not run_task.done():
+            run_task.cancel()
+    
+    async def test_error_handling(self, service):
+        """Test service handles errors correctly."""
+        # Inject a failure
+        service.should_fail = True
+        
+        await service.start()
+        run_task = asyncio.create_task(service.run())
+        
+        # Wait for service to handle error
+        await asyncio.sleep(0.1)
+        
+        # Check error was recorded
+        assert len(service.error_history) > 0
+        
+        await service.stop()
+        if not run_task.done():
+            run_task.cancel()
+```
+
+### Testing ZMQ Services
+
+**For services that use ZMQ:**
+
+```python
+class TestZmqService:
+    async def test_message_publishing(self):
+        """Test service publishes messages correctly."""
+        service = MyZmqService()
+        
+        # Start service
+        await service.start()
+        run_task = asyncio.create_task(service.run())
+        await service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+        
+        # Give time for initial messages
+        await asyncio.sleep(0.1)
+        
+        # Check statistics
+        assert service.stats.messages_sent > 0
+        
+        # Clean up
+        await service.stop()
+        if not run_task.done():
+            run_task.cancel()
+```
+
+### Common Testing Anti-Patterns
+
+**❌ Don't test internal implementation details:**
+```python
+# BAD: Testing private methods or internal state
+assert service._internal_counter == 5  # Fragile!
+
+# GOOD: Test public behavior
+assert service.get_counter() == 5
+```
+
+**❌ Don't ignore service lifecycle:**
+```python
+# BAD: Not properly starting/stopping services
+service = MyService()
+await service.main_work_loop()  # May fail without proper setup
+
+# GOOD: Use proper lifecycle
+service = MyService()
+await service.start()
+run_task = asyncio.create_task(service.run())
+# ... test behavior ...
+await service.stop()
+```
+
+## Service Lifecycle and Task Management
+
+### Task Management Best Practices
+
+**Add tasks in `start()`, not `__init__()`:**
+
+```python
+class MyService(BaseService):
+    async def start(self):
+        """Initialize and start background tasks."""
+        # Initialize resources first
+        self.database = await connect_to_database()
+        
+        # Add background tasks
+        self.add_task(self.main_work_loop())
+        self.add_task(self.health_monitor())
+        self.add_task(self.periodic_cleanup())
+        
+        # ALWAYS call super().start() LAST
+        await super().start()
+    
+    async def main_work_loop(self):
+        """Main service work loop."""
+        while self.running:
+            try:
+                await self.process_work()
+            except RetryableError as e:
+                self.record_error(e, is_fatal=False)
+                await self._sleep_if_running(1.0)  # Wait before retry
+            except FatalError as e:
+                self.record_error(e, is_fatal=True)
+                break  # Fatal error stops the loop
+                
+            await self._sleep_if_running(0.1)  # Prevent CPU spinning
+    
+    async def health_monitor(self):
+        """Monitor service health."""
+        while self.running:
+            try:
+                await self.check_health()
+            except Exception as e:
+                self.record_error(e, is_fatal=False)
+            
+            await self._sleep_if_running(5.0)  # Health check every 5 seconds
+```
+
+### Using `_sleep_if_running()` vs `asyncio.sleep()`
+
+**Always use `_sleep_if_running()` in loops:**
+
+```python
+# ✅ GOOD: Respects service shutdown
+while self.running:
+    await self.do_work()
+    await self._sleep_if_running(1.0)  # Interrupts on shutdown
+
+# ❌ BAD: Ignores service shutdown
+while self.running:
+    await self.do_work()
+    await asyncio.sleep(1.0)  # Doesn't interrupt on shutdown
+```
+
+### Error Recovery Patterns
+
+**Distinguish between retryable and fatal errors:**
+
+```python
+async def process_item(self, item):
+    """Process an item with proper error handling."""
+    try:
+        result = await self.risky_operation(item)
+        return result
+    except ConnectionError as e:
+        # Retryable: network issues
+        self.record_error(e, is_fatal=False)
+        raise  # Let caller decide retry logic
+    except ValidationError as e:
+        # Not retryable: bad data
+        self.record_error(e, is_fatal=False, 
+                         custom_message=f"Invalid item {item.id}: {e}")
+        return None  # Skip this item
+    except SystemExit as e:
+        # Fatal: system shutdown
+        self.record_error(e, is_fatal=True)
+        raise
+```
+
+## Common Patterns and Anti-Patterns
+
+### ✅ Do This
+
+1. **Use the state system for lifecycle management**
+2. **Always call `super().start()` last and `super().stop()` first**
+3. **Use `_sleep_if_running()` in loops for proper shutdown**
+4. **Record errors with context using `record_error()`**
+5. **Use TOML config with Pydantic validation**
+6. **Test with fast config overrides**
+7. **Use proper task cleanup in tests**
+
+### ❌ Don't Do This
+
+1. **Don't set service state directly (`self.state = ...`)**
+2. **Don't use `asyncio.sleep()` in service loops**
+3. **Don't initialize heavy resources in `__init__()`**
+4. **Don't ignore service lifecycle in tests**
+5. **Don't use raw dict access for config**
+6. **Don't duplicate error logging**
+7. **Don't forget to await `service.stop()` in tests**
 
 ## Shutdown and Error Handling Best Practices
 
@@ -363,6 +815,11 @@ async def process_request(self, request):
 
 ### 7. Testing Service Implementation
 
+> **Extended Testing Resources:**
+> - For comprehensive service testing best practices, see [README_SERVICE_TESTING.md](../../utils/tests/README_SERVICE_TESTING.md)
+> - For ZeroMQ-specific testing guidance, see [README_ZMQ_TESTS.md](../../utils/tests/README_ZMQ_TESTS.md)
+> - Consider using the `active_service()` context manager from `experimance_common.test_utils` for simplified testing
+
 #### Test Lifecycle Transitions
 ```python
 async def test_service_startup():
@@ -398,6 +855,26 @@ async def test_error_handling():
     service.record_error(RuntimeError("fatal"), is_fatal=True)
     assert service.status == ServiceStatus.FATAL
     # Service should be stopping automatically
+```
+
+#### Simplified Testing with active_service()
+```python
+async def test_with_active_service():
+    """Test using the active_service context manager."""
+    # Create your service with test-specific config
+    service = MyService(config_overrides={"work_interval": 0.1})
+    
+    # The context manager handles start, run, and cleanup
+    async with active_service(service) as running_service:
+        # Service is now running and ready for testing
+        assert running_service.state == ServiceState.RUNNING
+        
+        # Test your service functionality
+        result = await running_service.process_item(test_item)
+        assert result is not None
+        
+    # Service is automatically stopped when exiting the context
+    assert service.state == ServiceState.STOPPED
 ```
 
 ### 8. Common Anti-Patterns to Avoid
@@ -683,7 +1160,7 @@ class MyPublisher(ZmqPublisherService):
     def __init__(self):
         super().__init__(
             service_name="MyPublisher",
-            pub_address=f"tcp://*:{DEFAULT_PORTS[MessageType.STATE_UPDATE]}",
+            pub_address=f"tcp://*:{DEFAULT_PORTS['events']}",
             heartbeat_topic="mypub.heartbeat"
         )
 
@@ -728,10 +1205,10 @@ class MyController(ZmqControllerService):
     def __init__(self):
         super().__init__(
             service_name="MyController",
-            pub_address=f"tcp://*:{DEFAULT_PORTS[MessageType.COMMAND]}",      # For publishing commands
-            sub_address=f"tcp://localhost:{DEFAULT_PORTS[MessageType.STATE_UPDATE]}", # For subscribing to state updates
-            push_address=f"tcp://*:{DEFAULT_PORTS[MessageType.TASK]}",        # For pushing tasks to workers
-            pull_address=f"tcp://*:{DEFAULT_PORTS[MessageType.RESULT]}",      # For pulling results from workers
+            pub_address=f"tcp://*:{DEFAULT_PORTS['events']}",      # For publishing on unified events channel
+            sub_address=f"tcp://localhost:{DEFAULT_PORTS['events']}", # For subscribing to unified events channel
+            push_address=f"tcp://*:{DEFAULT_PORTS['transitions_pull']}",        # For pushing tasks to workers
+            pull_address=f"tcp://*:{DEFAULT_PORTS['loops_pull']}",      # For pulling results from workers
             topics=["worker.status", "sensor.data"], # Topics to subscribe to
             heartbeat_topic="controller.heartbeat",
             service_type="controller"

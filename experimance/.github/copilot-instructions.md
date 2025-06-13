@@ -79,6 +79,13 @@ experimance/
 - Use logging instead of print statements
 - Update files directly, don't use temp files or scripts to write and then update files
 
+## Project managed by `uv`
+
+- Use `uv` for running services and scripts
+- Each service should have a `pyproject.toml` file with dependencies and scripts defined
+- Use `uv run -m` to start services, e.g., `uv run -m experimance_core`
+- Use `uv run -m pytest` for running tests, e.g., `uv run -m pytest utils/tests/`
+
 ## ZeroMQ Communication
 
 - Services communicate via ZMQ PUB/SUB and PUSH/PULL patterns

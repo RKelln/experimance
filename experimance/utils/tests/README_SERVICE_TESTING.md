@@ -2,6 +2,10 @@
 
 This document outlines best practices for testing services in the Experimance project, particularly focusing on service lifecycle management during tests.
 
+> **Related Documentation**:
+> - For testing ZeroMQ-specific components, see [README_ZMQ_TESTS.md](README_ZMQ_TESTS.md)
+> - For general service implementation guidance, see [README_SERVICE.md](../libs/common/README_SERVICE.md)
+
 **Note**: The test utilities are now part of the `experimance_common` package and can be imported as:
 ```python
 from experimance_common.test_utils import active_service, wait_for_service_state

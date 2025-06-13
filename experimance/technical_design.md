@@ -1,6 +1,36 @@
-# Experimance — Technical Design v0.2
+# Experimance — Technical Design 3. **Era state machine** steps forward through the timeline (Wilderness ⇢ … ⇢ AI). From*Language*: Python 3.11 — `asyncio`
+*Responsibilities*
 
-> **Purpose**
+* **Central Coordinator**: Publishes events and### 4.6 `audio`
+
+* **ZMQ to OSC Bridge**: Subscribes to `AudioCommand` messages on the `events` channel and translates to OSC for SuperCollider.
+* SuperCollider backend (preferred, open‑source).
+* | | **5 Optional loop animation** | When hardware budget allows: • `experimance` publishes `LoopRequest {still_uri, style}` on another PUSH queue (`tcp://*:5562`). • `animate_worker` (either a small SD-video model or cloud service) returns `LoopReady {video_uri, duration_s}` on `events` channel. • `display` switches its texture source from "last still" to looping video (ffmpeg → GL texture or Godot's VideoPlayer) until the next `TransitionReady`. | Isolation means you can add fancy generative loops later without re-wiring the main display logic. If the loop service isn't running, nothing breaks—`display` just stays on the still image. |*3 Display swap**            | Worker publishes `TransitionReady {uri, is_video, loop=false}` on the `events` PUB channel (`tcp://*:5555`).`display` sees it, preloads the file/frames, cross-fades to the transition, then auto-plays the sequence.                                                                                                                                                                                                          | Keeps all media deliveries unified on one PUB topic; display remains stateless beyond "what's current/next?".                                                                               |*Environmental Audio Layers**: Tag-based environmental sounds (birds, traffic, church bells, etc.) triggered by prompt analysis.
+* **Era-based Music**: Automatic music layer transitions synchronized with era changes.
+* **Interaction Sounds**: Continuous sound effects while hands are detected over sand.
+* Layers: `music`, `ambience`, `ui`, `interaction`.
+* Auto‑ducking music & ambience via side‑chain when the **agent or audience** speaks.
+* **OSC Commands**: `/spacetime <biome> <era>`, `/include <tag>`, `/exclude <tag>`, `/trigger <event>`.
+* Publishes `AudioStatus` back to `events` channel for coordination with `experimance`.cribes to service responses via unified `events` channel.
+* Holds global state: `era`, `biome`, `idle_timer`, `audience_present`, `user_interaction_score`.
+* Loads initial state from a JSON configuration file (allows for reproducible testing and defined starting states).
+* Converts depth‑map Δ (from `depth/heightmap` channel) and sensor RMS (from OSC) into **user_interaction_score ∈ [0,1]**.
+* **Audio Tag Extraction**: Derives environmental audio tags from generated prompts using keyword matching.
+* Drives the era state machine:
+  * Gentle interaction progresses the era slowly.
+  * More active, rough interaction progresses more quickly.
+    * Enough intensity (i.e., `user_interaction_score` accumulating past a certain threshold) locks in a future progression towards Post-apocalyptic and Ruins eras. Specific mechanics TBD.
+* **Event Publishing**: Publishes `EraChanged`, `RenderRequest`, `AudioCommand`, `VideoMask`, and `IdleStateChanged` events on the `events` bus.
+* **Response Coordination**: Subscribes to `ImageReady`, `AgentControl`, and `AudioStatus` for timing and state coordination.
+* Processes `AgentControl` messages (e.g., `SuggestBiome`) from the `agent` to influence `biome` state.
+* **Depth Difference Visualization**: Generates and publishes `VideoMask` messages with depth difference images for sand interaction feedback.
+* **Interaction Sound Management**: Triggers continuous interaction sounds while hands are detected over the sand.it may either loop within AI, or continue to Post‑apocalyptic and Ruins before drifting back toward Wilderness.
+   * `experimance` (using the in-process `prompting` module) builds a text‑to‑image prompt and extracts audio tags.
+   * `experimance` publishes `RenderRequest` and `AudioCommand` on the unified `events` bus (see Section 2 & 5).
+   * *image\_server* receives the `RenderRequest`, renders the frame (local SDXL or remote fal.ai), and publishes `ImageReady` back on the `events` bus.
+   * *display* receives `ImageReady` and updates the projection.
+   * *audio* receives `AudioCommand` and cross‑fades music & ambience to match the new era and environmental tags.
+   * `experimance` coordinates timing and publishes `VideoMask` for depth difference visualization on sand.> **Purpose**
 > Provide a concise, implementation‑ready reference for developers & AI coding assistants building *Experimance*: an interactive sand‑table where audience actions steer an AI‑generated satellite narrative of human development.
 
 ---
@@ -43,16 +73,32 @@ The piece has different states, based of eras of human development:
 
 ## 2  ZeroMQ Connection Map
 
-**Message Bus**: ZeroMQ PUB/SUB (JSON packets).
+**Message Bus**: ZeroMQ PUB/SUB (JSON packets) with unified events channel.
 
-| Channel / Port                     | Pattern     | From (socket)                                                           | To (socket)                                                                   | Notes                                                                                                                           |
-| ---------------------------------- | ----------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `depth/heightmap` (`tcp://*:5556`) | PUB ▶ SUB   | `depth_proc` *(PUB)*                                                    | `experimance` *(SUB)*                                                         | ~15 Hz JSON: `{ "hand_detected": bool, "depth_map_png": "<base64_optional>" }`. PNG only if changed & no hand.                  |
-| `events` (`tcp://*:5555`)          | PUB ▶ SUB   | `experimance` *(PUB)*                                                   | `prompter` (if separate), `image_server`, `display`, `audio`, `agent` *(SUB)* | Topics: `EraChanged` (includes `era`, `biome`), `RenderRequest`, `Idle`.                                                        |
-| `images` (`tcp://*:5558`)          | PUB ▶ SUB   | `image_server (PUB)`, `transition_worker (PUB)`, `animate_worker (PUB)` | `display` *(SUB)*                                                             | JSON payloads with a `type` field (e.g., "ImageReady", "TransitionReady", "LoopReady") for dispatching. PNG/URL meta per frame. |
-| `agent_ctrl` (`tcp://*:5559`)      | PUB ▶ SUB   | `agent` *(PUB)*                                                         | `experimance`, `audio` *(SUB)*                                                | JSON: `AgentControlEvent` (e.g., `sub_type: "SuggestBiome"`, `sub_type: "AudiencePresent"`).                                    |
-| `transitions` (`tcp://*:5561`)     | PUSH ▶ PULL | `experimance` *(PUSH)*                                                  | `transition_worker.rs` *(PULL)*                                               | `TransitionRequest` (see schema)                                                                                                |
-| `loops` (`tcp://*:5562`)           | PUSH ▶ PULL | `experimance` *(PUSH)*                                                  | `animate_worker` (optional) *(PULL)*                                          | `LoopRequest` (see schema)                                                                                                      |
+### Primary Communication Channels
+
+| Channel / Port                     | Pattern     | Publishers                           | Subscribers                                 | Notes                                                                                                          |
+| ---------------------------------- | ----------- | ------------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `events` (`tcp://*:5555`)          | PUB ▶ SUB   | **All services** *(multi-publisher)* | **All services** *(selective subscription)* | **Unified coordination channel**: All inter-service communication flows here with message type filtering.      |
+| `depth/heightmap` (`tcp://*:5556`) | PUB ▶ SUB   | `depth_proc` *(PUB)*                 | `experimance` *(SUB)*                       | ~15 Hz JSON: `{ "hand_detected": bool, "depth_map_png": "<base64_optional>" }`. PNG only if changed & no hand. |
+| `transitions` (`tcp://*:5561`)     | PUSH ▶ PULL | `experimance` *(PUSH)*               | `transition_worker.rs` *(PULL)*             | `TransitionRequest` work distribution (optional performance optimization)                                      |
+| `loops` (`tcp://*:5562`)           | PUSH ▶ PULL | `experimance` *(PUSH)*               | `animate_worker` *(PULL)*                   | `LoopRequest` work distribution (optional performance optimization)                                            |
+
+### Events Channel Message Flow
+
+**Published by Core (`experimance`)**:
+- `EraChanged` → `audio`, `display`, `agent`
+- `RenderRequest` → `image_server`
+- `AudioCommand` → `audio`
+- `VideoMask` → `display`
+- `IdleStateChanged` → all services
+
+**Published by Services**:
+- `image_server` → `ImageReady` → `experimance`, `display`
+- `agent` → `AgentControl` → `experimance`, `audio`
+- `audio` → `AudioStatus` → `experimance`
+
+> **Key Architecture Change**: Multiple publishers can publish to the same ZMQ address. This enables a **unified events channel** where all coordination messages flow through `tcp://*:5555`, eliminating the need for separate ports per service relationship.
 
 > All sockets use `ZMQ_CONFLATE=1` where only the latest message matters (e.g., `depth/heightmap`).
 > Heartbeats (`ZMQ_HEARTBEAT_IVL=3000`) keep connections resilient over the month‑long run.
@@ -152,7 +198,7 @@ initial_state_path = "saved_data/default_state.json"  # Path to initial state JS
 
 * Default: OpenGL full‑screen window (PyGLFW) + shader‑based cross‑fade.
 * **Performance alternative**: Godot or Rust SDL app with ZeroMQ image stream & OSC control (TBD; investigate Godot ZMQ/OSC plugins).
-* Subscribes to the `images` channel (`tcp://*:5558`). Differentiates incoming messages (`ImageReady`, `TransitionReady`, `LoopReady`) by inspecting the `type` field in the JSON payload.
+* Subscribes to the `events` channel (`tcp://*:5555`). Differentiates incoming messages (`ImageReady`, `TransitionReady`, `LoopReady`) by inspecting the `type` field in the JSON payload.
 * Shader‑based cross-dissolve between images and video.
 * Receives either:
   * **Image** to quickly crossfade to (generated in response to sand interation, i.e. new depth map)
@@ -212,33 +258,80 @@ initial_state_path = "saved_data/default_state.json"  # Path to initial state JS
 ## 5  Inter‑service Message Schemas (excerpt)
 
 ```jsonc
-// --- Schemas for `events` channel (tcp://*:5555) --- 
+// --- Schemas for unified `events` channel (tcp://*:5555) --- 
+// All services publish and subscribe to this channel with message type filtering
 
-// EraChanged (broadcast by experimance)
+// EraChanged (published by experimance → audio, display, agent)
 {
   "type": "EraChanged",
   "era": "ai_future", // string, e.g., "wilderness", "pre_industrial", etc.
   "biome": "coastal"  // string, e.g., "desert", "forest", "mountains"
 }
 
-// RenderRequest (published by experimance, consumed by image_server)
-// This is a non-blocking request; image_server will publish ImageReady when done.
+// RenderRequest (published by experimance → image_server)
 {
   "type": "RenderRequest",
-  "request_id": "<uuid_string>", // Unique ID for this request
+  "request_id": "<uuid_string>",
   "era": "ai_future",
   "biome": "coastal",
   "prompt": "Low‑orbit satellite view of a coastal smart‑city …",
   "depth_map_png": "<base64_encoded_png_string_1024x1024_optional>"
 }
 
-// Idle (broadcast by experimance)
+// AudioCommand (published by experimance → audio)
 {
-  "type": "Idle",
-  "status": true // true if system is now idle, false if exiting idle
+  "type": "AudioCommand",
+  "command_type": "spacetime" | "include_tags" | "exclude_tags" | "trigger",
+  "era": "ai_future",
+  "biome": "coastal",
+  "tags_to_include": ["urban", "traffic", "technology"],
+  "tags_to_exclude": ["birds", "nature"],
+  "trigger": "interaction_start" | "interaction_stop" | "transition"
 }
 
-// --- Schemas for `images` channel (tcp://*:5558) --- 
+// VideoMask (published by experimance → display)
+{
+  "type": "VideoMask",
+  "mask_id": "<uuid_string>",
+  "mask_type": "depth_difference",
+  "depth_map_png": "<base64_encoded_png_string>",
+  "interaction_score": 0.7
+}
+
+// ImageReady (published by image_server → experimance, display)
+{
+  "type": "ImageReady",
+  "request_id": "<uuid_string>",
+  "image_id": "<uuid_string>",
+  "uri": "file:///var/cache/experimance/frame_1723.png"
+}
+
+// AgentControl (published by agent → experimance, audio)
+{
+  "type": "AgentControl",
+  "sub_type": "SuggestBiome" | "AudiencePresent" | "ConversationState",
+  "biome_suggestion": "desert",
+  "audience_present": true,
+  "conversation_active": false
+}
+
+// AudioStatus (published by audio → experimance)
+{
+  "type": "AudioStatus",
+  "status": "ready" | "transitioning" | "error",
+  "active_tags": ["urban", "traffic", "technology"],
+  "current_era": "ai_future",
+  "current_biome": "coastal"
+}
+
+// IdleStateChanged (published by experimance → all services)
+{
+  "type": "IdleStateChanged",
+  "is_idle": true,
+  "idle_duration": 45.2
+}
+
+// --- Schemas for `events` channel (tcp://*:5555) --- 
 // All messages on this channel should include a "type" field for the display to dispatch on.
 
 // ImageReady (image_server → display)
@@ -268,7 +361,7 @@ initial_state_path = "saved_data/default_state.json"  # Path to initial state JS
   "duration_s": 10.5 // Optional: duration in seconds
 }
 
-// --- Schemas for `agent_ctrl` channel (tcp://*:5559) --- 
+// --- Schemas for `events` channel (tcp://*:5555) --- 
 
 // AgentControlEvent (agent → experimance, audio)
 {

@@ -66,9 +66,9 @@ Standard ports for services are defined in `experimance_common.constants.DEFAULT
 ```python
 from experimance_common.constants import DEFAULT_PORTS
 
-# Access standard ports
-coordinator_pub_port = DEFAULT_PORTS["coordinator_pub"]  # 5555
-display_pull_port = DEFAULT_PORTS["display_pull"]        # 5560
+# Access standard ports - all services use unified events channel
+events_port = DEFAULT_PORTS["events"]  # 5555
+depth_port = DEFAULT_PORTS["depth_pub"]  # 5556 (high-bandwidth depth data)
 ```
 
 ### Publisher-Subscriber Pattern

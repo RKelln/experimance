@@ -8,19 +8,29 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 
 DEFAULT_PORTS = {
-    "events_pub": 5555,
-    "core": 5555,  # Same as events_pub
-    "depth_pub": 5556,
-    "transition_pull": 5557,
-    "images_pub": 5558,
-    "agent_pub": 5559,
-    "transitions_pull": 5561,
-    "loops_pull": 5562,
-    "image_server_pub": 5558,  # Same as images_pub
-    "audio_pub": 5565,
-    "audio_pull": 5566,
-    "audio_osc_send_port": 5567,
-    "audio_osc_recv_port": 5568,
+    # Unified events channel - all services publish and subscribe here
+    "events": 5555,
+    "events_pub": 5555,  # For backward compatibility
+    "events_sub": 5555,  # For backward compatibility
+    
+    # Specialized high-bandwidth channels
+    "depth_pub": 5556,  # Depth camera data (high frequency)
+    "transitions_pull": 5561,  # Work distribution for transition rendering
+    "loops_pull": 5562,  # Work distribution for animation loops
+    
+    # Audio OSC bridge ports
+    "audio_osc_send_port": 5567,  # Audio service → SuperCollider
+    "audio_osc_recv_port": 5568,  # SuperCollider → Audio service
+    
+    # Legacy port aliases (deprecated - use 'events' instead)
+    "core": 5555,
+    "image_server_pub": 5555,
+    "agent_pub": 5555,
+    "audio_pub": 5555,
+    "image_request_pub": 5555,
+    "coordinator_pub": 5555,
+    "display_pull": 5555,
+    "example_pub": 5555,
 }
 
 # Timeout settings
