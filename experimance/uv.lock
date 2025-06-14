@@ -773,6 +773,7 @@ dependencies = [
     { name = "fal-client" },
     { name = "image-server" },
     { name = "pyglet" },
+    { name = "pyrealsense2" },
 ]
 
 [package.optional-dependencies]
@@ -806,6 +807,7 @@ requires-dist = [
     { name = "image-server", editable = "services/image_server" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "pyglet", specifier = ">=2.1.6" },
+    { name = "pyrealsense2", specifier = ">=2.55.1.6486" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },

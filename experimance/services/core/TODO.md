@@ -11,20 +11,20 @@
 - [x] Implement signal handlers for graceful shutdown
 
 ## Phase 2: State Management
-- [ ] Define state data structures (Era, Biome, UserInteraction, etc.)
-- [ ] Implement era state machine with transition logic
-- [ ] Create state persistence (load/save from JSON)
-- [ ] Add idle timer and wilderness drift functionality
-- [ ] Implement user interaction score calculation
-- [ ] Create state validation and error recovery
+- [x] Define state data structures (Era, Biome, UserInteraction, etc.)
+- [x] Implement era state machine with transition logic
+- [x] Create state persistence (load/save from JSON)
+- [x] Add idle timer and wilderness drift functionality
+- [x] Implement user interaction score calculation
+- [x] Create state validation and error recovery
 
-## Phase 3: Depth Processing Integration
-- [ ] Integrate existing `depth_finder.py` module as-is
-- [ ] Create async task for continuous depth monitoring
-- [ ] Implement depth change detection and scoring
-- [ ] Add hand detection to prevent false triggers
-- [ ] Create depth map preprocessing for image generation
-- [ ] Add configurable depth processing parameters
+## Phase 3: Depth Processing Integration ✅
+- [x] Integrate existing `depth_finder.py` module as-is
+- [x] Create async task for continuous depth monitoring
+- [x] Implement depth change detection and scoring
+- [x] Add hand detection to prevent false triggers
+- [x] Create depth map preprocessing for image generation
+- [x] Add configurable depth processing parameters
 
 ## Phase 4: Prompt Generation Integration  
 - [ ] Integrate existing `prompter.py` module as-is

@@ -11,10 +11,12 @@ interaction_threshold = 0.3  # threshold for user interaction detection
 era_min_duration = 10.0      # minimum time in seconds before era can change
 
 [depth_processing]
-change_threshold = 50        # threshold for depth change detection
+camera_config_path = "services/core/depth_camera_config_high_accuracy.json"
+resolution = [640, 480]     # depth camera resolution (10Hz max for this res)
+fps = 30                    # camera frames per second 
+change_threshold = 50       # threshold for depth change detection
 min_depth = 0.49            # minimum depth value
 max_depth = 0.56            # maximum depth value
-resolution = [1280, 720]    # depth camera resolution
 output_size = [1024, 1024]  # processed output size
 
 [audio]

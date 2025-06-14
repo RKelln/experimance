@@ -7,12 +7,11 @@ This allows the service to be run with:
 import sys
 import asyncio
 
-from experimance_core.experimance_core import run_experimance_core_service
-
+from experimance_core.experimance_core import run_experimance_core_service, DEFAULT_CONFIG_PATH
 
 def main():
     """Main entry point."""
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.toml"
+    config_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG_PATH
     asyncio.run(run_experimance_core_service(config_path))
 
 

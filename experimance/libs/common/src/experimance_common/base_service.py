@@ -521,8 +521,8 @@ class BaseService:
         except Exception as e:
             logger.error(f"Error during signal-initiated stop for {self.service_name}: {e}", exc_info=True)
             # Ensure the service is in a non-operational state even if stop fails.
-            self.state = ServiceState.STOPPED
             self.status = ServiceStatus.ERROR
+            self.state = ServiceState.STOPPED
 
     def _task_done_callback(self, task):
         """Callback for completed tasks to immediately detect errors.

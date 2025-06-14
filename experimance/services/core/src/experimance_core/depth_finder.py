@@ -27,6 +27,7 @@ change_threshold_resolution = (128,128)
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
 DEFAULT_DEPTH_RESOLUTION = (1280, 720)
+DEFAULT_FPS = 6
 DEFAULT_OUTPUT_RESOLUTION = (1024, 1024)
 
 term = Terminal()
@@ -269,10 +270,9 @@ def detect_difference(image1, image2, threshold=60):
 
     return diff, image2
 
-
 def depth_camera_frame_generator(json_config=None,
                    size:tuple=DEFAULT_DEPTH_RESOLUTION, 
-                   fps:int=30, 
+                   fps:int=DEFAULT_FPS, 
                    align:bool=True,
                    min_depth:float=0,
                    max_depth:float=50,
@@ -281,10 +281,31 @@ def depth_camera_frame_generator(json_config=None,
     # Configure the streams
     pipeline = rs.pipeline()
     config = rs.config()
-    config.enable_stream(rs.stream.depth, size[0], size[1], rs.format.z16, 30) # NOTE: only works at 30 fps!
+    config.enable_stream(rs.stream.depth, size[0], size[1], rs.format.z16, fps)
     if align:
-        config.enable_stream(rs.stream.color, size[0], size[1], rs.format.bgr8, 30) # NOTE: only works at 30 fps!
-    profile = pipeline.start(config)
+        config.enable_stream(rs.stream.color, size[0], size[1], rs.format.bgr8, fps)
+    
+    # Try to start pipeline with auto-reset on "Couldn't resolve requests" error
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            profile = pipeline.start(config)
+            break  # Success, exit retry loop
+        except RuntimeError as e:
+            print(f"Camera initialization failed (attempt {attempt + 1}/{max_retries}): {e}")
+            #print_status(f"Camera initialization failed (attempt {attempt + 1}/{max_retries}): {e}", style='warning')
+            if attempt < max_retries - 1:  # Don't reset on last attempt
+                print_status("Attempting camera reset...", style='info')
+                time.sleep(3)  # Wait a moment before retrying
+                if reset_realsense_camera():
+                    print_status("Retrying camera initialization...", style='info')
+                    continue
+                else:
+                    print_status("Camera reset failed, retrying anyway...", style='warning')
+                    continue
+            else:
+                # the last attempt, re-raise
+                raise
 
     if json_config is not None:
         # check config path exists
@@ -492,7 +513,7 @@ def depth_generator( json_config=None,
         frame_number = 0
         while True:
             depth_image, _ = next(depth_frame_gen)
-
+                
             # Validate that both frames are valid
             if depth_image is None:
                 continue
@@ -631,17 +652,48 @@ def mock_depth_generator(mock_depth_images, delay=0.1):
         #time.sleep(delay)
 
 
+def reset_realsense_camera():
+    """
+    Attempt to reset the RealSense camera hardware.
+    
+    Returns:
+        bool: True if reset was successful, False otherwise
+    """
+    try:
+        ctx = rs.context()
+        devices = ctx.query_devices()
+        
+        if len(devices) == 0:
+            print('No RealSense devices found for reset')
+            return False
+        
+        dev = devices[0]
+        device_name = dev.get_info(rs.camera_info.name)
+        print(f'Found device: {device_name}')
+        print('Attempting hardware reset...')
+        dev.hardware_reset()
+        print('Hardware reset successful')
+        
+        # Wait a moment for the device to reinitialize
+        import time
+        time.sleep(2)
+        return True
+        
+    except Exception as e:
+        print(f'Camera reset failed: {e}')
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='Capture and send depth frames from a RealSense camera')
     parser.add_argument('-n', '--name', type=str, default=time.strftime("%Y%m%d-%H%M%S"), help='Name of the capture')
     parser.add_argument('-c','--config', type=str, default=None, help='Path to the depth camerma json configuration file')
     # NOTE: reccomended depth resolution:
     # 1280x720 for intel realsense D415 with min operating range of 43.8cm
-    # 848x480 for intel realsense D435 with min operating range of 16.8cm
     # but to reduce the minimum operating range you can reduce resolution
     # https://dev.intelrealsense.com/docs/tuning-depth-cameras-for-best-performance
     parser.add_argument('-s', '--size', type=int, nargs=2, default=DEFAULT_DEPTH_RESOLUTION, help='Size of the capture in pixels (width height)')
-    parser.add_argument('--fps', type=int, default=30, help='Frames per second')
+    parser.add_argument('--fps', type=int, default=DEFAULT_FPS, help='Frames per second')
     parser.add_argument('-r','--recording', action='store_true', help='Record the frames')
     parser.add_argument('-m','--min-depth', '--min_depth', type=float, default=0, help='Minimum depth in meters')
     parser.add_argument('-M','--max-depth', '--max_depth', type=float, default=10, help='Maximum depth in meters')

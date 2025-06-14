@@ -70,6 +70,16 @@ class StateMachineConfig(BaseModel):
 class DepthProcessingConfig(BaseModel):
     """Depth processing configuration."""
     
+    camera_config_path: str = Field(
+        default="depth_camera_config.json",
+        description="Path to depth camera configuration file"
+    )
+    
+    fps: int = Field(
+        default=6,
+        description="Camera frames per second (limited by resolution)"
+    )
+
     change_threshold: int = Field(
         default=50,
         description="Threshold for depth change detection"
