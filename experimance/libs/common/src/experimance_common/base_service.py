@@ -229,7 +229,7 @@ class BaseService:
         This method should be extended by subclasses to initialize 
         their specific components before calling super().start().
         """
-        logger.info(f"Starting {self.service_type} service: {self.service_name}")
+        logger.debug(f"Starting {self.service_type} service: {self.service_name}")
         self.start_time = time.monotonic()
         
         # Always include the stats display task
@@ -248,7 +248,7 @@ class BaseService:
                 logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring stop call.")
                 return
 
-            logger.info(f"Stopping {self.service_name} (lock acquired)...")
+            logger.debug(f"Stopping {self.service_name} (lock acquired)...")
             self.state = ServiceState.STOPPING
             
             # Cancel the main run task if it exists and is not this task
@@ -261,7 +261,7 @@ class BaseService:
                     # The task will be cancelled, and its own exception handling (e.g., CancelledError in run())
                     # will proceed. The finally block in run() should not call stop() again due to state check.
                 else:
-                    logger.info(f"Cancelling main run task for {self.service_name}.")
+                    logger.debug(f"Cancelling main run task for {self.service_name}.")
                     self._run_task_handle.cancel()
                     try:
                         logger.debug(f"Waiting for main run task of {self.service_name} to complete cancellation.")
@@ -279,7 +279,7 @@ class BaseService:
             await self._clear_tasks()  # Clear any registered tasks
             
             self.state = ServiceState.STOPPED
-            logger.info(f"Service {self.service_name} stopped")
+            logger.debug(f"Service {self.service_name} stopped")
     
     def _request_stop(self, suffix: str):
         """Internal method to request a graceful shutdown with a specific task name suffix.
@@ -355,7 +355,7 @@ class BaseService:
         if not self.tasks:
             raise RuntimeError("No tasks registered for service")
         
-        logger.info(f"Service {self.service_name} running")
+        logger.debug(f"Service {self.service_name} running")
         
         try:
             self._run_task_handle = asyncio.current_task() # Store handle to this task
@@ -442,11 +442,13 @@ class BaseService:
                         task_errors_found = True
                 
                 if task_errors_found:
-                    self.status = ServiceStatus.ERROR
-                    logger.info(f"Service {self.service_name} encountered task errors. Status set to ERROR. Stop will be handled by finally block.")
+                    self.record_error(
+                        Exception(f"Service {self.service_name} encountered task errors during run() execution."),
+                        is_fatal=False
+                    )
             except asyncio.CancelledError:
                 # If the gather itself is cancelled, we still want to check for task exceptions
-                logger.info(f"Gather was cancelled for {self.service_name}, checking individual tasks for errors")
+                logger.debug(f"Gather was cancelled for {self.service_name}, checking individual tasks for errors")
                 for task in task_objects:
                     if task.done() and not task.cancelled():
                         try:
@@ -461,7 +463,7 @@ class BaseService:
                 raise  # Re-raise the CancelledError
         # This CancelledError is for the run() task itself being cancelled.
         except asyncio.CancelledError:
-            logger.info(f"Service {self.service_name} run task itself was cancelled, initiating stop.")
+            logger.debug(f"Service {self.service_name} run task itself was cancelled, initiating stop.")
             # The finally block will handle calling stop().
         
         # This Exception is for other unexpected errors directly within the run() method's logic,
@@ -480,7 +482,7 @@ class BaseService:
             # This handles cases where run() exits due to an error or normal completion of its tasks,
             # without an external stop signal.
             if self.state not in [ServiceState.STOPPING, ServiceState.STOPPED]:
-                logger.info(f"Service {self.service_name} run() method ending (state: {self.state}). "
+                logger.debug(f"Service {self.service_name} run() method ending (state: {self.state}). "
                             f"Stop not yet initiated by other means. Calling self.stop().")
                 try:
                     await self.stop()
@@ -488,17 +490,17 @@ class BaseService:
                     logger.error(f"Error during self.stop() called from run() finally for {self.service_name}: {e}", exc_info=True)
                     self.record_error(e)
             elif self.state == ServiceState.STOPPING:
-                logger.info(f"Service {self.service_name} run() method's finally block: A stop operation is already in progress "
+                logger.debug(f"Service {self.service_name} run() method's finally block: A stop operation is already in progress "
                             f"(state: {self.state}). Letting it complete.")
             elif self.state == ServiceState.STOPPED:
-                logger.info(f"Service {self.service_name} run() method's finally block: Service already STOPPED.")
+                logger.debug(f"Service {self.service_name} run() method's finally block: Service already STOPPED.")
             
-            logger.info(f"Service {self.service_name} run() method completed. Final state: {self.state}")
+            logger.debug(f"Service {self.service_name} run() method completed. Final state: {self.state}")
 
     async def _handle_signal_async(self, sig):
         """Handle signals in the asyncio event loop by calling stop() or handling SIGTSTP."""
         signal_name = signal.Signals(sig).name
-        logger.info(f"Received signal {signal_name} in asyncio event loop for {self.service_name}")
+        logger.debug(f"Received signal {signal_name} in asyncio event loop for {self.service_name}")
 
         # Prevent re-entrant calls or acting on signals if already fully stopped.
         # If stop() is already in progress, stop() itself is idempotent.
@@ -512,7 +514,7 @@ class BaseService:
             # For now, we let the current stop() proceed.
             return
 
-        logger.info(f"Service {self.service_name} initiating shutdown via stop() due to signal {signal_name}")
+        logger.debug(f"Service {self.service_name} initiating shutdown via stop() due to signal {signal_name}")
         try:
             # Call stop() directly. stop() is responsible for setting the state
             await self.stop()
