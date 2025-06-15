@@ -2,13 +2,13 @@ from experimance_core.robust_camera import (
     CameraConfig,
     DepthProcessor,
     DepthFrame,
-    MockDepthProcessor,
-    create_depth_processor,
     mask_bright_area,
     simple_obstruction_detect,
     is_blank_frame,
     detect_difference
 )
+from experimance_core.mock_depth_processor import MockDepthProcessor
+from experimance_core.depth_factory import create_depth_processor
 from experimance_core.config import DEFAULT_CONFIG_PATH, DEFAULT_CAMERA_CONFIG_DIR
 import asyncio
 import cv2
