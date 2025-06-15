@@ -6,8 +6,9 @@ This module defines Pydantic models for validating and accessing
 core service configuration in a type-safe way.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from pathlib import Path
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -71,42 +72,279 @@ class StateMachineConfig(BaseModel):
     )
 
 
-class DepthProcessingConfig(BaseModel):
-    """Depth processing configuration."""
+class ColorizerScheme(Enum):
+    """Colorizer schemes for depth visualization."""
+    # from: https://intelrealsense.github.io/librealsense/python_docs/_generated/pyrealsense2.colorizer.html
+    JET = 0
+    CLASSIC = 1
+    WHITE_TO_BLACK = 2
+    BLACK_TO_WHITE = 3
+    BIO = 4
+    COLD = 5
+    WARM = 6
+    QUANTIZED = 7
+    PATTERN = 8
     
+class CameraConfig(BaseModel):
+    """Camera configuration for the robust camera system."""
+    
+    resolution: Tuple[int, int] = Field(
+        default=(640, 480),
+        description="Camera resolution (width, height)"
+    )
+    
+    fps: int = Field(
+        default=30,
+        description="Camera frames per second"
+    )
+    
+    align_frames: bool = Field(
+        default=True,
+        description="Enable frame alignment"
+    )
+    
+    min_depth: float = Field(
+        default=0.0,
+        description="Minimum depth value in meters"
+    )
+    
+    max_depth: float = Field(
+        default=10.0,
+        description="Maximum depth value in meters"
+    )
+    
+    json_config_path: Optional[str] = Field(
+        default=None,
+        description="Path to RealSense JSON config file"
+    )
+    
+    colorizer_scheme: ColorizerScheme = Field(
+        default=ColorizerScheme.CLASSIC,
+        description="Colorizer scheme for depth visualization"
+    )
+
+    # Processing parameters
+    output_resolution: Tuple[int, int] = Field(
+        default=(1024, 1024),
+        description="Output image resolution (width, height)"
+    )
+    
+    change_threshold: int = Field(
+        default=60,
+        description="Threshold for change detection"
+    )
+    
+    detect_hands: bool = Field(
+        default=True,
+        description="Enable hand detection"
+    )
+    
+    crop_to_content: bool = Field(
+        default=True,
+        description="Crop output to content area"
+    )
+    
+    warm_up_frames: int = Field(
+        default=10,
+        description="Number of frames to skip during warmup"
+    )
+    
+    lightweight_mode: bool = Field(
+        default=False,
+        description="Skip some processing for higher FPS"
+    )
+    
+    verbose_performance: bool = Field(
+        default=False,
+        description="Show detailed performance timing"
+    )
+    
+    debug_mode: bool = Field(
+        default=False,
+        description="Include intermediate images for visualization"
+    )
+    
+    # Mask stability parameters
+    mask_stability_frames: int = Field(
+        default=20,
+        description="Frames to analyze for mask stability"
+    )
+    
+    mask_stability_threshold: float = Field(
+        default=0.95,
+        description="Similarity threshold for mask stability"
+    )
+    
+    mask_lock_after_stable: bool = Field(
+        default=True,
+        description="Lock mask once stable"
+    )
+    
+    mask_allow_updates: bool = Field(
+        default=True,
+        description="Allow mask updates when bowl moves significantly"
+    )
+    
+    mask_update_threshold: float = Field(
+        default=0.7,
+        description="Threshold for detecting bowl movement"
+    )
+    
+    # Retry parameters
+    max_retries: int = Field(
+        default=3,
+        description="Maximum camera initialization retries"
+    )
+    
+    retry_delay: float = Field(
+        default=2.0,
+        description="Initial retry delay in seconds"
+    )
+    
+    max_retry_delay: float = Field(
+        default=30.0,
+        description="Maximum retry delay in seconds"
+    )
+    
+    aggressive_reset: bool = Field(
+        default=False,
+        description="Use more aggressive reset strategies"
+    )
+    
+    skip_advanced_config: bool = Field(
+        default=False,
+        description="Skip advanced JSON config loading"
+    )
+    
+    # RealSense filters
+    enable_filters: bool = Field(
+        default=True,
+        description="Enable RealSense post-processing filters"
+    )
+    
+    spatial_filter: bool = Field(
+        default=True,
+        description="Enable spatial filter"
+    )
+    
+    temporal_filter: bool = Field(
+        default=True,
+        description="Enable temporal filter"
+    )
+    
+    decimation_filter: bool = Field(
+        default=False,
+        description="Enable decimation filter"
+    )
+    
+    hole_filling_filter: bool = Field(
+        default=True,
+        description="Enable hole filling filter"
+    )
+    
+    threshold_filter: bool = Field(
+        default=False,
+        description="Enable threshold filter"
+    )
+    
+    # Spatial filter settings
+    spatial_filter_magnitude: float = Field(
+        default=2.0,
+        description="Spatial filter magnitude"
+    )
+    
+    spatial_filter_alpha: float = Field(
+        default=0.5,
+        description="Spatial filter alpha"
+    )
+    
+    spatial_filter_delta: float = Field(
+        default=20.0,
+        description="Spatial filter delta"
+    )
+    
+    spatial_filter_hole_fill: int = Field(
+        default=1,
+        description="Spatial filter hole fill mode"
+    )
+    
+    # Temporal filter settings
+    temporal_filter_alpha: float = Field(
+        default=0.4,
+        description="Temporal filter alpha"
+    )
+    
+    temporal_filter_delta: float = Field(
+        default=20.0,
+        description="Temporal filter delta"
+    )
+    
+    temporal_filter_persistence: int = Field(
+        default=3,
+        description="Temporal filter persistence"
+    )
+    
+    # Decimation filter settings
+    decimation_filter_magnitude: int = Field(
+        default=2,
+        description="Decimation filter magnitude"
+    )
+    
+    # Hole filling filter settings
+    hole_filling_mode: int = Field(
+        default=1,
+        description="Hole filling mode (0=disabled, 1=fill_from_left, 2=farest_from_around)"
+    )
+    
+    # Threshold filter settings
+    threshold_filter_min: float = Field(
+        default=0.15,
+        description="Threshold filter minimum value"
+    )
+    
+    threshold_filter_max: float = Field(
+        default=4.0,
+        description="Threshold filter maximum value"
+    )
+
+
+class DepthProcessingConfig(BaseModel):
+    """Depth processing configuration (legacy compatibility)."""
+    
+    # Keep these for backward compatibility with existing configs
     camera_config_path: str = Field(
         default="depth_camera_config.json",
-        description="Path to depth camera configuration file"
+        description="Path to depth camera configuration file (legacy)"
     )
     
     fps: int = Field(
         default=6,
-        description="Camera frames per second (limited by resolution)"
+        description="Camera frames per second (legacy - use camera.fps instead)"
     )
 
     change_threshold: int = Field(
         default=50,
-        description="Threshold for depth change detection"
+        description="Threshold for depth change detection (legacy - use camera.change_threshold instead)"
     )
     
     min_depth: float = Field(
         default=0.49,
-        description="Minimum depth value"
+        description="Minimum depth value (legacy - use camera.min_depth instead)"
     )
     
     max_depth: float = Field(
         default=0.56,
-        description="Maximum depth value"
+        description="Maximum depth value (legacy - use camera.max_depth instead)"
     )
     
     resolution: Tuple[int, int] = Field(
         default=(1280, 720),
-        description="Depth camera resolution"
+        description="Depth camera resolution (legacy - use camera.resolution instead)"
     )
     
     output_size: Tuple[int, int] = Field(
         default=(1024, 1024),
-        description="Processed output size"
+        description="Processed output size (legacy - use camera.output_resolution instead)"
     )
 
 
@@ -152,6 +390,8 @@ class CoreServiceConfig(Config):
     experimance_core: ExperimanceCoreConfig = Field(default_factory=ExperimanceCoreConfig)
     zmq: ZmqConfig = Field(default_factory=ZmqConfig)
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
-    depth_processing: DepthProcessingConfig = Field(default_factory=DepthProcessingConfig)
+    camera: CameraConfig = Field(default_factory=CameraConfig)
+    depth_processing: DepthProcessingConfig = Field(default_factory=DepthProcessingConfig)  # Legacy compatibility
     audio: AudioConfig = Field(default_factory=AudioConfig)
     prompting: PromptingConfig = Field(default_factory=PromptingConfig)
+    camera: CameraConfig = Field(default_factory=CameraConfig)

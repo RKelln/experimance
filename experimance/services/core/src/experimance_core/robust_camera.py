@@ -10,6 +10,7 @@ This module provides a modern, clean, and robust interface to Intel RealSense ca
 
 This is a complete replacement for depth_finder.py with modern design patterns.
 """
+# mypy: disable-error-code="attr-defined"
 
 import asyncio
 import json
@@ -18,7 +19,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Tuple, AsyncGenerator, Generator, Any, List, Dict
+from typing import Optional, Tuple, AsyncGenerator, Generator, Any, List, Dict, TYPE_CHECKING
 from random import randint
 import subprocess
 import psutil
@@ -27,10 +28,24 @@ import signal
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
+import pyrealsense2 as rs  # type: ignore
 from blessed import Terminal
 
+# Type aliases for RealSense objects to improve type hints
+if TYPE_CHECKING:
+    RSPipeline = rs.pipeline
+    RSProfile = Any  # rs.pipeline_profile
+    RSColorizer = rs.colorizer
+    RSAlign = rs.align
+else:
+    RSPipeline = Any
+    RSProfile = Any
+    RSColorizer = Any
+    RSAlign = Any
+
 from experimance_common.image_utils import get_mock_images, crop_to_content
+from experimance_core.config import CameraConfig, CoreServiceConfig, DEFAULT_CONFIG_PATH, ColorizerScheme
+from experimance_core.camera_utils import reset_realsense_camera
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +60,7 @@ kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 term = Terminal()
 
 
+
 # ==================== MODERN CAMERA INTERFACE ====================
 
 class CameraState(Enum):
@@ -54,84 +70,6 @@ class CameraState(Enum):
     READY = "ready"
     ERROR = "error"
     RESETTING = "resetting"
-
-class ColorizerScheme(Enum):
-    """Colorizer schemes for depth visualization."""
-    # from: https://intelrealsense.github.io/librealsense/python_docs/_generated/pyrealsense2.colorizer.html
-    JET = 0
-    CLASSIC = 1
-    WHITE_TO_BLACK = 2
-    BLACK_TO_WHITE = 3
-    BIO = 4
-    COLD = 5
-    WARM = 6
-    QUANTIZED = 7
-    PATTERN = 8
-
-@dataclass
-class CameraConfig:
-    """Camera configuration parameters."""
-    resolution: Tuple[int, int] = DEFAULT_DEPTH_RESOLUTION
-    fps: int = DEFAULT_FPS
-    align_frames: bool = True
-    min_depth: float = 0.0
-    max_depth: float = 10.0
-    colorizer_scheme: ColorizerScheme = ColorizerScheme.CLASSIC  # WhiteToBlack
-    json_config_path: Optional[str] = None
-    
-    # Processing parameters
-    output_resolution: Tuple[int, int] = DEFAULT_OUTPUT_RESOLUTION
-    change_threshold: int = 60
-    detect_hands: bool = True
-    crop_to_content: bool = True
-    warm_up_frames: int = 10
-    lightweight_mode: bool = False  # Skip some processing for higher FPS
-    verbose_performance: bool = False  # Show detailed performance timing
-    debug_mode: bool = False  # Include intermediate images for visualization
-    
-    # Mask stability parameters
-    mask_stability_frames: int = 20  # Frames to analyze for mask stability
-    mask_stability_threshold: float = 0.95  # Similarity threshold for mask stability
-    mask_lock_after_stable: bool = True  # Lock mask once stable
-    mask_allow_updates: bool = True  # Allow mask updates when bowl moves significantly
-    mask_update_threshold: float = 0.7  # Threshold for detecting bowl movement
-    
-    # Retry parameters
-    max_retries: int = 3
-    retry_delay: float = 2.0
-    max_retry_delay: float = 30.0
-    aggressive_reset: bool = False  # Use more aggressive reset strategies
-    skip_advanced_config: bool = False  # Skip advanced JSON config loading
-    
-    # RealSense filters (alternative to JSON config)
-    enable_filters: bool = True
-    spatial_filter: bool = True
-    temporal_filter: bool = True
-    decimation_filter: bool = False
-    hole_filling_filter: bool = True
-    threshold_filter: bool = False
-    
-    # Spatial filter settings
-    spatial_filter_magnitude: float = 2.0
-    spatial_filter_alpha: float = 0.5
-    spatial_filter_delta: float = 20.0
-    spatial_filter_hole_fill: int = 1
-    
-    # Temporal filter settings
-    temporal_filter_alpha: float = 0.4
-    temporal_filter_delta: float = 20.0
-    temporal_filter_persistence: int = 3
-    
-    # Decimation filter settings
-    decimation_filter_magnitude: int = 2
-    
-    # Hole filling filter settings
-    hole_filling_mode: int = 1  # 0=disabled, 1=fill_from_left, 2=farest_from_around
-    
-    # Threshold filter settings
-    threshold_filter_min: float = 0.15
-    threshold_filter_max: float = 4.0
-
 
 @dataclass
 class DepthFrame:
@@ -213,7 +151,7 @@ def mask_bright_area(image: np.ndarray) -> np.ndarray:
         fallback_mask = np.zeros((height, width), dtype=np.uint8)
         # Create circular mask sized for typical sand bowl (about 70% of smaller dimension)
         radius = int(min(width, height) * 0.35)
-        cv2.circle(fallback_mask, center, radius, 255, -1)
+        cv2.circle(fallback_mask, center, radius, (255,), -1)
         return fallback_mask
     
     return cropped_mask
@@ -305,297 +243,6 @@ def calculate_change_score(current_frame: np.ndarray, previous_frame: np.ndarray
         return 0.0
 
 
-def get_camera_diagnostics() -> Dict[str, Any]:
-    """
-    Get comprehensive camera diagnostics.
-    
-    Returns:
-        Dictionary with diagnostic information
-    """
-    diagnostics = {
-        'devices': [],
-        'processes': [],
-        'usb_devices': [],
-        'realsense_info': {}
-    }
-    
-    try:
-        # RealSense device enumeration
-        ctx = rs.context()
-        devices = ctx.query_devices()
-        
-        for i, dev in enumerate(devices):
-            device_info = {
-                'index': i,
-                'name': dev.get_info(rs.camera_info.name) if dev.supports(rs.camera_info.name) else 'Unknown',
-                'serial': dev.get_info(rs.camera_info.serial_number) if dev.supports(rs.camera_info.serial_number) else 'Unknown',
-                'firmware': dev.get_info(rs.camera_info.firmware_version) if dev.supports(rs.camera_info.firmware_version) else 'Unknown',
-                'product_id': dev.get_info(rs.camera_info.product_id) if dev.supports(rs.camera_info.product_id) else 'Unknown',
-                'usb_type': dev.get_info(rs.camera_info.usb_type_descriptor) if dev.supports(rs.camera_info.usb_type_descriptor) else 'Unknown',
-                'sensors': []
-            }
-            
-            # Get sensor information
-            for sensor in dev.query_sensors():
-                sensor_info = {
-                    'name': sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else 'Unknown',
-                    'profiles': []
-                }
-                
-                try:
-                    profiles = sensor.get_stream_profiles()
-                    for profile in profiles[:5]:  # Limit to first 5 profiles
-                        if profile.is_video_stream_profile():
-                            vp = profile.as_video_stream_profile()
-                            sensor_info['profiles'].append({
-                                'stream': str(vp.stream_type()),
-                                'format': str(vp.format()),
-                                'width': vp.width(),
-                                'height': vp.height(),
-                                'fps': vp.fps()
-                            })
-                except Exception as e:
-                    sensor_info['error'] = str(e)
-                
-                device_info['sensors'].append(sensor_info)
-                
-            diagnostics['devices'].append(device_info)
-            
-        diagnostics['realsense_info'] = {
-            'device_count': len(devices),
-            'context_created': True
-        }
-        
-    except Exception as e:
-        diagnostics['realsense_info'] = {
-            'error': str(e),
-            'context_created': False
-        }
-    
-    # Check for processes using camera
-    try:
-        camera_processes = []
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                # Check if process might be using camera
-                cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-                name = proc.info['name'].lower()
-                
-                if any(keyword in name or keyword in cmdline.lower() for keyword in 
-                       ['realsense', 'camera', 'opencv', 'gstreamer', 'v4l2', 'experimance']):
-                    camera_processes.append({
-                        'pid': proc.info['pid'],
-                        'name': proc.info['name'],
-                        'cmdline': cmdline[:100] + '...' if len(cmdline) > 100 else cmdline
-                    })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-                
-        diagnostics['processes'] = camera_processes
-        
-    except Exception as e:
-        diagnostics['processes'] = [{'error': str(e)}]
-    
-    # Check USB devices
-    try:
-        usb_devices = []
-        lsusb_output = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
-        if lsusb_output.returncode == 0:
-            for line in lsusb_output.stdout.split('\n'):
-                if 'intel' in line.lower() or '8086' in line or 'realsense' in line.lower():
-                    usb_devices.append(line.strip())
-        diagnostics['usb_devices'] = usb_devices
-        
-    except Exception as e:
-        diagnostics['usb_devices'] = [f'Error: {e}']
-    
-    return diagnostics
-
-
-def kill_camera_processes() -> bool:
-    """
-    Kill processes that might be holding camera resources.
-    
-    Returns:
-        True if any processes were killed, False otherwise
-    """
-    killed = False
-    
-    try:
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-                name = proc.info['name'].lower()
-                
-                # Be conservative - only kill obvious camera processes
-                if any(keyword in name for keyword in ['realsense-viewer', 'intel-realsense']):
-                    logger.info(f"Killing camera process: {proc.info['name']} (PID: {proc.info['pid']})")
-                    proc.terminate()
-                    killed = True
-                    
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-                
-        if killed:
-            time.sleep(2)  # Wait for processes to terminate
-            
-    except Exception as e:
-        logger.error(f"Error killing camera processes: {e}")
-        
-    return killed
-
-
-def usb_reset_device(vendor_id: str = "8086", product_id: str = None) -> bool:
-    """
-    Attempt to reset USB device by vendor/product ID.
-    
-    Args:
-        vendor_id: USB vendor ID (default: Intel)
-        product_id: USB product ID (optional)
-        
-    Returns:
-        True if reset was attempted, False otherwise
-    """
-    try:
-        # Find USB device
-        lsusb_output = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
-        if lsusb_output.returncode != 0:
-            logger.warning("lsusb command failed")
-            return False
-            
-        usb_device = None
-        for line in lsusb_output.stdout.split('\n'):
-            if vendor_id in line:
-                if product_id is None or product_id in line:
-                    # Extract bus and device numbers
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        bus = parts[1]
-                        device = parts[3].rstrip(':')
-                        usb_device = f"/dev/bus/usb/{bus}/{device}"
-                        break
-        
-        if not usb_device:
-            logger.warning(f"USB device with vendor ID {vendor_id} not found")
-            return False
-            
-        # Attempt USB reset using python usb library if available
-        try:
-            import usb.core
-            import usb.util
-            
-            devices = usb.core.find(find_all=True, idVendor=int(vendor_id, 16))
-            for device in devices:
-                if product_id is None or device.idProduct == int(product_id, 16):
-                    logger.info(f"Resetting USB device: vendor={vendor_id}, product={device.idProduct:04x}")
-                    device.reset()
-                    return True
-                    
-        except ImportError:
-            logger.warning("pyusb not available for USB reset")
-        except Exception as e:
-            logger.warning(f"USB reset via pyusb failed: {e}")
-            
-        # Fallback: try to unbind/rebind driver
-        try:
-            # This is more complex and requires root privileges
-            logger.info("USB reset attempted but requires additional privileges")
-            return False
-            
-        except Exception as e:
-            logger.warning(f"USB driver reset failed: {e}")
-            
-    except Exception as e:
-        logger.error(f"USB reset error: {e}")
-        
-    return False
-
-
-def reset_realsense_camera(aggressive: bool = False) -> bool:
-    """
-    Reset the RealSense camera hardware with multiple strategies.
-    
-    Args:
-        aggressive: If True, use more aggressive reset strategies
-    
-    Returns:
-        True if reset was successful, False otherwise
-    """
-    logger.info(f"Starting camera reset (aggressive={aggressive})")
-    
-    # Step 1: Get diagnostics before reset
-    diagnostics = get_camera_diagnostics()
-    logger.info(f"Found {len(diagnostics['devices'])} RealSense devices")
-    
-    if len(diagnostics['devices']) == 0:
-        logger.warning('No RealSense devices found for reset')
-        return False
-    
-    # Step 2: Kill potentially interfering processes
-    if aggressive:
-        logger.info("Killing potentially interfering processes...")
-        kill_camera_processes()
-    
-    # Step 3: Hardware reset
-    success = False
-    try:
-        ctx = rs.context()
-        devices = ctx.query_devices()
-        
-        for i, dev in enumerate(devices):
-            device_name = dev.get_info(rs.camera_info.name) if dev.supports(rs.camera_info.name) else f'Device {i}'
-            logger.info(f'Resetting device: {device_name}')
-            
-            try:
-                dev.hardware_reset()
-                logger.info(f'Hardware reset successful for {device_name}')
-                success = True
-                
-                # Wait longer for device to reinitialize
-                time.sleep(3 if not aggressive else 5)
-                
-            except Exception as e:
-                logger.warning(f'Hardware reset failed for {device_name}: {e}')
-                
-        if not success:
-            logger.error('All hardware resets failed')
-            
-    except Exception as e:
-        logger.error(f'Camera enumeration failed during reset: {e}')
-        
-    # Step 4: USB reset (if aggressive and hardware reset failed)
-    if aggressive and not success:
-        logger.info("Attempting USB reset...")
-        usb_success = usb_reset_device()
-        if usb_success:
-            logger.info("USB reset completed")
-            time.sleep(5)  # Wait longer after USB reset
-            success = True
-        else:
-            logger.warning("USB reset failed or not available")
-    
-    # Step 5: Verify reset by checking device availability
-    if success:
-        logger.info("Verifying reset by checking device availability...")
-        time.sleep(2)  # Additional wait
-        
-        try:
-            ctx = rs.context()
-            devices = ctx.query_devices()
-            if len(devices) > 0:
-                logger.info(f"Reset verification successful: {len(devices)} devices available")
-                return True
-            else:
-                logger.warning("Reset verification failed: no devices found")
-                return False
-                
-        except Exception as e:
-            logger.warning(f"Reset verification failed: {e}")
-            return False
-    
-    logger.error("Camera reset failed")
-    return False
-
 
 class RealSenseCamera:
     """
@@ -604,20 +251,22 @@ class RealSenseCamera:
     This class handles all low-level camera operations with retry logic.
     """
     
-    def __init__(self, config: CameraConfig):
+    def __init__(self, config):
+        """Initialize the camera with configuration from config.py."""
         self.config = config
         self.state = CameraState.DISCONNECTED
-        self.pipeline = None
-        self.profile = None
-        self.colorizer = None
-        self.align = None
-        self.filters = []  # Post-processing filters
+        self.pipeline: Optional[RSPipeline] = None
+        self.profile: Optional[RSProfile] = None
+        self.colorizer: Optional[RSColorizer] = None
+        self.align: Optional[RSAlign] = None
+        self.filters: List[Tuple[str, Any]] = []  # Post-processing filters
         self.retry_count = 0
         self.current_retry_delay = config.retry_delay
         
     async def initialize(self) -> bool:
         """Initialize the camera with retry logic."""
-        return await self._execute_with_retry("camera initialization", self._init_camera)
+        result = await self._execute_with_retry("camera initialization", self._init_camera)
+        return result is not None and result
     
     async def get_frame(self) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
         """Capture a single frame with retry logic."""
@@ -670,10 +319,13 @@ class RealSenseCamera:
                             # Reset retry state on success
                             self.retry_count = 0
                             self.current_retry_delay = self.config.retry_delay
+                            logger.info(f"Operation {operation_name} succeeded after reset!")
                             return result
                         except Exception as retry_e:
-                            logger.warning(f"Operation failed even after successful reset: {retry_e}")
+                            logger.warning(f"Operation {operation_name} failed even after successful reset: {retry_e}")
                             # Continue with normal retry delay logic
+                    else:
+                        logger.warning(f"Reset failed for {operation_name}, continuing with retry delay")
                     
                     # Exponential backoff (whether reset failed or post-reset operation failed)
                     delay = min(self.current_retry_delay * (2 ** attempt), self.config.max_retry_delay)
@@ -981,7 +633,8 @@ class DepthProcessor:
     with interaction detection, change analysis, and cropping.
     """
     
-    def __init__(self, config: CameraConfig):
+    def __init__(self, config:CameraConfig):
+        """Initialize the depth processor with configuration from config.py."""
         self.config = config
         self.camera = RealSenseCamera(config)
         self.frame_number = 0
@@ -1307,7 +960,7 @@ class DepthProcessor:
                 fallback = np.zeros((h, w), dtype=np.uint8)
                 center = (w // 2, h // 2)
                 radius = min(w, h) // 4
-                cv2.circle(fallback, center, radius, 255, -1)
+                cv2.circle(fallback, center, radius, (255,), -1)
                 return fallback
         
         # Generate current mask

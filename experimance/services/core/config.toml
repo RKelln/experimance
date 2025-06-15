@@ -10,23 +10,38 @@ wilderness_reset = 300.0     # seconds to full reset
 interaction_threshold = 0.3  # threshold for user interaction detection
 era_min_duration = 10.0      # minimum time in seconds before era can change
 
-[depth_processing]
-#camera_config_path = "depth_camera_config_v2.json"  # not working well, we set filters manually
-# Resolutions that work: 640x480@30fps, 1280x720@30
-resolution = [1280, 720]     # depth camera resolution (10Hz max for this res)
+[camera]
+# Core camera settings
+resolution = [1280, 720]     # depth camera resolution (width, height)
 fps = 30                    # camera frames per second 
+min_depth = 0.46            # minimum depth value in meters
+max_depth = 0.52            # maximum depth value in meters
+align_frames = true         # use color frames to help align the depth frames
+#json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config
+
+# Processing parameters
+output_resolution = [1024, 1024]  # processed output size (width, height)
 change_threshold = 50       # threshold for depth change detection
-min_depth = 0.46            # minimum depth value
-max_depth = 0.52            # maximum depth value
-output_resolution = [1024, 1024]  # processed output size
-align_frames = true         # use color frames to help aign the depth frames
+detect_hands = true         # enable hand detection
+crop_to_content = true      # crop output to content area
+warm_up_frames = 10         # number of frames to skip during warmup
+lightweight_mode = false   # skip some processing for higher FPS
+verbose_performance = true # show detailed performance timing
+debug_mode = false          # include intermediate images for visualization
 
 # Mask stability and bowl detection
-mask_stability_frames = 20      # Number of frames to analyze for mask stability
-mask_stability_threshold = 0.95 # Similarity threshold for mask stability (0.0-1.0)
-mask_lock_after_stable = true   # Lock mask once it becomes stable
-mask_allow_updates = false      # Allow mask updates when bowl moves significantly
-mask_update_threshold = 0.7     # Threshold for detecting bowl movement (0.0-1.0)
+mask_stability_frames = 20      # frames to analyze for mask stability
+mask_stability_threshold = 0.95 # similarity threshold for mask stability (0.0-1.0)
+mask_lock_after_stable = true   # lock mask once it becomes stable
+mask_allow_updates = false      # allow mask updates when bowl moves significantly
+mask_update_threshold = 0.7     # threshold for detecting bowl movement (0.0-1.0)
+
+# Retry parameters
+max_retries = 3             # maximum camera initialization retries
+retry_delay = 2.0           # initial retry delay in seconds
+max_retry_delay = 30.0      # maximum retry delay in seconds
+aggressive_reset = false    # use more aggressive reset strategies
+skip_advanced_config = false # skip advanced JSON config loading
 
 # RealSense filters (manual control instead of JSON config)
 # https://dev.intelrealsense.com/docs/post-processing-filters
@@ -47,7 +62,7 @@ threshold_filter = false   # threshold filter for depth range
 spatial_filter_magnitude = 2.0      # filter magnitude (1-5)
 spatial_filter_alpha = 0.5          # alpha factor (0-1)
 spatial_filter_delta = 20.0         # delta threshold (1-50)
-spatial_filter_hole_fill = 1        # number of iterations (1-5) [none,2,4,8,16,unlimited]
+spatial_filter_hole_fill = 1        # hole fill mode (0-5)
 
 # Temporal filter settings
 # The Alpha factor in an exponential moving average with Alpha=1 - no filter . Alpha = 0 - infinite filter

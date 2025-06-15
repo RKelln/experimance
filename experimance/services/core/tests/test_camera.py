@@ -1,5 +1,5 @@
+from experimance_core.config import CoreServiceConfig, DEFAULT_CONFIG_PATH
 from experimance_core.robust_camera import (
-    CameraConfig,
     DepthProcessor,
     DepthFrame,
     mask_bright_area,
@@ -32,106 +32,38 @@ allowing users to test both mock and real camera functionality,
 as well as image processing functions.
 """
 
-def create_test_config(verbose: bool = False, safe_mode: bool = False) -> CameraConfig:
+def create_test_config(verbose: bool = False, safe_mode: bool = False):
     """Create a test configuration, loading values from config.toml if available."""
     # Try to load configuration from the default config path
     config_path = Path(DEFAULT_CONFIG_PATH)
-    depth_config = {}
     
     if config_path.exists():
         try:
-            with open(config_path, 'r') as f:
-                toml_config = toml.load(f)
-                depth_config = toml_config.get('depth_processing', {})
-                print(f"📋 Loaded configuration from {config_path}")
+            # Load the full service config and extract camera config
+            service_config = CoreServiceConfig.from_overrides(config_file=str(config_path))
+            camera_config = service_config.camera
+            
+            # Override specific settings for testing
+            if verbose:
+                camera_config.verbose_performance = True
+            if safe_mode:
+                camera_config.skip_advanced_config = True
+                camera_config.json_config_path = None
+            
+            print(f"📋 Loaded configuration from {config_path}")
+            return camera_config
+            
         except Exception as e:
             print(f"⚠️  Warning: Could not load {config_path}: {e}")
             print("📋 Using default configuration")
     else:
         print(f"📋 No config file found at {config_path}, using defaults")
     
-    # Extract values from config with defaults
-    resolution = tuple(depth_config.get('resolution', [640, 480]))
-    fps = depth_config.get('fps', 30)
-    min_depth = depth_config.get('min_depth', 0.0)
-    max_depth = depth_config.get('max_depth', 10.0)
-    change_threshold = depth_config.get('change_threshold', 60)
-    output_size = tuple(depth_config.get('output_size', [1024, 1024]))
-    camera_config_path = depth_config.get('camera_config_path', None)
-    if camera_config_path:
-        camera_config_path = str(Path(DEFAULT_CAMERA_CONFIG_DIR) / camera_config_path)
-    
-    # In safe mode, skip advanced config
-    if safe_mode:
-        print("🛡️  Safe mode enabled - skipping advanced camera configuration")
-        camera_config_path = None
-    else:
-        # For testing, skip the JSON config file if it doesn't exist
-        if camera_config_path and not Path(camera_config_path).exists():
-            print(f"⚠️  Camera config file {camera_config_path} not found, skipping advanced config")
-            camera_config_path = None
-    
-    # Extract filter settings
-    enable_filters = depth_config.get('enable_filters', True)
-    spatial_filter = depth_config.get('spatial_filter', True)
-    temporal_filter = depth_config.get('temporal_filter', True)
-    decimation_filter = depth_config.get('decimation_filter', False)
-    hole_filling_filter = depth_config.get('hole_filling_filter', True)
-    threshold_filter = depth_config.get('threshold_filter', False)
-    
-    # Spatial filter settings
-    spatial_filter_magnitude = depth_config.get('spatial_filter_magnitude', 2.0)
-    spatial_filter_alpha = depth_config.get('spatial_filter_alpha', 0.5)
-    spatial_filter_delta = depth_config.get('spatial_filter_delta', 20.0)
-    spatial_filter_hole_fill = depth_config.get('spatial_filter_hole_fill', 1)
-    
-    # Temporal filter settings
-    temporal_filter_alpha = depth_config.get('temporal_filter_alpha', 0.4)
-    temporal_filter_delta = depth_config.get('temporal_filter_delta', 20.0)
-    temporal_filter_persistence = depth_config.get('temporal_filter_persistence', 3)
-    
-    # Decimation filter settings
-    decimation_filter_magnitude = depth_config.get('decimation_filter_magnitude', 2)
-    
-    # Hole filling filter settings
-    hole_filling_mode = depth_config.get('hole_filling_mode', 1)
-    
-    # Threshold filter settings
-    threshold_filter_min = depth_config.get('threshold_filter_min', 0.15)
-    threshold_filter_max = depth_config.get('threshold_filter_max', 4.0)
-    
+    # Fallback to creating a default camera config
+    from experimance_core.config import CameraConfig
     return CameraConfig(
-        resolution=resolution,
-        fps=fps,
-        min_depth=min_depth,
-        max_depth=max_depth,
-        change_threshold=change_threshold,
-        output_resolution=output_size,
-        json_config_path=camera_config_path,
-        detect_hands=True,
-        crop_to_content=True,
-        warm_up_frames=5,
-        max_retries=3,
-        verbose_performance=verbose,  # Enable performance logging if verbose
-        skip_advanced_config=safe_mode,  # Skip advanced config in safe mode
-        # Filter settings
-        enable_filters=enable_filters,
-        spatial_filter=spatial_filter,
-        temporal_filter=temporal_filter,
-        decimation_filter=decimation_filter,
-        hole_filling_filter=hole_filling_filter,
-        threshold_filter=threshold_filter,
-        spatial_filter_magnitude=spatial_filter_magnitude,
-        spatial_filter_alpha=spatial_filter_alpha,
-        spatial_filter_delta=spatial_filter_delta,
-        spatial_filter_hole_fill=spatial_filter_hole_fill,
-        temporal_filter_alpha=temporal_filter_alpha,
-        temporal_filter_delta=temporal_filter_delta,
-        temporal_filter_persistence=temporal_filter_persistence,
-        decimation_filter_magnitude=decimation_filter_magnitude,
-        hole_filling_mode=hole_filling_mode,
-        threshold_filter_min=threshold_filter_min,
-        threshold_filter_max=threshold_filter_max
+        verbose_performance=verbose,
+        skip_advanced_config=safe_mode
     )
 
 

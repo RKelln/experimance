@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import time
+import random
+import sys
 import numpy as np
 import cv2
 from datetime import datetime
@@ -23,7 +25,8 @@ from experimance_common.schemas import Era, Biome
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
 from experimance_core.config import CoreServiceConfig, DEFAULT_CONFIG_PATH
-from experimance_core.depth_finder import depth_generator, detect_difference, simple_obstruction_detect
+from experimance_core.depth_factory import create_depth_processor_from_config, create_depth_processor
+from experimance_core.robust_camera import DepthFrame, CameraState
 
 
 logger = logging.getLogger(__name__)
@@ -107,7 +110,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self._message_handlers: Dict[str, Any] = {}
         
         # Depth processing state
-        self.depth_generator: Optional[AsyncGenerator] = None
+        self._depth_processor: Optional[Any] = None
         self.previous_depth_image: Optional[np.ndarray] = None
         self.hand_detected: bool = False
         self.depth_difference_score: float = 0.0
@@ -118,6 +121,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self.depth_retry_delay = 1.0  # Start with 1 second
         self.max_depth_retry_delay = 30.0  # Cap at 30 seconds
         self.last_depth_warning_time = 0
+        self._camera_state = CameraState.DISCONNECTED
         
         # State management constants
         self.AVAILABLE_ERAS = list(Era)
@@ -141,7 +145,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         
         # Initialize depth processing (non-blocking on failure)
         try:
-            await self._initialize_depth_processing()
+            await self._initialize_depth_processor()
         except Exception as e:
             logger.warning(f"Initial depth processing setup failed: {e}")
             logger.info("Depth processing will be retried during runtime")
@@ -151,43 +155,38 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         
         logger.info("Experimance Core Service started successfully")
 
-    def _create_depth_generator_factory(self):
-        """Create a depth generator factory based on configuration."""
-        config = self.config.depth_processing
-        
-        def depth_factory():
-            return depth_generator(
-                json_config=config.camera_config_path,
-                size=tuple(config.resolution),
-                fps=config.fps,
-                recording=False,
-                align=True,
-                min_depth=config.min_depth,
-                max_depth=config.max_depth,
-                change_threshold=config.change_threshold,
-                detect_hands=True,
-                crop=True,
-                output_size=tuple(config.output_size),
-                test=False,
-                warm_up_period=5,
-                mock=None  # TODO: Add mock support for testing
-            )
-        
-        return depth_factory
+    def _create_camera_config(self):
+        """Get the camera configuration from the service configuration."""
+        return self.config.camera
 
-    async def _initialize_depth_processing(self):
-        """Initialize depth processing components."""
+    async def _initialize_depth_processor(self):
+        """Initialize depth processor using the new robust camera system."""
         try:
-            depth_factory = self._create_depth_generator_factory()
-            self.depth_generator = self._async_depth_wrapper(depth_factory())
-            logger.info("Depth processing initialized successfully")
+            # Get camera config from service config
+            camera_config = self._create_camera_config()
+            
+            # Create depth processor using the factory
+            self._depth_processor = create_depth_processor(
+                camera_config=camera_config,
+                mock_path=None  # Use real camera by default
+            )
+            
+            # Initialize the processor
+            success = await self._depth_processor.initialize()
+            if success:
+                self._camera_state = CameraState.READY
+                logger.info("Depth processor initialized successfully")
+            else:
+                self._camera_state = CameraState.ERROR
+                raise Exception("Depth processor initialization returned False")
+                
         except Exception as e:
-            logger.error(f"Failed to initialize depth processing: {e}")
-            # TODO: Implement fallback or mock mode
+            self._camera_state = CameraState.ERROR
+            logger.error(f"Failed to initialize depth processor: {e}")
             raise
 
-    async def _initialize_depth_processing_with_retry(self):
-        """Initialize depth processing with retry logic and rate-limited warnings."""
+    async def _initialize_depth_processor_with_retry(self):
+        """Initialize depth processor with retry logic and rate-limited warnings."""
         import time
         
         current_time = time.time()
@@ -197,28 +196,42 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             current_time - self.last_depth_warning_time > self.depth_retry_delay):
             
             try:
-                depth_factory = self._create_depth_generator_factory()
-                self.depth_generator = self._async_depth_wrapper(depth_factory())
-                logger.info("Depth processing initialized successfully")
+                # Get camera config from service config
+                camera_config = self._create_camera_config()
                 
-                # Reset retry count on success
-                self.depth_retry_count = 0
-                self.depth_retry_delay = 1.0
-                self.last_depth_warning_time = 0
-                return True
+                # Create depth processor using the factory
+                self._depth_processor = create_depth_processor(
+                    camera_config=camera_config,
+                    mock_path=None  # Use real camera by default
+                )
+                
+                # Initialize the processor
+                success = await self._depth_processor.initialize()
+                if success:
+                    self._camera_state = CameraState.READY
+                    logger.info("Depth processor initialized successfully")
+                    
+                    # Reset retry count on success
+                    self.depth_retry_count = 0
+                    self.depth_retry_delay = 1.0
+                    self.last_depth_warning_time = 0
+                    return True
+                else:
+                    raise Exception("Depth processor initialization returned False")
                 
             except Exception as e:
                 self.depth_retry_count += 1
                 self.last_depth_warning_time = current_time
+                self._camera_state = CameraState.ERROR
                 
                 if self.depth_retry_count <= self.max_depth_retries:
-                    logger.warning(f"Depth processing initialization failed (attempt {self.depth_retry_count}/{self.max_depth_retries}): {e}")
+                    logger.warning(f"Depth processor initialization failed (attempt {self.depth_retry_count}/{self.max_depth_retries}): {e}")
                     
                     # Exponential backoff with cap
                     self.depth_retry_delay = min(self.depth_retry_delay * 2, self.max_depth_retry_delay)
                     logger.info(f"Will retry depth initialization in {self.depth_retry_delay:.1f} seconds")
                 else:
-                    logger.error(f"Depth processing initialization failed after {self.max_depth_retries} attempts. Last error: {e}")
+                    logger.error(f"Depth processor initialization failed after {self.max_depth_retries} attempts. Last error: {e}")
                     logger.info("Will continue attempting every 30 seconds...")
                     self.depth_retry_delay = self.max_depth_retry_delay
                     
@@ -226,71 +239,39 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         
         return False
 
-    def _async_depth_wrapper(self, depth_gen):
-        """Wrap synchronous depth generator for async operation with better error handling."""
-        async def async_generator():
-            initialization_failed = False
-            try:
-                while self.running and not initialization_failed:
-                    try:
-                        # Get next depth frame in a non-blocking way
-                        # We need to handle the fact that depth_gen is a regular generator
-                        result = next(depth_gen)
-                        if result is not None:
-                            depth_image, hand_detected = result
-                            yield depth_image, hand_detected
-                        else:
-                            # Brief sleep if no new frame
-                            await asyncio.sleep(0.01)
-                    except StopIteration:
-                        logger.debug("Depth generator finished normally")
-                        break
-                    except Exception as e:
-                        error_msg = str(e)
-                        # Check for configuration or initialization errors that won't be fixed by retrying immediately
-                        if ("Configuration file not found" in error_msg or 
-                            "No device found" in error_msg or
-                            "Camera not connected" in error_msg):
-                            logger.error(f"Depth generator configuration error: {e}")
-                            initialization_failed = True
-                            break
-                        else:
-                            logger.error(f"Temporary error in depth generator: {e}")
-                            await asyncio.sleep(0.1)  # Brief pause on temporary error
-            finally:
-                # Clean up depth generator
-                if hasattr(depth_gen, 'close'):
-                    try:
-                        depth_gen.close()
-                    except Exception as e:
-                        logger.debug(f"Error closing depth generator: {e}")
-        
-        return async_generator()
-
-    async def _process_depth_frame(self, depth_image: np.ndarray, hand_detected: bool):
+    async def _process_depth_frame(self, depth_frame: DepthFrame):
         """Process a single depth frame and update interaction state."""
         try:
-            # Update hand detection state
-            if self.hand_detected != hand_detected:
+            # Extract data from DepthFrame
+            depth_image = depth_frame.depth_image
+            hand_detected = depth_frame.hand_detected
+            
+            # Update hand detection state (handle None case)
+            if hand_detected is not None and self.hand_detected != hand_detected:
                 self.hand_detected = hand_detected
                 logger.debug(f"Hand detection changed: {hand_detected}")
                 
                 # Publish interaction sound trigger
                 await self._publish_interaction_sound(hand_detected)
             
-            # Calculate depth difference and interaction score
-            if self.previous_depth_image is not None:
-                # Ensure images are the right type and size for comparison
-                small_current = cv2.resize(depth_image.astype(np.uint8), (128, 128)) if depth_image.size > 128*128 else depth_image.astype(np.uint8)
-                small_previous = cv2.resize(self.previous_depth_image.astype(np.uint8), (128, 128)) if self.previous_depth_image.size > 128*128 else self.previous_depth_image.astype(np.uint8)
+            # Calculate depth difference and interaction score using the depth image
+            if self.previous_depth_image is not None and depth_image is not None:
+                # Resize images to a smaller size for efficient comparison
+                small_current = cv2.resize(depth_image.astype(np.uint8), (128, 128))
                 
-                difference_score, _ = detect_difference(
-                    small_previous, 
-                    small_current, 
-                    threshold=self.config.depth_processing.change_threshold
-                )
+                # Resize previous image to match current if needed
+                if self.previous_depth_image.shape != small_current.shape:
+                    small_previous = cv2.resize(self.previous_depth_image.astype(np.uint8), (128, 128))
+                else:
+                    small_previous = self.previous_depth_image.astype(np.uint8)
+                
+                # Calculate simple difference score
+                diff = cv2.absdiff(small_previous, small_current)
+                difference_score = np.sum(diff > self.config.camera.change_threshold)
                 
                 # Normalize difference score to [0, 1] range
+                max_possible_diff = small_current.shape[0] * small_current.shape[1]
+                self.depth_difference_score = min(1.0, difference_score / max_possible_diff) if difference_score > 0 else 0.0
                 max_possible_diff = 128 * 128  # Maximum possible pixel differences
                 self.depth_difference_score = min(1.0, difference_score / max_possible_diff) if difference_score > 0 else 0.0
                 
@@ -307,8 +288,9 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                     await self._publish_video_mask()
             
             # Store current frame for next comparison
-            self.previous_depth_image = depth_image.copy()
-            self.last_depth_map = depth_image.copy()
+            if depth_image is not None:
+                self.previous_depth_image = depth_image.copy()
+                self.last_depth_map = depth_image.copy()
             
         except Exception as e:
             logger.error(f"Error processing depth frame: {e}")
@@ -408,12 +390,12 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self.era_progression_timer = 0.0
         
         # Select appropriate biome for new era
-        self.select_biome_for_era(new_era)
+        self.select_biome_for_era(self.current_era)
         
         # Publish EraChanged event
-        await self._publish_era_changed_event(old_era, new_era)
+        await self._publish_era_changed_event(old_era, self.current_era)
         
-        logger.info(f"Transitioned from {old_era} to {new_era}")
+        logger.info(f"Transitioned from {old_era} to {self.current_era}")
         return True
     
     def can_transition_to_era(self, target_era: str) -> bool:
@@ -456,9 +438,15 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         else:
             return possible_next_eras[0].value
     
-    def select_biome_for_era(self, era: str) -> str:
+    def select_biome_for_era(self, era: str | Era) -> str:
         """Select an appropriate biome for the given era."""
-        era_enum = Era(era)
+        if isinstance(era, str):
+            era_enum = Era(era)
+        elif isinstance(era, Era):
+            era_enum = era
+        else:
+            self.record_error(f"Invalid era type: {type(era)}")
+
         available_biomes = ERA_BIOMES.get(era_enum, [Biome.TEMPERATE_FOREST])
         
         # If current biome is available in new era, keep it
@@ -470,7 +458,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         import random
         new_biome = random.choice(available_biomes)
         self.current_biome = new_biome
-        logger.info(f"Selected biome {self.current_biome} for era {era}")
+        logger.info(f"Selected biome {self.current_biome} for era {era_enum}")
         return self.current_biome
     
     def update_idle_timer(self, delta_time: float):
@@ -673,39 +661,39 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             logger.error(f"Error publishing render request: {e}")
 
     async def _depth_processing_task(self):
-        """Handle depth camera data processing with improved retry logic."""
+        """Handle depth camera data processing with improved retry logic using robust camera."""
         logger.info("Depth processing task started")
         
         while self.running:
             try:
-                if self.depth_generator is not None:
+                if self._depth_processor is not None:
                     try:
-                        # Get next depth frame from async generator
-                        async for depth_image, hand_detected in self.depth_generator:
-                            if not self.running:
-                                break
-                            
-                            if depth_image is not None:
-                                await self._process_depth_frame(depth_image, hand_detected)
-                            
-                            # Brief yield to allow other tasks to run
-                            await asyncio.sleep(0.001)
+                        # Get next depth frame from the robust camera processor
+                        depth_frame = await self._depth_processor.get_processed_frame()
                         
-                        # If we exit the async for loop, the generator stopped
-                        # Only log once per retry cycle, not on every loop
-                        if self.depth_retry_count == 0:
-                            logger.warning("Depth generator stopped, attempting to reinitialize...")
+                        if not self.running:
+                            break
                         
-                        # Clean up the stopped generator
-                        self.depth_generator = None
+                        if depth_frame is not None:
+                            await self._process_depth_frame(depth_frame)
+                        
+                        # Brief yield to allow other tasks to run
+                        await asyncio.sleep(0.001)
                         
                     except Exception as e:
                         logger.error(f"Error in depth processing loop: {e}")
-                        self.depth_generator = None
+                        # Reset the processor to attempt recovery
+                        if self._depth_processor:
+                            try:
+                                self._depth_processor.stop()
+                            except:
+                                pass
+                        self._depth_processor = None
+                        self._camera_state = CameraState.ERROR
                 
                 # Try to initialize or reinitialize depth processing
-                if self.depth_generator is None:
-                    success = await self._initialize_depth_processing_with_retry()
+                if self._depth_processor is None:
+                    success = await self._initialize_depth_processor_with_retry()
                     if not success:
                         # Wait for the retry delay before trying again
                         if not await self._sleep_if_running(self.depth_retry_delay):
@@ -767,12 +755,13 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         await super().stop()
         
         # Clean up depth processing
-        if self.depth_generator is not None:
+        if self._depth_processor is not None:
             try:
-                # The async generator should clean itself up when running becomes False
-                self.depth_generator = None
+                self._depth_processor.stop()
+                self._depth_processor = None
+                self._camera_state = CameraState.DISCONNECTED
             except Exception as e:
-                logger.error(f"Error cleaning up depth generator: {e}")
+                logger.error(f"Error cleaning up depth processor: {e}")
         
         logger.info("Experimance Core Service stopped")
 
