@@ -267,6 +267,18 @@ python tests/test_camera.py --duration 30
 
 #### Quick Validation
 ```bash
+# Test camera with visualization (recommended)
+uv run python tests/test_camera.py --visualize --duration 10
+
+# Test camera info
+uv run python tests/test_camera.py --info
+
+# Test mock camera functionality
+uv run python tests/test_camera.py --mock --duration 5
+```
+
+#### Programmatic Test
+```bash
 # Test camera import and basic functionality
 python -c "
 import asyncio
@@ -655,17 +667,23 @@ The system includes comprehensive tests for both real and mock camera modes:
 # Navigate to the core service directory
 cd services/core
 
-# Test with real camera (if available)
-uv run python tests/test_camera.py
+# Test with real camera (runs until interrupted)
+uv run python tests/test_camera.py --real
 
-# Test with mock camera
+# Test with mock camera (runs until interrupted)
 uv run python tests/test_camera.py --mock
+
+# Test with visualization (interactive OpenCV window)
+uv run python tests/test_camera.py --visualize
+
+# Test with specific duration
+uv run python tests/test_camera.py --mock --duration 30
 
 # Test with verbose performance output
 uv run python tests/test_camera.py --verbose
 
-# Test specific scenarios
-uv run python tests/test_camera.py --mock --frames 50 --fps 15
+# Show help with all options
+uv run python tests/test_camera.py --help
 ```
 
 ### Test Script Options
@@ -673,9 +691,58 @@ uv run python tests/test_camera.py --mock --frames 50 --fps 15
 The `tests/test_camera.py` script supports various options:
 
 - `--mock` - Use mock camera instead of real hardware
+- `--real` - Use real RealSense camera
+- `--visualize` - Enable visual debug mode with OpenCV window showing intermediate processing steps
+- `--info` - Show connected camera information
+- `--functions` - Test standalone image processing functions
+- `--interactive` - Launch interactive testing mode
+- `--duration N` - Run test for N seconds (default: 0 = infinite duration)
 - `--verbose` - Enable detailed performance logging
-- `--frames N` - Process N frames (default: 30)
-- `--fps N` - Target frame rate (default: 30)
+
+**Examples:**
+```bash
+# Infinite duration tests (press Ctrl+C to stop)
+uv run python tests/test_camera.py --mock          # Mock camera test
+uv run python tests/test_camera.py --real          # Real camera test
+uv run python tests/test_camera.py --visualize     # Visual debug with mock
+
+# Timed tests
+uv run python tests/test_camera.py --real --duration 30    # 30 second test
+uv run python tests/test_camera.py --mock --duration 60    # 1 minute test
+
+# Special modes
+uv run python tests/test_camera.py --info          # Camera information
+uv run python tests/test_camera.py --functions     # Test image functions
+uv run python tests/test_camera.py --interactive   # Interactive menu
+```
+
+### Visualization Mode
+
+The test script includes a powerful visualization mode that displays all intermediate processing steps in real-time:
+
+```bash
+# Start visualization with mock camera (infinite duration)
+uv run python tests/test_camera.py --visualize
+
+# Start visualization with real camera
+uv run python tests/test_camera.py --real --visualize
+
+# Timed visualization test
+uv run python tests/test_camera.py --visualize --duration 60
+```
+
+**Visualization Features:**
+- **6-panel composite window** showing raw depth, processed output, masks, and debug images
+- **Real-time statistics** overlay with frame count, hand detection, change scores, and FPS
+- **Interactive controls**:
+  - **'q'** - Quit the visualization
+  - **'p'** - Pause/unpause the stream
+  - **'s'** - Save current images with timestamp
+  - **Window close** - Cleanly exits the test
+- **Configurable debug mode** - Enable/disable intermediate image generation
+- **Performance monitoring** - Live FPS and processing time display
+
+The visualization window automatically closes when you close it or press 'q', making it easy to test and debug camera functionality interactively.
 
 ### Expected Performance
 
@@ -835,14 +902,21 @@ async for frame in processor.stream_frames():
 
 **Initialization failures**
 - Check camera connection and drivers
-- Try running tests: `uv run python tests/test_camera.py`
-- Use mock mode for development: `--mock` flag
+- Try running tests: `uv run python tests/test_camera.py --info`
+- Use mock mode for development: `uv run python tests/test_camera.py --mock`
 - Check logs for specific error messages
+
+**Visualization issues**
+- If OpenCV window doesn't appear, check display environment variables
+- Window closes immediately: Use infinite duration (default) or longer duration
+- Visual artifacts: Try reducing resolution or enabling lightweight mode
+- Controls not working: Ensure OpenCV window has focus
 
 **Frame processing errors**
 - Verify camera configuration
 - Check depth range settings
 - Use verbose mode for debugging: `--verbose` flag
+- Try visualization mode to see intermediate steps: `--visualize`
 
 ### Debug Mode
 

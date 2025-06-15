@@ -7,7 +7,8 @@ This allows the service to be run with:
 import sys
 import asyncio
 
-from experimance_core.experimance_core import run_experimance_core_service, DEFAULT_CONFIG_PATH
+from experimance_core.experimance_core import run_experimance_core_service
+from experimance_core.config import DEFAULT_CONFIG_PATH
 
 def main():
     """Main entry point."""

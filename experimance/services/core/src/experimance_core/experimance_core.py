@@ -22,7 +22,7 @@ from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
 from experimance_common.schemas import Era, Biome
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
-from experimance_core.config import CoreServiceConfig
+from experimance_core.config import CoreServiceConfig, DEFAULT_CONFIG_PATH
 from experimance_core.depth_finder import depth_generator, detect_difference, simple_obstruction_detect
 
 
@@ -56,8 +56,6 @@ ERA_BIOMES = {
     Era.DYSTOPIA: [Biome.DESERT, Biome.TUNDRA, Biome.ARCTIC],  # Limited biomes after dystopia
     Era.RUINS: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.SWAMP, Biome.PLAINS]  # Nature reclaiming
 }
-
-DEFAULT_CONFIG_PATH = f"{CORE_SERVICE_DIR}/config.toml"
 
 class ExperimanceCoreService(ZmqPublisherSubscriberService):
     """

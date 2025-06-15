@@ -11,13 +11,64 @@ interaction_threshold = 0.3  # threshold for user interaction detection
 era_min_duration = 10.0      # minimum time in seconds before era can change
 
 [depth_processing]
-camera_config_path = "services/core/depth_camera_config_high_accuracy.json"
-resolution = [640, 480]     # depth camera resolution (10Hz max for this res)
+#camera_config_path = "depth_camera_config_v2.json"  # not working well, we set filters manually
+# Resolutions that work: 640x480@30fps, 1280x720@30
+resolution = [1280, 720]     # depth camera resolution (10Hz max for this res)
 fps = 30                    # camera frames per second 
 change_threshold = 50       # threshold for depth change detection
-min_depth = 0.49            # minimum depth value
-max_depth = 0.56            # maximum depth value
-output_size = [1024, 1024]  # processed output size
+min_depth = 0.46            # minimum depth value
+max_depth = 0.52            # maximum depth value
+output_resolution = [1024, 1024]  # processed output size
+align_frames = true         # use color frames to help aign the depth frames
+
+# RealSense filters (manual control instead of JSON config)
+# https://dev.intelrealsense.com/docs/post-processing-filters
+enable_filters = true       # enable/disable post-processing filters
+spatial_filter = true      # spatial edge-preserving filter
+temporal_filter = true     # temporal filter to reduce temporal noise
+decimation_filter = false  # decimation filter to reduce resolution
+hole_filling_filter = false # hole filling filter
+threshold_filter = false   # threshold filter for depth range
+
+# Spatial filter settings
+# Magnitute: Number of filter iterations
+# Spatial filter smooths the image by calculating frame with alpha and delta settings. 
+# Alpha defines the weight of the current pixel for smoothing, and is bounded within [25..100]%. 
+# Delta defines the depth gradient below which the smoothing will occur as number of depth levels.
+# An in-place heuristic symmetric hole-filling mode applied horizontally during the filter passes. 
+# Intended to rectify minor artefacts with minimal performance impact
+spatial_filter_magnitude = 2.0      # filter magnitude (1-5)
+spatial_filter_alpha = 0.5          # alpha factor (0-1)
+spatial_filter_delta = 20.0         # delta threshold (1-50)
+spatial_filter_hole_fill = 1        # number of iterations (1-5) [none,2,4,8,16,unlimited]
+
+# Temporal filter settings
+# The Alpha factor in an exponential moving average with Alpha=1 - no filter . Alpha = 0 - infinite filter
+# Step-size boundary. Establishes the threshold used to preserve surfaces (edges)
+# Persistence: A set of predefined rules (masks) that govern when missing pixels will be 
+# replace with the last valid value so that the data will remain persistent over time:
+#   Disabled - Persistency filter is not activated and no hole filling occurs.
+#   Valid in 8/8 - Persistency activated if the pixel was valid in 8 out of the last 8 frames
+#   Valid in 2/last 3 - Activated if the pixel was valid in two out of the last 3 frames
+#   Valid in 2/last 4 - Activated if the pixel was valid in two out of the last 4 frames
+#   Valid in 2/8 - Activated if the pixel was valid in two out of the last 8 frames
+#   Valid in 1/last 2 - Activated if the pixel was valid in one of the last two frames
+#   Valid in 1/last 5 - Activated if the pixel was valid in one out of the last 5 frames
+#   Valid in 1/last 8 - Activated if the pixel was valid in one out of the last 8 frames
+#   Persist Indefinitely - Persistency will be imposed regardless of the stored history (most aggressive filtering)
+temporal_filter_alpha = 0.4         # alpha factor (0-1)
+temporal_filter_delta = 20.0        # delta threshold (1-100)
+temporal_filter_persistence = 3     # persistence control (0-8)
+
+# Decimation filter settings
+decimation_filter_magnitude = 2     # decimation factor (2-8)
+
+# Hole filling filter settings
+hole_filling_mode = 1               # hole filling mode (0=disabled, 1=fill_from_left, 2=farthest_from_around)
+
+# Threshold filter settings
+threshold_filter_min = 0.15         # minimum distance in meters
+threshold_filter_max = 4.0          # maximum distance in meters
 
 [audio]
 tag_config_path = "config/audio_tags.json"  # path to audio tag configuration
