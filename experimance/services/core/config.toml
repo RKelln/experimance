@@ -25,7 +25,7 @@ align_frames = true         # use color frames to help aign the depth frames
 mask_stability_frames = 20      # Number of frames to analyze for mask stability
 mask_stability_threshold = 0.95 # Similarity threshold for mask stability (0.0-1.0)
 mask_lock_after_stable = true   # Lock mask once it becomes stable
-mask_allow_updates = true       # Allow mask updates when bowl moves significantly
+mask_allow_updates = false      # Allow mask updates when bowl moves significantly
 mask_update_threshold = 0.7     # Threshold for detecting bowl movement (0.0-1.0)
 
 # RealSense filters (manual control instead of JSON config)

@@ -9,7 +9,7 @@ import numpy as np
 import time
 from random import randint
 from typing import Optional, Tuple, Generator, AsyncGenerator
-from experimance_core.robust_camera import DepthProcessor, CameraConfig, DepthFrame, calculate_change_score
+from experimance_core.robust_camera import DepthProcessor, CameraConfig, DepthFrame, calculate_change_score, mask_bright_area
 from experimance_common.image_utils import get_mock_images
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,14 @@ class MockDepthProcessor(DepthProcessor):
         self.is_warmed_up = False
         self.mock_images_path = mock_images_path
         self.mock_generator = None
+        
+        # Mask stability tracking (inherited behavior)
+        self.stable_mask: Optional[np.ndarray] = None
+        self.mask_locked = False
+        self.mask_history: List[np.ndarray] = []
+        self.frames_since_mask_update = 0
+        self.previous_hand_detected = False
+        
         # Don't create a real camera for mock
         
     async def initialize(self) -> bool:

@@ -209,8 +209,8 @@ async def test_real_camera(duration: int = 0, verbose: bool = False, safe_mode: 
             
             if frame.hand_detected:
                 hand_detections += 1
-                print(f"👋 Frame {frame_count}: HANDS DETECTED! "
-                      f"change={frame.change_score:.3f}")
+                # print(f"👋 Frame {frame_count}: HANDS DETECTED! "
+                #       f"change={frame.change_score:.3f}")
             elif frame_count % 30 == 0:  # Print every 30 frames
                 print(f"Frame {frame_count}: "
                       f"change={frame.change_score:.3f}, "
@@ -407,24 +407,59 @@ async def test_camera_visualization(use_mock: bool = True, duration: int = 0):
         # Create blank composite image
         composite = np.zeros((rows * cell_height, cols * cell_width, 3), dtype=np.uint8)
         
+        def resize_preserve_aspect(img, max_width, max_height):
+            """Resize image preserving aspect ratio to fit within max dimensions."""
+            if img is None or img.size == 0:
+                return np.zeros((max_height, max_width, 3), dtype=np.uint8)
+            
+            h, w = img.shape[:2]
+            
+            # Calculate scale factor to fit within max dimensions
+            scale_w = max_width / w
+            scale_h = max_height / h
+            scale = min(scale_w, scale_h)
+            
+            # Calculate new dimensions
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            
+            # Resize image
+            resized = cv2.resize(img, (new_w, new_h))
+            
+            # Create canvas and center the image
+            canvas = np.zeros((max_height, max_width, 3), dtype=np.uint8)
+            
+            # Calculate centering offsets
+            y_offset = (max_height - new_h) // 2
+            x_offset = (max_width - new_w) // 2
+            
+            # Place resized image on canvas
+            if len(resized.shape) == 2:  # Grayscale
+                resized = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
+            
+            canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
+            
+            return canvas
+        
         def add_image_to_grid(img, row, col, title):
             """Add an image to the specified grid position with title."""
             if img is None:
                 # Create placeholder
-                img = np.zeros((cell_height-40, cell_width-20), dtype=np.uint8)
-                cv2.putText(img, "No Data", (cell_width//2-50, cell_height//2), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128,), 2)
-            
-            # Ensure image is the right size and type
-            if len(img.shape) == 2:  # Grayscale
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-            elif len(img.shape) == 3 and img.shape[2] == 3:  # Already BGR
-                pass
+                placeholder = np.zeros((cell_height-40, cell_width-20, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "No Data", (cell_width//2-50, cell_height//2), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128, 128, 128), 2)
+                img_resized = placeholder
             else:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-            
-            # Resize to fit cell (leaving space for title)
-            img_resized = cv2.resize(img, (cell_width-20, cell_height-40))
+                # Ensure image is the right type
+                if len(img.shape) == 2:  # Grayscale
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                elif len(img.shape) == 3 and img.shape[2] == 3:  # Already BGR
+                    pass
+                else:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                
+                # Resize preserving aspect ratio (leaving space for title)
+                img_resized = resize_preserve_aspect(img, cell_width-20, cell_height-40)
             
             # Calculate position
             y_start = row * cell_height + 30

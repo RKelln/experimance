@@ -660,9 +660,22 @@ class RealSenseCamera:
                 
                 if attempt < self.config.max_retries - 1:
                     # Attempt camera reset
-                    await self._reset_camera()
+                    reset_success = await self._reset_camera()
                     
-                    # Exponential backoff
+                    if reset_success:
+                        # Reset was successful, try the operation immediately
+                        logger.info(f"Reset successful, retrying {operation_name} immediately...")
+                        try:
+                            result = await operation() if asyncio.iscoroutinefunction(operation) else operation()
+                            # Reset retry state on success
+                            self.retry_count = 0
+                            self.current_retry_delay = self.config.retry_delay
+                            return result
+                        except Exception as retry_e:
+                            logger.warning(f"Operation failed even after successful reset: {retry_e}")
+                            # Continue with normal retry delay logic
+                    
+                    # Exponential backoff (whether reset failed or post-reset operation failed)
                     delay = min(self.current_retry_delay * (2 ** attempt), self.config.max_retry_delay)
                     logger.info(f"Retrying {operation_name} in {delay:.1f}s...")
                     await asyncio.sleep(delay)
@@ -672,8 +685,12 @@ class RealSenseCamera:
         
         return None
     
-    async def _reset_camera(self):
-        """Reset the camera hardware and reinitialize."""
+    async def _reset_camera(self) -> bool:
+        """Reset the camera hardware and reinitialize.
+        
+        Returns:
+            True if reset and reinitialization were successful, False otherwise
+        """
         self.state = CameraState.RESETTING
         logger.info("Resetting camera hardware...")
         
@@ -701,9 +718,11 @@ class RealSenseCamera:
                     if init_success:
                         logger.info("Camera pipeline reinitialized successfully")
                         self.state = CameraState.READY
+                        return True
                     else:
                         logger.error("Failed to reinitialize camera pipeline after reset")
                         self.state = CameraState.ERROR
+                        return False
                 except Exception as e:
                     logger.error(f"Error reinitializing camera after reset: {e}")
                     
@@ -716,20 +735,26 @@ class RealSenseCamera:
                             if init_success:
                                 logger.info("Camera pipeline reinitialized successfully (without advanced config)")
                                 self.state = CameraState.READY
+                                return True
                             else:
                                 logger.error("Failed to reinitialize even without advanced config")
                                 self.state = CameraState.ERROR
+                                return False
                         except Exception as e2:
                             logger.error(f"Error reinitializing without advanced config: {e2}")
                             self.state = CameraState.ERROR
+                            return False
                     else:
                         self.state = CameraState.ERROR
+                        return False
             else:
                 logger.warning("Camera hardware reset failed")
                 self.state = CameraState.ERROR
+                return False
         except Exception as e:
             logger.error(f"Error during camera reset: {e}")
             self.state = CameraState.ERROR
+            return False
     
     def _init_camera(self) -> bool:
         """Initialize the camera pipeline (synchronous)."""
@@ -964,6 +989,13 @@ class DepthProcessor:
         self.crop_bounds: Optional[Tuple[int, int, int, int]] = None
         self.is_warmed_up = False
         
+        # Mask stability tracking
+        self.stable_mask: Optional[np.ndarray] = None
+        self.mask_locked = False
+        self.mask_history: List[np.ndarray] = []  # Store recent masks for stability analysis
+        self.frames_since_mask_update = 0
+        self.previous_hand_detected = False  # Use previous frame's hand detection
+        
     async def initialize(self) -> bool:
         """Initialize the depth processor."""
         if self.camera.state == CameraState.READY:
@@ -1004,19 +1036,38 @@ class DepthProcessor:
         debug_change_diff = None
         debug_hand_detection = None
         
-        # Apply importance mask (skip in lightweight mode)
+        # Apply importance mask with stability logic (skip in lightweight mode)
+        # Use previous frame's hand detection to avoid interference
         mask_start = time.time()
         if self.config.lightweight_mode:
             masked_image = depth_image
             mask_time = 0
         else:
-            importance_mask = mask_bright_area(depth_image)
-            masked_image = cv2.bitwise_and(depth_image, depth_image, mask=importance_mask)
+            # Get mask (optimized for locked state)
+            mask_compute_start = time.time()
+            importance_mask = self._get_importance_mask(depth_image, self.previous_hand_detected)
+            mask_compute_time = time.time() - mask_compute_start
+            
+            # Apply mask efficiently using numpy operations (faster than cv2.bitwise_and)
+            mask_apply_start = time.time()
+            # Convert binary mask (0/255) to boolean for efficient multiplication
+            binary_mask = importance_mask > 0
+            masked_image = depth_image * binary_mask.astype(depth_image.dtype)
+            mask_apply_time = time.time() - mask_apply_start
+            
             mask_time = time.time() - mask_start
             
             # Store debug image if enabled
             if self.config.debug_mode:
                 debug_importance_mask = importance_mask.copy()
+                
+            # Log detailed mask timing if verbose and periodic
+            if (self.config.verbose_performance and 
+                self.frame_number % 30 == 0 and 
+                mask_compute_time > 0.001):  # Only log if compute time > 1ms
+                logger.debug(f"🔧 Mask detail: compute={mask_compute_time*1000:.1f}ms, "
+                           f"apply={mask_apply_time*1000:.1f}ms, "
+                           f"locked={self.mask_locked}")
         
         # Crop and resize if enabled
         crop_start = time.time()
@@ -1034,7 +1085,7 @@ class DepthProcessor:
             output = cv2.resize(masked_image, self.config.output_resolution)
         crop_time = time.time() - crop_start
         
-        # Detect hands/obstruction
+        # Detect hands/obstruction on the processed image
         hand_start = time.time()
         hand_detected = None
         if self.config.detect_hands:
@@ -1120,6 +1171,10 @@ class DepthProcessor:
             timestamp=time.time()
         )
         
+        # Update previous hand detection for next frame's mask stability
+        if hand_detected is not None:
+            self.previous_hand_detected = hand_detected
+        
         # Add debug images if debug mode is enabled
         if self.config.debug_mode:
             frame.raw_depth_image = depth_image.copy()
@@ -1175,6 +1230,120 @@ class DepthProcessor:
         """Stop the depth processor."""
         self.camera.stop()
         logger.info("Depth processor stopped")
+    
+    def _calculate_mask_similarity(self, mask1: np.ndarray, mask2: np.ndarray) -> float:
+        """Calculate similarity between two masks (0.0 to 1.0)."""
+        if mask1.shape != mask2.shape:
+            return 0.0
+        
+        # Calculate intersection over union (IoU)
+        intersection = np.logical_and(mask1 > 0, mask2 > 0).astype(np.uint8)
+        union = np.logical_or(mask1 > 0, mask2 > 0).astype(np.uint8)
+        
+        intersection_area = np.sum(intersection)
+        union_area = np.sum(union)
+        
+        if union_area == 0:
+            return 1.0  # Both masks are empty
+        
+        return float(intersection_area / union_area)
+    
+    def _is_mask_stable(self) -> bool:
+        """Check if the recent masks are stable enough to lock."""
+        if len(self.mask_history) < self.config.mask_stability_frames:
+            return False
+        
+        # Take the last N masks for analysis
+        recent_masks = self.mask_history[-self.config.mask_stability_frames:]
+        
+        # Calculate average similarity between consecutive masks
+        similarities = []
+        for i in range(1, len(recent_masks)):
+            similarity = self._calculate_mask_similarity(recent_masks[i-1], recent_masks[i])
+            similarities.append(similarity)
+        
+        if not similarities:
+            return False
+        
+        average_similarity = np.mean(similarities)
+        return bool(average_similarity >= self.config.mask_stability_threshold)
+    
+    def _should_update_mask(self, current_mask: np.ndarray, hand_detected: bool) -> bool:
+        """Determine if we should update the stable mask."""
+        # Never update if hands are detected
+        if hand_detected:
+            return False
+        
+        # Always update if mask is not locked yet
+        if not self.mask_locked:
+            return True
+        
+        # Don't update if mask is locked and updates are disabled
+        if self.mask_locked and not self.config.mask_allow_updates:
+            return False
+        
+        # Check if bowl has moved significantly (only if updates are allowed)
+        if self.stable_mask is not None and self.config.mask_allow_updates:
+            similarity = self._calculate_mask_similarity(self.stable_mask, current_mask)
+            if similarity < self.config.mask_update_threshold:
+                logger.info(f"Bowl movement detected (similarity: {similarity:.3f}), updating mask")
+                return True
+        
+        return False
+    
+    def _get_importance_mask(self, depth_image: np.ndarray, hand_detected: bool) -> np.ndarray:
+        """Get importance mask with stability and locking logic."""
+        # If mask is locked and updates are not allowed, return immediately
+        if self.mask_locked and not self.config.mask_allow_updates:
+            self.frames_since_mask_update += 1
+            if self.config.verbose_performance and self.frame_number % 30 == 0:
+                logger.debug(f"🔒 Using locked mask (frame {self.frame_number}) - no computation needed")
+            # Return stable mask or create fallback if None
+            if self.stable_mask is not None:
+                return self.stable_mask
+            else:
+                # Fallback: create a simple circular mask
+                h, w = depth_image.shape[:2]
+                fallback = np.zeros((h, w), dtype=np.uint8)
+                center = (w // 2, h // 2)
+                radius = min(w, h) // 4
+                cv2.circle(fallback, center, radius, 255, -1)
+                return fallback
+        
+        # Generate current mask
+        current_mask = mask_bright_area(depth_image)
+        
+        # Determine if we should update our mask
+        should_update = self._should_update_mask(current_mask, hand_detected)
+        
+        if should_update:
+            # Add to mask history for stability analysis
+            self.mask_history.append(current_mask.copy())
+            
+            # Keep only recent masks in history
+            if len(self.mask_history) > self.config.mask_stability_frames * 2:
+                self.mask_history = self.mask_history[-self.config.mask_stability_frames:]
+            
+            # Check if we should lock the mask
+            if not self.mask_locked and self.config.mask_lock_after_stable:
+                if self._is_mask_stable():
+                    self.stable_mask = current_mask.copy()
+                    self.mask_locked = True
+                    logger.info(f"🔒 Mask locked after {len(self.mask_history)} stable frames")
+                    return self.stable_mask
+            
+            # Update stable mask if not locked or if significant change detected
+            if not self.mask_locked or self.config.mask_allow_updates:
+                self.stable_mask = current_mask.copy()
+                self.frames_since_mask_update = 0
+                return self.stable_mask
+        
+        # Use stable mask if available, otherwise use current mask
+        if self.stable_mask is not None:
+            self.frames_since_mask_update += 1
+            return self.stable_mask
+        else:
+            return current_mask
 
 
 
