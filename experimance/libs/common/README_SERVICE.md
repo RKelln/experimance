@@ -12,6 +12,7 @@ This document describes the base service classes provided in `experimance_common
 4. **Use TDD**: Write tests first using the state management system for reliable testing
 5. **Handle errors properly**: Use `record_error()` with appropriate `is_fatal` flags
 6. **Use TOML for config**: Human-readable, supports comments, integrates with Pydantic
+7. **Use the common CLI system**: Create a `__main__.py` with `create_simple_main()` for consistent command line interfaces
 
 ### Essential Service Template
 
@@ -444,6 +445,118 @@ async def process_item(self, item):
         self.record_error(e, is_fatal=True)
         raise
 ```
+
+## Command Line Interface (CLI) System
+
+**TL;DR: Use the common CLI utilities for consistent command line interfaces across all services.**
+
+The `experimance_common.cli` module provides standardized command line argument parsing, logging setup, and service execution that all Experimance services should use.
+
+### Essential CLI Template
+
+```python
+# src/my_service/__main__.py
+"""
+Command line entry point for My Service.
+"""
+from experimance_common.cli import create_simple_main
+from .my_service import run_my_service
+from .config import DEFAULT_CONFIG_PATH
+
+# Create the main function using the common CLI utility
+main = create_simple_main(
+    service_name="My Service",
+    description="Brief description of what your service does",
+    service_runner=run_my_service,
+    default_config_path=DEFAULT_CONFIG_PATH
+)
+
+if __name__ == "__main__":
+    main()
+```
+
+### CLI with Custom Arguments
+
+For services that need additional command line arguments:
+
+```python
+# src/my_service/__main__.py
+from experimance_common.cli import create_simple_main
+from .my_service import run_my_service
+from .config import DEFAULT_CONFIG_PATH
+
+# Extra arguments specific to your service
+extra_args = {
+    '--model': {
+        'choices': ['gpt-4', 'gpt-3.5-turbo', 'claude-3'],
+        'default': 'gpt-4',
+        'help': 'AI model to use for generation'
+    },
+    '--max-tokens': {
+        'type': int,
+        'default': 1000,
+        'help': 'Maximum tokens for responses'
+    },
+    '--debug-mode': {
+        'action': 'store_true',
+        'help': 'Enable debug mode with extra logging'
+    }
+}
+
+# Create the main function using the common CLI utility
+main = create_simple_main(
+    service_name="My Service",
+    description="Service with custom command line arguments",
+    service_runner=run_my_service,
+    default_config_path=DEFAULT_CONFIG_PATH,
+    extra_args=extra_args
+)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Standard CLI Features
+
+All services automatically get these standard command line arguments:
+
+- `--log-level, -l`: Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- `--config, -c`: Path to configuration file (if default_config_path is provided)
+- `--help, -h`: Show help message with all available arguments
+
+### Usage Examples
+
+```bash
+# Basic usage with default settings
+uv run -m my_service
+
+# With custom log level
+uv run -m my_service --log-level DEBUG
+
+# With custom config file
+uv run -m my_service --config /path/to/custom/config.toml
+
+# With service-specific arguments
+uv run -m my_service --log-level DEBUG --model gpt-4 --max-tokens 2000
+
+# Show help for any service
+uv run -m my_service --help
+```
+
+### ⚠️ Important: Logging Configuration
+
+**DO NOT configure logging in library modules!** The CLI system handles logging configuration.
+
+```python
+# ❌ DON'T do this in service modules
+logging.basicConfig(level=logging.INFO, format='...')
+
+# ✅ DO this instead - just get loggers
+logger = logging.getLogger(__name__)
+```
+
+Only the main entry point (CLI) should configure logging. This ensures that command line arguments like `--log-level DEBUG` work correctly.
+
 
 ## Common Patterns and Anti-Patterns
 

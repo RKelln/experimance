@@ -11,8 +11,7 @@ from typing import Any, Dict, List, Optional, Union, Type, TypeVar
 import toml
 from pydantic import BaseModel
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
 
 

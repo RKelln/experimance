@@ -11,8 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeAlias, Union,
 import zmq
 import zmq.asyncio
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
 
 from experimance_common.constants import (
