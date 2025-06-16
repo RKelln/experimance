@@ -291,30 +291,17 @@ class DepthProcessor:
                     
         hand_time = time.time() - hand_start
         
-        # Calculate change score
+        # Store debug change image if enabled (for debugging, but no change score calculation)
         change_start = time.time()
-        change_score = 0.0
-        if self.previous_frame is not None:
+        change_score = 0.0  # Placeholder - actual change detection happens in core service
+        if self.config.debug_mode and self.previous_frame is not None:
+            # Create difference visualization for debugging only
             small_current = cv2.resize(output, change_threshold_resolution)
             small_previous = cv2.resize(self.previous_frame, change_threshold_resolution)
-            
-            diff, _ = detect_difference(
-                small_previous.astype(np.uint8),
-                small_current.astype(np.uint8),
-                threshold=self.config.change_threshold
-            )
-            
-            # Store debug image if enabled
-            if self.config.debug_mode:
-                # Create difference visualization
-                diff_img = cv2.absdiff(small_previous.astype(np.uint8), small_current.astype(np.uint8))
-                _, binary_diff = cv2.threshold(diff_img, self.config.change_threshold, 255, cv2.THRESH_BINARY)
-                # Resize back to output resolution for consistency
-                debug_change_diff = cv2.resize(binary_diff, self.config.output_resolution)
-            
-            # Normalize to [0, 1]
-            max_diff = change_threshold_resolution[0] * change_threshold_resolution[1]
-            change_score = min(1.0, diff / max_diff) if diff > 0 else 0.0
+            diff_img = cv2.absdiff(small_previous.astype(np.uint8), small_current.astype(np.uint8))
+            _, binary_diff = cv2.threshold(diff_img, self.config.change_threshold, 255, cv2.THRESH_BINARY)
+            # Resize back to output resolution for consistency
+            debug_change_diff = cv2.resize(binary_diff, self.config.output_resolution)
         change_time = time.time() - change_start
         
         # Update state

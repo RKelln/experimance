@@ -42,6 +42,7 @@ class MessageType(str, Enum):
     TEXT_OVERLAY = "TextOverlay"
     REMOVE_TEXT = "RemoveText"
     VIDEO_MASK = "VideoMask"
+    CHANGE_MAP = "ChangeMap"
     # Add more message types as needed
 
 

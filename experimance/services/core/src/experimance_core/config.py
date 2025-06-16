@@ -194,6 +194,17 @@ class CameraConfig(BaseModel):
         description="Threshold for detecting bowl movement"
     )
     
+    # Change detection parameters for core service filtering
+    significant_change_threshold: float = Field(
+        default=0.02,
+        description="Minimum change score to process a frame (0.0-1.0)"
+    )
+    
+    edge_erosion_pixels: int = Field(
+        default=10,
+        description="Pixels to erode from edges to reduce noise in change detection"
+    )
+    
     # Retry parameters
     max_retries: int = Field(
         default=3,
