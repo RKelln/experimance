@@ -17,8 +17,8 @@ era_min_duration = 10.0      # minimum time in seconds before era can change
 # Core camera settings
 resolution = [1280, 720]     # depth camera resolution (width, height)
 fps = 30                    # camera frames per second 
-min_depth = 0.46            # minimum depth value in meters
-max_depth = 0.52            # maximum depth value in meters
+min_depth = 0.46            # minimum depth value in meters - very tight range for sand only
+max_depth = 0.52            # maximum depth value in meters - very tight range for sand only
 align_frames = true         # use color frames to help align the depth frames
 #json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config
 
@@ -30,7 +30,7 @@ crop_to_content = true      # crop output to content area
 warm_up_frames = 10         # number of frames to skip during warmup
 lightweight_mode = false   # skip some processing for higher FPS
 verbose_performance = true # show detailed performance timing
-debug_mode = false          # include intermediate images for visualization
+debug_mode = false           # include intermediate images for visualization
 
 # Mask stability and bowl detection
 mask_stability_frames = 20      # frames to analyze for mask stability
@@ -65,7 +65,7 @@ threshold_filter = false   # threshold filter for depth range
 spatial_filter_magnitude = 2.0      # filter magnitude (1-5)
 spatial_filter_alpha = 0.5          # alpha factor (0-1)
 spatial_filter_delta = 20.0         # delta threshold (1-50)
-spatial_filter_hole_fill = 1        # hole fill mode (0-5)
+spatial_filter_hole_fill = 0        # hole fill mode (0-5) - DISABLED for raw depth consistency
 
 # Temporal filter settings
 # The Alpha factor in an exponential moving average with Alpha=1 - no filter . Alpha = 0 - infinite filter

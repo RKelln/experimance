@@ -398,6 +398,12 @@ class DepthFrame:
     def has_debug_images(self) -> bool:
         """Check if frame contains debug/intermediate images."""
         return self.raw_depth_image is not None
+    
+    def __str__(self):
+        return (f"DepthFrame(frame_number={self.frame_number}, "
+                f"timestamp={self.timestamp}, "
+                f"hand_detected={self.hand_detected}, "
+                f"change_score={self.change_score})")
 
 class AudioConfig(BaseModel):
     """Audio configuration."""

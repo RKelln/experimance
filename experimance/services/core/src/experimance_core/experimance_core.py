@@ -12,6 +12,8 @@ import asyncio
 import logging
 import time
 import sys
+from experimance_core.depth_processor import DepthProcessor
+from experimance_core.depth_visualizer import DepthVisualizer
 import numpy as np
 import cv2
 from datetime import datetime
@@ -79,9 +81,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         """
         self.config = config
         
-        # Store visualization flag for easy access  
-        self.visualize = self.config.visualize
-        
         # Extract service configuration
         service_name = self.config.experimance_core.name
         heartbeat_interval = self.config.experimance_core.heartbeat_interval
@@ -114,7 +113,8 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self._message_handlers: Dict[str, Any] = {}
         
         # Depth processing state
-        self._depth_processor: Optional[Any] = None
+        self._depth_processor: Optional[DepthProcessor] = None
+        self._depth_visualizer: Optional[DepthVisualizer] = None
         self.previous_depth_image: Optional[np.ndarray] = None
         self.last_processed_frame: Optional[np.ndarray] = None  # Reference frame for change detection
         self.hand_detected: bool = False
@@ -163,7 +163,8 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
 
     def _create_camera_config(self):
         """Get the camera configuration from the service configuration."""
-        return self.config.camera
+        camera_config = self.config.camera
+        return camera_config
 
     async def _initialize_depth_processor(self):
         """Initialize depth processor using the new robust camera system."""
@@ -176,6 +177,15 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 camera_config=camera_config,
                 mock_path=None  # Use real camera by default
             )
+            
+            # Initialize visualizer if debug mode is enabled
+            if camera_config.debug_mode:
+                logger.info("🎬 Debug mode enabled, initializing depth visualizer")
+                self._depth_visualizer = DepthVisualizer(
+                    window_name="Experimance Core - Depth Debug",
+                    window_size=(1200, 800)
+                )
+                self._depth_visualizer.create_window()
             
             # Initialize the processor
             success = await self._depth_processor.initialize()
@@ -305,7 +315,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 # Update depth difference score for interaction calculations
                 self.depth_difference_score = change_score
                 
-                # Calculate interaction intensity 
+                # Calculate interaction intensity (currently just using change score)
                 interaction_intensity = change_score
                 
                 # Update interaction score
@@ -313,10 +323,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 
                 # Publish change map to display service
                 await self._publish_change_map(change_map, change_score)
-                
-                # Publish video mask for visualization if significant interaction
-                if interaction_intensity > 0.1:
-                    await self._publish_video_mask()
             
             # This frame becomes our new reference frame
             if depth_image is not None:
@@ -429,25 +435,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 logger.warning("Failed to publish interaction sound command")
         except Exception as e:
             logger.error(f"Error publishing interaction sound: {e}")
-
-    async def _publish_video_mask(self):
-        """Publish video mask event for depth difference visualization."""
-        event = {
-            "type": MessageType.VIDEO_MASK.value,
-            "interaction_score": self.user_interaction_score,
-            "depth_difference_score": self.depth_difference_score,
-            "hand_detected": self.hand_detected,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        try:
-            success = await self.publish_message(event)
-            if success:
-                logger.debug(f"Published video mask: score={self.user_interaction_score:.3f}")
-            else:
-                logger.warning("Failed to publish video mask event")
-        except Exception as e:
-            logger.error(f"Error publishing video mask: {e}")
 
     async def _publish_idle_state_changed(self):
         """Publish idle state changed event."""
@@ -604,13 +591,16 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
     def calculate_interaction_score(self, interaction_intensity: float):
         """Calculate and update user interaction score."""
         # Simple scoring: weight recent interactions more heavily
-        decay_factor = 0.9
-        self.user_interaction_score = (self.user_interaction_score * decay_factor + 
-                                     interaction_intensity * (1 - decay_factor))
+        # decay_factor = 0.9
+        # self.user_interaction_score = (self.user_interaction_score * decay_factor + 
+        #                              interaction_intensity * (1 - decay_factor))
         
         # Clamp to [0, 1] range
-        self.user_interaction_score = max(0.0, min(1.0, self.user_interaction_score))
+        #self.user_interaction_score = max(0.0, min(1.0, self.user_interaction_score))
         
+        # for testing just add up all the intensities
+        self.user_interaction_score += interaction_intensity
+
         # Reset idle timer on interaction
         if interaction_intensity > 0.1:
             self.idle_timer = 0.0
@@ -792,7 +782,20 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                             break
                         
                         if depth_frame is not None:
+                            # start_time = time.perf_counter()
                             await self._process_depth_frame(depth_frame)
+                            # end_time = time.perf_counter()
+                            # duration_ms = (end_time - start_time) * 1000
+                            # if self.config.camera.verbose_performance:
+                            #     logger.info(f"Processed depth frame in {duration_ms:.1f} ms")
+                            
+                            # Display frame in visualizer if debug mode is enabled
+                            if self._depth_visualizer is not None:
+                                # Non-blocking visualization (don't let window events affect service)
+                                if not self._depth_visualizer.display_frame(depth_frame, show_fps=False):
+                                    logger.info("Depth visualizer window closed, disabling visualization")
+                                    self._depth_visualizer.destroy_window()
+                                    self._depth_visualizer = None
                         
                         # Brief yield to allow other tasks to run
                         await asyncio.sleep(TICK)
@@ -892,7 +895,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         logger.info(f"Stop called from: {traceback.format_stack()[-2].strip()}")
         
         # Clean up visualization window if it was used
-        if self.visualize:
+        if self.config.visualize:
             try:
                 cv2.destroyAllWindows()
             except Exception as e:
@@ -910,6 +913,14 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             except Exception as e:
                 logger.error(f"Error cleaning up depth processor: {e}")
         
+        # Clean up depth visualizer
+        if self._depth_visualizer is not None:
+            try:
+                self._depth_visualizer.destroy_window()
+                self._depth_visualizer = None
+            except Exception as e:
+                logger.error(f"Error cleaning up depth visualizer: {e}")
+        
         logger.info("Experimance Core Service stopped")
 
     def _visualize_depth_processing(self, depth_frame: DepthFrame, change_score: float = 0.0):
@@ -920,7 +931,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             depth_frame: Current depth frame data
             change_score: Current change detection score
         """
-        if not self.visualize:
+        if not self.config.visualize:
             return
             
         try:
@@ -931,11 +942,11 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 return
                 
             # Normalize depth image for display (0-255)
-            depth_normalized = np.zeros_like(depth_image, dtype=np.uint8)
-            cv2.normalize(depth_image, depth_normalized, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            #depth_normalized = np.zeros_like(depth_image, dtype=np.uint8)
+            #cv2.normalize(depth_image, depth_normalized, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             
             # Convert to 3-channel for color overlays
-            depth_color = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+            depth_color = cv2.applyColorMap(depth_image, cv2.COLORMAP_JET)
             
             # Create info overlay
             overlay = depth_color.copy()
