@@ -29,14 +29,14 @@ def print_diagnostics():
     print("-" * 30)
     
     try:
-        import pyrealsense2 as rs
-        ctx = rs.context()
+        import pyrealsense2 as rs # type: ignore
+        ctx = rs.context() # type: ignore
         devices = ctx.query_devices()
         
         print(f"🎥 Cameras found: {len(devices)}")
         for i, device in enumerate(devices):
-            print(f"   {i+1}. {device.get_info(rs.camera_info.name)} (S/N: {device.get_info(rs.camera_info.serial_number)})")
-            print(f"      FW: {device.get_info(rs.camera_info.firmware_version)}")
+            print(f"   {i+1}. {device.get_info(rs.camera_info.name)} (S/N: {device.get_info(rs.camera_info.serial_number)})") # type: ignore
+            print(f"      FW: {device.get_info(rs.camera_info.firmware_version)}") # type: ignore
     except Exception as e:
         print(f"❌ Failed to get camera diagnostics: {e}")
     
@@ -136,7 +136,7 @@ def test_basic_connection():
         import pyrealsense2 as rs
         
         # Try to create context and enumerate devices
-        ctx = rs.context()
+        ctx = rs.context() # type: ignore
         devices = ctx.query_devices()
         
         if len(devices) == 0:
@@ -147,9 +147,9 @@ def test_basic_connection():
         
         for i, device in enumerate(devices):
             print(f"   Device {i+1}:")
-            print(f"     Name: {device.get_info(rs.camera_info.name)}")
-            print(f"     Serial: {device.get_info(rs.camera_info.serial_number)}")
-            print(f"     Firmware: {device.get_info(rs.camera_info.firmware_version)}")
+            print(f"     Name: {device.get_info(rs.camera_info.name)}") # type: ignore
+            print(f"     Serial: {device.get_info(rs.camera_info.serial_number)}") # type: ignore
+            print(f"     Firmware: {device.get_info(rs.camera_info.firmware_version)}") # type: ignore
             
             # Try to query sensors
             sensors = device.query_sensors()
@@ -157,9 +157,9 @@ def test_basic_connection():
         
         # Try basic pipeline creation (don't start it)
         try:
-            pipeline = rs.pipeline()
-            config = rs.config()
-            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            pipeline = rs.pipeline() # type: ignore
+            config = rs.config() # type: ignore
+            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30) # type: ignore
             
             # Test configuration without starting
             profile = pipeline.get_active_profile()
@@ -362,7 +362,7 @@ def suggest_performance_fixes():
     print("   # Check current thermal policy")
     print("   cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")
     print("   # Set performance governor temporarily")
-    print("   sudo cpupower frequency-set -g performance
+    print("   sudo cpupower frequency-set -g performance")
     print("   # Reset back to powersave/ondemand after testing")
     
     print("\n3. 💾 Memory/Cache Optimization:")

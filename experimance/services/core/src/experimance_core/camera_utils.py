@@ -8,7 +8,7 @@ This module provides utility functions for camera diagnostics, reset, and recove
 import logging
 import subprocess
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import psutil
 import pyrealsense2 as rs  # type: ignore
@@ -32,24 +32,24 @@ def get_camera_diagnostics() -> Dict[str, Any]:
     
     try:
         # RealSense device enumeration
-        ctx = rs.context()
+        ctx = rs.context() # type: ignore
         devices = ctx.query_devices()
         
         for i, dev in enumerate(devices):
             device_info = {
                 'index': i,
-                'name': dev.get_info(rs.camera_info.name) if dev.supports(rs.camera_info.name) else 'Unknown',
-                'serial': dev.get_info(rs.camera_info.serial_number) if dev.supports(rs.camera_info.serial_number) else 'Unknown',
-                'firmware': dev.get_info(rs.camera_info.firmware_version) if dev.supports(rs.camera_info.firmware_version) else 'Unknown',
-                'product_id': dev.get_info(rs.camera_info.product_id) if dev.supports(rs.camera_info.product_id) else 'Unknown',
-                'usb_type': dev.get_info(rs.camera_info.usb_type_descriptor) if dev.supports(rs.camera_info.usb_type_descriptor) else 'Unknown',
+                'name': dev.get_info(rs.camera_info.name) if dev.supports(rs.camera_info.name) else 'Unknown', # type: ignore
+                'serial': dev.get_info(rs.camera_info.serial_number) if dev.supports(rs.camera_info.serial_number) else 'Unknown', # type: ignore
+                'firmware': dev.get_info(rs.camera_info.firmware_version) if dev.supports(rs.camera_info.firmware_version) else 'Unknown', # type: ignore
+                'product_id': dev.get_info(rs.camera_info.product_id) if dev.supports(rs.camera_info.product_id) else 'Unknown',  # type: ignore
+                'usb_type': dev.get_info(rs.camera_info.usb_type_descriptor) if dev.supports(rs.camera_info.usb_type_descriptor) else 'Unknown', # type: ignore
                 'sensors': []
             }
             
             # Get sensor information
             for sensor in dev.query_sensors():
                 sensor_info = {
-                    'name': sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else 'Unknown',
+                    'name': sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else 'Unknown', # type: ignore
                     'profiles': []
                 }
                 
@@ -156,7 +156,7 @@ def kill_camera_processes() -> bool:
     return killed
 
 
-def usb_reset_device(vendor_id: str = "8086", product_id: str = None) -> bool:
+def usb_reset_device(vendor_id: str = "8086", product_id: Optional[str] = None) -> bool:
     """
     Attempt to reset USB device by vendor/product ID.
     
@@ -196,12 +196,13 @@ def usb_reset_device(vendor_id: str = "8086", product_id: str = None) -> bool:
             import usb.util
             
             devices = usb.core.find(find_all=True, idVendor=int(vendor_id, 16))
-            for device in devices:
-                if product_id is None or device.idProduct == int(product_id, 16):
-                    logger.info(f"Resetting USB device: vendor={vendor_id}, product={device.idProduct:04x}")
-                    device.reset()
-                    return True
-                    
+            if devices:
+                for device in devices:
+                    if product_id is None or device.idProduct == int(product_id, 16): # type: ignore
+                        logger.info(f"Resetting USB device: vendor={vendor_id}, product={device.idProduct:04x}") # type: ignore
+                        device.reset() # type: ignore
+                        return True
+            return False  
         except ImportError:
             logger.warning("pyusb not available for USB reset")
         except Exception as e:
@@ -250,11 +251,11 @@ def reset_realsense_camera(aggressive: bool = False) -> bool:
     # Step 3: Hardware reset
     success = False
     try:
-        ctx = rs.context()
+        ctx = rs.context() # type: ignore
         devices = ctx.query_devices()
         
         for i, dev in enumerate(devices):
-            device_name = dev.get_info(rs.camera_info.name) if dev.supports(rs.camera_info.name) else f'Device {i}'
+            device_name = dev.get_info(rs.camera_info.name) if dev.supports(rs.camera_info.name) else f'Device {i}' # type: ignore
             logger.info(f'Resetting device: {device_name}')
             
             try:
@@ -291,7 +292,7 @@ def reset_realsense_camera(aggressive: bool = False) -> bool:
         time.sleep(2)  # Additional wait
         
         try:
-            ctx = rs.context()
+            ctx = rs.context() # type: ignore
             devices = ctx.query_devices()
             if len(devices) > 0:
                 logger.info(f"Reset verification successful: {len(devices)} devices available")

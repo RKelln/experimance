@@ -21,27 +21,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple, AsyncGenerator, Generator, Any, List, Dict, TYPE_CHECKING
 from random import randint
-import subprocess
-import psutil
-import os
-import signal
 
 import cv2
 import numpy as np
 import pyrealsense2 as rs  # type: ignore
 from blessed import Terminal
-
-# Type aliases for RealSense objects to improve type hints
-if TYPE_CHECKING:
-    RSPipeline = rs.pipeline
-    RSProfile = Any  # rs.pipeline_profile
-    RSColorizer = rs.colorizer
-    RSAlign = rs.align
-else:
-    RSPipeline = Any
-    RSProfile = Any
-    RSColorizer = Any
-    RSAlign = Any
 
 from experimance_common.image_utils import get_mock_images, crop_to_content
 from experimance_core.config import CameraConfig, CoreServiceConfig, DEFAULT_CONFIG_PATH, ColorizerScheme
@@ -255,10 +239,10 @@ class RealSenseCamera:
         """Initialize the camera with configuration from config.py."""
         self.config = config
         self.state = CameraState.DISCONNECTED
-        self.pipeline: Optional[RSPipeline] = None
-        self.profile: Optional[RSProfile] = None
-        self.colorizer: Optional[RSColorizer] = None
-        self.align: Optional[RSAlign] = None
+        self.pipeline: Any = None
+        self.profile: Any = None
+        self.colorizer: Any = None
+        self.align: Any = None
         self.filters: List[Tuple[str, Any]] = []  # Post-processing filters
         self.retry_count = 0
         self.current_retry_delay = config.retry_delay
@@ -413,23 +397,23 @@ class RealSenseCamera:
         self.state = CameraState.INITIALIZING
         
         # Configure streams
-        self.pipeline = rs.pipeline()
-        config = rs.config()
+        self.pipeline = rs.pipeline() # type: ignore
+        config = rs.config() # type: ignore
         
         config.enable_stream(
-            rs.stream.depth, 
+            rs.stream.depth,  # type: ignore
             self.config.resolution[0], 
             self.config.resolution[1], 
-            rs.format.z16, 
+            rs.format.z16,  # type: ignore
             self.config.fps
         )
         
         if self.config.align_frames:
             config.enable_stream(
-                rs.stream.color,
+                rs.stream.color, # type: ignore
                 self.config.resolution[0],
                 self.config.resolution[1],
-                rs.format.bgr8,
+                rs.format.bgr8, # type: ignore
                 self.config.fps
             )
         
@@ -448,7 +432,7 @@ class RealSenseCamera:
         
         # Setup frame alignment
         if self.config.align_frames:
-            self.align = rs.align(rs.stream.color)
+            self.align = rs.align(rs.stream.color) # type: ignore
         
         # Setup post-processing filters
         self._setup_post_processing()
@@ -473,16 +457,17 @@ class RealSenseCamera:
             
             json_string = str(json_obj).replace("'", '"')
             
-            device = self.profile.get_device()
-            advanced_mode = rs.rs400_advanced_mode(device)
-            
-            # Check if device supports advanced mode
-            if not advanced_mode.is_enabled():
-                logger.warning("Advanced mode not enabled on device, skipping advanced config")
-                return
+            if self.profile is not None:
+                device = self.profile.get_device()
+                advanced_mode = rs.rs400_advanced_mode(device) # type: ignore
                 
-            advanced_mode.load_json(json_string)
-            logger.info(f"Loaded advanced configuration from {config_path}")
+                # Check if device supports advanced mode
+                if not advanced_mode.is_enabled():
+                    logger.warning("Advanced mode not enabled on device, skipping advanced config")
+                    return
+                    
+                advanced_mode.load_json(json_string)
+                logger.info(f"Loaded advanced configuration from {config_path}")
             
         except Exception as e:
             logger.warning(f"Failed to load advanced configuration: {e}")
@@ -494,21 +479,21 @@ class RealSenseCamera:
         depth_sensor = self.profile.get_device().first_depth_sensor()
         
         # Set to High Accuracy preset if available
-        preset_range = depth_sensor.get_option_range(rs.option.visual_preset)
+        preset_range = depth_sensor.get_option_range(rs.option.visual_preset) # type: ignore
         for i in range(int(preset_range.max)):
-            preset_name = depth_sensor.get_option_value_description(rs.option.visual_preset, i)
+            preset_name = depth_sensor.get_option_value_description(rs.option.visual_preset, i) # type: ignore
             if preset_name == "High Accuracy":
-                depth_sensor.set_option(rs.option.visual_preset, i)
+                depth_sensor.set_option(rs.option.visual_preset, i) # type: ignore
                 logger.info("Set visual preset to High Accuracy")
                 break
     
     def _setup_colorizer(self):
         """Setup depth colorizer."""
-        self.colorizer = rs.colorizer(self.config.colorizer_scheme.value)
-        self.colorizer.set_option(rs.option.visual_preset, 1)  # Fixed range
-        self.colorizer.set_option(rs.option.min_distance, self.config.min_depth)
-        self.colorizer.set_option(rs.option.max_distance, self.config.max_depth)
-        self.colorizer.set_option(rs.option.color_scheme, self.config.colorizer_scheme.value)
+        self.colorizer = rs.colorizer(self.config.colorizer_scheme.value) # type: ignore
+        self.colorizer.set_option(rs.option.visual_preset, 1)  # Fixed range # type: ignore
+        self.colorizer.set_option(rs.option.min_distance, self.config.min_depth) # type: ignore
+        self.colorizer.set_option(rs.option.max_distance, self.config.max_depth) # type: ignore
+        self.colorizer.set_option(rs.option.color_scheme, self.config.colorizer_scheme.value) # type: ignore
     
     def _setup_post_processing(self):
         """Setup RealSense post-processing filters."""
@@ -520,27 +505,27 @@ class RealSenseCamera:
         
         # Decimation filter (reduces resolution)
         if self.config.decimation_filter:
-            decimation = rs.decimation_filter()
-            decimation.set_option(rs.option.filter_magnitude, self.config.decimation_filter_magnitude)
+            decimation = rs.decimation_filter() # type: ignore
+            decimation.set_option(rs.option.filter_magnitude, self.config.decimation_filter_magnitude) # type: ignore
             self.filters.append(("decimation", decimation))
             logger.info(f"Enabled decimation filter (magnitude: {self.config.decimation_filter_magnitude})")
         
         # Threshold filter (depth range)
         if self.config.threshold_filter:
-            threshold = rs.threshold_filter()
-            threshold.set_option(rs.option.min_distance, self.config.threshold_filter_min)
-            threshold.set_option(rs.option.max_distance, self.config.threshold_filter_max)
+            threshold = rs.threshold_filter() # type: ignore
+            threshold.set_option(rs.option.min_distance, self.config.threshold_filter_min) # type: ignore
+            threshold.set_option(rs.option.max_distance, self.config.threshold_filter_max) # type: ignore
             self.filters.append(("threshold", threshold))
             logger.info(f"Enabled threshold filter (range: {self.config.threshold_filter_min}-{self.config.threshold_filter_max}m)")
         
         # Spatial filter (edge-preserving)
         if self.config.spatial_filter:
             # https://intelrealsense.github.io/librealsense/python_docs/_generated/pyrealsense2.spatial_filter.html
-            spatial = rs.spatial_filter()
-            spatial.set_option(rs.option.filter_magnitude, self.config.spatial_filter_magnitude)
-            spatial.set_option(rs.option.filter_smooth_alpha, self.config.spatial_filter_alpha)
-            spatial.set_option(rs.option.filter_smooth_delta, self.config.spatial_filter_delta)
-            spatial.set_option(rs.option.holes_fill, self.config.spatial_filter_hole_fill)
+            spatial = rs.spatial_filter() # type: ignore
+            spatial.set_option(rs.option.filter_magnitude, self.config.spatial_filter_magnitude) # type: ignore
+            spatial.set_option(rs.option.filter_smooth_alpha, self.config.spatial_filter_alpha) # type: ignore
+            spatial.set_option(rs.option.filter_smooth_delta, self.config.spatial_filter_delta) # type: ignore
+            spatial.set_option(rs.option.holes_fill, self.config.spatial_filter_hole_fill) # type: ignore
             self.filters.append(("spatial", spatial))
             logger.info(f"Enabled spatial filter (mag: {self.config.spatial_filter_magnitude}, "
                        f"alpha: {self.config.spatial_filter_alpha}, delta: {self.config.spatial_filter_delta})")
@@ -548,18 +533,18 @@ class RealSenseCamera:
         # Temporal filter (reduces temporal noise)
         if self.config.temporal_filter:
             # https://intelrealsense.github.io/librealsense/python_docs/_generated/pyrealsense2.temporal_filter.html
-            temporal = rs.temporal_filter()
-            temporal.set_option(rs.option.filter_smooth_alpha, self.config.temporal_filter_alpha)
-            temporal.set_option(rs.option.filter_smooth_delta, self.config.temporal_filter_delta)
-            temporal.set_option(rs.option.holes_fill, self.config.temporal_filter_persistence)
+            temporal = rs.temporal_filter() # type: ignore
+            temporal.set_option(rs.option.filter_smooth_alpha, self.config.temporal_filter_alpha) # type: ignore
+            temporal.set_option(rs.option.filter_smooth_delta, self.config.temporal_filter_delta) # type: ignore
+            temporal.set_option(rs.option.holes_fill, self.config.temporal_filter_persistence) # type: ignore
             self.filters.append(("temporal", temporal))
             logger.info(f"Enabled temporal filter (alpha: {self.config.temporal_filter_alpha}, "
                        f"delta: {self.config.temporal_filter_delta}, persistence: {self.config.temporal_filter_persistence})")
         
         # Hole filling filter
         if self.config.hole_filling_filter:
-            hole_filling = rs.hole_filling_filter()
-            hole_filling.set_option(rs.option.holes_fill, self.config.hole_filling_mode)
+            hole_filling = rs.hole_filling_filter() # type: ignore
+            hole_filling.set_option(rs.option.holes_fill, self.config.hole_filling_mode) # type: ignore
             self.filters.append(("hole_filling", hole_filling))
             logger.info(f"Enabled hole filling filter (mode: {self.config.hole_filling_mode})")
         

@@ -8,7 +8,7 @@ import logging
 import numpy as np
 import time
 from random import randint
-from typing import Optional, Tuple, Generator, AsyncGenerator
+from typing import Optional, Tuple, Generator, AsyncGenerator, List
 from experimance_core.config import CameraConfig
 from experimance_core.robust_camera import DepthProcessor, DepthFrame, calculate_change_score, mask_bright_area
 from experimance_common.image_utils import get_mock_images
@@ -189,14 +189,16 @@ class MockDepthProcessor(DepthProcessor):
                 center = (width // 2, height // 2)
                 radius = min(width, height) // 3
                 mask = np.zeros((height, width), dtype=np.uint8)
-                cv2.circle(mask, center, radius, 255, -1)
+                cv2.circle(mask, center, radius, (255,), -1)
                 frame.importance_mask = mask
                 
                 # Mock masked image (apply the mask)
                 frame.masked_image = cv2.bitwise_and(depth_image, depth_image, mask=mask)
                 
                 # Mock cropped before resize (add border)
-                frame.cropped_before_resize = cv2.copyMakeBorder(depth_image, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=128)
+                frame.cropped_before_resize = cv2.copyMakeBorder(
+                    depth_image, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=(128,)
+                )
                 
                 # Mock change diff (random noise pattern)
                 change_diff = np.random.randint(0, 255, depth_image.shape, dtype=np.uint8)
