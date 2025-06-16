@@ -8,25 +8,20 @@ This service manages:
 - Prompt generation and audio tag extraction
 """
 import asyncio
-import json
 import logging
 import time
-import random
 import sys
 import numpy as np
 import cv2
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple, AsyncGenerator
-from enum import Enum
+from typing import Dict, Any, Optional
 
-from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
+from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.schemas import Era, Biome
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
-from experimance_core.config import CoreServiceConfig, DEFAULT_CONFIG_PATH
-from experimance_core.depth_factory import create_depth_processor_from_config, create_depth_processor
-from experimance_core.robust_camera import DepthFrame, CameraState
+from experimance_core.config import CoreServiceConfig, CameraState, DepthFrame, DEFAULT_CONFIG_PATH
+from experimance_core.depth_factory import create_depth_processor
 
 
 logger = logging.getLogger(__name__)

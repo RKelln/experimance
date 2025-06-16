@@ -4,7 +4,7 @@ Factory function to create depth processors.
 
 from typing import Optional
 from experimance_core.config import CoreServiceConfig, DEFAULT_CONFIG_PATH
-from experimance_core.robust_camera import DepthProcessor
+from experimance_core.depth_processor import DepthProcessor
 from experimance_core.mock_depth_processor import MockDepthProcessor
 
 def create_depth_processor_from_config(config_path: str = DEFAULT_CONFIG_PATH, mock_path: Optional[str] = None) -> DepthProcessor:

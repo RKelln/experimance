@@ -7,10 +7,12 @@ core service configuration in a type-safe way.
 """
 
 from typing import List, Tuple, Optional
-from pathlib import Path
 from enum import Enum
 
+from dataclasses import dataclass
 from pydantic import BaseModel, Field
+
+import numpy as np
 
 from experimance_common.config import Config
 from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
@@ -347,6 +349,42 @@ class DepthProcessingConfig(BaseModel):
         description="Processed output size (legacy - use camera.output_resolution instead)"
     )
 
+class CameraState(Enum):
+    """Camera operational states."""
+    DISCONNECTED = "disconnected"
+    INITIALIZING = "initializing"
+    READY = "ready"
+    ERROR = "error"
+    RESETTING = "resetting"
+
+
+@dataclass
+class DepthFrame:
+    """Depth frame data with metadata."""
+    depth_image: np.ndarray
+    color_image: Optional[np.ndarray] = None
+    hand_detected: Optional[bool] = None
+    change_score: float = 0.0
+    frame_number: int = 0
+    timestamp: float = 0.0
+    
+    # Debug/visualization intermediate images (only populated when debug_mode=True)
+    raw_depth_image: Optional[np.ndarray] = None
+    masked_image: Optional[np.ndarray] = None
+    importance_mask: Optional[np.ndarray] = None
+    cropped_before_resize: Optional[np.ndarray] = None
+    change_diff_image: Optional[np.ndarray] = None
+    hand_detection_image: Optional[np.ndarray] = None
+    
+    @property
+    def has_interaction(self) -> bool:
+        """Check if frame shows user interaction."""
+        return self.hand_detected or self.change_score > 0.1
+    
+    @property
+    def has_debug_images(self) -> bool:
+        """Check if frame contains debug/intermediate images."""
+        return self.raw_depth_image is not None
 
 class AudioConfig(BaseModel):
     """Audio configuration."""

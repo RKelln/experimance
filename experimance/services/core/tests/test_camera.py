@@ -1,5 +1,5 @@
 from experimance_core.config import CoreServiceConfig, DEFAULT_CONFIG_PATH
-from experimance_core.robust_camera import (
+from experimance_core.depth_processor import (
     DepthProcessor,
     DepthFrame,
     mask_bright_area,
