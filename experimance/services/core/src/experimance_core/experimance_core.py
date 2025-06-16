@@ -268,7 +268,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             
             # Early exit if hands are detected - we don't process frames with hands
             if hand_detected:
-                logger.debug("Skipping frame processing - hands detected")
+                #logger.debug("Skipping frame processing - hands detected")
                 return
             
             # Calculate change compared to last PROCESSED frame (not just previous frame)
@@ -287,7 +287,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 # Only process if change is significant enough
                 change_threshold = getattr(self.config.camera, 'significant_change_threshold', 0.02)
                 if change_score < change_threshold:
-                    logger.debug(f"Change too small ({change_score:.4f}), skipping frame")
+                    #logger.debug(f"Change too small ({change_score:.4f}), skipping frame")
                     return
                 
                 logger.debug(f"Significant change detected ({change_score:.4f}), processing frame")
