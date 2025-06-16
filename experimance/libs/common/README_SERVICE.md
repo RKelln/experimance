@@ -452,6 +452,39 @@ async def process_item(self, item):
 
 The `experimance_common.cli` module provides standardized command line argument parsing, logging setup, and service execution that all Experimance services should use.
 
+### Auto-Generated CLI Arguments
+
+The CLI system can automatically generate command line arguments from your Pydantic config classes, making all config fields accessible via CLI:
+
+```python
+# src/my_service/__main__.py
+"""
+Command line entry point for My Service.
+"""
+from experimance_common.cli import create_simple_main
+from .my_service import run_my_service
+from .config import MyServiceConfig, DEFAULT_CONFIG_PATH
+
+# Create the main function with auto-generated CLI args
+main = create_simple_main(
+    service_name="My Service",
+    description="Brief description of what your service does",
+    service_runner=run_my_service,
+    default_config_path=DEFAULT_CONFIG_PATH,
+    config_class=MyServiceConfig  # Auto-generates CLI args from this class
+)
+
+if __name__ == "__main__":
+    main()
+```
+
+**What gets auto-generated:**
+- Top-level config fields: `--visualize`, `--service-name`
+- Nested config fields: `--camera-fps`, `--state-machine-idle-timeout`
+- Boolean fields with defaults: `--debug-mode` or `--no-debug-mode`
+- Type-appropriate metavars: `N` for ints, `VALUE` for floats, `TEXT` for strings
+- Help text with section context: `[Camera] Camera frames per second (default: 30)`
+
 ### Essential CLI Template
 
 ```python
@@ -475,7 +508,39 @@ if __name__ == "__main__":
     main()
 ```
 
-### CLI with Custom Arguments
+### Service Runner Pattern for Enhanced CLI
+
+When using the auto-generated CLI arguments, your service runner should accept CLI arguments:
+
+```python
+# src/my_service/my_service.py
+import argparse
+
+async def run_my_service(config_path: str = DEFAULT_CONFIG_PATH, args:Optional[argparse.Namespace] = None):
+    """
+    Run My Service with CLI integration.
+    
+    Args:
+        config_path: Path to configuration file
+        args: CLI arguments from argparse (for config overrides)
+    """
+    # Create config with CLI overrides
+    config = MyServiceConfig.from_overrides(
+        config_file=config_path,
+        args=args  # CLI args automatically override config values
+    )
+    
+    service = MyService(config=config)
+    await service.start()
+    await service.run()
+```
+
+**Key Benefits:**
+- All config fields automatically become CLI arguments
+- Nested configs work: `--camera-fps 60` sets `config.camera.fps = 60`
+- TOML + CLI + defaults priority system: CLI > TOML > Pydantic defaults
+- Clean help text with section context and type hints
+- Consistent CLI interface across all services
 
 For services that need additional command line arguments:
 

@@ -3,18 +3,22 @@
 Main entry point for the Experimance Display Service.
 
 This allows the display service to be run as a module:
-    uv run -m experimance_display [--log-level DEBUG] [--config path/to/config] [--windowed] [--debug]
-    uv run -m experimance_display cli      # Run the CLI tool (legacy)
+    uv run -m experimance_display
 """
 import sys
 
-if len(sys.argv) > 1 and sys.argv[1] == "cli":
-    # Remove 'cli' from args and run legacy CLI
-    sys.argv.pop(1)
-    from .cli import main
+from experimance_common.cli import create_simple_main
+from experimance_display.display_service import run_display_service
+from experimance_display.config import DisplayServiceConfig, DEFAULT_CONFIG_PATH
+
+# Create the main function using the enhanced CLI utility with auto-generated args
+main = create_simple_main(
+    service_name="Display",
+    description="Visual display and rendering service for the sand table",
+    service_runner=run_display_service,
+    default_config_path=DEFAULT_CONFIG_PATH,
+    config_class=DisplayServiceConfig
+)
+
+if __name__ == "__main__":
     main()
-else:
-    # For now, just use the existing main_sync function
-    # TODO: Integrate with common CLI system while preserving display-specific args
-    from .display_service import main_sync
-    main_sync()

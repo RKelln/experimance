@@ -1,5 +1,8 @@
 ## Experimance Core Service Configuration
 
+# Debugging and visualization options
+visualize = false            # enable visual debugging - display depth image and processing flags
+
 [experimance_core]
 name = "experimance_core_dev"
 heartbeat_interval = 3.0

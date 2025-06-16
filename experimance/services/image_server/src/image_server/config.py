@@ -12,7 +12,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from experimance_common.config import Config
-from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR
 from image_server.generators.config import BaseGeneratorConfig
 
 # Import all generator config types
@@ -23,6 +23,8 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 #from image_server.generators.mock.mock_generator import MockGeneratorConfig
 #from image_server.generators.sdxl.sdxl_generator import SDXLGeneratorConfig
 #from image_server.generators.openai.openai_generator import OpenAIGeneratorConfig
+
+DEFAULT_CONFIG_PATH = f"{IMAGE_SERVER_SERVICE_DIR}/config.toml"
 
 class ZmqConfig(BaseModel):
     """ZeroMQ configuration for the Image Server service."""

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Tests for the configuration utilities in experimance_common.config.
+Tests for the configuration utilities in experimance_common.config and CLI integration.
 """
 
 import argparse
 import os
 import tempfile
+from typing import Optional
 
 import pytest
 import toml
@@ -17,6 +18,10 @@ from experimance_common.config import (
     namespace_to_dict,
     Config,
     ConfigError
+)
+from experimance_common.cli import (
+    extract_cli_args_from_config,
+    create_service_parser
 )
 
 
@@ -259,5 +264,501 @@ def test_pydantic_config_from_overrides():
         os.unlink(temp_file_path)
 
 
-if __name__ == "__main__":
-    pytest.main()
+# ============================================================================
+# CLI INTEGRATION TESTS
+# ============================================================================
+
+def test_extract_cli_args_from_config_basic():
+    """Test CLI argument extraction from simple Pydantic models."""
+    
+    class SimpleConfig(BaseModel):
+        name: str = Field(default="test", description="Service name")
+        port: int = Field(default=5555, description="Port number")
+        debug: bool = Field(default=False, description="Enable debug mode")
+        timeout: float = Field(default=30.0, description="Timeout in seconds")
+        optional_field: Optional[str] = Field(default=None, description="Optional field")
+    
+    cli_args = extract_cli_args_from_config(SimpleConfig)
+    
+    # Check that correct number of arguments are generated (excluding optional None field)
+    assert len(cli_args) == 4
+    
+    # Check string field
+    assert "--name" in cli_args
+    assert cli_args["--name"]["type"] == str
+    assert "Service name" in cli_args["--name"]["help"]
+    assert cli_args["--name"]["dest"] == "name"
+    
+    # Check int field
+    assert "--port" in cli_args
+    assert cli_args["--port"]["type"] == int
+    assert "Port number" in cli_args["--port"]["help"]
+    assert cli_args["--port"]["dest"] == "port"
+    
+    # Check boolean field (default False -> store_true)
+    assert "--debug" in cli_args
+    assert cli_args["--debug"]["action"] == "store_true"
+    assert "Enable debug mode" in cli_args["--debug"]["help"]
+    assert cli_args["--debug"]["dest"] == "debug"
+    
+    # Check float field
+    assert "--timeout" in cli_args
+    assert cli_args["--timeout"]["type"] == float
+    assert "Timeout in seconds" in cli_args["--timeout"]["help"]
+    assert cli_args["--timeout"]["dest"] == "timeout"
+
+
+def test_extract_cli_args_from_config_boolean_defaults():
+    """Test boolean field handling with different default values."""
+    
+    class BoolConfig(BaseModel):
+        enabled: bool = Field(default=True, description="Feature enabled")
+        disabled: bool = Field(default=False, description="Feature disabled")
+    
+    cli_args = extract_cli_args_from_config(BoolConfig)
+    
+    # True default should create --no-enabled flag with store_false
+    assert "--no-enabled" in cli_args
+    assert cli_args["--no-enabled"]["action"] == "store_false"
+    assert cli_args["--no-enabled"]["dest"] == "enabled"
+    
+    # False default should create --disabled flag with store_true
+    assert "--disabled" in cli_args
+    assert cli_args["--disabled"]["action"] == "store_true"
+    assert cli_args["--disabled"]["dest"] == "disabled"
+
+
+def test_extract_cli_args_from_config_nested():
+    """Test CLI argument extraction from nested Pydantic models."""
+    
+    class DatabaseConfig(BaseModel):
+        host: str = Field(default="localhost", description="Database host")
+        port: int = Field(default=5432, description="Database port")
+        ssl: bool = Field(default=True, description="Use SSL connection")
+    
+    class ServiceConfig(BaseModel):
+        name: str = Field(default="service", description="Service name")
+        database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Database configuration")
+        debug: bool = Field(default=False, description="Debug mode")
+    
+    cli_args = extract_cli_args_from_config(ServiceConfig)
+    
+    # Check top-level fields
+    assert "--name" in cli_args
+    assert cli_args["--name"]["dest"] == "name"
+    assert "--debug" in cli_args
+    assert cli_args["--debug"]["dest"] == "debug"
+    
+    # Check nested fields use dotted notation for dest
+    assert "--database-host" in cli_args
+    assert cli_args["--database-host"]["dest"] == "database.host"
+    assert "[Database] Database host" in cli_args["--database-host"]["help"]
+    
+    assert "--database-port" in cli_args
+    assert cli_args["--database-port"]["dest"] == "database.port"
+    assert "[Database] Database port" in cli_args["--database-port"]["help"]
+    
+    # Check nested boolean with True default
+    assert "--no-database-ssl" in cli_args
+    assert cli_args["--no-database-ssl"]["action"] == "store_false"
+    assert cli_args["--no-database-ssl"]["dest"] == "database.ssl"
+
+
+def test_extract_cli_args_from_config_deep_nesting():
+    """Test CLI argument extraction with multiple levels of nesting."""
+    
+    class AuthConfig(BaseModel):
+        username: str = Field(default="user", description="Username")
+        password: str = Field(default="pass", description="Password")
+    
+    class DatabaseConfig(BaseModel):
+        host: str = Field(default="localhost", description="Host")
+        auth: AuthConfig = Field(default_factory=AuthConfig, description="Authentication")
+    
+    class AppConfig(BaseModel):
+        name: str = Field(default="app", description="App name")
+        database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Database config")
+    
+    cli_args = extract_cli_args_from_config(AppConfig)
+    
+    # Check deeply nested fields
+    assert "--database-auth-username" in cli_args
+    assert cli_args["--database-auth-username"]["dest"] == "database.auth.username"
+    assert "[Database Auth] Username" in cli_args["--database-auth-username"]["help"]
+    
+    assert "--database-auth-password" in cli_args
+    assert cli_args["--database-auth-password"]["dest"] == "database.auth.password"
+    assert "[Database Auth] Password" in cli_args["--database-auth-password"]["help"]
+
+
+def test_create_service_parser_with_config_class():
+    """Test service parser creation with automatic CLI argument generation."""
+    
+    class TestConfig(BaseModel):
+        name: str = Field(default="test-service", description="Service name")
+        port: int = Field(default=8080, description="Port number")
+        debug: bool = Field(default=False, description="Debug mode")
+    
+    parser = create_service_parser(
+        service_name="Test",
+        description="Test service",
+        default_config_path="/tmp/config.toml",
+        config_class=TestConfig
+    )
+    
+    # Test that parser can parse generated arguments
+    args = parser.parse_args(["--name", "custom-service", "--port", "9090", "--debug"])
+    
+    assert args.name == "custom-service"
+    assert args.port == 9090
+    assert args.debug is True
+    assert args.config == "/tmp/config.toml"
+    assert args.log_level == "INFO"  # Default value
+
+
+def test_create_service_parser_nested_config_integration():
+    """Test parser with nested config and argument parsing."""
+    
+    class DatabaseConfig(BaseModel):
+        host: str = Field(default="localhost", description="Database host")
+        port: int = Field(default=5432, description="Database port")
+        ssl: bool = Field(default=True, description="Use SSL")
+    
+    class ServiceConfig(BaseModel):
+        name: str = Field(default="service", description="Service name")
+        database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+        timeout: float = Field(default=30.0, description="Request timeout")
+    
+    parser = create_service_parser(
+        service_name="Test",
+        description="Test service",
+        config_class=ServiceConfig
+    )
+    
+    # Test parsing nested arguments
+    args = parser.parse_args([
+        "--name", "my-service",
+        "--database-host", "db.example.com",
+        "--database-port", "3306",
+        "--no-database-ssl",
+        "--timeout", "60.0"
+    ])
+    
+    # Verify namespace contains dotted notation
+    assert args.name == "my-service"
+    assert getattr(args, "database.host") == "db.example.com"
+    assert getattr(args, "database.port") == 3306
+    assert getattr(args, "database.ssl") is False  # --no-database-ssl
+    assert args.timeout == 60.0
+
+
+def test_namespace_to_dict_with_cli_args():
+    """Test that CLI-generated namespaces convert correctly to nested dicts."""
+    
+    # Simulate a namespace created by our CLI system
+    namespace = argparse.Namespace()
+    namespace.name = "test-service"
+    namespace.debug = True
+    setattr(namespace, "database.host", "localhost")
+    setattr(namespace, "database.port", 5432)
+    setattr(namespace, "database.auth.username", "user")
+    setattr(namespace, "cache.redis.host", "redis.example.com")
+    
+    result = namespace_to_dict(namespace)
+    
+    expected = {
+        "name": "test-service",
+        "debug": True,
+        "database": {
+            "host": "localhost",
+            "port": 5432,
+            "auth": {
+                "username": "user"
+            }
+        },
+        "cache": {
+            "redis": {
+                "host": "redis.example.com"
+            }
+        }
+    }
+    
+    assert result == expected
+
+
+def test_config_from_overrides_with_cli_integration():
+    """Test complete integration of CLI args with Config.from_overrides."""
+    
+    class DatabaseConfig(BaseModel):
+        host: str = Field(default="localhost", description="Database host")
+        port: int = Field(default=5432, description="Database port")
+        ssl: bool = Field(default=True, description="Use SSL")
+    
+    class TestServiceConfig(Config):
+        name: str = Field(default="test-service", description="Service name")
+        database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+        debug: bool = Field(default=False, description="Debug mode")
+        timeout: float = Field(default=30.0, description="Timeout")
+    
+    # Create a temporary config file
+    with tempfile.NamedTemporaryFile(suffix='.toml', mode='w+', delete=False) as temp_file:
+        file_config = {
+            "name": "file-service",
+            "database": {
+                "host": "file-db.com",
+                "port": 3306
+            },
+            "timeout": 45.0
+        }
+        toml.dump(file_config, temp_file)
+        temp_file_path = temp_file.name
+    
+    try:
+        # Simulate CLI args from our enhanced parser
+        args = argparse.Namespace()
+        args.debug = True  # CLI override
+        setattr(args, "database.host", "cli-db.com")  # CLI override of nested field
+        setattr(args, "database.ssl", False)  # CLI override of nested boolean
+        # name and timeout should come from file
+        # database.port should come from file
+        
+        # Create config with all sources
+        config = TestServiceConfig.from_overrides(
+            config_file=temp_file_path,
+            args=args
+        )
+        
+        # Verify priority order
+        assert config.name == "file-service"      # From file
+        assert config.debug is True               # From CLI (highest priority)
+        assert config.database.host == "cli-db.com"  # From CLI (overrides file)
+        assert config.database.port == 3306      # From file
+        assert config.database.ssl is False      # From CLI (overrides default)
+        assert config.timeout == 45.0            # From file
+        
+    finally:
+        os.unlink(temp_file_path)
+
+
+def test_end_to_end_cli_workflow():
+    """Test complete workflow from config class to CLI parsing to config creation."""
+    
+    class CacheConfig(BaseModel):
+        redis_host: str = Field(default="localhost", description="Redis host")
+        redis_port: int = Field(default=6379, description="Redis port")
+        enabled: bool = Field(default=True, description="Enable caching")
+    
+    class ServiceConfig(Config):
+        service_name: str = Field(default="my-service", description="Service name")
+        port: int = Field(default=8080, description="Service port")
+        cache: CacheConfig = Field(default_factory=CacheConfig)
+        verbose: bool = Field(default=False, description="Verbose logging")
+    
+    # 1. Create parser with auto-generated args
+    parser = create_service_parser(
+        service_name="TestService",
+        description="End-to-end test service",
+        config_class=ServiceConfig
+    )
+    
+    # 2. Parse CLI arguments
+    cli_args = [
+        "--service-name", "production-service",
+        "--port", "9000",
+        "--cache-redis-host", "prod-redis.com",
+        "--no-cache-enabled",
+        "--verbose"
+    ]
+    args = parser.parse_args(cli_args)
+    
+    # 3. Create config from CLI args
+    config = ServiceConfig.from_overrides(args=args)
+    
+    # 4. Verify final configuration
+    assert config.service_name == "production-service"
+    assert config.port == 9000
+    assert config.cache.redis_host == "prod-redis.com"
+    assert config.cache.redis_port == 6379  # Default value
+    assert config.cache.enabled is False    # --no-cache-enabled
+    assert config.verbose is True           # --verbose
+    
+    # 5. Verify help text contains proper information
+    help_text = parser.format_help()
+    assert "--service-name" in help_text
+    assert "--cache-redis-host" in help_text
+    assert "--no-cache-enabled" in help_text
+
+
+def test_cli_args_with_special_characters():
+    """Test CLI arg generation with fields that have special characters."""
+    
+    class SpecialConfig(BaseModel):
+        field_with_underscores: str = Field(default="test", description="Field with underscores")
+        field123: int = Field(default=42, description="Field with numbers")
+        # Note: Pydantic field names can't have hyphens, so we test underscore conversion
+        
+    args = extract_cli_args_from_config(SpecialConfig)
+    
+    # Should convert underscores to hyphens in CLI arg names
+    assert '--field-with-underscores' in args
+    assert '--field123' in args
+    
+    # Check that dest uses original field names (with underscores)
+    assert args['--field-with-underscores']['dest'] == 'field_with_underscores'
+    assert args['--field123']['dest'] == 'field123'
+
+
+def test_cli_args_ignore_unsupported_types():
+    """Test that CLI arg generation ignores complex types we can't handle."""
+    
+    class ComplexConfig(BaseModel):
+        simple_str: str = Field(default="test")
+        complex_list: list = Field(default_factory=list, description="This should be ignored")
+        complex_dict: dict = Field(default_factory=dict, description="This should be ignored")
+        tuple_field: tuple = Field(default=(), description="This should be ignored")
+        
+    args = extract_cli_args_from_config(ComplexConfig)
+    
+    # Should only include the simple string field
+    assert '--simple-str' in args
+    assert '--complex-list' not in args
+    assert '--complex-dict' not in args
+    assert '--tuple-field' not in args
+
+
+def test_boolean_field_variations():
+    """Test different boolean field default combinations."""
+    
+    class BoolConfig(BaseModel):
+        default_false: bool = Field(default=False, description="Defaults to False")
+        default_true: bool = Field(default=True, description="Defaults to True")
+        no_default: bool = Field(description="No explicit default")
+        
+    args = extract_cli_args_from_config(BoolConfig)
+    
+    # False defaults should create --flag (store_true)
+    assert '--default-false' in args
+    assert args['--default-false']['action'] == 'store_true'
+    
+    # True defaults should create --no-flag (store_false)
+    assert '--no-default-true' in args
+    assert args['--no-default-true']['action'] == 'store_false'
+    
+    # No explicit default should be treated as False (store_true)
+    assert '--no-default' in args
+    assert args['--no-default']['action'] == 'store_true'
+
+
+def test_cli_integration_with_real_parser():
+    """Test full integration with argparse parser."""
+    
+    class TestConfig(BaseModel):
+        debug: bool = Field(default=False, description="Enable debug mode")
+        port: int = Field(default=8080, description="Server port")
+        host: str = Field(default="localhost", description="Server host")
+        timeout: float = Field(default=30.0, description="Request timeout")
+        
+    class NestedConfig(BaseModel):
+        test: TestConfig = Field(default_factory=TestConfig)
+        app_name: str = Field(default="test-app", description="Application name")
+        
+    parser = create_service_parser(
+        service_name="Test",
+        description="Test service",
+        config_class=NestedConfig
+    )
+    
+    # Test parsing various argument combinations
+    args1 = parser.parse_args(['--test-debug', '--test-port', '9000'])
+    assert getattr(args1, 'test.debug') is True
+    assert getattr(args1, 'test.port') == 9000
+    
+    args2 = parser.parse_args(['--test-host', 'example.com', '--app-name', 'my-app'])
+    assert getattr(args2, 'test.host') == 'example.com'
+    assert getattr(args2, 'app_name') == 'my-app'
+
+
+def test_namespace_to_dict_edge_cases():
+    """Test namespace_to_dict with edge cases."""
+    
+    # Test with None values (should be ignored)
+    ns = argparse.Namespace()
+    ns.some_field = "value"
+    ns.none_field = None
+    setattr(ns, 'nested.field', 'nested_value')
+    
+    result = namespace_to_dict(ns)
+    
+    assert result == {
+        'some_field': 'value',
+        'nested': {
+            'field': 'nested_value'
+        }
+    }
+    # None values should be omitted
+    assert 'none_field' not in result
+
+
+def test_config_from_overrides_priority():
+    """Test that CLI args have highest priority in Config.from_overrides."""
+    
+    class PriorityConfig(Config):
+        value: str = Field(default="default")
+        number: int = Field(default=100)
+        
+    # Create test TOML content
+    toml_content = {
+        'value': 'from_toml',
+        'number': 200
+    }
+    
+    # Create args namespace with CLI overrides
+    args = argparse.Namespace()
+    args.value = 'from_cli'
+    # Don't set number in CLI, should come from TOML
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+        toml.dump(toml_content, f)
+        temp_file = f.name
+    
+    try:
+        config = PriorityConfig.from_overrides(
+            config_file=temp_file,
+            args=args
+        )
+        
+        # CLI should override TOML
+        assert config.value == 'from_cli'
+        # TOML should override default
+        assert config.number == 200
+        
+    finally:
+        os.unlink(temp_file)
+
+
+def test_empty_config_class():
+    """Test CLI generation with empty config class."""
+    
+    class EmptyConfig(BaseModel):
+        pass
+        
+    args = extract_cli_args_from_config(EmptyConfig)
+    assert args == {}
+
+
+def test_cli_metavar_types():
+    """Test that metavar types are set correctly for different field types."""
+    
+    class MetavarConfig(BaseModel):
+        int_field: int = Field(default=42)
+        float_field: float = Field(default=3.14)
+        str_field: str = Field(default="test")
+        bool_field: bool = Field(default=False)
+        
+    args = extract_cli_args_from_config(MetavarConfig)
+    
+    assert args['--int-field']['metavar'] == 'N'
+    assert args['--float-field']['metavar'] == 'VALUE'
+    assert args['--str-field']['metavar'] == 'TEXT'
+    # Boolean fields shouldn't have metavar
+    assert 'metavar' not in args['--bool-field']

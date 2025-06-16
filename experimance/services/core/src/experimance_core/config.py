@@ -437,6 +437,12 @@ class CoreServiceConfig(Config):
     
     service_name: str = "experimance-core"
     
+    # Debugging and visualization options
+    visualize: bool = Field(
+        default=False,
+        description="Enable visual debugging - display depth image and processing flags in real-time"
+    )
+    
     # Main configuration sections
     experimance_core: ExperimanceCoreConfig = Field(default_factory=ExperimanceCoreConfig)
     zmq: ZmqConfig = Field(default_factory=ZmqConfig)
@@ -445,4 +451,3 @@ class CoreServiceConfig(Config):
     depth_processing: DepthProcessingConfig = Field(default_factory=DepthProcessingConfig)  # Legacy compatibility
     audio: AudioConfig = Field(default_factory=AudioConfig)
     prompting: PromptingConfig = Field(default_factory=PromptingConfig)
-    camera: CameraConfig = Field(default_factory=CameraConfig)

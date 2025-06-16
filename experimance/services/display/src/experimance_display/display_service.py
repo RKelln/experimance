@@ -25,7 +25,7 @@ from pyglet.window import key
 
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
-from experimance_common.constants import DEFAULT_PORTS, TICK
+from experimance_common.constants import DEFAULT_PORTS, TICK, DISPLAY_SERVICE_DIR
 from experimance_common.base_service import ServiceState
 
 from .config import DisplayServiceConfig
@@ -48,8 +48,7 @@ class DisplayService(ZmqSubscriberService):
     
     def __init__(
         self,
-        config: DisplayServiceConfig,
-        service_name: Optional[str] = None,
+        config: DisplayServiceConfig
     ):
         """Initialize the Display Service.
         
@@ -58,10 +57,6 @@ class DisplayService(ZmqSubscriberService):
             service_name: Name of this service instance
         """
         self.config = config
-        if service_name is not None:
-            self.config.service_name = service_name
-        if self.config.service_name is None:
-            self.config.service_name = "display-service"
         
         # Initialize ZMQ subscriber service for images channel
         super().__init__(
@@ -747,113 +742,25 @@ class DisplayService(ZmqSubscriberService):
             logger.error(f"Error showing debug text: {e}", exc_info=True)
 
 
-async def main():
-    """Main entry point for running the display service."""
-    parser = argparse.ArgumentParser(description="Experimance Display Service")
-    parser.add_argument(
-        "--config", "-c",
-        type=Path,
-        default="services/display/config.toml",
-        help="Path to configuration file"
-    )
-    parser.add_argument(
-        "--name", "-n",
-        type=str,
-        default="display-service",
-        help="Service instance name"
-    )
-    parser.add_argument(
-        "--log-level", "-l",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Log level"
-    )
-    parser.add_argument(
-        "--windowed", "-w",
-        action="store_true",
-        help="Run in windowed mode (overrides config)"
-    )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run in headless mode (no window, for testing)"
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug overlay"
-    )
-    parser.add_argument(
-        "--debug-text",
-        action="store_true",
-        help="Show test text in all positions with different speakers"
-    )
-    parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="Record and display profiling/performance info"
-    )
+async def run_display_service(
+    config_path: str = "config.toml", 
+    args: Optional[argparse.Namespace] = None
+) -> None:
+    """
+    Run the Experimance Display Service with CLI integration.
     
-    args = parser.parse_args()
-    
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    
-    # Load configuration
+    Args:
+        config_path: Path to configuration file
+        args: CLI arguments from argparse (for config overrides)
+    """
+    # Create config with CLI overrides
     config = DisplayServiceConfig.from_overrides(
-        config_file=args.config,
-        override_config=vars(args)
+        config_file=config_path,
+        args=args  # CLI args automatically override config values
     )
     
-    # Debug print to check settings
-    logger.info(f"Config loaded from {args.config}:")
-    logger.info(f"  - Display: fullscreen={config.display.fullscreen}, resolution={config.display.resolution}")
-    logger.info(f"  - Rendering: backend={config.rendering.backend}, vsync={config.display.vsync}")
-    
-    # Override fullscreen if windowed mode requested
-    if args.windowed:
-        config.display.fullscreen = False
-        logger.info(f"Windowed mode requested: fullscreen={config.display.fullscreen}")
-    
-    # Override headless mode if requested
-    if args.headless:
-        config.display.headless = True
-        logger.info(f"Headless mode enabled: headless={config.display.headless}")
-    
-    # Override debug if requested
-    if args.debug:
-        config.display.debug_overlay = True
-        logger.info(f"Debug overlay enabled: debug_overlay={config.display.debug_overlay}")
-    
-    if args.profile:
-        config.display.profile = True
-        logger.info(f"Profiling enabled: profile={config.display.profile}")
-
-    # Override debug text if requested
-    if args.debug_text:
-        config.display.debug_text = True
-        logger.info("Debug text enabled: will show test text in all positions")
-    
-    # Create and start the service
     service = DisplayService(
-        config=config,
-        service_name=args.name,
+        config=config
     )
-    
     await service.start()
-    logger.info(f"Display service '{args.name}' started successfully")
-    
-    # Run the main service loop (handles both ZMQ and pyglet)
     await service.run()
-
-
-def main_sync():
-    """Synchronous entry point that can handle asyncio properly."""
-    asyncio.run(main())
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

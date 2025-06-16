@@ -12,8 +12,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from experimance_common.config import Config
-from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.constants import DEFAULT_PORTS, DISPLAY_SERVICE_DIR
 
+DEFAULT_CONFIG_PATH = f"{DISPLAY_SERVICE_DIR}/config.toml"
 
 class ZmqConfig(BaseModel):
     """ZeroMQ configuration for the Display Service."""

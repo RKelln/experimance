@@ -8,6 +8,7 @@ It supports multiple image generation strategies including mock, local SDXL,
 FAL.AI, and OpenAI DALL-E.
 """
 
+import argparse
 import asyncio
 import logging
 import uuid
@@ -49,8 +50,7 @@ class ImageServerService(ZmqPublisherSubscriberService):
     
     def __init__(
         self,
-        config: ImageServerConfig,
-        service_name: Optional[str] = None,
+        config: ImageServerConfig
     ):
         """Initialize the Image Server Service.
         
@@ -63,10 +63,6 @@ class ImageServerService(ZmqPublisherSubscriberService):
         """
         try:
             self.config = config
-            if service_name is not None:
-                self.config.service_name = service_name
-            if self.config.service_name is None:
-                self.config.service_name = "image-server"
 
             # Create cache directory
             self.config.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -416,102 +412,25 @@ class ImageServerService(ZmqPublisherSubscriberService):
             raise  # Re-raise to ensure calling code knows there was an issue
 
 
-async def main():
-    """Main entry point for running the image server service."""
-    import argparse
-    import sys
-    import signal
+async def run_image_server_service(
+    config_path: str = "config.toml", 
+    args: Optional[argparse.Namespace] = None
+) -> None:
+    """
+    Run the Experimance Imager Server Service with CLI integration.
     
-    parser = argparse.ArgumentParser(description="Experimance Image Server Service")
-    parser.add_argument(
-        "-s, --config, --config-file",
-        type=Path,
-        default="services/image_server/config.toml",
-        dest="config_file",
-        help="Path to configuration file (default: config.toml)"
-    )
-    parser.add_argument(
-        "--name", "-n",
-        type=str,
-        default="image-server",
-        help="Service instance name"
-    )
-    parser.add_argument(
-        "--log-level", "-l",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Log level"
-    )
-    parser.add_argument(
-        "--cache-dir",
-        type=str,
-        help="Directory to store generated images"
-    )
-    parser.add_argument(
-        "--max-cache-size-gb",
-        type=float,
-        help="Maximum cache size in GB"
-    )
-    parser.add_argument(
-        "--generator.default_strategy",
-        type=str,
-        choices=["mock", "sdxl", "falai", "openai"],
-        help="Default image generation strategy"
-    )
-    parser.add_argument(
-        "--generator.timeout",
-        type=int,
-        help="Timeout for image generation in seconds"
-    )
-    parser.add_argument(
-        "--zmq.events_sub_address",
-        type=str,
-        help="ZMQ address for subscribing to events"
-    )
-    parser.add_argument(
-        "--zmq.images_pub_address",
-        type=str,
-        help="ZMQ address for publishing images"
+    Args:
+        config_path: Path to configuration file
+        args: CLI arguments from argparse (for config overrides)
+    """
+    # Create config with CLI overrides
+    config = ImageServerConfig.from_overrides(
+        config_file=config_path,
+        args=args  # CLI args automatically override config values
     )
     
-    args = parser.parse_args()
-    
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    service = ImageServerService(
+        config=config
     )
-
-    try:
-        # Load configuration
-        config = ImageServerConfig.from_overrides(
-            config_file=args.config_file,
-            override_config=vars(args)
-        )
-        
-        # Create the service
-        service = ImageServerService(
-            config=config,
-            service_name=args.name,
-        )
-
-        # Start the service
-        await service.start()
-        logger.info(f"Image server service '{args.name}' started successfully")
-        
-        # Run the service
-        await service.run()
-        
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt. Shutting down...")
-    except Exception as e:
-        logger.error(f"Fatal error in main: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        # Service cleanup will be handled by the BaseService class
-        # since we're using run() which handles shutdown on exceptions
-        logger.info("Image server service exiting")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    await service.start()
+    await service.run()

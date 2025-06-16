@@ -7,6 +7,7 @@ This service manages:
 - Event publishing and coordination with other services
 - Prompt generation and audio tag extraction
 """
+import argparse
 import asyncio
 import logging
 import time
@@ -69,15 +70,17 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
     and drives the narrative progression through different eras of human development.
     """
 
-    def __init__(self, config_path: str = DEFAULT_CONFIG_PATH):
+    def __init__(self, config: CoreServiceConfig):
         """
         Initialize the Experimance Core Service.
         
         Args:
-            config_path: Path to configuration file
+            config: Pre-configured CoreServiceConfig instance
         """
-        # Load configuration using the common config system
-        self.config = CoreServiceConfig.from_overrides(config_file=config_path)
+        self.config = config
+        
+        # Store visualization flag for easy access  
+        self.visualize = self.config.visualize
         
         # Extract service configuration
         service_name = self.config.experimance_core.name
@@ -269,7 +272,12 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             # Early exit if hands are detected - we don't process frames with hands
             if hand_detected:
                 #logger.debug("Skipping frame processing - hands detected")
+                # Still show visualization even when hands detected
+                self._visualize_depth_processing(depth_frame, 0.0)
                 return
+            
+            # Initialize change score for this frame
+            change_score = 0.0
             
             # Calculate change compared to last PROCESSED frame (not just previous frame)
             if self.last_processed_frame is not None and depth_image is not None:
@@ -288,6 +296,8 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 change_threshold = getattr(self.config.camera, 'significant_change_threshold', 0.02)
                 if change_score < change_threshold:
                     #logger.debug(f"Change too small ({change_score:.4f}), skipping frame")
+                    # Show visualization even for small changes
+                    self._visualize_depth_processing(depth_frame, change_score)
                     return
                 
                 logger.debug(f"Significant change detected ({change_score:.4f}), processing frame")
@@ -313,6 +323,9 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 self.last_processed_frame = depth_image.copy()
                 self.last_depth_map = depth_image.copy()
                 logger.debug("Updated reference frame for change detection")
+            
+            # Visualization for debugging (always show for processed frames)
+            self._visualize_depth_processing(depth_frame, change_score)
             
         except Exception as e:
             logger.error(f"Error processing depth frame: {e}")
@@ -877,6 +890,14 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         # debugging print the caller of stop
         import traceback
         logger.info(f"Stop called from: {traceback.format_stack()[-2].strip()}")
+        
+        # Clean up visualization window if it was used
+        if self.visualize:
+            try:
+                cv2.destroyAllWindows()
+            except Exception as e:
+                logger.warning(f"Error cleaning up visualization window: {e}")
+        
         # Call parent stop first to ensure proper shutdown sequence
         await super().stop()
         
@@ -891,22 +912,104 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         
         logger.info("Experimance Core Service stopped")
 
-
-async def run_experimance_core_service(config_path: str = DEFAULT_CONFIG_PATH):
+    def _visualize_depth_processing(self, depth_frame: DepthFrame, change_score: float = 0.0):
+        """
+        Display depth frame with processing flags for visual debugging.
+        
+        Args:
+            depth_frame: Current depth frame data
+            change_score: Current change detection score
+        """
+        if not self.visualize:
+            return
+            
+        try:
+            depth_image = depth_frame.depth_image
+            hand_detected = depth_frame.hand_detected
+            
+            if depth_image is None:
+                return
+                
+            # Normalize depth image for display (0-255)
+            depth_normalized = np.zeros_like(depth_image, dtype=np.uint8)
+            cv2.normalize(depth_image, depth_normalized, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            
+            # Convert to 3-channel for color overlays
+            depth_color = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+            
+            # Create info overlay
+            overlay = depth_color.copy()
+            
+            # Add status text
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            thickness = 2
+            
+            # Status indicators
+            status_text = [
+                f"Hand Detected: {'YES' if hand_detected else 'NO'}",
+                f"Change Score: {change_score:.4f}",
+                f"Era: {self.current_era.value}",
+                f"Biome: {self.current_biome.value}",
+                f"Interaction Score: {self.user_interaction_score:.3f}",
+                f"Idle Timer: {self.idle_timer:.1f}s",
+                f"Camera State: {self._camera_state.value}",
+            ]
+            
+            # Color coding
+            hand_color = (0, 0, 255) if hand_detected else (0, 255, 0)  # Red if hands, green if no hands
+            change_color = (0, 255, 255) if change_score > 0.02 else (128, 128, 128)  # Yellow if significant change
+            
+            # Draw status text
+            y_offset = 30
+            for i, text in enumerate(status_text):
+                color = hand_color if i == 0 else change_color if i == 1 else (255, 255, 255)
+                cv2.putText(overlay, text, (10, y_offset + i * 25), font, font_scale, color, thickness)
+            
+            # Show change map if available
+            if hasattr(self, 'change_map') and self.change_map is not None:
+                # Resize change map to match depth image
+                change_resized = cv2.resize(self.change_map.astype(np.uint8) * 255, 
+                                          (depth_image.shape[1], depth_image.shape[0]))
+                change_colored = cv2.applyColorMap(change_resized, cv2.COLORMAP_HOT)
+                
+                # Blend change map with depth image
+                alpha = 0.3
+                cv2.addWeighted(overlay, 1 - alpha, change_colored, alpha, 0, overlay)
+            
+            # Add frame border based on processing state
+            border_color = (0, 0, 255) if hand_detected else (0, 255, 0)  # Red if hands, green if processing
+            cv2.rectangle(overlay, (0, 0), (overlay.shape[1]-1, overlay.shape[0]-1), border_color, 3)
+            
+            # Show the visualization
+            cv2.imshow('Experimance Core - Depth Processing', overlay)
+            
+            # Non-blocking key check (1ms wait)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                logger.info("Visualization quit requested (press 'q' again or Ctrl+C to stop service)")
+                
+        except Exception as e:
+            logger.warning(f"Visualization error: {e}")
+        
+async def run_experimance_core_service(
+    config_path: str = DEFAULT_CONFIG_PATH, 
+    args:Optional[argparse.Namespace] = None
+):
     """
     Run the Experimance Core Service.
     
     Args:
         config_path: Path to configuration file
+        args: CLI arguments from argparse (if using new CLI system)
     """
-    service = ExperimanceCoreService(config_path=config_path)
+    # Create config with CLI overrides
+    config = CoreServiceConfig.from_overrides(
+        config_file=config_path,
+        args=args
+    )
+    
+    service = ExperimanceCoreService(config=config)
     
     await service.start()
     await service.run()
-
-
-if __name__ == "__main__":
-    import sys
-    
-    config_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG_PATH
-    asyncio.run(run_experimance_core_service(config_path))
