@@ -22,6 +22,8 @@ DEFAULT_CONFIG_PATH = f"{CORE_SERVICE_DIR}/config.toml"
 DEFAULT_CAMERA_CONFIG_DIR = CORE_SERVICE_DIR
 DEFAULT_CAMERA_CONFIG_PATH = f"{DEFAULT_CAMERA_CONFIG_DIR}/depth_camera_config.json"
 
+CAMERA_RESET_TIMEOUT = 45.0 # seconds
+
 class ExperimanceCoreConfig(BaseModel):
     """Core service configuration."""
     

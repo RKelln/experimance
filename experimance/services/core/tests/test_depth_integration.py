@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from experimance_core.experimance_core import ExperimanceCoreService
-from experimance_core.depth_finder import detect_difference, simple_obstruction_detect
+from experimance_core.depth_finder_prototype import detect_difference, simple_obstruction_detect
 from experimance_common.test_utils import active_service
 
 

@@ -19,8 +19,8 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs  # type: ignore
 
-from experimance_core.config import CameraState
-from experimance_core.camera_utils import reset_realsense_camera
+from experimance_core.config import CameraState, CAMERA_RESET_TIMEOUT
+from experimance_core.camera_utils import reset_realsense_camera_async
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,10 @@ class RealSenseCamera:
                 self.current_retry_delay = self.config.retry_delay
                 return result
                 
+            except asyncio.CancelledError:
+                logger.info(f"Operation {operation_name} was cancelled")
+                raise
+                
             except Exception as e:
                 last_exception = e
                 self.retry_count += 1
@@ -89,29 +93,44 @@ class RealSenseCamera:
                 logger.warning(f"{operation_name} failed (attempt {attempt + 1}/{self.config.max_retries}): {e}")
                 
                 if attempt < self.config.max_retries - 1:
-                    # Attempt camera reset
-                    reset_success = await self._reset_camera()
-                    
-                    if reset_success:
-                        # Reset was successful, try the operation immediately
-                        logger.info(f"Reset successful, retrying {operation_name} immediately...")
-                        try:
-                            result = await operation() if asyncio.iscoroutinefunction(operation) else operation()
-                            # Reset retry state on success
-                            self.retry_count = 0
-                            self.current_retry_delay = self.config.retry_delay
-                            logger.info(f"Operation {operation_name} succeeded after reset!")
-                            return result
-                        except Exception as retry_e:
-                            logger.warning(f"Operation {operation_name} failed even after successful reset: {retry_e}")
-                            # Continue with normal retry delay logic
-                    else:
-                        logger.warning(f"Reset failed for {operation_name}, continuing with retry delay")
+                    # Attempt camera reset (now async and cancellable)
+                    try:
+                        reset_success = await asyncio.wait_for(
+                            self._reset_camera(), 
+                            timeout=CAMERA_RESET_TIMEOUT  # Overall timeout for reset operation
+                        )
+                        
+                        if reset_success:
+                            # Reset was successful, try the operation immediately
+                            logger.info(f"Reset successful, retrying {operation_name} immediately...")
+                            try:
+                                result = await operation() if asyncio.iscoroutinefunction(operation) else operation()
+                                # Reset retry state on success
+                                self.retry_count = 0
+                                self.current_retry_delay = self.config.retry_delay
+                                logger.info(f"Operation {operation_name} succeeded after reset!")
+                                return result
+                            except Exception as retry_e:
+                                logger.warning(f"Operation {operation_name} failed even after successful reset: {retry_e}")
+                                # Continue with normal retry delay logic
+                        else:
+                            logger.warning(f"Reset failed for {operation_name}, continuing with retry delay")
+                        
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Reset operation timed out for {operation_name}")
+                    except asyncio.CancelledError:
+                        logger.info(f"Reset operation was cancelled for {operation_name}")
+                        raise
                     
                     # Exponential backoff (whether reset failed or post-reset operation failed)
                     delay = min(self.current_retry_delay * (2 ** attempt), self.config.max_retry_delay)
                     logger.info(f"Retrying {operation_name} in {delay:.1f}s...")
-                    await asyncio.sleep(delay)
+                    
+                    try:
+                        await asyncio.sleep(delay)
+                    except asyncio.CancelledError:
+                        logger.info(f"Retry delay was cancelled for {operation_name}")
+                        raise
                 else:
                     logger.error(f"All retry attempts failed for {operation_name}")
                     self.state = CameraState.ERROR
@@ -119,7 +138,7 @@ class RealSenseCamera:
         return None
     
     async def _reset_camera(self) -> bool:
-        """Reset the camera hardware and reinitialize.
+        """Reset the camera hardware and reinitialize (fully async and cancellable).
         
         Returns:
             True if reset and reinitialization were successful, False otherwise
@@ -127,22 +146,25 @@ class RealSenseCamera:
         self.state = CameraState.RESETTING
         logger.info("Resetting camera hardware...")
         
-        # Stop current pipeline
-        if self.pipeline:
-            try:
-                self.pipeline.stop()
-                logger.debug("Pipeline stopped")
-            except Exception as e:
-                logger.debug(f"Error stopping pipeline: {e}")
-            self.pipeline = None
-            self.profile = None
-        
-        # Hardware reset
         try:
-            success = reset_realsense_camera(aggressive=self.config.aggressive_reset)
+            # Stop current pipeline
+            if self.pipeline:
+                try:
+                    self.pipeline.stop()
+                    logger.debug("Pipeline stopped")
+                except Exception as e:
+                    logger.debug(f"Error stopping pipeline: {e}")
+                self.pipeline = None
+                self.profile = None
+            
+            # Hardware reset (now fully async and cancellable)
+            success = await reset_realsense_camera_async(aggressive=self.config.aggressive_reset)
+            
             if success:
                 logger.info("Camera hardware reset successful")
-                await asyncio.sleep(3)  # Wait for device reinitialization
+                
+                # Wait for device reinitialization (cancellable)
+                await asyncio.sleep(3)
                 
                 # Reinitialize the camera pipeline after reset
                 logger.info("Reinitializing camera pipeline after reset...")
@@ -184,6 +206,11 @@ class RealSenseCamera:
                 logger.warning("Camera hardware reset failed")
                 self.state = CameraState.ERROR
                 return False
+                
+        except asyncio.CancelledError:
+            logger.info("Camera reset was cancelled")
+            self.state = CameraState.ERROR
+            raise
         except Exception as e:
             logger.error(f"Error during camera reset: {e}")
             self.state = CameraState.ERROR

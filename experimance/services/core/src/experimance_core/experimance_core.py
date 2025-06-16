@@ -16,11 +16,17 @@ import cv2
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.constants import DEFAULT_PORTS, TICK
 from experimance_common.schemas import Era, Biome
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType
-from experimance_core.config import CoreServiceConfig, CameraState, DepthFrame, DEFAULT_CONFIG_PATH
+from experimance_core.config import (
+    CoreServiceConfig, 
+    CameraState,
+    DepthFrame,
+    DEFAULT_CONFIG_PATH,
+    CAMERA_RESET_TIMEOUT
+)
 from experimance_core.depth_factory import create_depth_processor
 
 
@@ -663,7 +669,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             try:
                 if self._depth_processor is not None:
                     try:
-                        # Get next depth frame from the robust camera processor
+                        # Get next depth frame
                         depth_frame = await self._depth_processor.get_processed_frame()
                         
                         if not self.running:
@@ -673,7 +679,11 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                             await self._process_depth_frame(depth_frame)
                         
                         # Brief yield to allow other tasks to run
-                        await asyncio.sleep(0.001)
+                        await asyncio.sleep(TICK)
+                        
+                    except asyncio.CancelledError:
+                        logger.info("Depth processing task was cancelled")
+                        break
                         
                     except Exception as e:
                         logger.error(f"Error in depth processing loop: {e}")
@@ -688,15 +698,33 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 
                 # Try to initialize or reinitialize depth processing
                 if self._depth_processor is None:
-                    success = await self._initialize_depth_processor_with_retry()
-                    if not success:
-                        # Wait for the retry delay before trying again
+                    try:
+                        # Only timeout on initialization to prevent hanging during reset/init
+                        success = await asyncio.wait_for(
+                            self._initialize_depth_processor_with_retry(),
+                            timeout=CAMERA_RESET_TIMEOUT  # 1 minute timeout for initialization only
+                        )
+                        if not success:
+                            # Wait for the retry delay before trying again
+                            if not await self._sleep_if_running(self.depth_retry_delay):
+                                break
+                    except asyncio.TimeoutError:
+                        logger.warning("Depth processor initialization timed out")
                         if not await self._sleep_if_running(self.depth_retry_delay):
                             break
+                    except asyncio.CancelledError:
+                        logger.info("Depth processor initialization was cancelled")
+                        break
                 
+            except asyncio.CancelledError:
+                logger.info("Depth processing task cancelled")
+                break
             except Exception as e:
                 self.record_error(e, is_fatal=False,
                                 custom_message="Error in depth processing task")
+                # Sleep briefly before retrying to avoid tight error loops
+                if not await self._sleep_if_running(1.0):
+                    break
 
     async def _state_machine_task(self):
         """Handle era progression and state machine logic."""

@@ -42,7 +42,7 @@ DEFAULT_RECV_TIMEOUT = 1.0  # seconds
 
 HEARTBEAT_TOPIC = "heartbeat"
 
-TICK = 0.01 # seconds, used sleeping in the main loop
+TICK = 0.001 # seconds, used sleeping in the main loop
 
 # media directories (relative paths)
 MEDIA_DIR = "media"
