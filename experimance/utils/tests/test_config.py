@@ -21,7 +21,10 @@ from experimance_common.config import (
 )
 from experimance_common.cli import (
     extract_cli_args_from_config,
-    create_service_parser
+    create_service_parser,
+    TrackedAction,
+    TrackedStoreTrueAction,
+    TrackedStoreFalseAction
 )
 
 
@@ -82,6 +85,9 @@ def test_namespace_to_dict():
     setattr(namespace, "database.host", "localhost")
     setattr(namespace, "database.port", 5432)
     setattr(namespace, "database.credentials.username", "user")
+    
+    # Manually set the tracking attribute to simulate all these were explicitly set
+    namespace._explicitly_set = {'name', 'log_level', 'timeout', 'zmq.port', 'database.host', 'database.port', 'database.credentials.username'}
     
     expected = {
         "name": "test",
@@ -146,6 +152,8 @@ def test_load_config_with_overrides():
         args = argparse.Namespace()
         setattr(args, "service.log_level", "DEBUG")
         setattr(args, "zmq.host", "127.0.0.1")
+        # Manually set tracking attribute for these explicitly set args
+        args._explicitly_set = {'service.log_level', 'zmq.host'}
         
         # Load with all options
         result = load_config_with_overrides(
@@ -237,6 +245,8 @@ def test_pydantic_config_from_overrides():
         args = argparse.Namespace()
         setattr(args, "log_level", "DEBUG")
         setattr(args, "zmq.host", "127.0.0.1")
+        # Manually set tracking attribute for these explicitly set args
+        args._explicitly_set = {'log_level', 'zmq.host'}
         
         config3 = MockServiceConfig.from_overrides(
             config_file=temp_file_path,
@@ -295,9 +305,9 @@ def test_extract_cli_args_from_config_basic():
     assert "Port number" in cli_args["--port"]["help"]
     assert cli_args["--port"]["dest"] == "port"
     
-    # Check boolean field (default False -> store_true)
+    # Check boolean field (default False -> TrackedStoreTrueAction)
     assert "--debug" in cli_args
-    assert cli_args["--debug"]["action"] == "store_true"
+    assert cli_args["--debug"]["action"] == TrackedStoreTrueAction
     assert "Enable debug mode" in cli_args["--debug"]["help"]
     assert cli_args["--debug"]["dest"] == "debug"
     
@@ -317,14 +327,14 @@ def test_extract_cli_args_from_config_boolean_defaults():
     
     cli_args = extract_cli_args_from_config(BoolConfig)
     
-    # True default should create --no-enabled flag with store_false
+    # True default should create --no-enabled flag with TrackedStoreFalseAction
     assert "--no-enabled" in cli_args
-    assert cli_args["--no-enabled"]["action"] == "store_false"
+    assert cli_args["--no-enabled"]["action"] == TrackedStoreFalseAction
     assert cli_args["--no-enabled"]["dest"] == "enabled"
     
-    # False default should create --disabled flag with store_true
+    # False default should create --disabled flag with TrackedStoreTrueAction
     assert "--disabled" in cli_args
-    assert cli_args["--disabled"]["action"] == "store_true"
+    assert cli_args["--disabled"]["action"] == TrackedStoreTrueAction
     assert cli_args["--disabled"]["dest"] == "disabled"
 
 
@@ -360,7 +370,7 @@ def test_extract_cli_args_from_config_nested():
     
     # Check nested boolean with True default
     assert "--no-database-ssl" in cli_args
-    assert cli_args["--no-database-ssl"]["action"] == "store_false"
+    assert cli_args["--no-database-ssl"]["action"] == TrackedStoreFalseAction
     assert cli_args["--no-database-ssl"]["dest"] == "database.ssl"
 
 
@@ -463,6 +473,8 @@ def test_namespace_to_dict_with_cli_args():
     setattr(namespace, "database.port", 5432)
     setattr(namespace, "database.auth.username", "user")
     setattr(namespace, "cache.redis.host", "redis.example.com")
+    # Simulate that all these were explicitly set
+    namespace._explicitly_set = {'name', 'debug', 'database.host', 'database.port', 'database.auth.username', 'cache.redis.host'}
     
     result = namespace_to_dict(namespace)
     
@@ -514,13 +526,15 @@ def test_config_from_overrides_with_cli_integration():
         temp_file_path = temp_file.name
     
     try:
-        # Simulate CLI args from our enhanced parser
-        args = argparse.Namespace()
-        args.debug = True  # CLI override
-        setattr(args, "database.host", "cli-db.com")  # CLI override of nested field
-        setattr(args, "database.ssl", False)  # CLI override of nested boolean
-        # name and timeout should come from file
-        # database.port should come from file
+        # Use actual CLI parser to create proper namespace with tracking
+        parser = create_service_parser(
+            service_name="Test",
+            description="CLI integration test",
+            config_class=TestServiceConfig
+        )
+        
+        # Parse CLI args that should override file values
+        args = parser.parse_args(['--debug', '--database-host', 'cli-db.com', '--no-database-ssl'])
         
         # Create config with all sources
         config = TestServiceConfig.from_overrides(
@@ -636,17 +650,17 @@ def test_boolean_field_variations():
         
     args = extract_cli_args_from_config(BoolConfig)
     
-    # False defaults should create --flag (store_true)
+    # False defaults should create --flag (TrackedStoreTrueAction)
     assert '--default-false' in args
-    assert args['--default-false']['action'] == 'store_true'
+    assert args['--default-false']['action'] == TrackedStoreTrueAction
     
-    # True defaults should create --no-flag (store_false)
+    # True defaults should create --no-flag (TrackedStoreFalseAction)
     assert '--no-default-true' in args
-    assert args['--no-default-true']['action'] == 'store_false'
+    assert args['--no-default-true']['action'] == TrackedStoreFalseAction
     
-    # No explicit default should be treated as False (store_true)
+    # No explicit default should be treated as False (TrackedStoreTrueAction)
     assert '--no-default' in args
-    assert args['--no-default']['action'] == 'store_true'
+    assert args['--no-default']['action'] == TrackedStoreTrueAction
 
 
 def test_cli_integration_with_real_parser():
@@ -686,6 +700,8 @@ def test_namespace_to_dict_edge_cases():
     ns.some_field = "value"
     ns.none_field = None
     setattr(ns, 'nested.field', 'nested_value')
+    # Manually set tracking attribute to include the non-None values
+    ns._explicitly_set = {'some_field', 'nested.field'}
     
     result = namespace_to_dict(ns)
     
@@ -715,6 +731,8 @@ def test_config_from_overrides_priority():
     # Create args namespace with CLI overrides
     args = argparse.Namespace()
     args.value = 'from_cli'
+    # Manually set tracking attribute to indicate this was explicitly set
+    args._explicitly_set = {'value'}
     # Don't set number in CLI, should come from TOML
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
@@ -762,3 +780,175 @@ def test_cli_metavar_types():
     assert args['--str-field']['metavar'] == 'TEXT'
     # Boolean fields shouldn't have metavar
     assert 'metavar' not in args['--bool-field']
+
+
+def test_cli_args_dont_override_config_with_defaults():
+    """
+    CRITICAL TEST: Ensure CLI boolean defaults don't override config file values.
+    
+    This test catches the bug where argparse sets boolean flags to their default
+    values even when not specified by the user, which then overrides config file
+    values inappropriately.
+    """
+    
+    class BooleanConfig(Config):
+        # These booleans have opposite defaults in the class vs config file
+        feature_a: bool = Field(default=True, description="Feature A")
+        feature_b: bool = Field(default=False, description="Feature B") 
+        feature_c: bool = Field(default=True, description="Feature C")
+        non_bool_field: str = Field(default="default", description="Non-boolean field")
+    
+    # Create config file with values opposite to the class defaults
+    toml_content = {
+        'feature_a': False,  # Class default is True
+        'feature_b': True,   # Class default is False
+        'feature_c': False,  # Class default is True
+        'non_bool_field': 'from_config'
+    }
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+        toml.dump(toml_content, f)
+        temp_file = f.name
+    
+    try:
+        # Create a parser and parse EMPTY CLI args (simulating user didn't specify any flags)
+        parser = create_service_parser(
+            service_name="Test",
+            description="Test boolean override bug",
+            config_class=BooleanConfig
+        )
+        
+        # Parse empty args - this would set all booleans to their defaults
+        args = parser.parse_args([])
+        
+        # Now create config using both file and args
+        config = BooleanConfig.from_overrides(
+            config_file=temp_file,
+            args=args
+        )
+        
+        # CRITICAL: Config file values should NOT be overridden by CLI defaults
+        assert config.feature_a is False, f"Expected False from config file, got {config.feature_a} (CLI default override bug!)"
+        assert config.feature_b is True, f"Expected True from config file, got {config.feature_b} (CLI default override bug!)"
+        assert config.feature_c is False, f"Expected False from config file, got {config.feature_c} (CLI default override bug!)"
+        assert config.non_bool_field == 'from_config', f"Expected 'from_config', got {config.non_bool_field}"
+        
+        # Now test that EXPLICIT CLI args DO override config file
+        explicit_args = parser.parse_args(['--no-feature-a', '--feature-b'])  # Explicitly set some flags
+        
+        explicit_config = BooleanConfig.from_overrides(
+            config_file=temp_file,
+            args=explicit_args
+        )
+        
+        # Explicitly set CLI args should override config file
+        assert explicit_config.feature_a is False, "Explicit --no-feature-a should override config file" 
+        assert explicit_config.feature_b is True, "Explicit --feature-b should override config file" 
+        # feature_c wasn't specified on CLI, should come from config file
+        assert explicit_config.feature_c is False, "Unspecified feature_c should come from config file"
+        
+    finally:
+        os.unlink(temp_file)
+
+
+def test_namespace_to_dict_only_includes_explicitly_set_values():
+    """
+    Test that namespace_to_dict only includes values that were explicitly provided,
+    not argparse defaults.
+    """
+    
+    class TestConfig(BaseModel):
+        explicit_field: str = Field(default="default_value")
+        bool_field: bool = Field(default=False)
+    
+    parser = create_service_parser(
+        service_name="Test", 
+        description="Test explicit args only",
+        config_class=TestConfig
+    )
+    
+    # Parse with no arguments - should result in empty dict after filtering
+    empty_args = parser.parse_args([])
+    
+    # The key fix: namespace_to_dict should only include explicitly set values
+    args_dict = namespace_to_dict(empty_args)
+    
+    # Should NOT include boolean defaults that weren't explicitly set
+    assert 'bool_field' not in args_dict, "Boolean defaults should not be included when not explicitly set"
+    assert 'explicit_field' not in args_dict, "String defaults should not be included when not explicitly set"
+    
+    # Should only include the built-in args like log_level, config, visualize
+    expected_builtin_args = {'log_level', 'config', 'visualize'}  # Standard args from create_service_parser
+    actual_keys = set(args_dict.keys())
+    
+    # All keys should be built-in args, not config-generated defaults
+    unexpected_keys = actual_keys - expected_builtin_args
+    assert len(unexpected_keys) == 0, f"Unexpected default values found: {unexpected_keys}"
+    
+    # Now test with explicit arguments
+    explicit_args = parser.parse_args(['--explicit-field', 'user_value', '--bool-field'])
+    explicit_dict = namespace_to_dict(explicit_args)
+    
+    # These should be included because they were explicitly set
+    assert 'explicit_field' in explicit_dict, "Explicitly set string field should be included"
+    assert explicit_dict['explicit_field'] == 'user_value'
+    assert 'bool_field' in explicit_dict, "Explicitly set boolean field should be included"
+    assert explicit_dict['bool_field'] is True
+
+
+def test_config_priority_with_mixed_sources():
+    """
+    Test the complete priority chain: CLI (explicit) > override_config > file > defaults.
+    This ensures the priority order is maintained and defaults don't interfere.
+    """
+    
+    class PriorityTestConfig(Config):
+        field1: str = Field(default="class_default")
+        field2: bool = Field(default=False) 
+        field3: int = Field(default=100)
+        field4: str = Field(default="another_default")
+    
+    # Config file values
+    toml_content = {
+        'field1': 'from_file',
+        'field2': True,
+        'field3': 200
+        # field4 not in file, should use class default
+    }
+    
+    # Override config values  
+    override_config = {
+        'field1': 'from_override',
+        # field2 not in override, should use file value
+        'field3': 300,
+        'field4': 'from_override'
+    }
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+        toml.dump(toml_content, f)
+        temp_file = f.name
+    
+    try:
+        parser = create_service_parser(
+            service_name="Priority",
+            description="Test priority",
+            config_class=PriorityTestConfig
+        )
+        
+        # CLI args - only set field1 explicitly
+        cli_args = parser.parse_args(['--field1', 'from_cli'])
+        
+        config = PriorityTestConfig.from_overrides(
+            override_config=override_config,
+            config_file=temp_file,
+            args=cli_args
+        )
+        
+        # Verify priority order
+        assert config.field1 == 'from_cli',      "CLI should have highest priority"
+        assert config.field2 is True,            "File should override class default"  
+        assert config.field3 == 300,             "Override should beat file"
+        assert config.field4 == 'from_override', "Override should beat class default"
+        
+    finally:
+        os.unlink(temp_file)

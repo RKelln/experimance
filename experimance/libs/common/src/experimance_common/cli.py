@@ -61,14 +61,15 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
         
         # Set the type
         if field_type == bool:
-            # For boolean fields, use store_true/store_false actions
+            # For boolean fields, use tracked actions to know when they were explicitly set
             if field_info.default is True:
-                arg_config['action'] = 'store_false'
+                arg_config['action'] = TrackedStoreFalseAction
                 arg_name = f"--no-{full_field_name.replace('_', '-').replace('.', '-')}"
             else:
-                arg_config['action'] = 'store_true'
+                arg_config['action'] = TrackedStoreTrueAction
         else:
             arg_config['type'] = field_type
+            arg_config['action'] = TrackedAction
             # Don't set metavar - it just adds noise to help text
             
         # Add help text from field description
@@ -159,11 +160,12 @@ def create_service_parser(
         description=f'Experimance {service_name} Service - {description}'
     )
     
-    # Standard arguments for all services
+    # Standard arguments for all services - use tracked actions to track when explicitly set
     parser.add_argument(
         '--log-level', '-l',
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
         default='INFO',
+        action=TrackedAction,
         help='Set the logging level (default: INFO)'
     )
     
@@ -171,6 +173,7 @@ def create_service_parser(
         parser.add_argument(
             '--config', '-c',
             default=default_config_path,
+            action=TrackedAction,
             help=f'Path to configuration file (default: {default_config_path})'
         )
     
@@ -270,3 +273,59 @@ def create_simple_main(
         ))
     
     return main
+
+
+import argparse
+import logging
+import traceback
+from typing import Dict, Any, Optional, Callable, Awaitable, Type, List
+
+from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
+
+
+class TrackedAction(argparse.Action):
+    """Custom argparse action that tracks which arguments were explicitly provided."""
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        # Ensure the namespace has our tracking set
+        if not hasattr(namespace, '_explicitly_set'):
+            namespace._explicitly_set = set()
+        
+        # Mark this argument as explicitly set
+        namespace._explicitly_set.add(self.dest)
+        
+        # Set the value as normal
+        setattr(namespace, self.dest, values)
+
+
+class TrackedStoreTrueAction(argparse._StoreTrueAction):
+    """Custom store_true action that tracks when the flag was explicitly provided."""
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        # Ensure the namespace has our tracking set
+        if not hasattr(namespace, '_explicitly_set'):
+            namespace._explicitly_set = set()
+        
+        # Mark this argument as explicitly set
+        namespace._explicitly_set.add(self.dest)
+        
+        # Call parent implementation
+        super().__call__(parser, namespace, values, option_string)
+
+
+class TrackedStoreFalseAction(argparse._StoreFalseAction):
+    """Custom store_false action that tracks when the flag was explicitly provided."""
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        # Ensure the namespace has our tracking set
+        if not hasattr(namespace, '_explicitly_set'):
+            namespace._explicitly_set = set()
+        
+        # Mark this argument as explicitly set
+        namespace._explicitly_set.add(self.dest)
+        
+        # Call parent implementation
+        super().__call__(parser, namespace, values, option_string)

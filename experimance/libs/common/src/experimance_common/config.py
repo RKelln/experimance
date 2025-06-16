@@ -47,6 +47,7 @@ def namespace_to_dict(namespace: argparse.Namespace) -> Dict[str, Any]:
     """Convert an argparse.Namespace to a nested dictionary.
     
     This handles nested keys specified with dots (e.g., 'zmq.port').
+    Only includes values that were explicitly set (not defaults).
     
     Args:
         namespace: Argparse namespace object
@@ -59,8 +60,17 @@ def namespace_to_dict(namespace: argparse.Namespace) -> Dict[str, Any]:
     # Convert namespace to flat dict
     flat_dict = vars(namespace)
     
+    # Check if the namespace has a tracking attribute for explicitly set arguments
+    # This is set by a custom argparse action
+    explicitly_set = getattr(namespace, '_explicitly_set', set())
+    
     for key, value in flat_dict.items():
+        # Skip None values
         if value is None:
+            continue
+            
+        # Skip values that weren't explicitly provided on command line
+        if key not in explicitly_set:
             continue
             
         # Handle nested keys with dots
