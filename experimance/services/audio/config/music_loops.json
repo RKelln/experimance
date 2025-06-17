@@ -7,12 +7,12 @@
         ],
         "pre_industrial": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/pre_industrial/flutes.wav"
             }
         ],
         "early_industrial": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/industrial/violins.wav"
             }
 
         ],
