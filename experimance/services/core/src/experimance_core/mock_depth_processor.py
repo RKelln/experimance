@@ -10,7 +10,11 @@ import time
 from random import randint
 from typing import Optional, Tuple, Generator, AsyncGenerator, List
 from experimance_core.config import CameraConfig
-from experimance_core.depth_processor import DepthProcessor, DepthFrame, calculate_change_score, mask_bright_area
+from experimance_core.depth_processor import DepthProcessor, DepthFrame
+from experimance_core.depth_utils import (
+    calculate_change_score, 
+    mask_bright_area
+)
 from experimance_common.image_utils import get_mock_images
 
 logger = logging.getLogger(__name__)

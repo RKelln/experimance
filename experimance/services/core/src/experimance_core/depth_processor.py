@@ -21,6 +21,18 @@ import numpy as np
 from experimance_common.image_utils import crop_to_content
 from experimance_core.config import CameraConfig, DepthFrame, CameraState
 from experimance_core.realsense_camera import RealSenseCamera
+from experimance_core.depth_utils import (
+    mask_bright_area, 
+    simple_obstruction_detect, 
+    is_blank_frame,
+    detect_difference,
+    calculate_change_score,
+    analyze_depth_values,
+    log_depth_analysis,
+    find_depth_peak,
+    log_peak_analysis,
+    debug_raw_depth_values
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,193 +43,6 @@ DEFAULT_OUTPUT_RESOLUTION = (1024, 1024)
 
 # Global variables for image processing
 change_threshold_resolution = (128, 128)
-kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-
-# ==================== UTILITY FUNCTIONS ====================
-
-def mask_bright_area(image: np.ndarray) -> np.ndarray:
-    """Create a mask for the bright area in the center of the image."""
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-    height, width = gray_image.shape
-    center = (width // 2, height // 2)
-    
-    # For tight depth ranges, we need adaptive thresholding
-    # Calculate image statistics to determine appropriate threshold
-    non_zero_pixels = gray_image[gray_image > 0]
-    if len(non_zero_pixels) == 0:
-        # No depth data, return circular fallback
-        logger.debug("No depth data found, using circular fallback mask")
-        fallback_mask = np.zeros((height, width), dtype=np.uint8)
-        radius = int(min(width, height) * 0.35)
-        cv2.circle(fallback_mask, center, radius, (255,), -1)
-        return fallback_mask
-
-    # Use adaptive threshold based on image statistics
-    non_zero_pixels = non_zero_pixels.astype(np.float32)  # Ensure correct dtype for mean/std
-    mean_val = np.mean(non_zero_pixels)
-    std_val = np.std(non_zero_pixels)
-    
-    # For tight depth ranges, use a higher threshold relative to the data range
-    # If std is very low (tight range), use mean - 0.5*std as threshold
-    # If std is higher (wide range), use fixed threshold
-    if std_val < 20:  # Tight depth range
-        threshold = max(10, int(mean_val - 0.5 * std_val))
-        logger.debug(f"Tight depth range detected: mean={mean_val:.1f}, std={std_val:.1f}, threshold={threshold:.1f}")
-    else:  # Normal depth range
-        threshold = 30
-        logger.debug(f"Normal depth range: using threshold={threshold}")
-    
-    _, thresholded = cv2.threshold(gray_image, threshold, 255, cv2.THRESH_BINARY)
-    
-    # Use floodFill to find contiguous bright area from center
-    flood_mask = np.zeros((height + 2, width + 2), np.uint8)
-    cv2.floodFill(thresholded, flood_mask, center, (255,), loDiff=(20,), upDiff=(20,), flags=cv2.FLOODFILL_MASK_ONLY)
-    
-    # Crop the flood fill mask
-    cropped_mask = flood_mask[1:-1, 1:-1]
-    
-    # Find and fill contours
-    contours, _ = cv2.findContours(cropped_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(cropped_mask, contours, -1, (255, 255, 255), thickness=cv2.FILLED)
-    
-    # Check if flood fill found a reasonable area (for sand bowl detection)
-    mask_area = cv2.countNonZero(cropped_mask)
-    total_area = height * width
-    mask_ratio = mask_area / total_area
-    
-    logger.debug(f"Mask area ratio: {mask_ratio:.3f} ({mask_area}/{total_area} pixels)")
-    
-    # If flood fill found too much (>80%) or too little (<5%), create a fallback circular mask
-    if mask_ratio < 0.05 or mask_ratio > 0.8:
-        logger.debug(f"Flood fill area ratio {mask_ratio:.3f} out of range, using fallback circular mask")
-        fallback_mask = np.zeros((height, width), dtype=np.uint8)
-        # Create circular mask sized for typical sand bowl (about 70% of smaller dimension)
-        radius = int(min(width, height) * 0.35)
-        cv2.circle(fallback_mask, center, radius, (255,), -1)
-        return fallback_mask
-    
-    return cropped_mask
-
-
-def simple_obstruction_detect(image: np.ndarray, size: Tuple[int, int] = (32, 32), pixel_threshold: int = 1, debug_save: bool = False, debug_prefix: str = "hand_detect") -> Optional[bool]:
-    """
-    Detect obstruction (hands) in the depth image.
-
-    This function checks if the center of a downscaled copy of the image has a significant number of black pixels
-    within a circular area, indicating an obstruction like a hand.
-    Args:
-        image: Input depth image as a numpy array.
-        size: Size to resize the image for processing (default is 32x32).
-        pixel_threshold: Minimum number of black pixels required to consider it an obstruction.
-        debug_save: If True, save debug images to disk
-        debug_prefix: Prefix for debug image filenames
-    If the image is blank or has no significant content, returns None.
-    
-    Returns:
-        True if obstruction detected, False if not, None if test fails
-    """
-    resized = cv2.resize(image, size)
-    
-    # Save debug image before processing if requested
-    if debug_save:
-        import os
-        debug_dir = "debug_hand_detection"
-        os.makedirs(debug_dir, exist_ok=True)
-        timestamp = int(time.time() * 1000)  # millisecond timestamp
-        #cv2.imwrite(f"{debug_dir}/{debug_prefix}_input_{timestamp}.png", resized)
-    
-    if is_blank_frame(resized):
-        return None
-    
-    thickness_multiplier = 0.3
-    circle_radius = int(size[0] * (1.0 + thickness_multiplier)) // 2
-    circle_center = (size[0] // 2, size[1] // 2)
-    
-    # Mask everything outside the circle as white
-    cv2.circle(resized, circle_center, circle_radius, (255, 255, 255), thickness=int(size[0] * thickness_multiplier))
-    
-    # Count black pixels inside the circle
-    not_black_pixels = cv2.countNonZero(resized)
-    black_pixels = size[0] * size[1] - not_black_pixels
-    
-    result = black_pixels > pixel_threshold
-    
-    # Add debug logging
-    if debug_save:
-        print(f"🔍 Hand detection: {black_pixels} black pixels (threshold: {pixel_threshold}) → {result}")
-        print(f"    Image stats: min={resized.min()}, max={resized.max()}, mean={resized.mean():.1f}")
-    
-    # Save debug image after processing if requested
-    if debug_save:
-        # Create a visualization showing the circle and detection result
-        debug_vis = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR) if len(resized.shape) == 2 else resized.copy()
-        color = (0, 255, 0) if result else (0, 0, 255)  # Green if hand detected, red if not
-        cv2.circle(debug_vis, circle_center, circle_radius, color, 2)
-        cv2.putText(debug_vis, f"Hand: {result} ({black_pixels}px)", (2, size[1]-2), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-        cv2.imwrite(f"{debug_dir}/{debug_prefix}_processed_{timestamp}.png", resized)
-    
-    return result
-
-
-def is_blank_frame(image: np.ndarray, threshold: float = 1.0) -> bool:
-    """Detect blank/empty frames."""
-    if np.std(image) < threshold:
-        logger.debug("Detected blank frame (std dev below threshold)")
-        return True
-    return False
-
-
-def detect_difference(image1: Optional[np.ndarray], image2: np.ndarray, threshold: int = 60) -> Tuple[float, np.ndarray]:
-    """
-    Calculate the amount of difference between two images.
-    
-    Returns:
-        Tuple of (difference_score, frame_to_use_for_next_comparison)
-    """
-    if image1 is None:
-        return threshold + 1, image2
-    
-    if is_blank_frame(image2):
-        return 0, image1
-    
-    # Calculate absolute difference
-    diff = cv2.absdiff(np.asanyarray(image1), np.asanyarray(image2))
-    _, binary_diff = cv2.threshold(diff, threshold, 255, cv2.THRESH_BINARY)
-    
-    # Morphological operations to remove noise
-    cleaned_diff = cv2.morphologyEx(binary_diff, cv2.MORPH_CLOSE, kernel)
-    cleaned_diff = cv2.morphologyEx(cleaned_diff, cv2.MORPH_OPEN, kernel)
-    
-    # Count non-zero pixels
-    difference_score = cv2.countNonZero(cleaned_diff)
-    
-    return difference_score, image2
-
-
-def calculate_change_score(current_frame: np.ndarray, previous_frame: np.ndarray, threshold: int) -> float:
-    """
-    Calculate change score between two frames.
-    
-    Returns:
-        Change score as a float between 0.0 and 1.0
-    """
-    try:
-        # Calculate absolute difference
-        diff = cv2.absdiff(current_frame, previous_frame)
-        
-        # Count pixels above threshold
-        changed_pixels = np.sum(diff > threshold)
-        total_pixels = diff.size
-        
-        if total_pixels == 0:
-            return 0.0
-        
-        return float(changed_pixels / total_pixels)
-        
-    except Exception as e:
-        logger.warning(f"Change score calculation failed: {e}")
-        return 0.0
-
 
 class DepthProcessor:
     """
@@ -284,36 +109,24 @@ class DepthProcessor:
         
         # Apply importance mask with stability logic (skip in lightweight mode)
         # Use previous frame's hand detection to avoid interference
-        mask_start = time.perf_counter()
         if self.config.lightweight_mode:
             masked_image = depth_image
             mask_time = 0
         else:
+            mask_start = time.perf_counter()
             # Get mask (optimized for locked state)
-            mask_compute_start = time.perf_counter()
             importance_mask = self._get_importance_mask(depth_image, self.previous_hand_detected)
-            mask_compute_time = time.perf_counter() - mask_compute_start
             
             # Apply mask efficiently using numpy operations (faster than cv2.bitwise_and)
-            mask_apply_start = time.perf_counter()
             # Convert binary mask (0/255) to boolean for efficient multiplication
             binary_mask = importance_mask > 0
             masked_image = depth_image * binary_mask.astype(depth_image.dtype)
-            mask_apply_time = time.perf_counter() - mask_apply_start
-            
+
             mask_time = time.perf_counter() - mask_start
             
             # Store debug image if enabled
             if self.config.debug_mode:
                 debug_importance_mask = importance_mask.copy()
-                
-            # Log detailed mask timing if verbose and periodic
-            if (self.config.verbose_performance and 
-                self.frame_number % 30 == 0 and 
-                mask_compute_time > 0.001):  # Only log if compute time > 1ms
-                logger.debug(f"🔧 Mask detail: compute={mask_compute_time*1000:.1f}ms, "
-                           f"apply={mask_apply_time*1000:.1f}ms, "
-                           f"locked={self.mask_locked}")
         
         # Crop and resize if enabled
         crop_start = time.perf_counter()
@@ -329,6 +142,12 @@ class DepthProcessor:
             
             # Save bounds once mask is locked
             if self.mask_locked:
+                if self.crop_bounds is None:
+                    # locking bounds for the first time
+                    if self.config.verbose_performance:
+                        # display depth analysis for first lock
+                        log_depth_analysis(cropped_image, self.config.min_depth, self.config.max_depth, self.frame_number)
+
                 self.crop_bounds = new_bounds
             
             # Store debug image if enabled (before resize)
@@ -376,7 +195,7 @@ class DepthProcessor:
         
         total_time = time.perf_counter() - frame_start
         
-        # Log performance based on configuration
+        # Log performance and depth analysis based on configuration
         if self.config.verbose_performance:
             # Show performance every 30 frames when verbose
             if self.frame_number % 30 == 0:
@@ -386,7 +205,7 @@ class DepthProcessor:
                            f"crop={crop_time*1000:.1f}ms, "
                            f"hand={hand_time*1000:.1f}ms, "
                            f"change={change_time*1000:.1f}ms, "
-                           f"total={total_time*1000:.1f}ms")
+                           f"total={total_time*1000:.1f}ms")      
         else:
             # Less frequent logging for normal operation
             if self.frame_number % 60 == 0:
@@ -560,12 +379,12 @@ class DepthProcessor:
             self.mask_history.append(current_mask.copy())
             
             # Keep only recent masks in history
-            if len(self.mask_history) > self.config.mask_stability_frames * 2:
-                self.mask_history = self.mask_history[-self.config.mask_stability_frames:]
+            if len(self.mask_history) > self.config.mask_stability_frames * 1.2:
+                self.f = self.mask_history[-self.config.mask_stability_frames:]
             
             # Check if we should lock the mask
             if not self.mask_locked and self.config.mask_lock_after_stable:
-                if self._is_mask_stable():
+                if self._is_mask_stable(): # expensive check
                     self.stable_mask = current_mask.copy()
                     self.mask_locked = True
                     logger.info(f"🔒 Mask locked after {len(self.mask_history)} stable frames")
@@ -583,7 +402,6 @@ class DepthProcessor:
             return self.stable_mask
         else:
             return current_mask
-
 
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Any, List
 
 import cv2
+from experimance_core.depth_utils import debug_raw_depth_values
 import numpy as np
 import pyrealsense2 as rs  # type: ignore
 
@@ -43,6 +44,7 @@ class RealSenseCamera:
         self.filters: List[Tuple[str, Any]] = []  # Post-processing filters
         self.retry_count = 0
         self.current_retry_delay = config.retry_delay
+        self._store_raw_depth = False  # Flag to store raw depth data for debugging
         
     async def initialize(self) -> bool:
         """Initialize the camera with retry logic."""
@@ -421,7 +423,15 @@ class RealSenseCamera:
             # Apply post-processing filters to depth frame
             filtered_depth_frame = self._apply_filters(depth_frame)
 
-        # Colorize depth frame
+        # Get raw depth data first (in millimeters)
+        # if self._store_raw_depth:
+        #     raw_depth_data = np.asanyarray(depth_frame.get_data())
+        #     # Store raw depth data for debugging (optional)
+        #     self._last_raw_depth = raw_depth_data
+        #raw_depth_data = np.asanyarray(depth_frame.get_data())
+        #debug_raw_depth_values(raw_depth_data)
+        
+        # Colorize depth frame for visualization
         depth_color_frame = self.colorizer.colorize(filtered_depth_frame)
         depth_colormap = np.asanyarray(depth_color_frame.get_data())
         
