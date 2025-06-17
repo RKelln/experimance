@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from experimance_core.experimance_core import ExperimanceCoreService
+from experimance_core.config import CoreServiceConfig
 from experimance_core.depth_finder_prototype import detect_difference, simple_obstruction_detect
 from experimance_common.test_utils import active_service
 
@@ -67,9 +68,22 @@ def mock_depth_frames():
 
 @pytest.fixture
 def test_config():
-    """Create a test configuration file path."""
-    # The service expects a config_path, not a config object
-    return "config.toml"  # Use the existing test config file
+    """Create a test configuration for the core service."""
+    config_overrides = {
+        "experimance_core": {
+            "name": "test_depth_core",
+            "heartbeat_interval": 1.0
+        },
+        "state_machine": {
+            "idle_timeout": 10.0,
+            "wilderness_reset": 60.0,
+            "interaction_threshold": 0.5,
+            "era_min_duration": 5.0
+        },
+        "visualize": False
+    }
+    
+    return CoreServiceConfig.from_overrides(override_config=config_overrides)
 
 
 @pytest.fixture
@@ -101,7 +115,7 @@ class TestDepthProcessingIntegration:
     async def test_depth_frame_processing_sequence(self, mock_depth_frames, test_config):
         """Test processing a sequence of depth frames."""
         # Create service with mocked dependencies
-        service = ExperimanceCoreService(config_path=test_config)
+        service = ExperimanceCoreService(config=test_config)
         
         # Mock the depth generator
         mock_gen = MockDepthGenerator(mock_depth_frames)
@@ -131,7 +145,7 @@ class TestDepthProcessingIntegration:
     async def test_hand_detection_state_changes(self, mock_depth_frames, test_config):
         """Test hand detection state changes trigger events."""
         # Create service with mocked dependencies
-        service = ExperimanceCoreService(config_path=test_config)
+        service = ExperimanceCoreService(config=test_config)
         
         # Mock the depth generator
         mock_gen = MockDepthGenerator(mock_depth_frames)
@@ -164,7 +178,7 @@ class TestDepthProcessingIntegration:
     async def test_interaction_score_accumulation(self, mock_depth_frames, test_config):
         """Test interaction score accumulation over time."""
         # Create service with mocked dependencies
-        service = ExperimanceCoreService(config_path=test_config)
+        service = ExperimanceCoreService(config=test_config)
         
         # Mock the depth generator
         mock_gen = MockDepthGenerator(mock_depth_frames)
@@ -193,7 +207,7 @@ class TestDepthProcessingIntegration:
     async def test_video_mask_publishing(self, mock_depth_frames, test_config):
         """Test video mask publishing on significant interaction."""
         # Create service with mocked dependencies
-        service = ExperimanceCoreService(config_path=test_config)
+        service = ExperimanceCoreService(config=test_config)
         
         # Mock the depth generator
         mock_gen = MockDepthGenerator(mock_depth_frames)

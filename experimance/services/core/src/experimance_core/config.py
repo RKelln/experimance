@@ -36,6 +36,11 @@ class ExperimanceCoreConfig(BaseModel):
         default=3.0,
         description="Heartbeat interval in seconds"
     )
+    
+    change_smoothing_queue_size: int = Field(
+        default=3,
+        description="Size of the change score queue for smoothing (minimum values reduce hand entry/exit artifacts)"
+    )
 
 
 class ZmqConfig(BaseModel):
@@ -196,7 +201,7 @@ class CameraConfig(BaseModel):
     
     # Change detection parameters for core service filtering
     significant_change_threshold: float = Field(
-        default=0.02,
+        default=0.01,
         description="Minimum change score to process a frame (0.0-1.0)"
     )
     

@@ -6,6 +6,7 @@ visualize = false            # enable visual debugging - display depth image and
 [experimance_core]
 name = "experimance_core_dev"
 heartbeat_interval = 3.0
+change_smoothing_queue_size = 4   # size of change score queue for smoothing (reduces hand artifacts)
 
 [state_machine]
 idle_timeout = 45.0          # seconds
@@ -25,13 +26,14 @@ colorizer_scheme = 2        # white to black
 #json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config
 
 # Processing parameters
-output_resolution = [1024, 1024]  # processed output size (width, height)
-change_threshold = 50       # threshold for depth change detection
-detect_hands = true         # enable hand detection
-crop_to_content = true      # crop output to content area
-warm_up_frames = 10         # number of frames to skip during warmup
-lightweight_mode = false   # skip some processing for higher FPS
-verbose_performance = true # show detailed performance timing
+output_resolution = [1024, 1024]     # processed output size (width, height)
+change_threshold = 10                # threshold for depth differences per pixel
+significant_change_threshold = 0.01  # threshold for depth change detection per image
+detect_hands = true          # enable hand detection
+crop_to_content = true       # crop output to content area
+warm_up_frames = 10          # number of frames to skip during warmup
+lightweight_mode = false     # skip some processing for higher FPS
+verbose_performance = true   # show detailed performance timing
 debug_mode = false           # include intermediate images for visualization
 
 # Mask stability and bowl detection

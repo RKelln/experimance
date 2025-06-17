@@ -11,6 +11,42 @@ This document outlines best practices for testing services in the Experimance pr
 from experimance_common.test_utils import active_service, wait_for_service_state
 ```
 
+## Config Loading for Service Tests
+
+When testing services, use the centralized config loading pattern instead of temporary config files:
+
+```python
+from experimance_core.config import CoreServiceConfig
+
+@pytest.mark.asyncio
+async def test_service_with_config():
+    # ✅ Recommended: Use config objects with overrides
+    override_config = {
+        "depth_processing": {
+            "frame_delay_after_hand": 10,
+            "change_threshold": 0.5
+        }
+    }
+    config = CoreServiceConfig.from_overrides(override_config=override_config)
+    service = ExperimanceCoreService(config=config)
+    
+    async with active_service(service) as active:
+        # Test with custom config values
+        assert active.config.depth_processing.frame_delay_after_hand == 10
+```
+
+**Key Points:**
+- Use `ServiceConfig.from_overrides(override_config=...)` to customize test configs
+- Pass config objects to services, not config file paths
+- Override only the specific values needed for your test
+- Avoid creating temporary config files in tests
+
+**Benefits:**
+- More reliable and faster tests (no file I/O)
+- Clear test intentions (config values visible in test code)
+- Better error handling and validation
+- Consistent with the project's config architecture
+
 ## Using the `active_service()` Context Manager
 
 The `active_service()` context manager is now available from the common library and is the recommended way to test services. It handles:

@@ -5,12 +5,11 @@ Following TDD approach for Phase 2: State Management
 """
 import asyncio
 import pytest
-import tempfile
-import toml
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
 
 from experimance_core.experimance_core import ExperimanceCoreService
+from experimance_core.config import CoreServiceConfig
 from experimance_common.schemas import Era, Biome
 
 
@@ -18,9 +17,9 @@ class TestExperimanceCoreServiceStateManagement:
     """Test state management functionality."""
 
     @pytest.fixture
-    def temp_config_file(self):
-        """Create a temporary config file for testing."""
-        config_data = {
+    def test_config(self):
+        """Create a test configuration for the core service."""
+        config_overrides = {
             "experimance_core": {
                 "name": "test_experimance_core_state",
                 "heartbeat_interval": 1.0
@@ -46,16 +45,19 @@ class TestExperimanceCoreServiceStateManagement:
                 "data_path": "data/",
                 "locations_file": "locations.json",
                 "developments_file": "anthropocene.json"
-            }
+            },
+            "visualize": False
         }
+        
+        return CoreServiceConfig.from_overrides(override_config=config_overrides)
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
             toml.dump(config_data, f)
             return f.name
 
-    def test_service_has_era_state_data_structures(self, temp_config_file):
+    def test_service_has_era_state_data_structures(self, test_config):
         """Test that service defines proper era state data structures."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Should have Era enumeration or constants
         assert hasattr(service, 'AVAILABLE_ERAS') or hasattr(service, 'Era')
@@ -64,9 +66,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert hasattr(service, 'transition_to_era')
         assert hasattr(service, 'can_transition_to_era')
 
-    def test_service_has_biome_state_data_structures(self, temp_config_file):
+    def test_service_has_biome_state_data_structures(self, test_config):
         """Test that service defines proper biome state data structures."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Should have Biome enumeration or constants
         assert hasattr(service, 'AVAILABLE_BIOMES') or hasattr(service, 'Biome')
@@ -75,9 +77,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert hasattr(service, 'select_biome_for_era')
 
     @pytest.mark.asyncio
-    async def test_era_progression_logic(self, temp_config_file):
+    async def test_era_progression_logic(self, test_config):
         """Test era progression state machine logic."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Test initial state
         assert service.current_era.value == "wilderness"
@@ -96,9 +98,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert next_era in ["future", "dystopia"]
 
     @pytest.mark.asyncio
-    async def test_idle_timeout_functionality(self, temp_config_file):
+    async def test_idle_timeout_functionality(self, test_config):
         """Test idle timeout and wilderness reset functionality."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Set service to a non-wilderness era
         service.current_era = Era.MODERN
@@ -115,9 +117,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert service.current_era.value == "wilderness"
         assert service.idle_timer == 0.0
 
-    def test_user_interaction_scoring(self, temp_config_file):
+    def test_user_interaction_scoring(self, test_config):
         """Test user interaction score calculation."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Test initial score
         assert service.user_interaction_score == 0.0
@@ -131,9 +133,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert service.user_interaction_score <= 1.0
 
     @pytest.mark.asyncio
-    async def test_era_change_triggers_events(self, temp_config_file):
+    async def test_era_change_triggers_events(self, test_config):
         """Test that era changes trigger appropriate events."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Mock the publish_message method
         service.publish_message = Mock()
@@ -150,9 +152,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert call_args["new_era"] == "pre_industrial"
 
     @pytest.mark.asyncio
-    async def test_state_persistence(self, temp_config_file):
+    async def test_state_persistence(self, test_config):
         """Test state can be saved and loaded."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Change state
         service.current_era = Era.MODERN
@@ -176,9 +178,9 @@ class TestExperimanceCoreServiceStateManagement:
         assert service.current_biome.value == Biome.DESERT
         assert service.user_interaction_score == 0.7
 
-    def test_state_validation_and_recovery(self, temp_config_file):
+    def test_state_validation_and_recovery(self, test_config):
         """Test state validation and error recovery."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Test invalid era
         assert not service.is_valid_era("invalid_era")

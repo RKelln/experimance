@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 import sys
+from collections import deque
 from experimance_core.depth_processor import DepthProcessor
 from experimance_core.depth_visualizer import DepthVisualizer
 import numpy as np
@@ -120,6 +121,10 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self.hand_detected: bool = False
         self.depth_difference_score: float = 0.0
         self.change_map: Optional[np.ndarray] = None  # Binary change map for display service
+        
+        # Change score smoothing with queue (take minimum to reduce artifacts)
+        queue_size = self.config.experimance_core.change_smoothing_queue_size
+        self.change_score_queue: deque = deque(maxlen=queue_size)
         
         # Retry control for depth processing
         self.depth_retry_count = 0
@@ -274,6 +279,10 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 
                 # Publish interaction sound trigger
                 await self._publish_interaction_sound(hand_detected)
+                
+                # Clear change score queue when hand state changes to reset smoothing
+                self.change_score_queue.clear()
+                logger.debug("Cleared change score queue due to hand state change")
             
             # Always update the previous frame for interaction scoring
             if depth_image is not None:
@@ -287,7 +296,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 return
             
             # Initialize change score for this frame
-            change_score = 0.0
+            raw_change_score = 0.0
             
             # Calculate change compared to last PROCESSED frame (not just previous frame)
             if self.last_processed_frame is not None and depth_image is not None:
@@ -295,34 +304,47 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 mask = self._create_comparison_mask(depth_image)
                 
                 # Calculate difference with noise reduction
-                change_score, change_map = self._calculate_change_with_mask(
+                raw_change_score, change_map = self._calculate_change_with_mask(
                     self.last_processed_frame, depth_image, mask
                 )
                 
-                # Store change map for display service
-                self.change_map = change_map
+                # Add raw change score to queue for smoothing
+                self.change_score_queue.append(raw_change_score)
                 
-                # Only process if change is significant enough
-                change_threshold = getattr(self.config.camera, 'significant_change_threshold', 0.02)
-                if change_score < change_threshold:
-                    #logger.debug(f"Change too small ({change_score:.4f}), skipping frame")
+                # Use minimum from queue to reduce artifacts from hand entry/exit
+                if self.change_score_queue.maxlen is not None and len(self.change_score_queue) >= self.change_score_queue.maxlen:
+                    smoothed_change_score = min(self.change_score_queue)
+                else:
+                    smoothed_change_score = 0
+                
+                logger.debug(f"Change scores - raw: {raw_change_score:.4f}, smoothed (min): {smoothed_change_score:.4f}, queue: {list(self.change_score_queue)}")
+                
+                # Only process if smoothed change is significant enough
+                change_threshold = getattr(self.config.camera, 'significant_change_threshold', 0.01)
+                if smoothed_change_score < change_threshold:
+                    logger.debug(f"Smoothed change too small ({smoothed_change_score:.4f}), skipping frame")
                     # Show visualization even for small changes
-                    self._visualize_depth_processing(depth_frame, change_score)
+                    self._visualize_depth_processing(depth_frame, smoothed_change_score)
                     return
                 
-                logger.debug(f"Significant change detected ({change_score:.4f}), processing frame")
+                logger.debug(f"Significant smoothed change detected ({smoothed_change_score:.4f}), processing frame")
                 
-                # Update depth difference score for interaction calculations
-                self.depth_difference_score = change_score
+                self.change_score_queue.clear()  # Clear queue after processing significant change
+
+                # Store change map for display service
+                self.change_map = change_map
+
+                # Update depth difference score for interaction calculations (use smoothed score)
+                self.depth_difference_score = smoothed_change_score
                 
-                # Calculate interaction intensity (currently just using change score)
-                interaction_intensity = change_score
+                # Calculate interaction intensity (currently just using smoothed change score)
+                interaction_intensity = smoothed_change_score
                 
                 # Update interaction score
                 self.calculate_interaction_score(interaction_intensity)
                 
-                # Publish change map to display service
-                await self._publish_change_map(change_map, change_score)
+                # Publish change map to display service (with smoothed score)
+                await self._publish_change_map(change_map, smoothed_change_score)
             
             # This frame becomes our new reference frame
             if depth_image is not None:
@@ -331,7 +353,9 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 logger.debug("Updated reference frame for change detection")
             
             # Visualization for debugging (always show for processed frames)
-            self._visualize_depth_processing(depth_frame, change_score)
+            # Use smoothed score if available, otherwise raw score
+            display_score = smoothed_change_score if 'smoothed_change_score' in locals() else raw_change_score
+            self._visualize_depth_processing(depth_frame, display_score, self.depth_difference_score)
             
         except Exception as e:
             logger.error(f"Error processing depth frame: {e}")
@@ -923,13 +947,16 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         
         logger.info("Experimance Core Service stopped")
 
-    def _visualize_depth_processing(self, depth_frame: DepthFrame, change_score: float = 0.0):
+    def _visualize_depth_processing(self, depth_frame: DepthFrame, 
+                                    change_score: float = 0.0, significant_change: float = 0.0):
         """
         Display depth frame with processing flags for visual debugging.
         
         Args:
             depth_frame: Current depth frame data
             change_score: Current change detection score
+            significant_change: Last significant change score (for visualization)
+            change_map: Optional binary change map for visualization
         """
         if not self.config.visualize:
             return
@@ -957,9 +984,16 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             thickness = 2
             
             # Status indicators
+            queue_size = self.config.experimance_core.change_smoothing_queue_size
+            queue_info = f"Queue({len(self.change_score_queue)}/{queue_size}): " + str([f"{x:.3f}" for x in list(self.change_score_queue)])
+            queue_min = min(self.change_score_queue) if len(self.change_score_queue) > 0 else 0.0
+            
             status_text = [
                 f"Hand Detected: {'YES' if hand_detected else 'NO'}",
-                f"Change Score: {change_score:.4f}",
+                f"Change Score (raw): {change_score:.4f}",
+                f"Change Score (min): {queue_min:.4f}",
+                f"Last significant change: {significant_change:.4f}",
+                queue_info,
                 f"Era: {self.current_era.value}",
                 f"Biome: {self.current_biome.value}",
                 f"Interaction Score: {self.user_interaction_score:.3f}",
@@ -969,12 +1003,20 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             
             # Color coding
             hand_color = (0, 0, 255) if hand_detected else (0, 255, 0)  # Red if hands, green if no hands
-            change_color = (0, 255, 255) if change_score > 0.02 else (128, 128, 128)  # Yellow if significant change
+            change_color = (0, 255, 255) if queue_min > 0.02 else (128, 128, 128)  # Yellow if significant change
+            queue_color = (255, 255, 255)  # White for queue info
             
             # Draw status text
             y_offset = 30
             for i, text in enumerate(status_text):
-                color = hand_color if i == 0 else change_color if i == 1 else (255, 255, 255)
+                if i == 0:
+                    color = hand_color
+                elif i == 1 or i == 2:
+                    color = change_color
+                elif i == 3:
+                    color = queue_color
+                else:
+                    color = (255, 255, 255)
                 cv2.putText(overlay, text, (10, y_offset + i * 25), font, font_scale, color, thickness)
             
             # Show change map if available
@@ -989,7 +1031,12 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 cv2.addWeighted(overlay, 1 - alpha, change_colored, alpha, 0, overlay)
             
             # Add frame border based on processing state
-            border_color = (0, 0, 255) if hand_detected else (0, 255, 0)  # Red if hands, green if processing
+            if hand_detected:
+                border_color = (0, 0, 255)  # Red if hands detected
+            elif queue_min > 0.02:
+                border_color = (0, 255, 255)  # Cyan if significant change detected
+            else:
+                border_color = (0, 255, 0)  # Green if processing normally
             cv2.rectangle(overlay, (0, 0), (overlay.shape[1]-1, overlay.shape[0]-1), border_color, 3)
             
             # Show the visualization

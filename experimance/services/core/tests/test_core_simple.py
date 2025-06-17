@@ -15,44 +15,42 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from experimance_core.experimance_core import ExperimanceCoreService, ERA_PROGRESSION, ERA_BIOMES
+from experimance_core.config import CoreServiceConfig
 from experimance_common.schemas import Era, Biome
 
 
 @pytest.fixture
-def mock_config_file():
-    """Create a temporary config file for testing."""
-    config_content = """
-[experimance_core]
-name = "test_core"
-heartbeat_interval = 1.0
-
-[state_machine]
-idle_timeout = 10.0
-wilderness_reset = 60.0
-interaction_threshold = 0.5
-era_min_duration = 5.0
-
-[depth_processing]
-change_threshold = 25
-min_depth = 0.4
-max_depth = 0.6
-resolution = [640, 480]
-output_size = [512, 512]
-"""
+def test_config():
+    """Create a test configuration for the core service."""
+    config_overrides = {
+        "experimance_core": {
+            "name": "test_core",
+            "heartbeat_interval": 1.0
+        },
+        "state_machine": {
+            "idle_timeout": 10.0,
+            "wilderness_reset": 60.0,
+            "interaction_threshold": 0.5,
+            "era_min_duration": 5.0
+        },
+        "depth_processing": {
+            "change_threshold": 25,
+            "min_depth": 0.4,
+            "max_depth": 0.6,
+            "resolution": [640, 480],
+            "output_size": [512, 512]
+        },
+        "visualize": False
+    }
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
-        f.write(config_content)
-        f.flush()
-        yield f.name
-    
-    Path(f.name).unlink()
+    return CoreServiceConfig.from_overrides(override_config=config_overrides)
 
 
 @pytest.fixture
-def mock_service(mock_config_file):
+def mock_service(test_config):
     """Create a mock service for testing."""
     with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
-        service = ExperimanceCoreService(config_path=mock_config_file)
+        service = ExperimanceCoreService(config=test_config)
         service.publish_message = AsyncMock()
         return service
 

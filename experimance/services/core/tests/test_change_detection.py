@@ -8,7 +8,7 @@ import cv2
 from unittest.mock import AsyncMock, MagicMock
 
 from experimance_core.experimance_core import ExperimanceCoreService
-from experimance_core.config import DepthFrame
+from experimance_core.config import DepthFrame, CoreServiceConfig
 
 
 class TestChangeDetection:
@@ -17,7 +17,7 @@ class TestChangeDetection:
     @pytest.fixture
     def mock_service(self):
         """Create a mock service for testing."""
-        service = ExperimanceCoreService()
+        service = ExperimanceCoreService(config=CoreServiceConfig())
         service.config = MagicMock()
         service.config.camera.significant_change_threshold = 0.02
         service.config.camera.change_threshold = 30
@@ -30,7 +30,6 @@ class TestChangeDetection:
         # Mock the publishing methods
         service._publish_interaction_sound = AsyncMock()
         service._publish_change_map = AsyncMock()
-        service._publish_video_mask = AsyncMock()
         service.calculate_interaction_score = MagicMock()
         
         return service

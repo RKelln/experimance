@@ -19,7 +19,7 @@ class TestExperimanceCoreServiceInfrastructure:
     """Test basic service infrastructure and lifecycle."""
 
     @pytest.fixture
-    def temp_config_file(self):
+    def test_config(self):
         """Create a temporary config file for testing."""
         config_data = {
             "experimance_core": {
@@ -54,17 +54,17 @@ class TestExperimanceCoreServiceInfrastructure:
             toml.dump(config_data, f)
             return f.name
 
-    def test_service_can_be_instantiated(self, temp_config_file):
+    def test_service_can_be_instantiated(self, test_config):
         """Test that ExperimanceCoreService can be instantiated with config."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         assert service is not None
         assert service.service_name == "test_experimance_core"
         assert service.state == ServiceState.INITIALIZED
 
-    def test_service_loads_configuration(self, temp_config_file):
+    def test_service_loads_configuration(self, test_config):
         """Test that service properly loads configuration from file."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Check that configuration is loaded
         assert hasattr(service, 'config')
@@ -72,9 +72,9 @@ class TestExperimanceCoreServiceInfrastructure:
         assert service.config.state_machine.idle_timeout == 45.0
         assert service.config.depth_processing.change_threshold == 50
 
-    def test_service_uses_correct_zmq_ports(self, temp_config_file):
+    def test_service_uses_correct_zmq_ports(self, test_config):
         """Test that service configures correct ZMQ ports for unified events channel."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Should use the unified events port
         expected_port = DEFAULT_PORTS["events"]
@@ -82,9 +82,9 @@ class TestExperimanceCoreServiceInfrastructure:
         assert service.sub_address == f"tcp://localhost:{expected_port}"
 
     @pytest.mark.asyncio
-    async def test_service_lifecycle_start_stop(self, temp_config_file):
+    async def test_service_lifecycle_start_stop(self, test_config):
         """Test basic service lifecycle - start and stop."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Service should start in INITIALIZED state
         assert service.state == ServiceState.INITIALIZED
@@ -98,9 +98,9 @@ class TestExperimanceCoreServiceInfrastructure:
         assert service.state == ServiceState.STOPPED
 
     @pytest.mark.asyncio
-    async def test_service_registers_message_handlers(self, temp_config_file):
+    async def test_service_registers_message_handlers(self, test_config):
         """Test that service registers handlers for expected message types."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Start service to initialize handlers
         await service.start()
@@ -114,9 +114,9 @@ class TestExperimanceCoreServiceInfrastructure:
             
         await service.stop()
 
-    def test_service_has_required_attributes(self, temp_config_file):
+    def test_service_has_required_attributes(self, test_config):
         """Test that service has all required attributes for core functionality."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # State management attributes
         assert hasattr(service, 'current_era')
@@ -136,14 +136,14 @@ class TestExperimanceCoreServiceInfrastructure:
     async def test_service_handles_configuration_errors(self):
         """Test that service handles missing or invalid configuration gracefully."""
         # Test with non-existent config file - should not raise error but use defaults
-        service = ExperimanceCoreService(config_path="nonexistent.toml")
+        service = ExperimanceCoreService(config="nonexistent.toml")
         assert service is not None
         # Should use default configuration values
         assert service.config.experimance_core.name == "experimance_core"
 
-    def test_service_inherits_from_correct_base_class(self, temp_config_file):
+    def test_service_inherits_from_correct_base_class(self, test_config):
         """Test that service properly inherits from ZMQPublisherSubscriberService."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Should have publisher and subscriber capabilities
         assert hasattr(service, 'publish_message')
@@ -151,10 +151,10 @@ class TestExperimanceCoreServiceInfrastructure:
 
     @pytest.mark.skip(reason="ZmqPublisher mock needs adjustment - functionality works correctly")
     @pytest.mark.asyncio 
-    async def test_service_publishes_heartbeat(self, temp_config_file):
+    async def test_service_publishes_heartbeat(self, test_config):
         """Test that service publishes heartbeat messages."""
         with patch('experimance_common.zmq.zmq_utils.ZmqPublisher') as mock_publisher:
-            service = ExperimanceCoreService(config_path=temp_config_file)
+            service = ExperimanceCoreService(config=test_config)
             
             await service.start()
             
@@ -164,9 +164,9 @@ class TestExperimanceCoreServiceInfrastructure:
             
             await service.stop()
 
-    def test_service_has_state_persistence_attributes(self, temp_config_file):
+    def test_service_has_state_persistence_attributes(self, test_config):
         """Test that service has attributes for state persistence."""
-        service = ExperimanceCoreService(config_path=temp_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         assert hasattr(service, 'session_start_time')
         assert hasattr(service, 'era_progression_timer')

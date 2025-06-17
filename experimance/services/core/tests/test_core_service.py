@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from experimance_core.experimance_core import ExperimanceCoreService, ERA_PROGRESSION, ERA_BIOMES
+from experimance_core.config import CoreServiceConfig
 from experimance_common.schemas import Era, Biome
 from experimance_common.test_utils import active_service
 from experimance_common.service_state import ServiceState
@@ -33,51 +34,48 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def mock_config_file():
-    """Create a temporary config file for testing."""
-    config_content = """
-[experimance_core]
-name = "test_core"
-heartbeat_interval = 1.0
-
-[state_machine]
-idle_timeout = 10.0
-wilderness_reset = 60.0
-interaction_threshold = 0.5
-era_min_duration = 5.0
-
-[depth_processing]
-change_threshold = 25
-min_depth = 0.4
-max_depth = 0.6
-resolution = [640, 480]
-output_size = [512, 512]
-
-[audio]
-tag_config_path = "config/audio_tags.json"
-interaction_sound_duration = 1.0
-
-[prompting]
-data_path = "data/"
-locations_file = "locations.json"
-developments_file = "anthropocene.json"
-"""
+def test_config():
+    """Create a test configuration for the core service."""
+    # Use config overrides instead of TOML files for testing
+    config_overrides = {
+        "experimance_core": {
+            "name": "test_core",
+            "heartbeat_interval": 1.0
+        },
+        "state_machine": {
+            "idle_timeout": 10.0,
+            "wilderness_reset": 60.0,
+            "interaction_threshold": 0.5,
+            "era_min_duration": 5.0
+        },
+        "depth_processing": {
+            "change_threshold": 25,
+            "min_depth": 0.4,
+            "max_depth": 0.6,
+            "resolution": [640, 480],
+            "output_size": [512, 512]
+        },
+        "audio": {
+            "tag_config_path": "config/audio_tags.json",
+            "interaction_sound_duration": 1.0
+        },
+        "prompting": {
+            "data_path": "data/",
+            "locations_file": "locations.json",
+            "developments_file": "anthropocene.json"
+        },
+        "visualize": False  # Disable visualization for tests
+    }
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
-        f.write(config_content)
-        f.flush()
-        yield f.name
-    
-    # Cleanup
-    Path(f.name).unlink()
+    return CoreServiceConfig.from_overrides(override_config=config_overrides)
 
 
 @pytest.fixture
-def core_service(mock_config_file):
+def core_service(test_config):
     """Create a core service instance for testing."""
     # Mock ZMQ initialization to avoid network dependencies
     with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
-        service = ExperimanceCoreService(config_path=mock_config_file)
+        service = ExperimanceCoreService(config=test_config)
         
         # Mock parent class methods and attributes
         service.publish_message = AsyncMock()
@@ -406,7 +404,7 @@ async def test_service_lifecycle():
          patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.start') as mock_start, \
          patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.stop') as mock_stop:
         
-        service = ExperimanceCoreService()
+        service = ExperimanceCoreService(config=mock_config_file)
         
         # Mock required methods
         service.publish_message = AsyncMock()

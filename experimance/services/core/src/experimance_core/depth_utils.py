@@ -102,12 +102,15 @@ def simple_obstruction_detect(image: np.ndarray, size: Tuple[int, int] = (32, 32
     if is_blank_frame(resized):
         return None
     
+    # Set nearly white pixels to black (hands sometimes appear at 255)
+    resized[resized > 254] = 0
+
     thickness_multiplier = 0.3
     circle_radius = int(size[0] * (1.0 + thickness_multiplier)) // 2
     circle_center = (size[0] // 2, size[1] // 2)
     
-    # Mask everything outside the circle as white
-    cv2.circle(resized, circle_center, circle_radius, (255, 255, 255), thickness=int(size[0] * thickness_multiplier))
+    # Mask everything outside the circle as gray
+    cv2.circle(resized, circle_center, circle_radius, (128, 128, 128), thickness=int(size[0] * thickness_multiplier))
     
     # Count black pixels inside the circle
     not_black_pixels = cv2.countNonZero(resized)
