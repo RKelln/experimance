@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from experimance_core.experimance_core import ExperimanceCoreService
 from experimance_core.config import DepthFrame, CoreServiceConfig
+from .mocks import create_mock_core_service
 
 
 class TestChangeDetection:
@@ -17,20 +18,27 @@ class TestChangeDetection:
     @pytest.fixture
     def mock_service(self):
         """Create a mock service for testing."""
-        service = ExperimanceCoreService(config=CoreServiceConfig())
-        service.config = MagicMock()
-        service.config.camera.significant_change_threshold = 0.02
-        service.config.camera.change_threshold = 30
-        service.config.camera.edge_erosion_pixels = 5  # Smaller value for 100x100 test images
+        config_overrides = {
+            "experimance_core": {
+                "change_smoothing_queue_size": 1  # Small queue for testing
+            },
+            "camera": {
+                "significant_change_threshold": 0.01,  # Lower threshold for testing
+                "change_threshold": 30,
+                "edge_erosion_pixels": 5  # Smaller value for 100x100 test images
+            }
+        }
+        service = create_mock_core_service(config_overrides)
+        
+        # Additional test-specific setup
         service.hand_detected = False
         service.last_processed_frame = None
         service.change_map = None
         service.depth_difference_score = 0.0
-        
-        # Mock the publishing methods
-        service._publish_interaction_sound = AsyncMock()
-        service._publish_change_map = AsyncMock()
         service.calculate_interaction_score = MagicMock()
+        
+        # Mock the visualization method to avoid pygame dependencies
+        service._visualize_depth_processing = MagicMock()
         
         return service
 

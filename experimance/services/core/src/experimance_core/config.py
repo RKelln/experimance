@@ -98,7 +98,7 @@ class CameraConfig(BaseModel):
     """Camera configuration for the robust camera system."""
     
     resolution: Tuple[int, int] = Field(
-        default=(640, 480),
+        default=(1280, 720),
         description="Camera resolution (width, height)"
     )
     
@@ -108,7 +108,7 @@ class CameraConfig(BaseModel):
     )
     
     align_frames: bool = Field(
-        default=True,
+        default=False,
         description="Enable frame alignment"
     )
     
@@ -140,7 +140,7 @@ class CameraConfig(BaseModel):
     
     change_threshold: int = Field(
         default=60,
-        description="Threshold for change detection"
+        description="Threshold for depth change detection, per pixel (0-255)"
     )
     
     detect_hands: bool = Field(
@@ -151,11 +151,6 @@ class CameraConfig(BaseModel):
     crop_to_content: bool = Field(
         default=True,
         description="Crop output to content area"
-    )
-    
-    warm_up_frames: int = Field(
-        default=10,
-        description="Number of frames to skip during warmup"
     )
     
     lightweight_mode: bool = Field(
@@ -181,7 +176,7 @@ class CameraConfig(BaseModel):
     
     mask_stability_threshold: float = Field(
         default=0.95,
-        description="Similarity threshold for mask stability"
+        description="Similarity threshold for mask stability, per image (0.0-1.0)"
     )
     
     mask_lock_after_stable: bool = Field(
@@ -190,7 +185,7 @@ class CameraConfig(BaseModel):
     )
     
     mask_allow_updates: bool = Field(
-        default=True,
+        default=False,
         description="Allow mask updates when bowl moves significantly"
     )
     

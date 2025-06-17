@@ -716,6 +716,47 @@ uv run python tests/test_camera.py --functions     # Test image functions
 uv run python tests/test_camera.py --interactive   # Interactive menu
 ```
 
+### Basic Mock Processor Testing
+```python
+@pytest.mark.asyncio
+async def test_basic_depth_processing():
+    processor = MockDepthProcessor(camera_config)
+    await processor.initialize()
+    
+    try:
+        async for frame in processor.stream_frames():
+            assert isinstance(frame, DepthFrame)
+            assert frame.depth_image is not None
+            break
+    finally:
+        processor.stop()
+```
+
+### Configurable Hand Detection
+```python
+processor.set_hand_detection_rate(0.0)  # No hands
+processor.set_hand_detection_rate(1.0)  # Always hands
+```
+
+### Deterministic Testing
+```python
+test_frames = [
+    (depth_image1, False),
+    (depth_image2, True),
+]
+processor.set_frame_sequence(test_frames)
+```
+
+### Core Service Integration
+```python
+with patch('experimance_core.experimance_core.create_depth_processor') as mock_factory:
+    mock_processor = MockDepthProcessor(camera_config)
+    mock_factory.return_value = mock_processor
+    
+    service = ExperimanceCoreService(config=test_config)
+    # Test service with mock processor
+```
+
 ### Visualization Mode
 
 The test script includes a powerful visualization mode that displays all intermediate processing steps in real-time:

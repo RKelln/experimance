@@ -33,6 +33,10 @@ class MockDepthProcessor(DepthProcessor):
         self.mock_images_path = mock_images_path
         self.mock_generator = None
         
+        # Mock-specific configuration
+        self.hand_detection_rate = 0.05  # 5% chance by default
+        self.error_simulation_count = 0
+        
         # Mask stability tracking (inherited behavior)
         self.stable_mask: Optional[np.ndarray] = None
         self.mask_locked = False
@@ -44,12 +48,14 @@ class MockDepthProcessor(DepthProcessor):
         
     async def initialize(self) -> bool:
         """Initialize mock processor."""
-        if self.mock_images_path:
-            mock_images = get_mock_images(self.mock_images_path)
-            self.mock_generator = self._create_mock_generator(mock_images)
-        else:
-            # Generate random mock frames
-            self.mock_generator = self._random_mock_generator()
+        # Only create a generator if one hasn't been set already
+        if self.mock_generator is None:
+            if self.mock_images_path:
+                mock_images = get_mock_images(self.mock_images_path)
+                self.mock_generator = self._create_mock_generator(mock_images)
+            else:
+                # Generate random mock frames
+                self.mock_generator = self._random_mock_generator()
         
         logger.info("Mock depth processor initialized")
         return True
@@ -66,10 +72,15 @@ class MockDepthProcessor(DepthProcessor):
                 depth_image = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
                 if depth_image is not None:
                     depth_image = cv2.resize(depth_image, self.config.output_resolution)
-                    hand_detected = randint(0, 100) < 10  # 10% chance of hands
+                    hand_detected = randint(0, 100) < (self.hand_detection_rate * 100)
                     yield depth_image, hand_detected
                 else:
-                    yield None, False
+                    # If image fails to load, generate a simple gradient instead
+                    height, width = self.config.output_resolution
+                    gradient_image = np.zeros((height, width), dtype=np.uint8)
+                    for y in range(height):
+                        gradient_image[y, :] = int((y / height) * 255)
+                    yield gradient_image, False
     
     def _random_mock_generator(self) -> Generator:
         """Generate realistic mock depth frames using Perlin-like noise."""
@@ -140,7 +151,7 @@ class MockDepthProcessor(DepthProcessor):
             
             # Less frequent "hand" disturbance for more stable visualization
             hand_detected = False
-            if np.random.random() < 0.05:  # Reduced from 12% to 5% chance
+            if np.random.random() < self.hand_detection_rate:
                 hand_detected = True
                 # Add circular disturbance to simulate hand
                 hand_x = center_x + np.random.randint(-width//4, width//4)
@@ -243,12 +254,15 @@ class MockDepthProcessor(DepthProcessor):
         try:
             target_frame_time = 1.0 / self.config.fps
             
-            while True:
+            while self.is_initialized:  # Check if still initialized/running
                 frame_start = time.time()
                 frame = await self.get_processed_frame()
                 
                 if frame is not None:
                     yield frame
+                else:
+                    # If frame is None, the generator was stopped
+                    break
                 
                 # Adaptive frame rate control
                 frame_duration = time.time() - frame_start
@@ -262,4 +276,29 @@ class MockDepthProcessor(DepthProcessor):
         except Exception as e:
             logger.error(f"Error in mock depth frame stream: {e}")
         finally:
-            self.stop()
+            logger.info("Mock depth frame stream ended")
+    
+    def set_hand_detection_rate(self, rate: float):
+        """Set the rate of hand detection for testing (0.0 to 1.0)."""
+        self.hand_detection_rate = rate
+    
+    def set_frame_sequence(self, frames: List[Tuple[np.ndarray, bool]]):
+        """Set a specific sequence of frames for deterministic testing."""
+        def frame_sequence_generator():
+            while True:
+                for depth_image, hand_detected in frames:
+                    yield depth_image, hand_detected
+        
+        self.mock_generator = frame_sequence_generator()
+    
+    def simulate_camera_error(self, error_count: int = 1):
+        """Simulate camera errors for testing error handling."""
+        self.error_simulation_count = error_count
+    
+    def get_frame_statistics(self) -> dict:
+        """Get statistics about generated frames for testing validation."""
+        return {
+            "total_frames": self.frame_number,
+            "has_generator": self.mock_generator is not None,
+            "is_initialized": self.is_initialized
+        }
