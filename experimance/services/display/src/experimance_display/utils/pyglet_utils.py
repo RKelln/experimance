@@ -20,14 +20,14 @@ from experimance_common.constants import BASE64_PNG_PREFIX
 logger = logging.getLogger(__name__)
 
 """
-Usage pattern for any renderer:
+Recommended usage pattern for any renderer handling ZMQ messages:
 
 ```python
-    from experimance_display.utils.pyglet_utils import load_pyglet_image_from_data, cleanup_temp_file, create_positioned_sprite
+    from experimance_display.utils.pyglet_utils import load_pyglet_image_from_message, cleanup_temp_file, create_positioned_sprite
 
-    # Load image from any source
-    pyglet_image, temp_file_path = load_pyglet_image_from_data(
-        image_data=your_image_data,  # file path, base64, or PIL Image
+    # Load image from ZMQ message (handles all transport modes automatically)
+    pyglet_image, temp_file_path = load_pyglet_image_from_message(
+        message=zmq_message,  # ZMQ message from prepare_image_message
         image_id="my_image",
         set_center_anchor=True
     )
@@ -40,69 +40,6 @@ Usage pattern for any renderer:
         cleanup_temp_file(temp_file_path)
 ```
 """
-
-def load_pyglet_image_from_data(
-    image_data: Union[str, Path, PILImage.Image],
-    image_id: Optional[str] = None,
-    set_center_anchor: bool = True
-) -> Tuple[Optional[pyglet.image.AbstractImage], Optional[str]]:
-    """Load a pyglet image from various data sources.
-    
-    Args:
-        image_data: Image data - can be:
-            - File path (str or Path)
-            - Base64 encoded string (with data:image prefix)
-            - PIL Image object
-        image_id: Optional identifier for logging
-        set_center_anchor: Whether to set anchor to center of image
-        
-    Returns:
-        Tuple of (pyglet_image, temp_file_path) or (None, None) if failed
-        temp_file_path is returned for cleanup if a temporary file was created
-    """
-    try:
-        pyglet_image = None
-        temp_file_path = None
-        
-        if isinstance(image_data, (str, Path)):
-            if isinstance(image_data, str) and image_data.startswith(BASE64_PNG_PREFIX):
-                # Handle base64 encoded image
-                logger.debug(f"Loading pyglet image from base64 data: {image_id or 'unknown'}")
-                pyglet_image, temp_file_path = _load_pyglet_from_base64(image_data)
-            else:
-                # Handle file path
-                file_path = str(image_data)
-                logger.debug(f"Loading pyglet image from file: {file_path}")
-                
-                if not os.path.isfile(file_path):
-                    logger.error(f"Image file not found: {file_path}")
-                    return None, None
-                
-                pyglet_image = pyglet.image.load(file_path)
-                
-        elif isinstance(image_data, PILImage.Image):
-            # Handle PIL Image
-            logger.debug(f"Loading pyglet image from PIL Image: {image_id or 'unknown'}")
-            pyglet_image, temp_file_path = _load_pyglet_from_pil(image_data)
-        
-        else:
-            logger.error(f"Unsupported image_data type: {type(image_data)}")
-            return None, None
-        
-        if pyglet_image and set_center_anchor:
-            # Set anchor point to center
-            pyglet_image.anchor_x = pyglet_image.width // 2
-            pyglet_image.anchor_y = pyglet_image.height // 2
-        
-        if pyglet_image:
-            logger.debug(f"Successfully loaded pyglet image: {image_id or 'unknown'}")
-        
-        return pyglet_image, temp_file_path
-        
-    except Exception as e:
-        logger.error(f"Error loading pyglet image {image_id or 'unknown'}: {e}", exc_info=True)
-        return None, None
-
 
 def _load_pyglet_from_base64(base64_data: str) -> Tuple[Optional[pyglet.image.AbstractImage], Optional[str]]:
     """Load pyglet image from base64 data.

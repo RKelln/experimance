@@ -69,7 +69,7 @@ class DisplayService(ZmqSubscriberService):
                 MessageType.LOOP_READY,
                 MessageType.TEXT_OVERLAY,
                 MessageType.REMOVE_TEXT,
-                MessageType.VIDEO_MASK,
+                MessageType.CHANGE_MAP,
                 MessageType.ERA_CHANGED,
             ]
         )
@@ -271,7 +271,7 @@ class DisplayService(ZmqSubscriberService):
         self.register_handler(MessageType.LOOP_READY, self._handle_loop_ready)
         self.register_handler(MessageType.TEXT_OVERLAY, self._handle_text_overlay)
         self.register_handler(MessageType.REMOVE_TEXT, self._handle_remove_text)
-        self.register_handler(MessageType.VIDEO_MASK, self._handle_video_mask)
+        self.register_handler(MessageType.CHANGE_MAP, self._handle_video_mask)
         self.register_handler(MessageType.ERA_CHANGED, self._handle_era_changed)
         
         logger.info("ZMQ message handlers registered")

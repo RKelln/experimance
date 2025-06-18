@@ -20,10 +20,10 @@ import cv2
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
-from experimance_common.constants import DEFAULT_PORTS, TICK
+from experimance_common.constants import DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES
 from experimance_common.schemas import Era, Biome
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.zmq.zmq_utils import MessageType, prepare_image_message
 from experimance_core.config import (
     CoreServiceConfig, 
     CameraState,
@@ -426,15 +426,20 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
 
     async def _publish_change_map(self, change_map: np.ndarray, change_score: float):
         """Publish change map to display service."""
-        event = {
-            "type": MessageType.CHANGE_MAP.value,
-            "change_score": change_score,
-            "has_change_map": True,  # Indicates binary change map is available
-            "timestamp": datetime.now().isoformat()
-        }
-        
         try:
-            success = await self.publish_message(event)
+            # Use the new enum-based image utilities
+            message = prepare_image_message(
+                image_data=change_map,
+                target_address=f"tcp://localhost:{DEFAULT_PORTS['events']}",
+                transport_mode=IMAGE_TRANSPORT_MODES["AUTO"],  # Auto-detect optimal transport
+                type=MessageType.CHANGE_MAP.value,
+                change_score=change_score,
+                has_change_map=True,
+                timestamp=datetime.now().isoformat(),
+                mask_id=f"change_map_{int(time.time() * 1000)}"
+            )
+            
+            success = await self.publish_message(message)
             if success:
                 logger.debug(f"Published change map: score={change_score:.4f}")
             else:

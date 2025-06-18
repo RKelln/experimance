@@ -13,12 +13,12 @@ import logging
 import os
 import asyncio
 from typing import Dict, Any, Optional, Tuple
-from urllib.parse import urlparse
 
 import pyglet
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 
 from .layer_manager import LayerRenderer
+from ..utils.pyglet_utils import load_pyglet_image_from_message, cleanup_temp_file
 
 logger = logging.getLogger(__name__)
 
@@ -180,34 +180,44 @@ class VideoOverlayRenderer(LayerRenderer):
         """Handle VideoMask message.
         
         Args:
-            message: VideoMask message with mask image URI
+            message: VideoMask message with mask image URI or image data
         """
         try:
             mask_id = message["mask_id"]
-            uri = message["uri"]
             fade_in_duration = message.get("fade_in_duration", self.fade_in_duration)
             fade_out_duration = message.get("fade_out_duration", self.fade_out_duration)
             
-            logger.info(f"Loading video mask: {mask_id} from {uri}")
+            logger.info(f"Loading video mask: {mask_id}")
             
-            # Load mask image
-            mask_path = self._uri_to_path(uri)
-            if not mask_path:
-                logger.error(f"Could not resolve mask URI: {uri}")
-                return
+            # Use the generic message loader for pyglet compatibility
+            mask_image, temp_file_path = load_pyglet_image_from_message(
+                message, 
+                image_id=mask_id,
+                set_center_anchor=False  # We'll set this ourselves if needed
+            )
             
-            # Load mask texture
-            success = await self._load_mask(mask_path)
-            if not success:
-                logger.error(f"Failed to load mask: {mask_path}")
-                return
-            
-            # Update fade durations
-            self.fade_in_duration = fade_in_duration
-            self.fade_out_duration = fade_out_duration
-            
-            # Start fade in animation
-            self._start_fade_in()
+            try:
+                if not mask_image:
+                    logger.error(f"Failed to load mask {mask_id} - no valid data source")
+                    return
+                
+                # Set the mask texture
+                self.mask_texture = mask_image.get_texture()
+                self.current_mask = mask_image
+                self.mask_loaded = True
+                
+                logger.info(f"Mask {mask_id} loaded successfully")
+                
+                # Update fade durations
+                self.fade_in_duration = fade_in_duration
+                self.fade_out_duration = fade_out_duration
+                
+                # Start fade in animation
+                self._start_fade_in()
+                
+            finally:
+                # Clean up any temporary file that was created
+                cleanup_temp_file(temp_file_path)
             
         except Exception as e:
             logger.error(f"Error handling VideoMask: {e}", exc_info=True)
@@ -255,59 +265,6 @@ class VideoOverlayRenderer(LayerRenderer):
             logger.error(f"Error loading video {video_path}: {e}", exc_info=True)
             self.video_loaded = False
             return False
-    
-    async def _load_mask(self, mask_path: str) -> bool:
-        """Load mask texture from file path.
-        
-        Args:
-            mask_path: Path to mask image file
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            if not os.path.isfile(mask_path):
-                logger.error(f"Mask file not found: {mask_path}")
-                return False
-            
-            logger.debug(f"Loading mask: {mask_path}")
-            
-            # Load mask image
-            mask_image = pyglet.image.load(mask_path)
-            self.mask_texture = mask_image.get_texture()
-            self.current_mask = mask_image
-            
-            self.mask_loaded = True
-            logger.info(f"Mask loaded successfully: {mask_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error loading mask {mask_path}: {e}", exc_info=True)
-            self.mask_loaded = False
-            return False
-    
-    def _uri_to_path(self, uri: str) -> Optional[str]:
-        """Convert URI to local file path.
-        
-        Args:
-            uri: URI string (e.g., "file:///path/to/mask.png")
-            
-        Returns:
-            Local file path or None if invalid
-        """
-        try:
-            parsed = urlparse(uri)
-            if parsed.scheme == "file":
-                return parsed.path
-            elif parsed.scheme == "":
-                # Assume it's already a file path
-                return uri
-            else:
-                logger.warning(f"Unsupported URI scheme: {parsed.scheme}")
-                return None
-        except Exception as e:
-            logger.error(f"Error parsing URI {uri}: {e}")
-            return None
     
     def _start_fade_in(self):
         """Start fade in animation."""

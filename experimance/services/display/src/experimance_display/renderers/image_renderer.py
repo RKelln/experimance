@@ -20,6 +20,7 @@ import pyglet
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 
 from .layer_manager import LayerRenderer
+from ..utils.pyglet_utils import load_pyglet_image_from_message, cleanup_temp_file, create_positioned_sprite
 
 logger = logging.getLogger(__name__)
 
@@ -162,28 +163,46 @@ class ImageRenderer(LayerRenderer):
         """Handle ImageReady message.
         
         Args:
-            message: ImageReady message with image_id and uri
+            message: ImageReady message with image_id and uri, and optionally image_data
         """
         try:
             image_id = message["image_id"]
-            uri = message["uri"]
             
-            logger.info(f"Loading image: {image_id} from {uri}")
+            logger.info(f"Loading image: {image_id}")
             
-            # Load image from URI
-            image_path = self._uri_to_path(uri)
-            if not image_path:
-                logger.error(f"Could not resolve URI: {uri}")
+            # Check cache first
+            if image_id in self.image_cache:
+                logger.debug(f"Using cached image: {image_id}")
+                image, sprite = self.image_cache[image_id]
+                self._start_transition_to_image(image, sprite, image_id)
                 return
             
-            # Load image
-            image, sprite = await self._load_image(image_path, image_id)
-            if not image or not sprite:
-                logger.error(f"Failed to load image: {image_path}")
+            # Use the robust image loading utility - it will handle fallbacks automatically
+            pyglet_image, temp_file_path = load_pyglet_image_from_message(
+                message=message,  # Pass the entire message
+                image_id=image_id,
+                set_center_anchor=True
+            )
+            
+            if not pyglet_image:
+                logger.error(f"Failed to load image {image_id} - no valid data source")
                 return
             
-            # Start transition to new image
-            self._start_transition_to_image(image, sprite, image_id)
+            try:
+                # Create positioned sprite
+                sprite = create_positioned_sprite(pyglet_image, self.window_size)
+                
+                # Cache the image
+                self._cache_image(image_id, pyglet_image, sprite)
+                
+                logger.info(f"Successfully loaded image: {image_id}")
+                
+                # Start transition to new image
+                self._start_transition_to_image(pyglet_image, sprite, image_id)
+                
+            finally:
+                # Clean up temporary file if one was created
+                cleanup_temp_file(temp_file_path)
             
         except Exception as e:
             logger.error(f"Error handling ImageReady: {e}", exc_info=True)
@@ -220,62 +239,15 @@ class ImageRenderer(LayerRenderer):
             logger.error(f"Error parsing URI {uri}: {e}")
             return None
     
-    async def _load_image(self, image_path: str, image_id: str) -> Tuple[Optional[Any], Optional[Any]]:
-        """Load image from file path.
-        
-        Args:
-            image_path: Path to image file
-            image_id: Unique identifier for the image
-            
-        Returns:
-            Tuple of (image, sprite) or (None, None) if failed
-        """
-        try:
-            # Check cache first
-            if image_id in self.image_cache:
-                logger.debug(f"Using cached image: {image_id}")
-                return self.image_cache[image_id]
-            
-            # Check if file exists
-            if not os.path.isfile(image_path):
-                logger.error(f"Image file not found: {image_path}")
-                return None, None
-            
-            # Load image
-            logger.debug(f"Loading image from: {image_path}")
-            image = pyglet.image.load(image_path)
-            
-            # Set anchor point to center
-            image.anchor_x = image.width // 2
-            image.anchor_y = image.height // 2
-            
-            # Create sprite
-            sprite = pyglet.sprite.Sprite(image)
-            
-            # Position sprite at center of window
-            self._position_sprite(sprite)
-            
-            # Cache the image
-            self._cache_image(image_id, image, sprite)
-            
-            logger.debug(f"Successfully loaded image: {image_id}")
-            return image, sprite
-            
-        except Exception as e:
-            logger.error(f"Error loading image {image_path}: {e}", exc_info=True)
-            return None, None
-    
     def _position_sprite(self, sprite):
         """Position sprite at center of window.
         
         Args:
             sprite: Pyglet sprite to position
         """
-        center_x = self.window_size[0] // 2
-        center_y = self.window_size[1] // 2
-        
-        sprite.x = center_x
-        sprite.y = center_y
+        # Use the same positioning logic as the utility
+        sprite.x = self.window_size[0] // 2
+        sprite.y = self.window_size[1] // 2
     
     def _cache_image(self, image_id: str, image: Any, sprite: Any):
         """Cache an image and sprite.
