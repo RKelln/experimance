@@ -368,8 +368,245 @@ class TestCropToContent:
         
         assert left_black > 0 or right_black > 0, "Should have black pillarboxing on left or right"
         
-    # ...existing code...
+    class TestNdarrayToBase64Url:
+        """Test cases for the ndarray_to_base64url function."""
+        
+        def test_grayscale_array(self):
+            """Test conversion of grayscale (2D) numpy array."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Create a simple grayscale test pattern
+            array = np.zeros((64, 64), dtype=np.uint8)
+            array[16:48, 16:48] = 255  # White square in center
+            
+            result = ndarray_to_base64url(array)
+            
+            # Check basic format
+            assert isinstance(result, str)
+            assert result.startswith("data:image/png;base64,")
+            assert len(result) > 100  # Should have substantial base64 data
+        
+        def test_rgb_array(self):
+            """Test conversion of RGB (3D) numpy array."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Create a simple RGB test pattern
+            array = np.zeros((32, 32, 3), dtype=np.uint8)
+            array[:, :, 0] = 255  # All red
+            array[8:24, 8:24, 1] = 255  # Green square in center
+            
+            result = ndarray_to_base64url(array)
+            
+            # Check basic format
+            assert isinstance(result, str)
+            assert result.startswith("data:image/png;base64,")
+            assert len(result) > 100
+        
+        def test_rgba_array(self):
+            """Test conversion of RGBA (4D) numpy array."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Create RGBA test pattern with transparency
+            array = np.zeros((32, 32, 4), dtype=np.uint8)
+            array[:, :, 0] = 255  # Red channel
+            array[:, :, 3] = 128  # 50% transparency
+            array[8:24, 8:24, 3] = 255  # Opaque center square
+            
+            result = ndarray_to_base64url(array)
+            
+            # Check basic format
+            assert isinstance(result, str)
+            assert result.startswith("data:image/png;base64,")
+            assert len(result) > 100
+        
+        def test_bgr_opencv_array(self):
+            """Test conversion of BGR array (like OpenCV format)."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Create BGR test pattern (OpenCV format)
+            array = np.zeros((32, 32, 3), dtype=np.uint8)
+            array[:, :, 0] = 255  # Blue channel (BGR order)
+            array[:, :, 2] = 128  # Red channel (BGR order)
+            
+            result = ndarray_to_base64url(array)
+            
+            # Check basic format
+            assert isinstance(result, str)
+            assert result.startswith("data:image/png;base64,")
+            assert len(result) > 100
+            
+            # Note: Function should convert BGR to RGB automatically
+            # We can't easily test the color conversion without decoding the base64,
+            # but we can ensure it doesn't crash and produces valid output
+        
+        def test_different_dtypes(self):
+            """Test conversion with different numpy data types."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Test with different data types
+            test_arrays = [
+                np.random.randint(0, 256, (16, 16), dtype=np.uint8),
+                np.random.randint(0, 256, (16, 16), dtype=np.int32).astype(np.uint8),
+                (np.random.random((16, 16)) * 255).astype(np.uint8),
+            ]
+            
+            for i, array in enumerate(test_arrays):
+                result = ndarray_to_base64url(array)
+                assert isinstance(result, str), f"Test array {i} should return string"
+                assert result.startswith("data:image/png;base64,"), f"Test array {i} should have correct prefix"
+        
+        def test_invalid_array_shapes(self):
+            """Test error handling for invalid array shapes."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Test arrays with unsupported shapes
+            invalid_arrays = [
+                np.zeros((10,)),  # 1D array
+                np.zeros((10, 10, 10, 10)),  # 4D array
+                np.zeros((10, 10, 5)),  # 3D but wrong number of channels
+            ]
+            
+            for array in invalid_arrays:
+                with pytest.raises(ValueError):
+                    ndarray_to_base64url(array)
+        
+        def test_empty_array(self):
+            """Test handling of empty arrays."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Very small array (should still work)
+            small_array = np.zeros((1, 1), dtype=np.uint8)
+            result = ndarray_to_base64url(small_array)
+            
+            assert isinstance(result, str)
+            assert result.startswith("data:image/png;base64,")
+        
+        def test_large_array(self):
+            """Test handling of larger arrays."""
+            from experimance_common.image_utils import ndarray_to_base64url
+            
+            # Larger array (but not too large for test performance)
+            large_array = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8)
+            result = ndarray_to_base64url(large_array)
+            
+            assert isinstance(result, str)
+            assert result.startswith("data:image/png;base64,")
+            assert len(result) > 1000  # Should be substantial for large image
 
+    class TestNdarrayToTempFile:
+        """Test cases for the ndarray_to_temp_file function."""
+        
+    def test_grayscale_array_temp_file(self):
+        """Test saving grayscale numpy array to temporary file."""
+        from experimance_common.image_utils import ndarray_to_temp_file, cleanup_temp_file
+        from pathlib import Path
+        
+        # Create grayscale test pattern
+        array = np.zeros((64, 64), dtype=np.uint8)
+        array[16:48, 16:48] = 255  # White square in center
+        
+        temp_path_str = ndarray_to_temp_file(array)
+        temp_path = Path(temp_path_str)
+        
+        try:
+            # Check that file was created
+            assert temp_path.exists(), f"Temporary file should exist: {temp_path}"
+            assert temp_path.suffix == '.png', f"Should be PNG file: {temp_path}"
+            assert temp_path.name.startswith('experimance_img_'), f"Should have correct prefix: {temp_path.name}"
+            
+            # Check file size is reasonable
+            assert temp_path.stat().st_size > 100, "File should not be empty"
+            
+        finally:
+            # Cleanup
+            cleanup_temp_file(temp_path_str)
+            assert not temp_path.exists(), "File should be cleaned up"
+        
+    def test_rgb_array_temp_file(self):
+        """Test saving RGB numpy array to temporary file."""
+        from experimance_common.image_utils import ndarray_to_temp_file, cleanup_temp_file
+        from pathlib import Path
+        
+        # Create RGB test pattern
+        array = np.zeros((32, 32, 3), dtype=np.uint8)
+        array[:, :, 0] = 255  # Red channel
+        array[8:24, 8:24, 1] = 255  # Green square in center
+        
+        temp_path_str = ndarray_to_temp_file(array)
+        temp_path = Path(temp_path_str)
+        
+        try:
+            assert temp_path.exists()
+            assert temp_path.suffix == '.png'
+            assert temp_path.stat().st_size > 100
+            
+        finally:
+            cleanup_temp_file(temp_path_str)
+            assert not temp_path.exists(), "Temporary file should be cleaned up"
+        
+    def test_rgba_array_temp_file(self):
+        """Test saving RGBA numpy array to temporary file."""
+        from experimance_common.image_utils import ndarray_to_temp_file, cleanup_temp_file
+        from pathlib import Path
+        
+        # Create RGBA test pattern
+        array = np.zeros((32, 32, 4), dtype=np.uint8)
+        array[:, :, 0] = 255  # Red channel
+        array[:, :, 3] = 128  # 50% transparency
+        
+        temp_path_str = ndarray_to_temp_file(array)
+        temp_path = Path(temp_path_str)
+        
+        try:
+            assert temp_path.exists()
+            assert temp_path.suffix == '.png'
+            assert temp_path.stat().st_size > 100
+            
+        finally:
+            cleanup_temp_file(temp_path_str)
+            assert not temp_path.exists(), "Temporary file should be cleaned up"
+        
+    def test_pil_image_temp_file(self):
+        """Test saving PIL Image to temporary file."""
+        from experimance_common.image_utils import pil_to_temp_file, cleanup_temp_file
+        from PIL import Image, ImageDraw
+        from pathlib import Path
+        
+        # Create PIL test image
+        img = Image.new('RGB', (64, 64), color='blue')
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([16, 16, 48, 48], fill='yellow')
+        
+        temp_path_str = pil_to_temp_file(img)
+        temp_path = Path(temp_path_str)
+        
+        try:
+            assert temp_path.exists()
+            assert temp_path.suffix == '.png'
+            assert temp_path.stat().st_size > 100
+            
+        finally:
+            cleanup_temp_file(temp_path_str)
+            assert not temp_path.exists(), "Temporary file should be cleaned up"
+        
+        def test_invalid_array_temp_file(self):
+            """Test error handling for invalid arrays."""
+            from experimance_common.image_utils import ndarray_to_temp_file
+            
+            # Test with invalid array shape
+            invalid_array = np.zeros((10,))  # 1D array
+            
+            with pytest.raises(ValueError):
+                ndarray_to_temp_file(invalid_array)
+        
+        def test_cleanup_nonexistent_file(self):
+            """Test cleanup of non-existent file (should not raise error)."""
+            from experimance_common.image_utils import cleanup_temp_file
+            
+            # Should not raise error for non-existent file
+            fake_path = "/tmp/nonexistent_file.png"
+            result = cleanup_temp_file(fake_path)  # Should complete without error
+            assert result is False  # Should return False for non-existent file
 
 def test_debug_output():
     """Test the debug output functionality."""
@@ -410,3 +647,160 @@ if __name__ == "__main__":
         print(f"❌ Test failed: {e}")
         import traceback
         traceback.print_exc()
+
+class TestBase64Conversion:
+    """Test cases for base64 image conversion functions."""
+    
+    def test_png_to_base64url_and_back(self):
+        """Test converting PIL image to base64 and back."""
+        from experimance_common.image_utils import png_to_base64url, base64url_to_png
+        from experimance_common.constants import BASE64_PNG_PREFIX
+        from PIL import Image
+        
+        # Create a simple test image
+        test_image = Image.new('RGB', (100, 100), (255, 0, 0))
+        
+        # Convert to base64 and back
+        base64_data = png_to_base64url(test_image)
+        assert base64_data.startswith(BASE64_PNG_PREFIX)
+        
+        decoded_image = base64url_to_png(base64_data)
+        assert decoded_image.size == (100, 100)
+        
+        # Test different format
+        base64_data_jpg = png_to_base64url(test_image, format="JPEG")
+        assert base64_data_jpg.startswith("data:image/jpeg;base64,")
+        
+    def test_base64url_to_png_with_prefix(self):
+        """Test that base64url_to_png handles data URL prefixes correctly."""
+        from experimance_common.image_utils import png_to_base64url, base64url_to_png
+        from PIL import Image
+        
+        # Create test image
+        test_image = Image.new('RGB', (50, 50), (0, 255, 0))
+        
+        # Convert to base64 with prefix
+        base64_with_prefix = png_to_base64url(test_image)
+        
+        # Should work with prefix
+        decoded_with_prefix = base64url_to_png(base64_with_prefix)
+        assert decoded_with_prefix.size == (50, 50)
+        
+        # Should also work with just the base64 part (no prefix)
+        base64_only = base64_with_prefix.split(",")[1]
+        decoded_without_prefix = base64url_to_png(base64_only)
+        assert decoded_without_prefix.size == (50, 50)
+
+class TestImageLoadFormat:
+    """Test cases for the ImageLoadFormat enum and load_image_from_message function."""
+    
+    def setup_method(self):
+        """Set up test data for each test method."""
+        from PIL import Image
+        from experimance_common.zmq.zmq_utils import prepare_image_message
+        
+        # Create a test image
+        self.test_image = Image.new('RGB', (100, 100), (255, 0, 0))
+        
+        # Create a test message with base64 transport
+        self.test_message = prepare_image_message(
+            image_data=self.test_image,
+            target_address="tcp://localhost:5555",
+            mask_id="test_enum"
+        )
+    
+    def test_pil_format(self):
+        """Test loading image as PIL format (default)."""
+        from experimance_common.image_utils import load_image_from_message, ImageLoadFormat
+        from PIL import Image
+        
+        # Test explicit PIL format
+        result = load_image_from_message(self.test_message, ImageLoadFormat.PIL)
+        assert result is not None, "PIL format should not return None"
+        assert isinstance(result, Image.Image), f"Expected PIL Image, got {type(result)}"
+        assert result.size == (100, 100), f"Expected size (100, 100), got {result.size}"
+        
+        # Test default format (should be PIL)
+        default_result = load_image_from_message(self.test_message)
+        assert isinstance(default_result, Image.Image), "Default format should be PIL Image"
+    
+    def test_numpy_format(self):
+        """Test loading image as numpy array format."""
+        from experimance_common.image_utils import load_image_from_message, ImageLoadFormat
+        
+        try:
+            import numpy as np
+        except ImportError:
+            pytest.skip("NumPy not available")
+        
+        result = load_image_from_message(self.test_message, ImageLoadFormat.NUMPY)
+        assert result is not None, "NUMPY format should not return None when numpy is available"
+        assert isinstance(result, np.ndarray), f"Expected numpy.ndarray, got {type(result)}"
+        assert result.shape == (100, 100, 3), f"Expected shape (100, 100, 3), got {result.shape}"
+        
+        # Check that the data is reasonable (red image should have high red values)
+        assert result[:, :, 0].mean() > 200, "Red channel should have high values"
+    
+    def test_filepath_format(self):
+        """Test loading image as file path format."""
+        from experimance_common.image_utils import load_image_from_message, ImageLoadFormat, cleanup_temp_file
+        from pathlib import Path
+        
+        result = load_image_from_message(self.test_message, ImageLoadFormat.FILEPATH)
+        assert result is not None, "FILEPATH format should not return None"
+        assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
+        assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
+        
+        file_path, is_temp = result
+        assert isinstance(file_path, str), f"Expected string file path, got {type(file_path)}"
+        assert isinstance(is_temp, bool), f"Expected boolean is_temp flag, got {type(is_temp)}"
+        assert Path(file_path).exists(), f"File should exist: {file_path}"
+        
+        # For base64 messages, should create temp file
+        assert is_temp, "Base64 message should create temporary file"
+        
+        # Clean up temp file
+        cleanup_temp_file(file_path)
+        assert not Path(file_path).exists(), "Temp file should be cleaned up"
+    
+    def test_filepath_format_with_uri_message(self):
+        """Test FILEPATH format with a file URI message."""
+        from experimance_common.image_utils import load_image_from_message, ImageLoadFormat
+        from experimance_common.zmq.zmq_utils import prepare_image_message
+        from pathlib import Path
+        import tempfile
+        
+        # Create a temporary file with the test image
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            self.test_image.save(tmp.name)
+            temp_file_path = tmp.name
+        
+        try:
+            # Create message with file URI transport
+            uri_message = prepare_image_message(
+                image_data=temp_file_path,
+                target_address="tcp://localhost:5555",
+                transport_mode="file_uri",
+                mask_id="test_uri"
+            )
+            
+            result = load_image_from_message(uri_message, ImageLoadFormat.FILEPATH)
+            assert result is not None, "FILEPATH format should work with URI messages"
+            assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
+            file_path, is_temp = result
+            assert file_path == temp_file_path, "Should return original file path for URI messages"
+            assert not is_temp, "URI message should not create temp file"
+            
+        finally:
+            Path(temp_file_path).unlink()
+    
+    def test_invalid_message(self):
+        """Test behavior with invalid message."""
+        from experimance_common.image_utils import load_image_from_message, ImageLoadFormat
+        
+        invalid_message = {"invalid": "data"}
+        
+        # All formats should handle invalid messages gracefully
+        assert load_image_from_message(invalid_message, ImageLoadFormat.PIL) is None
+        assert load_image_from_message(invalid_message, ImageLoadFormat.NUMPY) is None
+        assert load_image_from_message(invalid_message, ImageLoadFormat.FILEPATH) is None

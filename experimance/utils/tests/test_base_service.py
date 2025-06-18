@@ -794,7 +794,7 @@ class TestServiceShutdownTaskNaming:
             
             expected_patterns = [
                 "task-name-test-service-requested-stop",
-                "task-name-test-service-fatal-error-stop"
+                # "task-name-test-service-fatal-error-stop" # this should be rejected as we're already stopping
             ]
             
             for pattern in expected_patterns:

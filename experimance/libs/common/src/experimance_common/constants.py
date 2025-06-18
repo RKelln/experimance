@@ -44,6 +44,37 @@ HEARTBEAT_TOPIC = "heartbeat"
 
 TICK = 0.001 # seconds, used sleeping in the main loop
 
+# Image transport configuration
+IMAGE_TRANSPORT_MODES = {
+    "FILE_URI": "file_uri",      # Send file path/URI (same machine)
+    "BASE64": "base64",          # Send base64 encoded image (remote machines)
+    "AUTO": "auto",              # Auto-detect based on target
+    "HYBRID": "hybrid"           # Send both URI and base64 (receiver chooses)
+}
+
+# Default image transport mode
+DEFAULT_IMAGE_TRANSPORT_MODE = IMAGE_TRANSPORT_MODES["AUTO"]
+
+# File size threshold for auto mode (bytes)
+# Images larger than this will prefer URI over base64 to reduce network load
+IMAGE_TRANSPORT_SIZE_THRESHOLD = 1024 * 1024  # 1MB
+
+# Temporary file settings
+TEMP_FILE_PREFIX = "experimance_img_"
+TEMP_FILE_SUFFIX = ".png"
+TEMP_FILE_CLEANUP_AGE = 300  # seconds (5 minutes)
+TEMP_FILE_CLEANUP_INTERVAL = 60  # seconds (1 minute)
+DEFAULT_TEMP_DIR = "/tmp"  # Default directory for temporary files
+
+# URI and URL constants
+FILE_URI_PREFIX = "file://"
+DATA_URL_PREFIX = "data:image/"
+BASE64_PNG_PREFIX = "data:image/png;base64,"
+
+# ZMQ address patterns
+ZMQ_TCP_BIND_PREFIX = "tcp://*:"
+ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost:"
+
 # media directories (relative paths)
 MEDIA_DIR = "media"
 IMAGES_DIR = f"{MEDIA_DIR}/images"
@@ -78,6 +109,23 @@ __all__ = [
     "DEFAULT_RECV_TIMEOUT", 
     "HEARTBEAT_TOPIC", 
     "TICK",
+    # Image transport settings
+    "IMAGE_TRANSPORT_MODES",
+    "DEFAULT_IMAGE_TRANSPORT_MODE", 
+    "IMAGE_TRANSPORT_SIZE_THRESHOLD",
+    # Temp file settings
+    "TEMP_FILE_PREFIX",
+    "TEMP_FILE_SUFFIX", 
+    "TEMP_FILE_CLEANUP_AGE",
+    "TEMP_FILE_CLEANUP_INTERVAL",
+    "DEFAULT_TEMP_DIR",
+    # URI and URL constants
+    "FILE_URI_PREFIX",
+    "DATA_URL_PREFIX", 
+    "BASE64_PNG_PREFIX",
+    # ZMQ address patterns
+    "ZMQ_TCP_BIND_PREFIX",
+    "ZMQ_TCP_CONNECT_PREFIX",
     # Media directories (relative)
     "MEDIA_DIR",
     "IMAGES_DIR", 
@@ -91,7 +139,7 @@ __all__ = [
     "GENERATED_IMAGES_DIR_ABS", 
     "MOCK_IMAGES_DIR_ABS",
     "AUDIO_DIR_ABS",
-    "VIDEOS_DIR_ABS"
+    "VIDEOS_DIR_ABS",
     # Services directories
     "SERVICES_DIR",
     "CORE_SERVICE_DIR",
