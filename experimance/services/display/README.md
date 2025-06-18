@@ -100,7 +100,8 @@ shader_path = "shaders/"      # Path to custom shaders
 The display service subscribes to these ZMQ message types:
 
 ### Events Channel (port 5555)
-- **ImageReady**: New satellite landscape images
+- **DisplayMedia**: Primary display content (images, sequences, videos) with transition control
+- **ImageReady**: Legacy image messages (deprecated, use DisplayMedia)
 - **TransitionReady**: Custom transition videos
 - **LoopReady**: Animated loop videos (future enhancement)
 
@@ -147,6 +148,35 @@ await service.stop()
 ```
 
 ### Message Schemas
+
+#### DisplayMedia Message (Primary)
+```python
+{
+    "type": "DisplayMedia",
+    "content_type": "image",             # Required: "image", "image_sequence", "video"
+    
+    # For IMAGE content_type
+    "image_data": "<image_data>",        # Image data (file path, base64, numpy, PIL)
+    "uri": "file:///path/to/image.png",  # Alternative: file reference
+    
+    # For IMAGE_SEQUENCE content_type  
+    "sequence_path": "/path/to/frames/", # Directory with numbered images
+    
+    # For VIDEO content_type
+    "video_path": "/path/to/video.mp4",  # Path to video file
+    
+    # Display properties
+    "duration": 3.0,                     # Duration in seconds (sequences/videos)
+    "loop": false,                       # Whether to loop content
+    "fade_in": 0.5,                     # Fade in duration in seconds
+    "fade_out": 0.5,                    # Fade out duration in seconds
+    
+    # Context information
+    "era": "ai_future",                  # Current era context
+    "biome": "coastal",                  # Current biome context
+    "source_request_id": "<uuid>"        # Links to original RenderRequest
+}
+```
 
 #### TextOverlay Message
 ```python

@@ -1,27 +1,142 @@
-# Experimance — Technical Design 3. **Era state machine** steps forward through the timeline (Wilderness ⇢ … ⇢ AI). From*Language*: Python 3.11 — `asyncio`
-*Responsibilities*
+# Experimance — Technical Design
 
-* **Central Coordinator**: Publishes events and### 4.6 `audio`
+> **Purpose**
+> Provide a concise, implementation‑ready reference for developers & AI coding assistants building *Experimance*: an interactive sand‑table where audience actions steer an AI‑generated satellite narrative of human development.
 
-* **ZMQ to OSC Bridge**: Subscribes to `AudioCommand` messages on the `events` channel and translates to OSC for SuperCollider.
-* SuperCollider backend (preferred, open‑source).
-* | | **5 Optional loop animation** | When hardware budget allows: • `experimance` publishes `LoopRequest {still_uri, style}` on another PUSH queue (`tcp://*:5562`). • `animate_worker` (either a small SD-video model or cloud service) returns `LoopReady {video_uri, duration_s}` on `events` channel. • `display` switches its texture source from "last still" to looping video (ffmpeg → GL texture or Godot's VideoPlayer) until the next `TransitionReady`. | Isolation means you can add fancy generative loops later without re-wiring the main display logic. If the loop service isn't running, nothing breaks—`display` just stays on the still image. |*3 Display swap**            | Worker publishes `TransitionReady {uri, is_video, loop=false}` on the `events` PUB channel (`tcp://*:5555`).`display` sees it, preloads the file/frames, cross-fades to the transition, then auto-plays the sequence.                                                                                                                                                                                                          | Keeps all media deliveries unified on one PUB topic; display remains stateless beyond "what's current/next?".                                                                               |*Environmental Audio Layers**: Tag-based environmental sounds (birds, traffic, church bells, etc.) triggered by prompt analysis.
-* **Era-based Music**: Automatic music layer transitions synchronized with era changes.
-* **Interaction Sounds**: Continuous sound effects while hands are detected over sand.
-* Layers: `music`, `ambience`, `ui`, `interaction`.
-* Auto‑ducking music & ambience via side‑chain when the **agent or audience** speaks.
-* **OSC Commands**: `/spacetime <biome> <era>`, `/include <tag>`, `/exclude <tag>`, `/trigger <event>`.
-* Publishes `AudioStatus` back to `events` channel for coordination with `experimance`.cribes to service responses via unified `events` channel.
-* Holds global state: `era`, `biome`, `idle_timer`, `audience_present`, `user_interaction_score`.
-* Loads initial state from a JSON configuration file (allows for reproducible testing and defined starting states).
-* Converts depth‑map Δ (from `depth/heightmap` channel) and sensor RMS (from OSC) into **user_interaction_score ∈ [0,1]**.
-* **Audio Tag Extraction**: Derives environmental audio tags from generated prompts using keyword matching.
-* Drives the era state machine:
-  * Gentle interaction progresses the era slowly.
-  * More active, rough interaction progresses more quickly.
-    * Enough intensity (i.e., `user_interaction_score` accumulating past a certain threshold) locks in a future progression towards Post-apocalyptic and Ruins eras. Specific mechanics TBD.
-* **Event Publishing**: Publishes `EraChanged`, `RenderRequest`, `AudioCommand`, `VideoMask`, and `IdleStateChanged` events on the `events` bus.
-* **Response Coordination**: Subscribes to `ImageReady`, `AgentControl`, and `AudioStatus` for timing and state coordination.
+---
+
+## 1  Experience Overview
+
+A large bowl of white sand has AI generated satellite images projected on it. As the audience interacts with the sand the images update```
+
+Complete schema definitions live at `/schemas`.
+
+---
+
+## 5.1 DISPLAY_MEDIA Message Flow and Design
+
+### Overview
+
+The DISPLAY_MEDIA message type represents a significant architectural improvement in how media content is delivered to the display service. Instead of the display service directly handling ImageReady messages, the core `experimance` service now acts as a coordinator, receiving ImageReady messages and then intelligently deciding how to present the content to the display.
+
+### Architecture Benefits
+
+1. **Centralized Display Logic**: All display decisions happen in one place (core service)
+2. **Flexible Content Types**: Support for images, image sequences, and videos 
+3. **Rich Transition Support**: Built-in fade effects and transition management
+4. **Context Preservation**: Era and biome information travels with display requests
+5. **Robust Image Transport**: Uses modern enum-based image transport utilities
+
+### Message Flow
+
+```
+┌─────────────────┐    RenderRequest     ┌──────────────┐
+│   experimance   │ ────────────────────▶ │ image_server │
+│   (core)        │                      │              │
+└─────────────────┘                      └──────────────┘
+         │                                        │
+         │                               ImageReady
+         │                                        │
+         ▼                                        ▼
+┌─────────────────┐                      ┌──────────────┐
+│  Transition     │                      │   Display    │
+│  Evaluation     │                      │   Decision   │
+│                 │                      │   Logic      │
+└─────────────────┘                      └──────────────┘
+         │                                        │
+         │                               DisplayMedia
+         │                                        │
+         ▼                                        ▼
+┌─────────────────┐                      ┌──────────────┐
+│    display      │ ◀────────────────────│   Enhanced   │
+│    service      │     DisplayMedia     │   Message    │
+└─────────────────┘                      └──────────────┘
+```
+
+### Transition Logic
+
+The core service evaluates several factors when an ImageReady message is received:
+
+1. **Era Progression**: Did the era change from the last image?
+2. **Interaction State**: Is there active user interaction that warrants immediate display?
+3. **Content Timing**: Should there be a smooth transition between images?
+
+Based on these factors, the core service creates a DisplayMedia message with appropriate:
+- **Content Type**: Usually "image" for generated content
+- **Transition Effects**: Fade-in/out durations based on interaction context
+- **Transport Mode**: Automatically selected based on image size and connection type
+
+### Image Transport Integration
+
+DISPLAY_MEDIA messages leverage the modernized image transport utilities:
+
+- **Enum-Based Transport**: Uses `ImageLoadFormat` enum instead of boolean flags
+- **Automatic Mode Selection**: Chooses between FILE_PATH, BASE64, NUMPY, or PIL based on content and destination
+- **Size-Based Optimization**: Large images use file paths, smaller ones use direct transport
+- **Error Handling**: Robust fallback mechanisms for transport failures
+
+### Example Scenarios
+
+**Scenario 1: Era Change with Transition**
+```json
+{
+  "type": "DisplayMedia",
+  "content_type": "image",
+  "image_data": "<base64_encoded_data>",
+  "fade_in": 1.0,
+  "fade_out": 0.5,
+  "era": "modern",
+  "biome": "coastal",
+  "source_request_id": "abc-123"
+}
+```
+
+**Scenario 2: Direct Image Display (Active Interaction)**
+```json
+{
+  "type": "DisplayMedia", 
+  "content_type": "image",
+  "uri": "file:///var/cache/experimance/frame_1723.png",
+  "fade_in": 0.2,
+  "era": "ai_future",
+  "biome": "urban"
+}
+```
+
+---
+
+## 6  Hardware & I/Oessing from untouched wilderness through many eras of human development to the modern day and then beyond to an imagined abstract AI-infused cityscape or post-apocalyptic ruins depending on the audience's interactions with the sand. A depth camera is used to observe the topology of the sand which informs the generated images. Sensors on the sand's contain detect how gently the sand is moved. 
+
+As the audience looks at the piece it sees them with a webcam and introduces itself - the audience can talk to it and it invites them to play with the sand.
+
+Soft music plays from nearby speakers along with environmental audio that matches the imagery in the sand (sounds of animals fading to the sounds of human habitation). 
+
+
+### Eras
+The piece has different states, based of eras of human development:
+
+**Wilderness** (no humans)
+**Pre-industrial** (villages)
+**Early industrial** (1600s)
+**Late industrial** (1800s)
+**Early modern** (1900-1960)
+**Modern** (2000-2020)
+**AI/Future** (2030+)
+**Post-apocalyptic**
+**Ruins**
+
+### Typical interaction Flow
+
+1. Audience approaches the table → *agent* greets them (presence detected via webcam face‑tracking **or** hand‑over‑sand pickup from the depth camera).
+2. Depth camera & sand‑edge sensors detect movement intensity. `experimance` calculates `user_interaction_score`.
+3. **Era state machine** steps forward through the timeline (Wilderness ⇢ … ⇢ AI). From the AI era it may either loop within AI, or continue to Post‑apocalyptic and Ruins before drifting back toward Wilderness.
+   * `experimance` (using the in-process `prompting` module) builds a text‑to‑image prompt and other necessary data.
+   * `experimance` publishes a `RenderRequest` on the `events` bus (see Section 2 & 5).
+   * *image\_server* receives the `RenderRequest`, renders the frame (local SDXL or remote fal.ai), and publishes `ImageReady` on the `events` bus.
+   * `experimance` receives `ImageReady`, evaluates transition requirements, and publishes `DisplayMedia` to *display* service.
+   * *display* receives `DisplayMedia` and updates the projection with appropriate transitions (fade, dissolve, etc.).
+   * *audio* cross‑fades music & ambience to match the new era (triggered by `EraChanged` from `experimance`).
+4. When idle > *IDLE\_TIMEOUT* (configurable, default = 45 s) the scene drifts back toward Wilderness.
 * Processes `AgentControl` messages (e.g., `SuggestBiome`) from the `agent` to influence `biome` state.
 * **Depth Difference Visualization**: Generates and publishes `VideoMask` messages with depth difference images for sand interaction feedback.
 * **Interaction Sound Management**: Triggers continuous interaction sounds while hands are detected over the sand.it may either loop within AI, or continue to Post‑apocalyptic and Ruins before drifting back toward Wilderness.
@@ -91,10 +206,11 @@ The piece has different states, based of eras of human development:
 - `RenderRequest` → `image_server`
 - `AudioCommand` → `audio`
 - `VideoMask` → `display`
+- `DisplayMedia` → `display`
 - `IdleStateChanged` → all services
 
 **Published by Services**:
-- `image_server` → `ImageReady` → `experimance`, `display`
+- `image_server` → `ImageReady` → `experimance`
 - `agent` → `AgentControl` → `experimance`, `audio`
 - `audio` → `AudioStatus` → `experimance`
 
@@ -304,6 +420,33 @@ initial_state_path = "saved_data/default_state.json"  # Path to initial state JS
   "request_id": "<uuid_string>",
   "image_id": "<uuid_string>",
   "uri": "file:///var/cache/experimance/frame_1723.png"
+}
+
+// DisplayMedia (published by experimance → display)
+{
+  "type": "DisplayMedia",
+  "content_type": "image",  // "image", "image_sequence", "video"
+  
+  // For IMAGE content_type
+  "image_data": "<base64_or_numpy_array>",  // Image data in base64 or raw format
+  "uri": "file:///path/to/image.png",       // Optional file URI
+  
+  // For IMAGE_SEQUENCE content_type
+  "sequence_path": "/path/to/sequence/",    // Directory with numbered images
+  
+  // For VIDEO content_type
+  "video_path": "/path/to/video.mp4",       // Path to video file
+  
+  // Display properties
+  "duration": 3.0,                          // Duration in seconds (sequences/videos)
+  "loop": false,                            // Whether to loop content
+  "fade_in": 0.5,                          // Fade in duration in seconds
+  "fade_out": 0.5,                         // Fade out duration in seconds
+  
+  // Context information
+  "era": "ai_future",                       // Current era
+  "biome": "coastal",                       // Current biome
+  "source_request_id": "<uuid_string>"      // Links to original RenderRequest
 }
 
 // AgentControl (published by agent → experimance, audio)

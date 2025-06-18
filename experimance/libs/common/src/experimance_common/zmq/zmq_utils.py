@@ -50,6 +50,7 @@ class MessageType(str, Enum):
     HEARTBEAT = "Heartbeat"
     ALERT = "Alert"
     # Display service message types
+    DISPLAY_MEDIA = "DisplayMedia"
     TEXT_OVERLAY = "TextOverlay"
     REMOVE_TEXT = "RemoveText"
     CHANGE_MAP = "ChangeMap"

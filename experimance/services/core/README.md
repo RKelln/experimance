@@ -248,11 +248,26 @@ Provides real-time interaction visualization:
 }
 ```
 
+#### DisplayMedia
+Sends coordinated display content with intelligent transitions:
+```json
+{
+  "event_type": "DisplayMedia",
+  "content_type": "image",
+  "image_data": "<transport_optimized_data>",
+  "fade_in": 0.5,
+  "fade_out": 0.3,
+  "era": "modern",
+  "biome": "urban",
+  "source_request_id": "uuid-string"
+}
+```
+
 ### Subscribed Events
 
 The service listens for coordination events from other services:
 
-- **ImageReady**: Confirms image generation completion
+- **ImageReady**: Confirms image generation completion, triggers DisplayMedia publishing
 - **AgentControl**: AI agent presence detection and biome suggestions  
 - **AudioStatus**: Audio system status and coordination
 

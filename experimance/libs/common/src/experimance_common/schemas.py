@@ -3,7 +3,7 @@ Schema definitions for Experimance inter-service messages.
 """
 
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -52,6 +52,24 @@ class TransitionStyle(str, Enum):
     MORPH = "morph"
     WIPE = "wipe"
     SIMPLE = "simple"
+
+
+class DisplayContentType(str, Enum):
+    """Content types for display media."""
+    IMAGE = "image"
+    IMAGE_SEQUENCE = "image_sequence"
+    VIDEO = "video"
+
+
+class DisplayTransitionType(str, Enum):
+    """Transition types for display media."""
+    NONE = "none"                    # No transition, direct display
+    FADE = "fade"                    # Simple fade transition
+    DISSOLVE = "dissolve"            # Cross-dissolve
+    SLIDE = "slide"                  # Slide transition
+    MORPH = "morph"                  # Morphing transition
+    IMAGE_SEQUENCE = "image_sequence"  # Play image sequence
+    VIDEO = "video"                  # Play video transition
 
 
 class MessageBase(BaseModel):
@@ -152,3 +170,39 @@ class LoopRequest(MessageBase):
     request_id: str
     still_image_uri: str  # URI to the still image to animate
     style: str  # Hint for the animation style
+
+
+class ContentType(str, Enum):
+    """Types of content that can be displayed."""
+    IMAGE = "image"                    # Single static image
+    IMAGE_SEQUENCE = "image_sequence"  # Sequence of images (for transitions)
+    VIDEO = "video"                    # Video file
+
+
+class DisplayMedia(MessageBase):
+    """Message for sending media content to display service."""
+    type: str = "DisplayMedia"
+    
+    # Content specification
+    content_type: ContentType
+    
+    # For IMAGE content_type
+    image_data: Optional[Any] = None      # Image data (numpy array, PIL, etc.)
+    uri: Optional[str] = None             # File URI for image
+    
+    # For IMAGE_SEQUENCE content_type  
+    sequence_path: Optional[str] = None   # Path to directory with numbered images
+    
+    # For VIDEO content_type
+    video_path: Optional[str] = None      # Path to video file
+    
+    # Display properties
+    duration: Optional[float] = None      # Duration in seconds (for sequences/videos)
+    loop: bool = False                    # Whether to loop the content
+    fade_in: Optional[float] = None       # Fade in duration in seconds
+    fade_out: Optional[float] = None      # Fade out duration in seconds
+    
+    # Context information
+    era: Optional[Era] = None
+    biome: Optional[Biome] = None
+    source_request_id: Optional[str] = None  # Links back to original render request

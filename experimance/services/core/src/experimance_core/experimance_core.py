@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
 from experimance_common.constants import DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES
-from experimance_common.schemas import Era, Biome
+from experimance_common.schemas import Era, Biome, ContentType
 from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
 from experimance_common.zmq.zmq_utils import MessageType, prepare_image_message
 from experimance_core.config import (
@@ -108,6 +108,10 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self.audience_present: bool = False
         self.era_progression_timer: float = 0.0
         self.session_start_time: datetime = datetime.now()
+        
+        # Track era changes for transition decisions
+        self._last_era: Optional[Era] = Era.WILDERNESS
+        self._pending_transition: Optional[Dict[str, Any]] = None  # Store pending transition data
         
         # Internal state
         self.last_depth_map: Optional[Any] = None
@@ -488,6 +492,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         """Register handlers for different message types."""
         self._message_handlers = {
             "ImageReady": self._handle_image_ready,
+            "TransitionReady": self._handle_transition_ready,
             "AgentControl": self._handle_agent_control,
             "AudioStatus": self._handle_audio_status,
         }
@@ -736,8 +741,151 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
     # Message Handler Methods
     async def _handle_image_ready(self, message: Dict[str, Any]):
         """Handle ImageReady messages from image server."""
-        logger.debug(f"Received ImageReady message: {message.get('request_id')}")
-        # TODO: Implement image ready handling logic
+        request_id = message.get('request_id')
+        logger.debug(f"Received ImageReady message: {request_id}")
+        
+        try:
+            # Check if this is a response to our render request
+            if not request_id:
+                logger.warning("ImageReady message missing request_id")
+                return
+            
+            # Determine if we need a transition
+            needs_transition = await self._should_request_transition(message)
+            
+            if needs_transition:
+                # Request transition from transition service
+                await self._request_transition(message)
+            else:
+                # Send directly to display service
+                await self._send_display_media(message)
+                
+        except Exception as e:
+            logger.error(f"Error handling ImageReady message: {e}")
+
+    async def _should_request_transition(self, image_message: Dict[str, Any]) -> bool:
+        """
+        Determine if a transition is needed based on current state.
+        
+        Args:
+            image_message: The ImageReady message from image server
+            
+        Returns:
+            True if a transition should be requested
+        """
+        # For now, implement simple logic - can be made more sophisticated
+        
+        # Always transition on era changes
+        if hasattr(self, '_last_era') and self._last_era != self.current_era:
+            logger.info(f"Era changed from {getattr(self, '_last_era', None)} to {self.current_era}, requesting transition")
+            return True
+        
+        # Transition on significant interaction (major changes to the sand table)
+        if self.user_interaction_score > self.config.state_machine.interaction_threshold * 2:
+            logger.info(f"High interaction score ({self.user_interaction_score:.3f}), requesting transition")
+            return True
+        
+        # For now, default to no transition for minor changes
+        return False
+
+    async def _request_transition(self, image_message: Dict[str, Any]):
+        """
+        Request a transition from the transition service.
+        
+        Args:
+            image_message: The ImageReady message containing the new image
+        """
+        try:
+            # Determine transition type based on context
+            transition_type = self._get_transition_type()
+            
+            # For now, we'll implement a simple approach where we directly
+            # send to display with transition info. Later this can be expanded
+            # to actually communicate with a transition service.
+            
+            logger.info(f"Requesting {transition_type} transition")
+            
+            # Send to display with transition metadata
+            await self._send_display_media(image_message, transition_type=transition_type)
+            
+        except Exception as e:
+            logger.error(f"Error requesting transition: {e}")
+            # Fallback: send without transition
+            await self._send_display_media(image_message)
+
+    def _get_transition_type(self) -> str:
+        """
+        Determine the appropriate transition type based on current context.
+        
+        Returns:
+            Transition type string
+        """
+        # Era changes get more dramatic transitions
+        if hasattr(self, '_last_era') and self._last_era != self.current_era:
+            era_transitions = {
+                "wilderness": "fade",
+                "pre_industrial": "slide", 
+                "early_industrial": "fade",
+                "late_industrial": "morph",
+                "modern": "slide",
+                "current": "fade",
+                "future": "morph",
+                "dystopia": "fade",
+                "ruins": "fade"
+            }
+            return era_transitions.get(self.current_era.value, "fade")
+        
+        # High interaction gets subtle transitions
+        if self.user_interaction_score > self.config.state_machine.interaction_threshold:
+            return "fade"
+        
+        return "fade"  # Default
+
+    async def _send_display_media(self, image_message: Dict[str, Any], transition_type: Optional[str] = None):
+        """
+        Send DISPLAY_MEDIA message to display service.
+        
+        Args:
+            image_message: The ImageReady message from image server
+            transition_type: Optional transition type
+        """
+        try:
+            # Create DISPLAY_MEDIA message
+            display_message = {
+                "type": MessageType.DISPLAY_MEDIA.value,
+                "content_type": ContentType.IMAGE.value,
+                "request_id": image_message.get('request_id'),
+                "timestamp": datetime.now().isoformat(),
+                "era": self.current_era.value,
+                "biome": self.current_biome.value,
+                "interaction_score": self.user_interaction_score
+            }
+            
+            # Add transition info if specified
+            if transition_type:
+                display_message["transition_type"] = transition_type
+                display_message["transition_duration"] = 2.0  # Default 2 seconds
+            
+            # Copy image transport fields from the ImageReady message
+            image_fields = ["uri", "image_data", "image_format", "image_id", "mask_id"]
+            for field in image_fields:
+                if field in image_message:
+                    display_message[field] = image_message[field]
+            
+            # Publish to display service
+            success = await self.publish_message(display_message)
+            
+            if success:
+                logger.debug(f"Sent DISPLAY_MEDIA to display service (transition: {transition_type})")
+                
+                # Update state tracking
+                self._last_era = self.current_era
+                
+            else:
+                logger.warning("Failed to send DISPLAY_MEDIA message")
+                
+        except Exception as e:
+            logger.error(f"Error sending DISPLAY_MEDIA: {e}")
 
     async def _handle_agent_control(self, message: Dict[str, Any]):
         """Handle AgentControl messages from agent service."""
@@ -748,6 +896,84 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         """Handle AudioStatus messages from audio service.""" 
         logger.debug(f"Received AudioStatus message: {message.get('status')}")
         # TODO: Implement audio status handling logic
+
+    async def _handle_transition_ready(self, message: Dict[str, Any]):
+        """Handle TRANSITION_READY messages from transition service."""
+        logger.debug(f"Received TRANSITION_READY message: {message.get('transition_id')}")
+        
+        if self._pending_transition is None:
+            logger.warning("Received TRANSITION_READY but no pending transition")
+            return
+        
+        try:
+            # Create DISPLAY_MEDIA message with transition
+            transition_type = message.get("transition_type", "fade")
+            sequence_path = message.get("sequence_path")
+            video_path = message.get("video_path")
+            duration = message.get("duration", 2.0)
+            
+            if sequence_path:
+                # Image sequence transition
+                display_media = self._create_display_media(
+                    content_type=ContentType.IMAGE_SEQUENCE,
+                    transition_type=transition_type,
+                    sequence_path=sequence_path,
+                    duration=duration,
+                    final_image_id=self._pending_transition["target_image_id"],
+                    final_image_uri=self._pending_transition["target_image_uri"],
+                    era=self.current_era.value,
+                    biome=self.current_biome.value,
+                    interaction_score=self.user_interaction_score
+                )
+            elif video_path:
+                # Video transition
+                display_media = self._create_display_media(
+                    content_type=ContentType.VIDEO,
+                    transition_type=transition_type,
+                    video_path=video_path,
+                    duration=duration,
+                    final_image_id=self._pending_transition["target_image_id"],
+                    final_image_uri=self._pending_transition["target_image_uri"],
+                    era=self.current_era.value,
+                    biome=self.current_biome.value,
+                    interaction_score=self.user_interaction_score
+                )
+            else:
+                logger.warning("TRANSITION_READY message missing sequence_path or video_path")
+                return
+            
+            # Publish DISPLAY_MEDIA
+            await self.publish_message(display_media)
+            logger.info(f"Published DISPLAY_MEDIA with {transition_type} transition")
+            
+            # Clear pending transition
+            self._pending_transition = None
+            
+        except Exception as e:
+            logger.error(f"Error handling TRANSITION_READY: {e}")
+            self._pending_transition = None
+    
+    def _create_display_media(self, content_type: ContentType, **kwargs) -> Dict[str, Any]:
+        """Create a DISPLAY_MEDIA message with the given content type and parameters."""
+        display_media = {
+            "type": MessageType.DISPLAY_MEDIA.value,
+            "content_type": content_type.value,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add all additional parameters
+        for key, value in kwargs.items():
+            if value is not None:
+                display_media[key] = value
+        
+        return display_media
+    
+    def _needs_transition(self) -> bool:
+        """Check if a transition is needed based on era change."""
+        if self._last_era is None:
+            return False  # First image, no transition needed
+        
+        return self.current_era != self._last_era
 
     async def _main_event_loop(self):
         """Primary event coordination loop."""
