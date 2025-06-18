@@ -9,45 +9,42 @@ This project is a Python-based distributed system for an interactive art install
 - **Services**: Individual components like core, display, audio, and agent services that communicate via ZMQ
   - Each service is a standalone Python package with its own dependencies and src directory
 - **Infrastructure**: Configuration for deployment, monitoring, and management
+- **Utilities**: Scripts and tools for testing, examples, and development support
 
 ## Package Structure
 
 ```
 experimance/
-├── pyproject.toml       # Main project meta-package
-├── setup_new.sh         # Installation script
 ├── libs/
 │   └── common/          # Shared common libraries
-│       ├── pyproject.toml
 │       └── src/
 │           └── experimance_common/
-│               ├── __init__.py
-│               ├── constants.py
-│               ├── schemas.py
-│               └── zmq_utils.py
+│               ├── zmq/
+│               │   ├── zmq_utils.py        # ZMQ communication utilities
+│               │   └── other base classes for ZMQ communication services
+│               ├── config.py               # Configuration management using pydantic
+│               ├── constants.py            # Constants used across the project
+│               ├── logger.py               # Logging utilities
+                ├── schemas.py              # Pydantic schemas for data validation across services
+│               └── image_utils.py          # Image processing utilities
 ├── services/
 │   ├── core/            # Core service managing state machine
-│   │   ├── pyproject.toml
 │   │   └── src/
 │   │       └── experimance_core/
 │   │
 │   ├── display/         # Display service for sand table visualization
-│   │   ├── pyproject.toml
 │   │   └── src/
 │   │       └── experimance_display/
 │   │
 │   ├── audio/           # Audio service for sound generation
-│   │   ├── pyproject.toml
 │   │   └── src/
 │   │       └── experimance_audio/
 │   │
 │   ├── agent/           # Agent service for AI interaction
-│   │   ├── pyproject.toml
 │   │   └── src/
 │   │       └── experimance_agent/
 │   │
 │   ├── image_server/    # Image generation service
-│   │   ├── pyproject.toml
 │   │   └── src/
 │   │       └── image_server/
 │   │
@@ -56,6 +53,7 @@ experimance/
 │       └── src/
 │           └── experimance_transition/
 ├── utils/               # Utility modules for testing and other purposes
+│   ├── examples/        # Examples of usage
 │   └── tests/           # Testing utilities
 ├── scripts/             # Utility scripts for setup and management
 └── infra/
@@ -100,8 +98,7 @@ experimance/
 
 - Use `asyncio` for concurrent operations
 - Use `pydantic` for data validation and serialization
-- Always handle cleanup in services with proper socket closing and context termination
-- Implement graceful shutdown with signal handlers
+- Always handle cleanup in services (note base classes handle most cleanup)
 - Use proper logging with configurable log levels
 - Services should implement a standard interface with `start()`, `stop()`, and `run()` methods
 
@@ -113,16 +110,17 @@ experimance/
 - Use optional-dependencies for features that aren't required
 - Target Python 3.11+ compatibility
 - Each service should specify its own dependencies with appropriate version constraints
-- Handle SDL2 dependencies with pysdl2 and pysdl2-dll instead of sdl2
 - Use src layout for all packages to ensure clean development installs
 
 ## Testing
 
-- Write unit tests with pytest
+- Write unit tests with pytest, using pytest fixtures for setup
 - Use pytest-asyncio for testing async code
-- Mock external dependencies
+- Mock external dependencies as needed, check for existing mocks and reuse
 - Test failure cases as well as success
 - Use fixtures for common setup
+- Place tests in `utils/tests/` directory for common or in `service/NAME/tests/` for service-specific tests
+- Put usage examples that can guide others  in `utils/examples/`
 
 ## Commenting Conventions
 
