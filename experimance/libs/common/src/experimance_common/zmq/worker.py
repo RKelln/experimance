@@ -10,10 +10,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from experimance_common.zmq.base_zmq import BaseZmqService
-from experimance_common.zmq.zmq_utils import ZmqSubscriber, ZmqPullSocket, ZmqPushSocket
+from experimance_common.zmq.zmq_utils import ZmqSubscriber, ZmqPullSocket, ZmqConnectingPushSocket
 from experimance_common.zmq.subscriber import ZmqSubscriberService
 from experimance_common.zmq.pull import ZmqPullService
 from experimance_common.zmq.push import ZmqPushService
+from experimance_common.zmq.zmq_utils import MessageDataType
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
         self.pull_socket = ZmqPullSocket(self.pull_address)
         self.register_socket(self.pull_socket)
         
-        # Initialize push socket for sending responses back (if address provided)
+        # Initialize push socket for sending responses back (CONNECT to controller's binding pull socket)
         if self.push_address:
-            logger.info(f"Initializing push socket on {self.push_address}")
-            self.push_socket = ZmqPushSocket(self.push_address)
+            logger.info(f"Initializing connecting push socket on {self.push_address}")
+            self.push_socket = ZmqConnectingPushSocket(self.push_address)
             self.register_socket(self.push_socket)
         
         # Register tasks
@@ -71,7 +72,7 @@ class ZmqWorkerService(ZmqSubscriberService, ZmqPullService, ZmqPushService):
         
         await BaseZmqService.start(self)
     
-    async def send_response(self, response: Dict[str, Any]) -> bool:
+    async def send_response(self, response: MessageDataType) -> bool:
         """Send a response back to the controller.
         
         Args:

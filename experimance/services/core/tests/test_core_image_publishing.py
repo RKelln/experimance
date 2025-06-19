@@ -32,12 +32,9 @@ class TestCoreServiceImagePublishing:
         self.mock_config.camera = Mock()
         self.mock_config.camera.debug_mode = False
         
-        # Mock the parent class initialization to avoid ZMQ setup
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__'):
-            self.service = ExperimanceCoreService(config=self.mock_config)
-            
-        # Mock the publish_message method
-        self.service.publish_message = AsyncMock(return_value=True)
+        # Use the reusable mock from mocks.py
+        from .mocks import create_mock_core_service_with_custom_config
+        self.service = create_mock_core_service_with_custom_config(self.mock_config)
     
     @pytest.mark.asyncio
     async def test_publish_change_map_uses_enum_transport_modes(self):

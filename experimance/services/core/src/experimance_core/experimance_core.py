@@ -10,8 +10,11 @@ This service manages:
 import argparse
 import asyncio
 import logging
+import random
 import time
+import traceback
 import sys
+import uuid
 from collections import deque
 from experimance_core.depth_processor import DepthProcessor
 from experimance_core.depth_visualizer import DepthVisualizer
@@ -21,9 +24,9 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
 from experimance_common.constants import DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES
-from experimance_common.schemas import Era, Biome, ContentType
-from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
-from experimance_common.zmq.zmq_utils import MessageType, prepare_image_message
+from experimance_common.schemas import Era, Biome, ContentType, RenderRequest
+from experimance_common.zmq.controller import ZmqControllerMultiWorkerService, ControllerMultiWorkerConfig, WorkerConnectionConfig
+from experimance_common.zmq.zmq_utils import MessageType, MessageDataType, prepare_image_message
 from experimance_core.config import (
     CoreServiceConfig, 
     CameraState,
@@ -65,7 +68,7 @@ ERA_BIOMES = {
     Era.RUINS: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.SWAMP, Biome.PLAINS]  # Nature reclaiming
 }
 
-class ExperimanceCoreService(ZmqPublisherSubscriberService):
+class ExperimanceCoreService(ZmqControllerMultiWorkerService):
     """
     Central coordinator service for the Experimance interactive art installation.
     
@@ -86,19 +89,22 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         service_name = self.config.experimance_core.name
         heartbeat_interval = self.config.experimance_core.heartbeat_interval
         
-        # Initialize ZMQ addresses using unified events channel
+        # Initialize ZMQ addresses for PUB/SUB
         pub_address = f"tcp://*:{DEFAULT_PORTS['events']}"
         sub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
         
-        # Initialize parent service
+        # Initialize parent service with PUB/SUB and multi-worker capabilities
         super().__init__(
             service_name=service_name,
             pub_address=pub_address,
             sub_address=sub_address,
-            subscribe_topics=[],  # Will subscribe to all messages and filter by type
-            publish_topic=f"{service_name}.heartbeat",
+            topics=[],  # Will subscribe to all messages and filter by type
+            heartbeat_topic=f"{service_name}.heartbeat",
             service_type="core_coordinator"
         )
+        
+        # Configure workers from Pydantic configuration
+        self.setup_workers_from_config_provider(self.config)
         
         # State machine variables
         self.current_era: Era = Era.WILDERNESS
@@ -115,8 +121,7 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         
         # Internal state
         self.last_depth_map: Optional[Any] = None
-        self._message_handlers: Dict[str, Any] = {}
-        
+
         # Depth processing state
         self._depth_processor: Optional[DepthProcessor] = None
         self._depth_visualizer: Optional[DepthVisualizer] = None
@@ -145,6 +150,8 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         self.Biome = Biome  # Expose enum class
         
         logger.info(f"Experimance Core Service initialized: {service_name}")
+
+
 
     async def start(self):
         """Start the service and initialize components."""
@@ -347,6 +354,10 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 # Update interaction score
                 self.calculate_interaction_score(interaction_intensity)
                 
+                # Update the generated image for display service
+                # TODO: This should be a separate task in the future
+
+
                 # Publish change map to display service (with smoothed score)
                 await self._publish_change_map(change_map, smoothed_change_score)
             
@@ -490,18 +501,18 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
 
     def _register_message_handlers(self):
         """Register handlers for different message types."""
-        self._message_handlers = {
-            "ImageReady": self._handle_image_ready,
-            "TransitionReady": self._handle_transition_ready,
+        message_handlers = {
             "AgentControl": self._handle_agent_control,
             "AudioStatus": self._handle_audio_status,
         }
-        
-        # Register handlers with the parent service
-        for message_type, handler in self._message_handlers.items():
+
+        # Register handlers with the pubsub system
+        for message_type, handler in message_handlers.items():
             self.register_handler(message_type, handler)
-            
-        logger.debug(f"Registered {len(self._message_handlers)} message handlers")
+
+        # Register worker handlers for responses from push/pull workers
+        self.register_worker_handler("image", self._handle_image_ready_task)
+        
 
     # State Management Methods
     
@@ -553,7 +564,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             
         # For Future era, use probability to decide between looping and progressing
         if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
-            import random
             # 70% chance to stay in Future, 30% to progress to dystopia
             next_era = random.choices(possible_next_eras, weights=[0.7, 0.3])[0]
         else:
@@ -571,7 +581,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             return None
             
         if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
-            import random
             return random.choices(possible_next_eras, weights=[0.7, 0.3])[0].value
         else:
             return possible_next_eras[0].value
@@ -593,7 +602,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
             return self.current_biome
             
         # Otherwise, select randomly from available biomes
-        import random
         new_biome = random.choice(available_biomes)
         self.current_biome = new_biome
         logger.info(f"Selected biome {self.current_biome} for era {era_enum}")
@@ -762,6 +770,32 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 
         except Exception as e:
             logger.error(f"Error handling ImageReady message: {e}")
+
+    async def _handle_image_ready_task(self, task: MessageDataType):
+        """Handle IMAGE_READY tasks received from the image server via PULL socket.
+        
+        Args:
+            task: The IMAGE_READY message from the image server
+        """
+        try:
+            # Convert to dict if it's a Pydantic model
+            if hasattr(task, 'model_dump') and callable(getattr(task, 'model_dump')):
+                task_dict = task.model_dump()  # type: ignore
+            elif isinstance(task, dict):
+                task_dict = task
+            else:
+                logger.warning(f"Unexpected task type: {type(task)}")
+                return
+                
+            if task_dict.get("type") == MessageType.IMAGE_READY.value:
+                logger.debug(f"Received IMAGE_READY task: {task_dict.get('request_id')}")
+                # Delegate to existing message handler
+                await self._handle_image_ready(task_dict)
+            else:
+                logger.warning(f"Received unexpected task type from image server: {task_dict.get('type')}")
+        except Exception as e:
+            logger.error(f"Error handling image ready task: {e}")
+            self.record_error(e, is_fatal=False, custom_message=f"Error handling IMAGE_READY task: {e}")
 
     async def _should_request_transition(self, image_message: Dict[str, Any]) -> bool:
         """
@@ -1002,25 +1036,73 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
                 self.record_error(e, is_fatal=False, 
                                 custom_message="Error in main event loop")
 
-    async def _publish_render_request(self):
+    async def _publish_render_request(self, message: Optional[RenderRequest] = None):
         """Publish a render request to the image server."""
-        event = {
-            "type": MessageType.RENDER_REQUEST.value,
-            "current_era": self.current_era,
-            "current_biome": self.current_biome,
-            "interaction_score": self.user_interaction_score,
-            "seed": int(time.time()),  # Use timestamp as seed for variability
-            "timestamp": datetime.now().isoformat()
-        }
+        
+        if message is None:
+            # Create a default render request using the proper schema
+            prompt = self._generate_prompt_for_era_biome(self.current_era, self.current_biome)
+            
+            request = RenderRequest(
+                request_id=str(uuid.uuid4()),
+                era=self.current_era,
+                biome=self.current_biome,
+                prompt=prompt,
+                seed=int(time.time())  # Use timestamp as seed for variability
+            )
+        else:
+            request = message
         
         try:
-            success = await self.publish_message(event)
+            # Push the task to the image server via PUSH socket
+            success = await self.push_task(request)
             if success:
-                logger.debug(f"Published render request for {self.current_era}/{self.current_biome}")
+                logger.debug(f"Pushed render request for {request.era}/{request.biome}")
+                logger.debug(f"Request ID: {request.request_id}")
             else:
-                logger.warning("Failed to publish render request")
+                logger.warning("Failed to push render request")
         except Exception as e:
-            logger.error(f"Error publishing render request: {e}")
+            logger.error(f"Error pushing render request: {e}")
+            
+    def _generate_prompt_for_era_biome(self, era: Era, biome: Biome) -> str:
+        """Generate an appropriate prompt for the given era and biome."""
+        # Map eras to descriptive periods
+        era_descriptions = {
+            Era.WILDERNESS: "pristine wilderness",
+            Era.PRE_INDUSTRIAL: "pre-industrial settlement", 
+            Era.EARLY_INDUSTRIAL: "early industrial development",
+            Era.LATE_INDUSTRIAL: "industrial landscape",
+            Era.MODERN: "modern development",
+            Era.CURRENT: "contemporary landscape",
+            Era.FUTURE: "futuristic landscape",
+            Era.DYSTOPIA: "dystopian wasteland",
+            Era.RUINS: "overgrown ruins"
+        }
+        
+        # Map biomes to environmental descriptions
+        biome_descriptions = {
+            Biome.RAINFOREST: "dense rainforest",
+            Biome.TEMPERATE_FOREST: "temperate forest",
+            Biome.BOREAL_FOREST: "boreal forest",
+            Biome.DECIDUOUS_FOREST: "deciduous forest",
+            Biome.DESERT: "arid desert",
+            Biome.MOUNTAIN: "mountainous terrain",
+            Biome.TUNDRA: "arctic tundra",
+            Biome.PLAINS: "open plains",
+            Biome.RIVER: "river valley",
+            Biome.COASTAL: "coastal region",
+            Biome.TROPICAL_ISLAND: "tropical island",
+            Biome.ARCTIC: "arctic landscape",
+            Biome.SWAMP: "wetland swamp"
+        }
+        
+        era_desc = era_descriptions.get(era, "landscape")
+        biome_desc = biome_descriptions.get(biome, "natural area")
+        
+        # Create a descriptive prompt for satellite imagery
+        prompt = f"Satellite view of {biome_desc} in {era_desc}, aerial perspective, detailed topography"
+        
+        return prompt
 
     async def _depth_processing_task(self):
         """Handle depth camera data processing with improved retry logic using robust camera."""
@@ -1146,7 +1228,6 @@ class ExperimanceCoreService(ZmqPublisherSubscriberService):
         """Stop the service gracefully."""
         logger.info("Stopping Experimance Core Service")
         # debugging print the caller of stop
-        import traceback
         logger.info(f"Stop called from: {traceback.format_stack()[-2].strip()}")
         
         # Clean up visualization window if it was used

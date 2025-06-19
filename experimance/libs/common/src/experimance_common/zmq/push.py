@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict
 
 from experimance_common.zmq.base_zmq import BaseZmqService
-from experimance_common.zmq.zmq_utils import ZmqPushSocket
+from experimance_common.zmq.zmq_utils import ZmqPushSocket, MessageDataType
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class ZmqPushService(BaseZmqService):
         
         await super().start()
     
-    async def push_task(self, task: Dict[str, Any]) -> bool:
+    async def push_task(self, task: MessageDataType) -> bool:
         """Push a task to workers.
         
         Args:

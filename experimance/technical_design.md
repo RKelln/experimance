@@ -29,29 +29,29 @@ The DISPLAY_MEDIA message type represents a significant architectural improvemen
 
 ### Message Flow
 
-```
-┌─────────────────┐    RenderRequest     ┌──────────────┐
-│   experimance   │ ────────────────────▶ │ image_server │
-│   (core)        │                      │              │
-└─────────────────┘                      └──────────────┘
-         │                                        │
-         │                               ImageReady
-         │                                        │
-         ▼                                        ▼
-┌─────────────────┐                      ┌──────────────┐
-│  Transition     │                      │   Display    │
-│  Evaluation     │                      │   Decision   │
-│                 │                      │   Logic      │
-└─────────────────┘                      └──────────────┘
-         │                                        │
-         │                               DisplayMedia
-         │                                        │
-         ▼                                        ▼
-┌─────────────────┐                      ┌──────────────┐
-│    display      │ ◀────────────────────│   Enhanced   │
-│    service      │     DisplayMedia     │   Message    │
-└─────────────────┘                      └──────────────┘
-```
+TODO: make into diagram?
+
+core -> RENDER_REQUEST (push)  -> image server
+core <- IMAGE_READY (pull)     <- image server
+core -> DISPLAY_MEDIA (pubsub) -> display
+
+With future:
+core -> TRANSITION_REQUEST (push) -> transition service
+core <- TRANSITION_READY (pull)   <- transition serrvice
+core -> DISPLAY_MEDIA (pubsub) -> display
+
+and possible:
+core -> LOOP_REQUEST (push) -> image server
+core <- LOOP_READY (pull)   <- image server
+core -> DISPLAY_MEDIA (pubsub) -> display
+
+and additional core events:
+core -> CHANGE_MAP (push) -> display
+
+core <- AGENT_CONTROL_EVENT (???) <- agent
+agent -> TEXT_OVERLAY (push)      -> display
+agent -> REMOVE_TEXT (push)       -> display
+
 
 ### Transition Logic
 

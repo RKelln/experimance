@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from experimance_common.zmq.pubsub import ZmqPublisherSubscriberService
+from experimance_common.zmq.worker import ZmqWorkerService
 from experimance_common.zmq.zmq_utils import MessageType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.config import load_config_with_overrides
@@ -37,12 +37,12 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 
 logger = logging.getLogger(__name__)
 
-class ImageServerService(ZmqPublisherSubscriberService):
+class ImageServerService(ZmqWorkerService):
     """Main image server service that handles render requests and publishes generated images.
     
-    This service follows the Experimance star topology pattern:
-    - Subscribes to the events channel for RenderRequest messages
-    - Publishes ImageReady messages to the images channel
+    This service uses the worker pattern:
+    - Pulls RenderRequest messages from Core service 
+    - Pushes ImageReady messages back to Core service
     - Supports multiple image generation strategies
     """
     image_generator: ImageGenerator
@@ -69,14 +69,14 @@ class ImageServerService(ZmqPublisherSubscriberService):
             
             configure_external_loggers(logging.WARNING)
 
-            # Initialize the base service
+            # Initialize the base service using worker pattern
             super().__init__(
                 service_name=self.config.service_name,
-                service_type="image-server",
-                pub_address=self.config.zmq.events_pub_address,
-                sub_address=self.config.zmq.events_sub_address,
-                subscribe_topics=[MessageType.RENDER_REQUEST],
-                publish_topic=MessageType.IMAGE_READY,
+                sub_address=self.config.zmq.events_sub_address,  # For control messages
+                pull_address=f"tcp://localhost:{DEFAULT_PORTS['images']}",  # Pull RENDER_REQUEST from Core
+                push_address=f"tcp://*:{DEFAULT_PORTS['image_results']}",  # Push IMAGE_READY back to Core
+                topics=[],  # No specific subscription topics for now
+                service_type="image-server"
             )
             
             # For compatibility with tests
@@ -174,10 +174,26 @@ class ImageServerService(ZmqPublisherSubscriberService):
             prompt = message["prompt"]
             depth_map_b64 = message.get("depth_map_png")
             
-            logger.info(f"Processing RenderRequest {request_id}")
+            # Extract era and biome for context-aware generation
+            era = message.get("era")
+            biome = message.get("biome")
+            seed = message.get("seed")
+            negative_prompt = message.get("negative_prompt")
+            style = message.get("style")
             
-            # Create and properly register image generation task
-            task = self._process_render_request(request_id, prompt, depth_map_b64)
+            logger.info(f"Processing RenderRequest {request_id} for {era}/{biome}")
+            
+            # Create and properly register image generation task with full context
+            task = self._process_render_request(
+                request_id=request_id, 
+                prompt=prompt, 
+                depth_map_b64=depth_map_b64,
+                era=era,
+                biome=biome,
+                seed=seed,
+                negative_prompt=negative_prompt,
+                style=style
+            )
             self.add_task(task)
             
         except Exception as e:
@@ -210,7 +226,12 @@ class ImageServerService(ZmqPublisherSubscriberService):
         self,
         request_id: str,
         prompt: str,
-        depth_map_b64: Optional[str] = None
+        depth_map_b64: Optional[str] = None,
+        era: Optional[str] = None,
+        biome: Optional[str] = None,
+        seed: Optional[int] = None,
+        negative_prompt: Optional[str] = None,
+        style: Optional[str] = None
     ):
         """Process a render request and generate an image.
         
@@ -218,16 +239,32 @@ class ImageServerService(ZmqPublisherSubscriberService):
             request_id: Unique identifier for this request
             prompt: Text prompt for image generation
             depth_map_b64: Optional base64-encoded depth map
+            era: Era context for generation
+            biome: Biome context for generation
+            seed: Random seed for generation
+            negative_prompt: Negative prompt for generation
+            style: Style hint for generation
         """
         try:
-            # Generate the image
+            # Generate the image with full context
             image_path = await self._generate_image(
                 prompt=prompt,
                 depth_map_b64=depth_map_b64,
+                era=era,
+                biome=biome,
+                seed=seed,
+                negative_prompt=negative_prompt,
+                style=style
             )
             
-            # Publish ImageReady message
-            await self._publish_image_ready(request_id, image_path)
+            # Publish ImageReady message with context
+            await self._publish_image_ready(
+                request_id=request_id, 
+                image_path=image_path,
+                prompt=prompt,
+                era=era,
+                biome=biome
+            )
             
             logger.info(f"Successfully processed RenderRequest {request_id}")
             
@@ -277,12 +314,22 @@ class ImageServerService(ZmqPublisherSubscriberService):
             raise RuntimeError(error_msg) from e
     
     
-    async def _publish_image_ready(self, request_id: str, image_path: str):
+    async def _publish_image_ready(
+        self, 
+        request_id: str, 
+        image_path: str,
+        prompt: Optional[str] = None,
+        era: Optional[str] = None,
+        biome: Optional[str] = None
+    ):
         """Publish an ImageReady message.
         
         Args:
             request_id: The original request ID
             image_path: Path to the generated image
+            prompt: The prompt used for generation
+            era: Era context for the image
+            biome: Biome context for the image
             
         Raises:
             RuntimeError: If publishing the message fails
@@ -294,7 +341,7 @@ class ImageServerService(ZmqPublisherSubscriberService):
             # Generate unique image ID
             image_id = str(uuid.uuid4())
             
-            # Create ImageReady message
+            # Create ImageReady message with context
             message = {
                 "type": MessageType.IMAGE_READY,
                 "request_id": request_id,
@@ -302,8 +349,34 @@ class ImageServerService(ZmqPublisherSubscriberService):
                 "uri": image_uri
             }
             
-            # Publish the message
-            success = await self.publish_message(message)
+            # Add context fields if provided
+            if prompt:
+                message["prompt"] = prompt
+            if era:
+                message["era"] = era
+            if biome:
+                message["biome"] = biome
+            
+            # If configured for remote deployment, include base64 data
+            if getattr(self.config, 'include_image_data', False):
+                try:
+                    import base64
+                    with open(image_path, 'rb') as image_file:
+                        image_data = base64.b64encode(image_file.read()).decode('utf-8')
+                        message["image_data"] = image_data
+                        
+                    # Get image dimensions for metadata
+                    from PIL import Image
+                    with Image.open(image_path) as img:
+                        message["width"] = img.width
+                        message["height"] = img.height
+                        message["format"] = img.format.lower() if img.format else "png"
+                except Exception as e:
+                    logger.warning(f"Failed to encode image data for {image_path}: {e}")
+                    # Continue with URI-only message
+            
+            # Publish the message using push socket
+            success = await self.send_response(message)
             
             if success:
                 logger.info(f"Published ImageReady message for request {request_id}")

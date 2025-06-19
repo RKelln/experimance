@@ -13,7 +13,8 @@ from typing import Any, Dict, Optional
 from experimance_common.constants import HEARTBEAT_INTERVAL, HEARTBEAT_TOPIC
 from experimance_common.service_state import ServiceState
 from experimance_common.zmq.base_zmq import BaseZmqService
-from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher, topic_to_str, topics_to_strs
+from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher, topic_to_str, topics_to_strs, MessageDataType, TopicType
+from experimance_common.schemas import MessageBase
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +86,11 @@ class ZmqPublisherService(BaseZmqService):
             
             await asyncio.sleep(interval)
     
-    async def publish_message(self, message: Dict[str, Any], topic: Optional[str] = None) -> bool:
+    async def publish_message(self, message: MessageDataType, topic: Optional[TopicType] = None) -> bool:
         """Publish a message to subscribers.
         
         Args:
-            message: Message to publish
+            message: Message to publish (dict or Pydantic model)
             topic: Topic to publish on (if None, uses the default heartbeat topic)
             
         Returns:
@@ -100,24 +101,30 @@ class ZmqPublisherService(BaseZmqService):
             self.errors += 1
             return False
         
+        # get topic from message if provided, either in dict or as a Pydantic model
+        if topic is None:
+            if isinstance(message, MessageBase):
+                topic = message.type
+            elif isinstance(message, dict) and "topic" in message:
+                topic = message["topic"]
+
         if topic is not None:
             topic = topic_to_str(topic)
             logger.debug(f"Publishing message to custom topic: {topic}")
-            
+        
         # If topic provided, create a new publisher or use existing one with that topic
-        publisher = self.publisher
         if topic is not None and topic != self.topic:
             logger.warning(f"Publishing to custom topic {topic}, not the default {self.topic}")
-            publisher = ZmqPublisher(self.pub_address, topic)
+            temp_publisher = ZmqPublisher(self.pub_address, topic)
             try:
-                success = await publisher.publish_async(message)
+                success = await temp_publisher.publish_async(message)
                 if success:
                     self.messages_sent += 1
                 else:
                     self.errors += 1
                 return success
             finally:
-                publisher.close()
+                temp_publisher.close()
         else:
             # Use the default publisher
             try:

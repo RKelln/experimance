@@ -26,12 +26,14 @@ from pyglet.gl import (
 )
 from pyglet.graphics.shader import Shader, ShaderProgram
 
+from experimance_common.constants import GENERATED_IMAGES_DIR_ABS, VIDEOS_DIR_ABS
+
 # ── Configuration ─────────────────────────────────────────────────────────────
-IMAGE_FOLDER    = "media/images/generated"      # directory for background images
+IMAGE_FOLDER    = str(GENERATED_IMAGES_DIR_ABS)  # directory for background images
 IMAGE_DURATION  = 5.0            # seconds per image (including fades)
 IMAGE_FADE_TIME = 1.0            # seconds to fade in/out each image
 
-VIDEO_PATH      = "media/video/video_overlay.mp4" # video file path
+VIDEO_PATH      = str(VIDEOS_DIR_ABS / "video_overlay.mp4")  # video file path
 VIDEO_FADE_TIME = 1.0            # seconds fade in/out video overlay
 VIDEO_HOLD_TIME = 3.0            # seconds fully visible
 

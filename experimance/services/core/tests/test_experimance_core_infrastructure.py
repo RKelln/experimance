@@ -53,32 +53,42 @@ class TestExperimanceCoreServiceInfrastructure:
 
     def test_service_can_be_instantiated(self, test_config):
         """Test that ExperimanceCoreService can be instantiated with config."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
-            service = ExperimanceCoreService(config=test_config)
-            
-            assert service is not None
-            assert service.config.experimance_core.name == "test_experimance_core"
-            # Check that service has required attributes
-            assert hasattr(service, 'config')
-            assert hasattr(service, 'current_era')
-            assert hasattr(service, 'current_biome')
+        from .mocks import create_mock_core_service_with_custom_config
+        
+        service = create_mock_core_service_with_custom_config(test_config)
+        
+        assert service is not None
+        assert service.config.experimance_core.name == "test_experimance_core"
+        # Check that service has required attributes
+        assert hasattr(service, 'config')
+        assert hasattr(service, 'current_era')
+        assert hasattr(service, 'current_biome')
 
     def test_service_loads_configuration(self, test_config):
         """Test that service properly loads configuration from config object."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
-            service = ExperimanceCoreService(config=test_config)
-            
-            # Check that configuration is loaded
-            assert hasattr(service, 'config')
-            assert service.config.experimance_core.name == "test_experimance_core"
-            assert service.config.state_machine.idle_timeout == 45.0
-            assert service.config.depth_processing.change_threshold == 50
+        from .mocks import create_mock_core_service_with_custom_config
+        
+        service = create_mock_core_service_with_custom_config(test_config)
+        
+        # Check that configuration is loaded
+        assert hasattr(service, 'config')
+        assert service.config.experimance_core.name == "test_experimance_core"
+        assert service.config.state_machine.idle_timeout == 45.0
+        assert service.config.depth_processing.change_threshold == 50
 
     def test_service_uses_correct_zmq_ports(self, test_config):
         """Test that service configures correct ZMQ ports for unified events channel."""
         # Mock ZMQ initialization to avoid needing actual ZMQ attributes
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None) as mock_init:
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None) as mock_init, \
+             patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None):
+            
             service = ExperimanceCoreService(config=test_config)
+            
+            # Initialize essential attributes
+            setattr(service, 'worker_connections', {})
+            setattr(service, 'service_name', test_config.experimance_core.name)
+            setattr(service, 'tasks', [])
+            setattr(service, '_running', False)
             
             # Should use the unified events port
             expected_port = DEFAULT_PORTS["events"]
@@ -94,11 +104,18 @@ class TestExperimanceCoreServiceInfrastructure:
     @pytest.mark.asyncio
     async def test_service_lifecycle_start_stop(self, test_config):
         """Test basic service lifecycle - start and stop."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None), \
-             patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.start') as mock_start, \
-             patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.stop') as mock_stop:
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None), \
+             patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.start') as mock_start, \
+             patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.stop') as mock_stop, \
+             patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None):
             
             service = ExperimanceCoreService(config=test_config)
+            
+            # Initialize essential attributes
+            setattr(service, 'worker_connections', {})
+            setattr(service, 'service_name', test_config.experimance_core.name)
+            setattr(service, 'tasks', [])
+            setattr(service, '_running', False)
             
             # Mock required methods to avoid complex initialization
             service.publish_message = AsyncMock()
@@ -115,7 +132,7 @@ class TestExperimanceCoreServiceInfrastructure:
     @pytest.mark.asyncio
     async def test_service_registers_message_handlers(self, test_config):
         """Test that service registers handlers for expected message types."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
             service = ExperimanceCoreService(config=test_config)
             
             # Mock the register_handler method to track what handlers are registered
@@ -137,7 +154,7 @@ class TestExperimanceCoreServiceInfrastructure:
 
     def test_service_has_required_attributes(self, test_config):
         """Test that service has all required attributes for core functionality."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
             service = ExperimanceCoreService(config=test_config)
             
             # State management attributes
@@ -160,15 +177,15 @@ class TestExperimanceCoreServiceInfrastructure:
         # Test with default configuration - should use default values
         default_config = CoreServiceConfig.from_overrides(override_config={})
         
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
             service = ExperimanceCoreService(config=default_config)
             assert service is not None
             # Should use default configuration values
             assert service.config.experimance_core.name == "experimance_core"
 
     def test_service_inherits_from_correct_base_class(self, test_config):
-        """Test that service properly inherits from ZMQPublisherSubscriberService."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
+        """Test that service properly inherits from ZmqControllerMultiWorkerService."""
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
             service = ExperimanceCoreService(config=test_config)
             
             # Should have publisher and subscriber capabilities
@@ -192,7 +209,7 @@ class TestExperimanceCoreServiceInfrastructure:
 
     def test_service_has_state_persistence_attributes(self, test_config):
         """Test that service has attributes for state persistence."""
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
             service = ExperimanceCoreService(config=test_config)
             
             assert hasattr(service, 'session_start_time')

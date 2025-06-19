@@ -24,26 +24,26 @@ class TestCoreImageReadyHandling:
     @pytest.fixture
     async def service(self):
         """Create a test core service instance."""
-        # Create a mock config similar to other tests
-        mock_config = Mock()
-        mock_config.experimance_core = Mock()
-        mock_config.experimance_core.name = "test_core"
-        mock_config.experimance_core.heartbeat_interval = 5.0
-        mock_config.experimance_core.change_smoothing_queue_size = 5
-        mock_config.state_machine = Mock()
-        mock_config.state_machine.idle_timeout = 300.0
-        mock_config.state_machine.interaction_threshold = 0.5
-        mock_config.state_machine.era_min_duration = 60.0
-        mock_config.visualize = False
-        mock_config.camera = Mock()
-        mock_config.camera.debug_mode = False
+        # Use the reusable mock from mocks.py
+        from .mocks import create_mock_core_service
         
-        # Mock the parent class initialization to avoid ZMQ setup
-        with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__'):
-            service = ExperimanceCoreService(config=mock_config)
-            
-        # Mock the publish_message method to avoid actual ZMQ publishing
-        service.publish_message = AsyncMock(return_value=True)
+        # Create service with custom config overrides for this test
+        service = create_mock_core_service(config_overrides={
+            "experimance_core": {
+                "name": "test_core",
+                "heartbeat_interval": 5.0,
+                "change_smoothing_queue_size": 5
+            },
+            "state_machine": {
+                "idle_timeout": 300.0,
+                "interaction_threshold": 0.5,
+                "era_min_duration": 60.0
+            },
+            "camera": {
+                "debug_mode": False
+            },
+            "visualize": False
+        })
         
         return service
     

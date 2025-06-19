@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeAlias, Union,
 import zmq
 import zmq.asyncio
 
+
 # Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ from experimance_common.constants import (
     BASE64_PNG_PREFIX,
 )
 
+from experimance_common.schemas import MessageBase
 
 class MessageType(str, Enum):
     """Message types used in the Experimance system."""
@@ -56,6 +58,9 @@ class MessageType(str, Enum):
     CHANGE_MAP = "ChangeMap"
     # Add more message types as needed
 
+    def __str__(self) -> str:
+        """Return the string representation of the message type."""
+        return self.value
 
 class ZmqException(Exception):
     """Base exception for ZMQ-related errors."""
@@ -67,6 +72,57 @@ class ZmqTimeoutError(ZmqException):
     pass
 
 TopicType: TypeAlias = str | MessageType
+MessageDataType: TypeAlias = Union[Dict[str, Any], MessageBase]
+
+# FIXME: shouldn't need to use these anymore, use MessageBase.from_dict()
+def serialize_message(message: MessageDataType) -> Dict[str, Any]:
+    """
+    Convert a message to a dictionary for JSON serialization.
+    
+    Args:
+        message: Either a dictionary or a Pydantic BaseModel instance
+        
+    Returns:
+        Dictionary representation of the message
+        
+    Raises:
+        TypeError: If message is not a dict or BaseModel
+    """
+    if isinstance(message, dict):
+        return message
+    elif isinstance(message, MessageBase):
+        return message.model_dump()
+    else:
+        raise TypeError(f"Message must be a dict or Pydantic BaseModel, got {type(message)}")
+
+
+# FIXME: shouldn't need to use these anymore, use MessageBase.from_dict()
+def deserialize_message(data: Dict[str, Any], message_class: Optional[type] = None) -> MessageDataType:
+    """
+    Convert a dictionary to a Pydantic model if a message class is provided.
+    
+    Args:
+        data: Dictionary data from JSON deserialization
+        message_class: Optional Pydantic model class to convert to
+        
+    Returns:
+        Either the original dict or a Pydantic model instance
+        
+    Raises:
+        ValueError: If message_class is provided but data cannot be converted
+    """
+    if message_class is None:
+        return data
+        
+    if issubclass(message_class, MessageBase):
+        try:
+            return message_class(**data)
+        except Exception as e:
+            raise ValueError(f"Cannot convert data to {message_class.__name__}: {e}") from e
+    else:        raise ValueError(f"Message class must be a Pydantic BaseModel, got {message_class}")
+
+
+
 
 class ZmqBase:
     """Base class for ZMQ socket wrappers."""
@@ -150,11 +206,12 @@ class ZmqPublisher(ZmqBase):
         
         logger.debug(f"Publisher bound to {address} on topic '{self.topic}'")
     
-    def publish(self, message: Dict[str, Any], topic: Optional[TopicType] = None) -> bool:
+    def publish(self, message: MessageDataType, topic: Optional[TopicType] = None) -> bool:
         """Publish a message on the topic.
         
         Args:
-            message: The message to publish (will be serialized to JSON)
+            message: The message to publish (dict or Pydantic model, will be serialized to JSON)
+            topic: Optional topic override
             
         Returns:
             True if successful, False otherwise
@@ -165,7 +222,9 @@ class ZmqPublisher(ZmqBase):
             
         try:
             assert self.socket is not None, "ZMQ socket was not properly initialized"
-            json_message = json.dumps(message)
+            # Convert message to dict if it's a Pydantic model
+            message_dict = serialize_message(message)
+            json_message = json.dumps(message_dict)
             topic = topic_to_str(topic) if topic else self.topic
             self.socket.send_string(f"{topic} {json_message}")
             return True
@@ -176,11 +235,12 @@ class ZmqPublisher(ZmqBase):
             logger.error(f"Error publishing message: {e}")
             return False
     
-    async def publish_async(self, message: Dict[str, Any], topic: Optional[TopicType] = None) -> bool:
+    async def publish_async(self, message: MessageDataType, topic: Optional[TopicType] = None) -> bool:
         """Publish a message asynchronously on the topic.
         
         Args:
-            message: The message to publish (will be serialized to JSON)
+            message: The message to publish (dict or Pydantic model, will be serialized to JSON)
+            topic: Optional topic override
             
         Returns:
             True if successful, False otherwise
@@ -190,7 +250,9 @@ class ZmqPublisher(ZmqBase):
             return False
             
         try:
-            json_message = json.dumps(message)
+            # Convert message to dict if it's a Pydantic model
+            message_dict = serialize_message(message)
+            json_message = json.dumps(message_dict)
             topic = topic_to_str(topic) if topic else self.topic
             # Use wait_for to add a timeout
             await asyncio.wait_for(
@@ -243,11 +305,11 @@ class ZmqSubscriber(ZmqBase):
         
         logger.debug(f"Subscriber connected to {address} with topics {self.topics}")
     
-    def receive(self) -> Tuple[str, Dict[str, Any]]:
+    def receive(self) -> Tuple[str, MessageDataType]:
         """Receive a message from the subscribed topics.
         
         Returns:
-            Tuple of (topic, message)
+            Tuple of (topic, message) where message is dict or appropriate schema
             
         Raises:
             ZmqTimeoutError: If the receive operation times out
@@ -265,7 +327,14 @@ class ZmqSubscriber(ZmqBase):
                 
             topic = message_str[:space_index]
             message_json = message_str[space_index + 1:]
-            message = json.loads(message_json)
+            message_dict = json.loads(message_json)
+            
+            # Always try to convert to schema if message has a type field
+            try:
+                message = MessageBase.from_dict(message_dict)
+            except Exception:
+                # If schema conversion fails, return the dict
+                message = message_dict
             
             return topic, message
         except zmq.error.Again:
@@ -276,12 +345,12 @@ class ZmqSubscriber(ZmqBase):
         except Exception as e:
             logger.error(f"Error receiving message: {e}")
             return "", {}
-    
-    async def receive_async(self) -> Tuple[str, Dict[str, Any]]:
+        
+    async def receive_async(self) -> Tuple[str, MessageDataType]:
         """Receive a message asynchronously from the subscribed topics.
         
         Returns:
-            Tuple of (topic, message)
+            Tuple of (topic, message) where message is dict or appropriate schema
             
         Raises:
             ZmqTimeoutError: If the receive operation times out
@@ -304,7 +373,14 @@ class ZmqSubscriber(ZmqBase):
                 
             topic = message_str[:space_index]
             message_json = message_str[space_index + 1:]
-            message = json.loads(message_json)
+            message_dict = json.loads(message_json)
+            
+            # Always try to convert to schema if message has a type field
+            try:
+                message = MessageBase.from_dict(message_dict)
+            except Exception:
+                # If schema conversion fails, return the dict
+                message = message_dict
             
             return topic, message
         except asyncio.TimeoutError:
@@ -348,11 +424,11 @@ class ZmqPushSocket(ZmqBase):
         
         logger.debug(f"Push socket bound to {address}")
     
-    def push(self, message: Dict[str, Any]) -> bool:
+    def push(self, message: MessageDataType) -> bool:
         """Push a message to the socket.
         
         Args:
-            message: The message to push (will be serialized to JSON)
+            message: The message to push (dict or Pydantic model, will be serialized to JSON)
             
         Returns:
             True if successful, False otherwise
@@ -363,7 +439,9 @@ class ZmqPushSocket(ZmqBase):
             
         try:
             assert self.socket is not None, "ZMQ socket was not properly initialized"
-            json_message = json.dumps(message)
+            # Convert message to dict if it's a Pydantic model
+            message_dict = serialize_message(message)
+            json_message = json.dumps(message_dict)
             self.socket.send_string(json_message)
             return True
         except zmq.error.Again:
@@ -373,11 +451,11 @@ class ZmqPushSocket(ZmqBase):
             logger.error(f"Error pushing message: {e}")
             return False
     
-    async def push_async(self, message: Dict[str, Any]) -> bool:
+    async def push_async(self, message: MessageDataType) -> bool:
         """Push a message asynchronously to the socket.
         
         Args:
-            message: The message to push (will be serialized to JSON)
+            message: The message to push (dict or Pydantic model, will be serialized to JSON)
             
         Returns:
             True if successful, False otherwise
@@ -387,7 +465,9 @@ class ZmqPushSocket(ZmqBase):
             return False
             
         try:
-            json_message = json.dumps(message)
+            # Convert message to dict if it's a Pydantic model
+            message_dict = serialize_message(message)
+            json_message = json.dumps(message_dict)
             # Use wait_for to add a timeout
             await asyncio.wait_for(
                 self.socket.send_string(json_message), # type: ignore
@@ -425,11 +505,11 @@ class ZmqPullSocket(ZmqBase):
         
         logger.debug(f"Pull socket connected to {address}")
     
-    def pull(self) -> Dict[str, Any]:
+    def pull(self) -> MessageDataType:
         """Pull a message from the socket.
         
         Returns:
-            The received message
+            The received message as dict or appropriate schema
             
         Raises:
             ZmqTimeoutError: If the receive operation times out
@@ -439,7 +519,16 @@ class ZmqPullSocket(ZmqBase):
             
         try:
             message_str : str = self.socket.recv_string() # type: ignore
-            return json.loads(message_str)
+            message_dict = json.loads(message_str)
+            
+            # Always try to convert to schema if message has a type field
+            try:
+                message = MessageBase.from_dict(message_dict)
+            except Exception:
+                # If schema conversion fails, return the dict
+                message = message_dict
+                
+            return message
         except zmq.error.Again:
             raise ZmqTimeoutError("Pull operation timed out")
         except json.JSONDecodeError as e:
@@ -449,11 +538,11 @@ class ZmqPullSocket(ZmqBase):
             logger.error(f"Error pulling message: {e}")
             return {}
     
-    async def pull_async(self) -> Dict[str, Any]:
+    async def pull_async(self) -> MessageDataType:
         """Pull a message asynchronously from the socket.
         
         Returns:
-            The received message
+            The received message as dict or appropriate schema
             
         Raises:
             ZmqTimeoutError: If the receive operation times out
@@ -467,7 +556,17 @@ class ZmqPullSocket(ZmqBase):
                 self.socket.recv_string(), # type: ignore
                 timeout=DEFAULT_RECV_TIMEOUT
             )
-            return json.loads(message_str)
+            message_dict = json.loads(message_str)
+            
+            # Always try to convert to schema if message has a type field
+            try:
+                from experimance_common.schemas import MessageBase
+                message = MessageBase.from_dict(message_dict)
+            except (ImportError, Exception):
+                # If schema conversion fails, return the dict
+                message = message_dict
+                
+            return message
         except asyncio.TimeoutError:
             raise ZmqTimeoutError("Async pull operation timed out")
         except asyncio.CancelledError:
@@ -517,11 +616,11 @@ class ZmqBindingPullSocket(ZmqBase):
         logger.debug(f"Pull socket bound to {address}")
     
     # Re-use the pull and pull_async methods from ZmqPullSocket
-    def pull(self) -> Dict[str, Any]:
+    def pull(self) -> MessageDataType:
         """Pull a message from the socket.
         
         Returns:
-            The received message
+            The received message as dict or appropriate schema
             
         Raises:
             ZmqTimeoutError: If the receive operation times out
@@ -531,7 +630,16 @@ class ZmqBindingPullSocket(ZmqBase):
             
         try:
             message_str : str = self.socket.recv_string() # type: ignore
-            return json.loads(message_str)
+            message_dict = json.loads(message_str)
+            
+            # Always try to convert to schema if message has a type field
+            try:
+                message = MessageBase.from_dict(message_dict)
+            except Exception:
+                # If schema conversion fails, return the dict
+                message = message_dict
+                
+            return message
         except zmq.error.Again:
             raise ZmqTimeoutError("Pull operation timed out")
         except json.JSONDecodeError as e:
@@ -608,11 +716,11 @@ class ZmqConnectingPushSocket(ZmqBase):
         
         logger.debug(f"Push socket connected to {address}")
     
-    def push(self, message: Dict[str, Any]) -> bool:
+    def push(self, message: MessageDataType) -> bool:
         """Push a message to the socket.
         
         Args:
-            message: The message to push (will be serialized to JSON)
+            message: The message to push (dict or Pydantic model, will be serialized to JSON)
             
         Returns:
             True if successful, False otherwise
@@ -622,7 +730,9 @@ class ZmqConnectingPushSocket(ZmqBase):
             return False
             
         try:
-            message_str = json.dumps(message)
+            # Convert message to dict if it's a Pydantic model
+            message_dict = serialize_message(message)
+            message_str = json.dumps(message_dict)
             self.socket.send_string(message_str) # type: ignore
             return True
         except zmq.error.Again:
@@ -632,11 +742,11 @@ class ZmqConnectingPushSocket(ZmqBase):
             logger.error(f"Error pushing message: {e}")
             return False
     
-    async def push_async(self, message: Dict[str, Any]) -> bool:
+    async def push_async(self, message: MessageDataType) -> bool:
         """Push a message asynchronously to the socket.
         
         Args:
-            message: The message to push (will be serialized to JSON)
+            message: The message to push (dict or Pydantic model, will be serialized to JSON)
             
         Returns:
             True if successful, False otherwise
@@ -646,7 +756,9 @@ class ZmqConnectingPushSocket(ZmqBase):
             return False
             
         try:
-            message_str = json.dumps(message)
+            # Convert message to dict if it's a Pydantic model
+            message_dict = serialize_message(message)
+            message_str = json.dumps(message_dict)
             # Use wait_for to add a timeout
             await asyncio.wait_for(
                 self.socket.send_string(message_str), # type: ignore

@@ -44,6 +44,7 @@ class Biome(str, Enum):
     SWAMP = "swamp"
     PLAINS = "plains"
     ARCTIC = "arctic"
+    JUNGLE = "jungle"
 
 
 class TransitionStyle(str, Enum):
@@ -75,6 +76,64 @@ class DisplayTransitionType(str, Enum):
 class MessageBase(BaseModel):
     """Base class for all message types."""
     type: str
+    
+    def get(self, key: str, missing_value: Optional[Any] = None) -> Any:
+        """
+        Return the value for a given attribute, or None if not found.
+        Follows doct.get() semantics.
+        
+        Returns:
+            Value of the attribute or None if not found
+        """
+        return getattr(self, key, missing_value)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Union[Dict[str, Any], 'MessageBase']:
+        """
+        Create the appropriate message object based on the 'type' field in the data.
+        
+        Args:
+            data: Dictionary data from JSON deserialization with a 'type' field
+            
+        Returns:
+            Either the original dict (if type unknown) or the appropriate MessageBase subclass instance
+        """
+        # Get all MessageBase subclasses
+        subclasses = cls._get_all_subclasses()
+        
+        # Create a mapping from type strings to classes
+        type_to_class = {}
+        for subclass in subclasses:
+            # Get the default value for the 'type' field
+            if hasattr(subclass, '__fields__') and 'type' in subclass.__fields__:
+                field_info = subclass.__fields__['type']
+                if hasattr(field_info, 'default') and field_info.default:
+                    type_to_class[field_info.default] = subclass
+            # Fallback: try to create an instance and get the type
+            elif hasattr(subclass, 'model_fields') and 'type' in subclass.model_fields:
+                field_info = subclass.model_fields['type']
+                if hasattr(field_info, 'default') and field_info.default:
+                    type_to_class[field_info.default] = subclass
+        
+        message_type = data.get("type")
+        if message_type and message_type in type_to_class:
+            schema_class = type_to_class[message_type]
+            try:
+                return schema_class(**data)
+            except Exception:
+                # If conversion fails, return original dict
+                return data
+        else:
+            # Unknown message type, return as dict
+            return data
+    
+    @classmethod 
+    def _get_all_subclasses(cls):
+        """Recursively get all subclasses of MessageBase."""
+        subclasses = set(cls.__subclasses__())
+        for subclass in list(subclasses):
+            subclasses.update(subclass._get_all_subclasses())
+        return subclasses
 
 
 class EraChanged(MessageBase):
@@ -91,7 +150,10 @@ class RenderRequest(MessageBase):
     era: Era
     biome: Biome
     prompt: str
+    negative_prompt: Optional[str] = None
+    style: Optional[str] = None  # Optional style hint
     depth_map_png: Optional[str] = None  # Base64 encoded PNG
+    seed: Optional[int] = None
 
 
 class IdleStatus(MessageBase):
@@ -196,7 +258,7 @@ class DisplayMedia(MessageBase):
     # For VIDEO content_type
     video_path: Optional[str] = None      # Path to video file
     
-    # Display properties
+    # Display properties (override defaults in display service)
     duration: Optional[float] = None      # Duration in seconds (for sequences/videos)
     loop: bool = False                    # Whether to loop the content
     fade_in: Optional[float] = None       # Fade in duration in seconds

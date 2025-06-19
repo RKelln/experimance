@@ -6,7 +6,7 @@ This module defines Pydantic models for validating and accessing
 core service configuration in a type-safe way.
 """
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 from enum import Enum
 
 from dataclasses import dataclass
@@ -16,6 +16,8 @@ import numpy as np
 
 from experimance_common.config import Config
 from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
+from experimance_common.zmq.controller import ControllerMultiWorkerConfig, WorkerConnectionConfig
+from experimance_common.zmq.zmq_utils import MessageType
 
 # Define the default configuration path relative to the project root
 DEFAULT_CONFIG_PATH = f"{CORE_SERVICE_DIR}/config.toml"
@@ -438,6 +440,63 @@ class PromptingConfig(BaseModel):
     )
 
 
+class WorkerConfigHelper(BaseModel):
+    """Helper configuration for creating multi-controller worker config."""
+    
+    non_blocking: bool = Field(
+        default=False,
+        description="If True, worker pull connections will use optimized non-block path"
+    )
+
+    image_worker: bool = Field(
+        default=True,
+        description="Enable image processing worker"
+    )
+    
+    transition_worker: bool = Field(
+        default=True,
+        description="Enable transition processing worker"
+    )
+    
+    video_worker: bool = Field(
+        default=False,  # Optional for now
+        description="Enable loop/video processing worker"
+    )
+    
+    def create_controller_config(self) -> ControllerMultiWorkerConfig:
+        """Create a ControllerMultiWorkerConfig from this helper config.
+        
+        Returns:
+            Properly configured ControllerMultiWorkerConfig instance
+        """
+        workers = {}
+        
+        if self.image_worker:
+            workers["image"] = WorkerConnectionConfig(
+                push_address=f"tcp://*:{DEFAULT_PORTS['image_requests']}",
+                pull_address=f"tcp://*:{DEFAULT_PORTS['image_results']}",
+                push_message_types=[MessageType.RENDER_REQUEST],
+                pull_message_types=[MessageType.IMAGE_READY]
+            )
+        
+        if self.transition_worker:
+            workers["transition"] = WorkerConnectionConfig(
+                push_address=f"tcp://*:{DEFAULT_PORTS['transition_requests']}",
+                pull_address=f"tcp://*:{DEFAULT_PORTS['transition_results']}",
+                push_message_types=[MessageType.TRANSITION_REQUEST],
+                pull_message_types=[MessageType.TRANSITION_READY]
+            )
+        
+        if self.video_worker:
+            workers["video"] = WorkerConnectionConfig(
+                push_address=f"tcp://*:{DEFAULT_PORTS['video_requests']}",
+                pull_address=f"tcp://*:{DEFAULT_PORTS['video_results']}",
+                push_message_types=[MessageType.LOOP_REQUEST],
+                pull_message_types=[MessageType.LOOP_READY]
+            )
+        
+        return ControllerMultiWorkerConfig(workers=workers)
+
 class CoreServiceConfig(Config):
     """Complete configuration schema for the Core Service."""
     
@@ -452,8 +511,17 @@ class CoreServiceConfig(Config):
     # Main configuration sections
     experimance_core: ExperimanceCoreConfig = Field(default_factory=ExperimanceCoreConfig)
     zmq: ZmqConfig = Field(default_factory=ZmqConfig)
+    workers: WorkerConfigHelper = Field(default_factory=WorkerConfigHelper)
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     depth_processing: DepthProcessingConfig = Field(default_factory=DepthProcessingConfig)  # Legacy compatibility
     audio: AudioConfig = Field(default_factory=AudioConfig)
     prompting: PromptingConfig = Field(default_factory=PromptingConfig)
+    
+    def get_controller_config(self) -> ControllerMultiWorkerConfig:
+        """Get the ControllerMultiWorkerConfig for the ZMQ controller service.
+        
+        Returns:
+            Configured ControllerMultiWorkerConfig instance
+        """
+        return self.workers.create_controller_config()

@@ -2,52 +2,13 @@
 
 This directory contains utility scripts and Pytest tests for the Experimance package.
 
-## Available Test Scripts & Modules
-
-### 1. `simple_test.py`
-A minimal script that checks basic imports without requiring any extras. Useful for quick environment checks.
-
-```bash
-# Run from the experimance root directory
-uv run python utils/tests/simple_test.py
-```
-
-This test:
-- Verifies Python version and environment.
-- Checks if `experimance` and `experimance_common` can be imported.
-- Lists installed `experimance` packages.
-
-### 2. `check_env.py`
-Checks the Python environment and system configurations in more detail.
-
-```bash
-# Run from the experimance root directory
-uv run python utils/tests/check_env.py
-```
-
-This test:
-- Verifies Python version compatibility.
-- Checks for required system libraries.
-- Displays environment variables and paths.
-
-### 3. `test_<component>.py`
-Pytest module for testing the service base classes in `experimance_common.service`.
-
-```bash
-# Run from the experimance root directory
-uv run -m pytest -v
-
-# for debug logging
-uv run -m pytest -v --log-cli-level=DEBUG -s 
-```
-
 ## Testing Documentation
 
 For more detailed information about testing in the Experimance project:
 
 - [Service Testing Best Practices](./README_SERVICE_TESTING.md) - How to use `active_service()` and other test utilities (now available from `experimance_common.test_utils`)
 - [ZMQ Testing Guide](./README_ZMQ_TESTS.md) - Details about testing ZMQ services
-- [Service Architecture](../common/README_SERVICE.md) - General information about the service base classes
+- [Service Architecture](../../libs/common/README_SERVICE.md) - General information about the service base classes
 
 ### Test Utilities Import
 
@@ -63,8 +24,23 @@ from experimance_common.test_utils import (
 )
 ```
 
+## General utilities
 
-## Example Code
+You can find useful utilities to build your tests in `libs/common/src/experimance_common/`:
+  1. `test_utils.py`: utilities for integration testing or common to all service testing
+  2. `zmq/zmq_utils.py`: ZMQ related test utilities
+  3. `image_utils.py`: image loading, saving and manipulation utilities
+  4. `schemas.py`: Pydantic schemas used throughout the project
+  5. `constants.py`: Don't hardcode strings, get from or add to this constants file
+  6. `config.py`: How data is loaded into services. See 
+
+Also look under the `service/NAME/tests/` directory for service specific tests and service specific mocks in `mocks.py`.
+
+Please use the `schemas.py`, `constants.py` and `config.py` in the common library as well instead of hard-coding values 
+or creating new configuration.
+
+
+## Example 
 
 The `utils/examples` directory contains example implementations that demonstrate proper usage patterns of the common library components, including the service classes.
 

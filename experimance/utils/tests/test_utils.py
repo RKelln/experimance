@@ -507,3 +507,43 @@ def debug_service_tasks(service: BaseService):
         else:
             # It's something else
             logger.debug(f"  - Task: {name}, Type: {type(task_coro)}")
+
+
+# ============================================================================
+# Image Test Utilities
+# ============================================================================
+
+def create_test_image(width: int = 400, height: int = 400, content_rect: Optional[tuple] = None):
+    """
+    Create a test image with optional content rectangle.
+    
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels  
+        content_rect: Optional (x, y, w, h) rectangle to highlight
+        
+    Returns:
+        PIL.Image: Test image
+    """
+    import numpy as np
+    from PIL import Image, ImageDraw
+    
+    # Create a random base image
+    array = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+    img = Image.fromarray(array)
+    
+    # Add content rectangle if specified
+    if content_rect:
+        draw = ImageDraw.Draw(img)
+        x, y, w, h = content_rect
+        # Draw a bright rectangle
+        draw.rectangle([x, y, x + w, y + h], outline=(255, 255, 0), width=3)
+        draw.rectangle([x + 5, y + 5, x + w - 5, y + h - 5], fill=(255, 255, 255))
+    
+    return img
+
+
+def create_test_numpy_image(width: int = 400, height: int = 400):
+    """Create a test image as numpy array."""
+    import numpy as np
+    return np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)

@@ -75,17 +75,11 @@ def test_config():
 @pytest.fixture
 def core_service(test_config):
     """Create a core service instance for testing."""
-    # Mock ZMQ initialization to avoid network dependencies
-    with patch('experimance_core.experimance_core.ZmqPublisherSubscriberService.__init__', return_value=None):
-        service = ExperimanceCoreService(config=test_config)
-        
-        # Mock parent class methods and attributes
-        service.publish_message = AsyncMock()
-        service.add_task = MagicMock()
-        service._sleep_if_running = AsyncMock(return_value=False)
-        service.record_error = MagicMock()
-        
-        return service
+    from .mocks import create_mock_core_service
+    
+    # Use the proper mock function with the test config 
+    # The mock function will use its defaults for any missing fields
+    return create_mock_core_service()
 
 
 class TestServiceInitialization:

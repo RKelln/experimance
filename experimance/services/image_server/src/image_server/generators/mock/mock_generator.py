@@ -1,6 +1,9 @@
 import asyncio
 import logging
-from typing import Optional, Literal
+import random
+import shutil
+from pathlib import Path
+from typing import Optional, Literal, List
 
 from image_server.generators.generator import ImageGenerator
 from image_server.generators.config import BaseGeneratorConfig
@@ -15,7 +18,8 @@ logger = logging.getLogger(__name__)
 class MockImageGenerator(ImageGenerator):
     """Mock image generator for testing purposes.
     
-    Generates simple placeholder images with the prompt text.
+    Can either generate simple placeholder images with prompt text or 
+    use existing images from a specified directory for more realistic testing.
     """
     
     def _configure(self, config:BaseGeneratorConfig, **kwargs):
@@ -24,9 +28,31 @@ class MockImageGenerator(ImageGenerator):
             **config.model_dump(),
             **kwargs
         })
+        
+        # If using existing images, validate the directory and collect image files
+        self._existing_images: List[Path] = []
+        if self.config.use_existing_images and self.config.existing_images_dir:
+            self._load_existing_images()
+    
+    def _load_existing_images(self) -> None:
+        """Load list of existing images from the configured directory."""
+        if not self.config.existing_images_dir or not self.config.existing_images_dir.exists():
+            logger.warning(f"Existing images directory not found: {self.config.existing_images_dir}")
+            return
+            
+        # Find all image files (common formats)
+        image_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.bmp'}
+        self._existing_images = [
+            f for f in self.config.existing_images_dir.rglob("*")
+            if f.suffix.lower() in image_extensions and f.is_file()
+        ]
+        
+        logger.info(f"MockImageGenerator: Found {len(self._existing_images)} existing images in {self.config.existing_images_dir}")
+        if not self._existing_images:
+            logger.warning("No existing images found - will fall back to generated placeholders")
     
     async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
-        """Generate a mock image with the prompt text."""
+        """Generate a mock image with the prompt text or copy an existing image."""
         self._validate_prompt(prompt)
         
         logger.info(f"MockImageGenerator: Generating image for prompt: {prompt[:50]}...")
@@ -34,6 +60,33 @@ class MockImageGenerator(ImageGenerator):
         # Simulate some processing time
         await asyncio.sleep(0.1)
         
+        # If we have existing images and are configured to use them, pick one randomly
+        if self.config.use_existing_images and self._existing_images:
+            return await self._copy_existing_image(prompt)
+        else:
+            return await self._generate_placeholder_image(prompt, **kwargs)
+    
+    async def _copy_existing_image(self, prompt: str) -> str:
+        """Copy a random existing image to the output location."""
+        # Pick a random existing image
+        source_image = random.choice(self._existing_images)
+        
+        # Determine output format based on source image
+        output_ext = source_image.suffix.lower()
+        if output_ext == '.jpeg':
+            output_ext = '.jpg'
+        
+        # Create output path
+        output_path = self._get_output_path(output_ext.lstrip('.'))
+        
+        # Copy the image
+        shutil.copy2(source_image, output_path)
+        
+        logger.info(f"MockImageGenerator: Copied existing image {source_image.name} to {output_path}")
+        return str(output_path)
+    
+    async def _generate_placeholder_image(self, prompt: str, **kwargs) -> str:
+        """Generate a simple placeholder image with the prompt text."""
         # Create a simple image with the prompt text
         image = Image.new("RGB", self.config.image_size, self.config.background_color)
         draw = ImageDraw.Draw(image)
@@ -56,25 +109,12 @@ class MockImageGenerator(ImageGenerator):
         
         draw.text((x, y), text, fill=self.config.text_color, font=font)
         
-        # Add era/biome info if provided
-        #era = kwargs.get("era", "unknown")
-        #biome = kwargs.get("biome", "unknown")
-        #info_text = f"Era: {era}, Biome: {biome}"
-        
-        # Add info text at the bottom
-        #info_bbox = draw.textbbox((0, 0), info_text, font=font)
-        #info_width = info_bbox[2] - info_bbox[0]
-        #info_x = (self.config.image_size[0] - info_width) // 2
-        #info_y = self.config.image_size[1] - 50
-        
-        #draw.text((info_x, info_y), info_text, fill=self.config.text_color, font=font)
-        
         # Save the image
         output_path = self._get_output_path("png")
         image.save(output_path)
         
-        logger.info(f"MockImageGenerator: Saved image to {output_path}")
-        return output_path
+        logger.info(f"MockImageGenerator: Saved placeholder image to {output_path}")
+        return str(output_path)
         
     async def stop(self):
         """Stop any ongoing generation processes.

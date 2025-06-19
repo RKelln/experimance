@@ -10,27 +10,19 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 DEFAULT_PORTS = {
     # Unified events channel - all services publish and subscribe here
     "events": 5555,
-    "events_pub": 5555,  # For backward compatibility
-    "events_sub": 5555,  # For backward compatibility
     
     # Specialized high-bandwidth channels
-    "depth_pub": 5556,  # Depth camera data (high frequency)
-    "transitions_pull": 5561,  # Work distribution for transition rendering
-    "loops_pull": 5562,  # Work distribution for animation loops
+    "depth": 5556,                # Depth camera data (high frequency) currenly unused
+    "transition_requests": 5560,  # Work distribution for transition rendering
+    "transition_results": 5561,   # Results from transition rendering
+    "video_requests": 5562,       # Work distribution for video generation
+    "video_results": 5563,        # Resulting generated videos
+    "image_requests": 5564,       # Work distribution for image generation 
+    "image_results": 5565,        # Results from image generation
     
     # Audio OSC bridge ports
     "audio_osc_send_port": 5567,  # Audio service → SuperCollider
     "audio_osc_recv_port": 5568,  # SuperCollider → Audio service
-    
-    # Legacy port aliases (deprecated - use 'events' instead)
-    "core": 5555,
-    "image_server_pub": 5555,
-    "agent_pub": 5555,
-    "audio_pub": 5555,
-    "image_request_pub": 5555,
-    "coordinator_pub": 5555,
-    "display_pull": 5555,
-    "example_pub": 5555,
 }
 
 # Timeout settings
