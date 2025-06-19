@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from experimance_common.config import BaseConfig
+from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
 from experimance_common.zmq.config import (
     WorkerServiceConfig, PublisherConfig, SubscriberConfig, 
@@ -39,14 +39,11 @@ class GeneratorConfig(BaseModel):
     )
 
 
-class ImageServerConfig(BaseConfig):
+class ImageServerConfig(BaseServiceConfig):
     """Complete configuration schema for the Image Server service."""
     
     # Override service name with default for image server
-    service_name: str = Field(
-        default="image-server",
-        description="Name of this service instance"
-    )
+    service_name: str ="image-server"
     
     # Cache configuration
     cache_dir: Path = Field(

@@ -145,13 +145,6 @@ def load_config_with_overrides(
 
 
 # Common config base classes to reduce duplication across services
-class BaseServiceConfig(BaseModel):
-    """Base service configuration with common fields."""
-    
-    service_name: str = Field(
-        description="Name of this service instance"
-    )
-
 
 T = TypeVar('T', bound='BaseConfig')
 class BaseConfig(BaseModel):
@@ -203,3 +196,16 @@ class BaseConfig(BaseModel):
         
         # Then validate with Pydantic and return instance
         return cls(**merged_config)
+
+# =============================================================================
+# SERVICE CONFIGURATION BASE CLASSES
+# =============================================================================
+
+class BaseServiceConfig(BaseConfig):
+    """Base service configuration with common fields."""
+    
+    service_name: str = Field(
+        description="Name of this service instance"
+    )
+
+    

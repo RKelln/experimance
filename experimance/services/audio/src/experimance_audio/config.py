@@ -94,7 +94,7 @@ class AudioConfig(BaseModel):
         description="Directory containing audio configuration JSON files"
     )
 
-class AudioServiceConfig(BaseServiceConfig, BaseConfig):
+class AudioServiceConfig(BaseServiceConfig):
     """Configuration for the Audio Service."""
     
     # Override the default service name (BaseServiceConfig defines the field but has no default)

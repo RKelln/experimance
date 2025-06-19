@@ -41,7 +41,7 @@ Usage Examples:
 import asyncio
 import logging
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Optional, Set, Callable, Deque
+from typing import Any, Dict, List, Optional, Set, Callable, Deque, Union, Awaitable
 from unittest.mock import AsyncMock, MagicMock
 import json
 from dataclasses import dataclass, field
@@ -52,14 +52,14 @@ try:
     from .config import (
         PublisherConfig, SubscriberConfig, PushConfig, PullConfig,
         PubSubServiceConfig, WorkerServiceConfig, ControllerServiceConfig,
-        WorkerConfig
+        WorkerConfig, TopicType, MessageDataType
     )
 except ImportError:
     # Absolute import when run directly
     from experimance_common.zmq.config import (
         PublisherConfig, SubscriberConfig, PushConfig, PullConfig,
         PubSubServiceConfig, WorkerServiceConfig, ControllerServiceConfig,
-        WorkerConfig
+        WorkerConfig, TopicType, MessageDataType
     )
 
 logger = logging.getLogger(__name__)
@@ -217,27 +217,56 @@ class MockPubSubService:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.stop()
     
-    async def publish(self, topic: str, message: Dict[str, Any]):
-        """Publish a message."""
+    async def publish(self, data: "MessageDataType", topic: Optional["TopicType"] = None) -> None:
+        """Publish a message (matching real PubSubService interface)."""
         if not self.running:
             raise RuntimeError(f"MockPubSubService '{self.name}' not running")
         
         if not self.config.publisher:
             raise RuntimeError(f"MockPubSubService '{self.name}' has no publisher config")
         
+        # Resolve topic like the real implementation
+        if topic is None:
+            if isinstance(data, dict) and 'type' in data:
+                resolved_topic = str(data['type'])
+            elif hasattr(data, 'type'):  # MessageBase
+                resolved_topic = str(data.type)  # type: ignore
+            elif self.config.publisher and self.config.publisher.default_topic:
+                resolved_topic = str(self.config.publisher.default_topic)
+            else:
+                resolved_topic = "default"
+        else:
+            resolved_topic = str(topic)
+        
+        # Convert data to dict if needed
+        if isinstance(data, dict):
+            message = data
+        else:
+            # Assume it's a MessageBase or similar with a dict() method
+            message = data.dict() if hasattr(data, 'dict') else dict(data)
+        
         # Store message
-        mock_msg = MockMessage(topic=topic, content=message, sender_id=self.name)
+        mock_msg = MockMessage(topic=resolved_topic, content=message, sender_id=self.name)
         self.published_messages.append(mock_msg)
         self.message_count += 1
         
         # Send to global message bus
-        await mock_message_bus.publish(topic, message, self.name)
+        await mock_message_bus.publish(resolved_topic, message, self.name)
         
-        logger.debug(f"MockPubSubService '{self.name}' published to {topic}: {message}")
+        logger.debug(f"MockPubSubService '{self.name}' published to {resolved_topic}: {message}")
     
     def set_message_handler(self, handler: Callable):
         """Set message handler for received messages."""
         self.message_handlers.append(handler)
+    
+    def add_message_handler(self, topic: "TopicType", handler: Callable[["MessageDataType"], Union[None, Awaitable[None]]]) -> None:
+        """Add a message handler for a specific topic (matching real PubSubService interface)."""
+        topic_str = str(topic)
+        # Store topic-specific handlers
+        if not hasattr(self, '_topic_handlers'):
+            self._topic_handlers = {}
+        self._topic_handlers[topic_str] = handler
+        logger.debug(f"MockPubSubService '{self.name}' added handler for topic '{topic_str}'")
     
     async def _handle_message(self, topic: str, message: Dict[str, Any]):
         """Handle incoming message."""
@@ -249,7 +278,19 @@ class MockPubSubService:
         self.received_messages.append(mock_msg)
         self.message_count += 1
         
-        # Call handlers
+        # Call topic-specific handlers first (matching real PubSubService behavior)
+        if hasattr(self, '_topic_handlers') and topic in self._topic_handlers:
+            handler = self._topic_handlers[topic]
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(message)  # Real interface passes only message
+                else:
+                    handler(message)  # Real interface passes only message
+            except Exception as e:
+                self.error_count += 1
+                logger.error(f"Error in MockPubSubService '{self.name}' topic handler for '{topic}': {e}")
+        
+        # Call general handlers (legacy behavior)
         for handler in self.message_handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -355,20 +396,38 @@ class MockWorkerService:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.stop()
     
-    async def publish(self, topic: str, message: Dict[str, Any]):
-        """Publish a message."""
+    async def publish(self, data: "MessageDataType", topic: Optional["TopicType"] = None) -> None:
+        """Publish a message (matching real WorkerService interface)."""
         if not self.running:
             raise RuntimeError(f"MockWorkerService '{self.name}' not running")
         
+        # Resolve topic like the real implementation
+        if topic is None:
+            if isinstance(data, dict) and 'type' in data:
+                resolved_topic = str(data['type'])
+            elif hasattr(data, 'type'):  # MessageBase
+                resolved_topic = str(data.type)  # type: ignore
+            else:
+                resolved_topic = "default"
+        else:
+            resolved_topic = str(topic)
+        
+        # Convert data to dict if needed
+        if isinstance(data, dict):
+            message = data
+        else:
+            # Assume it's a MessageBase or similar with a dict() method
+            message = data.dict() if hasattr(data, 'dict') else dict(data)
+        
         # Store message
-        mock_msg = MockMessage(topic=topic, content=message, sender_id=self.name)
+        mock_msg = MockMessage(topic=resolved_topic, content=message, sender_id=self.name)
         self.published_messages.append(mock_msg)
         self.message_count += 1
         
         # Send to global message bus
-        await mock_message_bus.publish(topic, message, self.name)
+        await mock_message_bus.publish(resolved_topic, message, self.name)
         
-        logger.debug(f"MockWorkerService '{self.name}' published to {topic}: {message}")
+        logger.debug(f"MockWorkerService '{self.name}' published to {resolved_topic}: {message}")
     
     async def push(self, message: Dict[str, Any]):
         """Push work."""
@@ -385,6 +444,14 @@ class MockWorkerService:
     def set_message_handler(self, handler: Callable):
         """Set message handler for received messages."""
         self.message_handlers.append(handler)
+    
+    def add_message_handler(self, topic: "TopicType", handler: Callable[[str, "MessageDataType"], None]) -> None:
+        """Add a message handler for a specific topic (matching real WorkerService interface)."""
+        # For mocks, we'll add to the general handlers but with topic filtering
+        def topic_filter_handler(msg_topic: str, message: Dict[str, Any]):
+            if str(topic) == msg_topic:
+                handler(msg_topic, message)
+        self.message_handlers.append(topic_filter_handler)
     
     def set_work_handler(self, handler: Callable):
         """Set work handler for pulled work."""
@@ -508,20 +575,38 @@ class MockControllerService:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.stop()
     
-    async def publish(self, topic: str, message: Dict[str, Any]):
-        """Publish a message."""
+    async def publish(self, data: "MessageDataType", topic: Optional["TopicType"] = None) -> None:
+        """Publish a message (matching real ControllerService interface)."""
         if not self.running:
             raise RuntimeError(f"MockControllerService '{self.name}' not running")
         
+        # Resolve topic like the real implementation
+        if topic is None:
+            if isinstance(data, dict) and 'type' in data:
+                resolved_topic = str(data['type'])
+            elif hasattr(data, 'type'):  # MessageBase
+                resolved_topic = str(data.type)  # type: ignore
+            else:
+                resolved_topic = "default"
+        else:
+            resolved_topic = str(topic)
+        
+        # Convert data to dict if needed
+        if isinstance(data, dict):
+            message = data
+        else:
+            # Assume it's a MessageBase or similar with a dict() method
+            message = data.dict() if hasattr(data, 'dict') else dict(data)
+        
         # Store message
-        mock_msg = MockMessage(topic=topic, content=message, sender_id=self.name)
+        mock_msg = MockMessage(topic=resolved_topic, content=message, sender_id=self.name)
         self.published_messages.append(mock_msg)
         self.message_count += 1
         
         # Send to global message bus
-        await mock_message_bus.publish(topic, message, self.name)
+        await mock_message_bus.publish(resolved_topic, message, self.name)
         
-        logger.debug(f"MockControllerService '{self.name}' published to {topic}: {message}")
+        logger.debug(f"MockControllerService '{self.name}' published to {resolved_topic}: {message}")
     
     async def push_to_worker(self, worker_name: str, message: Dict[str, Any]):
         """Push message to specific worker."""
@@ -539,6 +624,14 @@ class MockControllerService:
     def set_message_handler(self, handler: Callable):
         """Set message handler for received messages."""
         self.message_handlers.append(handler)
+    
+    def add_message_handler(self, topic: "TopicType", handler: Callable[[str, "MessageDataType"], None]) -> None:
+        """Add a message handler for a specific topic (matching real ControllerService interface)."""
+        # For mocks, we'll add to the general handlers but with topic filtering
+        def topic_filter_handler(msg_topic: str, message: Dict[str, Any]):
+            if str(topic) == msg_topic:
+                handler(msg_topic, message)
+        self.message_handlers.append(topic_filter_handler)
     
     def set_worker_handler(self, worker_name: str, handler: Callable):
         """Set handler for specific worker."""
@@ -665,7 +758,7 @@ if __name__ == "__main__":
                 
                 pubsub.set_message_handler(handler)
                 
-                await pubsub.publish("demo.topic", {"test": "message"})
+                await pubsub.publish({"test": "message"}, "demo.topic")
                 await asyncio.sleep(0.1)  # Allow message processing
                 
                 print(f"   Published: {len(pubsub.published_messages)} messages")
@@ -699,7 +792,7 @@ if __name__ == "__main__":
                 
                 controller.set_worker_handler("demo_worker", work_handler)
                 
-                await controller.publish("heartbeat", {"status": "alive"})
+                await controller.publish({"status": "alive"}, "heartbeat")
                 await controller.push_to_worker("demo_worker", {"action": "process"})
                 await asyncio.sleep(0.1)
                 
