@@ -1,6 +1,10 @@
+---
+applyTo: '**'
+---
 # Experimance Project Instructions
 
-This project is a Python-based distributed system for an interactive art installation called Experimance. The system uses ZeroMQ for inter-service communication and handles real-time sensor data, image processing, and audio-visual outputs.
+This project is a Python-based distributed system for an interactive art installation called Experimance. 
+The system uses ZeroMQ for inter-service communication and handles real-time sensor data, image processing, and audio-visual outputs.
 
 ## Project Architecture
 
@@ -20,9 +24,11 @@ experimance/
 │       └── src/
 │           └── experimance_common/
 │               ├── zmq/
-│               │   ├── zmq_utils.py        # ZMQ communication utilities
-│               │   └── other base classes for ZMQ communication services
-│               ├── config.py               # Configuration management using pydantic
+│               │   ├── config.py           # ZMQ configuration pydantic models
+│               │   ├── components.py       # ZMQ communication components
+│               │   ├── services.py         # ZMQ services composed of components
+│               │   └── mocks.py            # Mock ZMQ components for testing
+│               ├── config.py               # Service configuration management using pydantic
 │               ├── constants.py            # Constants used across the project
 │               ├── logger.py               # Logging utilities
                 ├── schemas.py              # Pydantic schemas for data validation across services
@@ -54,7 +60,7 @@ experimance/
 │           └── experimance_transition/
 ├── utils/               # Utility modules for testing and other purposes
 │   ├── examples/        # Examples of usage
-│   └── tests/           # Testing utilities
+│   └── tests/           # Testing utilities for cross service testing
 ├── scripts/             # Utility scripts for setup and management
 └── infra/
     ├── ansible/
