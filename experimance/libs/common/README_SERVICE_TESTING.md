@@ -1,26 +1,79 @@
 # Service Testing Best Practices
 
-This document outlines best practices for testing services in the Experimance project, particularly focusing on service lifecycle management during tests.
+This document outlines comprehensive best practices for testing services in the Experimance project, covering modern configuration patterns, ZMQ testing, lifecycle management, and common testing utilities.
 
 > **Related Documentation**:
-> - For testing ZeroMQ-specific components, see [README_ZMQ_TESTS.md](README_ZMQ_TESTS.md)
-> - For general service implementation guidance, see [README_SERVICE.md](../libs/common/README_SERVICE.md)
+> - For general service implementation guidance, see [README_SERVICE.md](README_SERVICE.md)
+> - For ZMQ communication patterns and testing guidance, see [README_ZMQ.md](README_ZMQ.md)
 
-**Note**: The test utilities are now part of the `experimance_common` package and can be imported as:
+
+## Quick Start: Essential Test Template
+
 ```python
+# tests/test_my_service.py
+import pytest
+import asyncio
+from unittest.mock import Mock, AsyncMock, patch
+from pathlib import Path
+from experimance_common.service_state import ServiceState, ServiceStatus
 from experimance_common.test_utils import active_service, wait_for_service_state
+from my_service.my_service import MyService
+from my_service.config import MyServiceConfig
+
+class TestMyService:
+    """Test cases for MyService using modern patterns."""
+    
+    @pytest.fixture
+    def mock_config(self):
+        """Create a test configuration using modern config patterns."""
+        return MyServiceConfig.from_overrides(
+            default_config={
+                "service_name": "test-my-service",
+                "work_interval": 0.1,  # Fast for tests
+                "debug_mode": True
+            }
+        )
+    
+    @pytest.fixture
+    async def service(self, mock_config):
+        """Create a service instance for testing with proper lifecycle."""
+        with patch('my_service.external_dependency.Component') as mock_component:
+            service = MyService(config=mock_config)
+            yield service
+            # Cleanup handled by active_service context manager
+    
+    @pytest.mark.asyncio
+    async def test_service_initialization(self, service):
+        """Test that the service initializes correctly."""
+        assert service.service_name == "test-my-service"
+        assert service.state == ServiceState.INITIALIZED
+        assert hasattr(service, 'config')
+    
+    @pytest.mark.asyncio
+    async def test_service_lifecycle(self, service):
+        """Test the complete service start/stop lifecycle."""
+        async with active_service(service) as active:
+            assert active.state == ServiceState.STARTED
+            # Test service functionality here
+        
+        # Service is automatically stopped and cleaned up
+        assert service.state == ServiceState.STOPPED
 ```
 
-## Config Loading for Service Tests
+## Modern Configuration Testing Patterns
 
-When testing services, use the centralized config loading pattern instead of temporary config files:
+**🎯 TL;DR**: Use `BaseServiceConfig.from_overrides()` for test configurations, not temporary config files or manual instantiation.
+
+### Configuration Loading for Service Tests
+
+When testing services, use the centralized configuration loading pattern instead of temporary configuration files:
 
 ```python
 from experimance_core.config import CoreServiceConfig
 
 @pytest.mark.asyncio
 async def test_service_with_config():
-    # ✅ Recommended: Use config objects with overrides
+    # ✅ Recommended: Use configuration objects with overrides
     override_config = {
         "depth_processing": {
             "frame_delay_after_hand": 10,
@@ -31,23 +84,491 @@ async def test_service_with_config():
     service = ExperimanceCoreService(config=config)
     
     async with active_service(service) as active:
-        # Test with custom config values
+        # Test with custom configuration values
         assert active.config.depth_processing.frame_delay_after_hand == 10
 ```
 
-**Key Points:**
-- Use `ServiceConfig.from_overrides(override_config=...)` to customize test configs
-- Pass config objects to services, not config file paths
+**Key Configuration Testing Principles:**
+- Use `ServiceConfig.from_overrides(override_config=...)` to customize test configurations
+- Pass configuration objects to services, not configuration file paths
 - Override only the specific values needed for your test
-- Avoid creating temporary config files in tests
+- Avoid creating temporary configuration files in tests
 
 **Benefits:**
 - More reliable and faster tests (no file I/O)
-- Clear test intentions (config values visible in test code)
+- Clear test intentions (configuration values visible in test code)
 - Better error handling and validation
-- Consistent with the project's config architecture
+- Consistent with the project's configuration architecture
 
-## Using the `active_service()` Context Manager
+### Modern Configuration Override Patterns
+
+#### Basic Configuration Override
+```python
+@pytest.fixture
+def test_config():
+    """Create test configuration with common overrides."""
+    return MyServiceConfig.from_overrides(
+        default_config={
+            "service_name": "test-my-service",
+            "work_interval": 0.1,  # Fast for tests
+            "debug_mode": True,
+            "log_level": "DEBUG"
+        }
+    )
+```
+
+#### Nested Configuration Testing
+```python
+@pytest.fixture
+def advanced_config():
+    """Test configuration with nested structures."""
+    return ImageServerConfig.from_overrides(
+        default_config={
+            "service_name": "test-image-server",
+            "cache_dir": "/tmp/test_images",
+            "generator": {
+                "default_strategy": "mock",
+                "timeout": 10
+            },
+            "mock": {
+                "use_existing_images": False,
+                "image_size": [512, 512]
+            },
+            "zmq": {
+                "name": "test-image-server",
+                "publisher": {
+                    "port": 5555,
+                    "default_topic": "IMAGE_READY"
+                }
+            }
+        }
+    )
+```
+
+#### Testing Configuration Validation
+```python
+def test_config_validation():
+    """Test that configuration validation works correctly."""
+    # Test valid configuration
+    valid_config = MyServiceConfig.from_overrides(
+        default_config={"work_interval": 1.0}
+    )
+    assert valid_config.work_interval == 1.0
+    
+    # Test invalid configuration
+    with pytest.raises(ValidationError):
+        MyServiceConfig.from_overrides(
+            default_config={"work_interval": -1.0}  # Should fail validation
+        )
+```
+
+### Configuration Testing with ZMQ Services
+
+For services using ZMQ composition patterns:
+
+```python
+@pytest.fixture
+def zmq_service_config():
+    """Configuration for ZMQ-enabled service testing."""
+    return MyZmqServiceConfig.from_overrides(
+        default_config={
+            "service_name": "test-zmq-service",
+            "zmq": {
+                "name": "test-service",
+                "publisher": {
+                    "address": "tcp://*",
+                    "port": 5555,
+                    "default_topic": "TEST_TOPIC"
+                },
+                "subscriber": {
+                    "address": "tcp://localhost",
+                    "port": 5556,
+                    "topics": ["INPUT_TOPIC"]
+                }
+            }
+        }
+    )
+```
+
+## Mock Utilities and Test Fixtures
+
+**🎯 Key Insight**: Create reusable mock factories to avoid repetitive mock setup across tests.
+
+### Creating Comprehensive Mock Files
+
+Based on successful patterns from recent service refactoring, create a dedicated `tests/mocks.py` file:
+
+```python
+# tests/mocks.py
+"""
+Reusable mock utilities for service testing.
+"""
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, AsyncMock, MagicMock
+from typing import Optional, Dict, Any
+
+from my_service.config import MyServiceConfig
+from my_service.my_service import MyService
+
+def create_mock_service_config(
+    service_name: str = "test-service",
+    cache_dir: Optional[Path] = None,
+    **overrides
+) -> MyServiceConfig:
+    """
+    Create a mock service configuration for testing.
+    
+    Args:
+        service_name: Name of the service instance
+        cache_dir: Directory for cache (defaults to temp)
+        **overrides: Additional configuration overrides
+        
+    Returns:
+        MyServiceConfig instance suitable for testing
+    """
+    if cache_dir is None:
+        cache_dir = Path(tempfile.mkdtemp())
+        
+    default_config = {
+        "service_name": service_name,
+        "cache_dir": str(cache_dir),
+        "work_interval": 0.1,  # Fast for tests
+        "debug_mode": True,
+        **overrides
+    }
+    
+    return MyServiceConfig.from_overrides(default_config=default_config)
+
+def create_mock_zmq_service() -> Mock:
+    """
+    Create a mock ZMQ service for testing.
+    
+    Returns:
+        Mock ZMQ service with common methods mocked
+    """
+    mock_service = Mock()
+    mock_service.start = AsyncMock()
+    mock_service.stop = AsyncMock()
+    mock_service.publish = AsyncMock()
+    mock_service.send_response = AsyncMock()
+    mock_service.set_work_handler = Mock()
+    mock_service.add_message_handler = Mock()
+    return mock_service
+
+def create_mock_service(
+    config: Optional[MyServiceConfig] = None,
+    mock_zmq: bool = True,
+    mock_external_deps: bool = True
+) -> MyService:
+    """
+    Create a mock service instance for testing.
+    
+    Args:
+        config: Optional configuration (will create default if None)
+        mock_zmq: Whether to mock ZMQ service
+        mock_external_deps: Whether to mock external dependencies
+        
+    Returns:
+        MyService with mocked dependencies
+    """
+    if config is None:
+        config = create_mock_service_config()
+        
+    service = MyService(config)
+    
+    if mock_zmq and hasattr(service, 'zmq_service'):
+        service.zmq_service = create_mock_zmq_service()
+        
+    if mock_external_deps:
+        # Mock any external dependencies
+        service.external_component = Mock()
+        
+    return service
+
+# Sample test messages for consistent testing
+SAMPLE_TEST_MESSAGE = {
+    "type": "TEST_MESSAGE",
+    "request_id": "test_request_001",
+    "data": {"key": "value"}
+}
+
+SAMPLE_ERROR_MESSAGE = {
+    "invalid": "data",
+    # Missing required fields
+}
+
+class MockServiceTestCase:
+    """Base test case class with common setup and utilities."""
+    
+    def setup_method(self):
+        """Setup method called before each test."""
+        self.test_cache_dir = Path(tempfile.mkdtemp())
+        self.test_cache_dir.mkdir(exist_ok=True)
+        
+    def teardown_method(self):
+        """Cleanup method called after each test."""
+        if self.test_cache_dir.exists():
+            import shutil
+            shutil.rmtree(self.test_cache_dir, ignore_errors=True)
+            
+    def create_test_config(self, **overrides) -> MyServiceConfig:
+        """Create a test configuration with optional overrides."""
+        default_overrides = {
+            "cache_dir": str(self.test_cache_dir),
+            **overrides
+        }
+        return create_mock_service_config(**default_overrides)
+```
+
+### Using Mock Factories in Tests
+
+```python
+# tests/test_my_service.py
+import pytest
+from tests.mocks import (
+    create_mock_service_config,
+    create_mock_service,
+    SAMPLE_TEST_MESSAGE,
+    MockServiceTestCase
+)
+
+class TestMyService(MockServiceTestCase):
+    """Test cases using the mock factory pattern."""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Create a mock configuration."""
+        return self.create_test_config(
+            service_name="test-my-service",
+            strategy="mock"
+        )
+
+    @pytest.fixture
+    def mock_service(self, mock_config):
+        """Create a mock service instance."""
+        return create_mock_service(
+            config=mock_config,
+            mock_zmq=True,
+            mock_external_deps=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_with_mock_utilities(self, mock_service):
+        """Test using the mock utilities."""
+        async with active_service(mock_service) as active:
+            # Use sample messages for consistent testing
+            await active.handle_message(SAMPLE_TEST_MESSAGE)
+            
+            # Verify mocked ZMQ calls
+            active.zmq_service.publish.assert_called()
+```
+
+## Comprehensive Testing Patterns
+
+### Essential Test Structure
+
+**Use the service state system for reliable testing:**
+
+```python
+# tests/test_my_service.py
+import pytest
+import asyncio
+from experimance_common.service_state import ServiceState, ServiceStatus
+from experimance_common.test_utils import active_service, wait_for_service_state
+from my_service.my_service import MyService
+
+class TestMyService:
+    """Comprehensive test coverage for MyService."""
+
+    @pytest.mark.asyncio
+    async def test_service_initialization(self, service):
+        """Test that the service initializes correctly."""
+        assert service.service_name == "test-my-service"
+        assert service.state == ServiceState.INITIALIZED
+        assert hasattr(service, 'config')
+        assert hasattr(service, 'zmq_service')  # If using ZMQ
+
+    @pytest.mark.asyncio
+    async def test_service_lifecycle(self, service):
+        """Test complete service start/stop lifecycle."""
+        # Service starts in INITIALIZED state
+        assert service.state == ServiceState.INITIALIZED
+        
+        async with active_service(service) as active:
+            # Service should be STARTED after start()
+            assert active.state == ServiceState.STARTED
+            
+            # Test service functionality
+            await active.do_work()
+            
+        # Service should be STOPPED after context exit
+        assert service.state == ServiceState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_message_handling(self, service):
+        """Test service message handling."""
+        async with active_service(service) as active:
+            # Test valid message
+            test_message = {"type": "TEST", "data": "value"}
+            await active.handle_message(test_message)
+            
+            # Verify message was processed
+            assert active.last_message == test_message
+
+    @pytest.mark.asyncio
+    async def test_error_handling(self, service):
+        """Test service error handling."""
+        async with active_service(service) as active:
+            # Mock an error condition
+            with patch.object(active, 'process_data', side_effect=ValueError("Test error")):
+                await active.handle_message({"type": "TEST"})
+                
+                # Verify error was recorded
+                assert len(active.errors) > 0
+                assert "Test error" in str(active.errors[0])
+```
+
+### Testing ZMQ Services with Composition Architecture
+
+**For services using the composition-based ZMQ pattern:**
+
+```python
+class TestZmqService:
+    """Test ZMQ service functionality using composition pattern."""
+
+    @pytest.mark.asyncio
+    async def test_zmq_service_initialization(self, zmq_service):
+        """Test ZMQ service component initialization."""
+        assert zmq_service.zmq_service is not None
+        assert hasattr(zmq_service.zmq_service, 'publisher')
+        assert hasattr(zmq_service.zmq_service, 'subscriber')
+
+    @pytest.mark.asyncio  
+    async def test_message_publishing(self, zmq_service):
+        """Test ZMQ message publishing."""
+        async with active_service(zmq_service) as active:
+            # Mock the ZMQ service
+            active.zmq_service = create_mock_zmq_service()
+            
+            # Publish a test message
+            await active.publish_message("TEST_TOPIC", {"data": "test"})
+            
+            # Verify publish was called
+            active.zmq_service.publish.assert_called_once_with(
+                "TEST_TOPIC", 
+                {"data": "test"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_handler_registration(self, zmq_service):
+        """Test that ZMQ handlers are properly registered."""
+        async with active_service(zmq_service) as active:
+            # Verify handlers were set up
+            active.zmq_service.set_work_handler.assert_called()
+            active.zmq_service.add_message_handler.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_zmq_message_handling(self, zmq_service):
+        """Test handling of ZMQ messages."""
+        async with active_service(zmq_service) as active:
+            # Create test message
+            zmq_message = {
+                "type": "RENDER_REQUEST",
+                "request_id": "test_001",
+                "prompt": "test prompt"
+            }
+            
+            # Handle the message
+            await active._handle_zmq_message(zmq_message)
+            
+            # Verify processing occurred
+            assert active.last_processed_request == "test_001"
+```
+
+### Testing Service Error Scenarios
+
+```python
+class TestServiceErrors:
+    """Test error handling and recovery scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_non_fatal_error_handling(self, service):
+        """Test that non-fatal errors don't stop the service."""
+        async with active_service(service) as active:
+            # Simulate non-fatal error
+            with patch.object(active, 'process_item', side_effect=ValueError("Retryable error")):
+                await active.handle_request({"item": "test"})
+                
+                # Service should still be running
+                assert active.state == ServiceState.STARTED
+                assert active.status == ServiceStatus.DEGRADED
+                
+    @pytest.mark.asyncio
+    async def test_fatal_error_handling(self, service):
+        """Test that fatal errors properly shut down the service.""" 
+        async with active_service(service) as active:
+            # Record a fatal error
+            active.record_error(RuntimeError("Fatal error"), is_fatal=True)
+            
+            # Wait for service to stop
+            await wait_for_service_state(active, ServiceState.STOPPED, timeout=5.0)
+            
+            assert active.state == ServiceState.STOPPED
+            assert active.status == ServiceStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_invalid_message_handling(self, service):
+        """Test handling of invalid messages."""
+        async with active_service(service) as active:
+            # Send invalid message
+            invalid_message = {"invalid": "data"}
+            
+            # Should not crash the service
+            await active.handle_message(invalid_message)
+            
+            # Service should still be running
+            assert active.state == ServiceState.STARTED
+```
+
+### Testing Configuration Validation
+
+```python
+class TestServiceConfiguration:
+    """Test configuration validation and override patterns."""
+
+    def test_default_configuration(self):
+        """Test service with default configuration."""
+        config = MyServiceConfig()
+        service = MyService(config)
+        
+        assert service.config.service_name == "my-service"  # Default
+        assert service.config.work_interval > 0
+
+    def test_configuration_overrides(self):
+        """Test configuration override patterns."""
+        override_config = {
+            "service_name": "custom-service",
+            "work_interval": 2.0,
+            "nested_config": {
+                "param": "custom_value"
+            }
+        }
+        
+        config = MyServiceConfig.from_overrides(default_config=override_config)
+        service = MyService(config)
+        
+        assert service.config.service_name == "custom-service"
+        assert service.config.work_interval == 2.0
+        assert service.config.nested_config.param == "custom_value"
+
+    def test_configuration_validation_errors(self):
+        """Test that invalid configurations raise appropriate errors."""
+        with pytest.raises(ValidationError):
+            MyServiceConfig.from_overrides(
+                default_config={"work_interval": -1.0}  # Invalid value
+            )
+```
 
 The `active_service()` context manager is now available from the common library and is the recommended way to test services. It handles:
 
@@ -112,63 +633,182 @@ async def test_advanced_service():
         # Test service functionality...
 ```
 
-## Common Testing Patterns
+## ## Using the `active_service()` Context Manager
 
-### Test Initialization
+The `active_service()` context manager is now available from the common library and is the recommended way to test services. It handles:
+
+- Service startup
+- Task creation
+- Waiting for the service to reach the proper state
+- Proper shutdown and cleanup, even if tests fail
+
+### Basic Example
 
 ```python
+import pytest
+from experimance_common.test_utils import active_service
+
 @pytest.mark.asyncio
-async def test_service_initialization(test_config):
-    """Test that the service initializes correctly."""
+async def test_my_service():
+    # Create your service
     service = MyService(config=test_config)
     
+    # Use active_service() to handle lifecycle
     async with active_service(service) as active:
-        # Verify initialization was successful
-        assert active.component is not None
-        assert active.other_property == expected_value
+        # The service is now running and ready for testing
+        
+        # Test service functionality
+        result = await active.some_method()
+        assert result is True
+        
+        # Send test messages
+        await active.handle_message({"key": "value"})
+        
+        # Verify service state
+        assert active.some_property == expected_value
+    
+    # No need to manually stop - active_service handles cleanup
+    # The service is now stopped
 ```
 
-### Test Message Handling
+### Advanced Usage
+
+The `active_service()` context manager accepts several optional parameters:
 
 ```python
 @pytest.mark.asyncio
-async def test_message_handling(test_config):
-    """Test service message handling."""
+async def test_advanced_service():
     service = MyService(config=test_config)
     
-    # Mock component before starting
-    with patch('module.Component') as mock_component:
-        async with active_service(service) as active:
-            # Send test message
-            test_message = {"key": "value", "data": [1, 2, 3]}
-            await active.handle_message(test_message)
-            
-            # Verify handler was called correctly
-            mock_component.process.assert_called_once_with(test_message["data"])
+    # Custom setup function (runs before starting the service)
+    def setup_service(svc):
+        svc.custom_property = "test_value"
+        # Return value is ignored
+    
+    # Specify custom settings
+    async with active_service(
+        service,
+        run_task_name="my-test-task",  # Custom name for the run task (for debugging)
+        target_state=ServiceState.RUNNING,  # State to wait for before yielding
+        setup_func=setup_service  # Optional setup function
+    ) as active:
+        # Service is now running with custom setup applied
+        assert active.custom_property == "test_value"
+        
+        # Test service functionality...
 ```
 
-### Test Error Handling
+## Common Testing Anti-Patterns to Avoid
+
+### ❌ Configuration Anti-Patterns
 
 ```python
-@pytest.mark.asyncio
-async def test_error_handling(test_config):
-    """Test service error handling."""
-    service = MyService(config=test_config)
-    
-    # Set up to trigger an error
-    with patch('module.Component.process', side_effect=ValueError("Test error")):
-        async with active_service(service) as active:
-            # Trigger error
-            await active.handle_message({"key": "value"})
-            
-            # Verify error was recorded but service remained running
-            assert active.status == ServiceStatus.DEGRADED
-            assert active.running is True
-            
-            # Verify error was recorded
-            assert len(active.errors) == 1
-            assert "Test error" in str(active.errors[0])
+# BAD: Creating temporary configuration files
+with tempfile.NamedTemporaryFile(mode='w', suffix='.toml') as f:
+    f.write('service_name = "test"\n')
+    f.flush()
+    config = MyServiceConfig.from_file(f.name)
+
+# GOOD: Use configuration overrides
+config = MyServiceConfig.from_overrides(
+    default_config={"service_name": "test"}
+)
 ```
+
+```python
+# BAD: Testing implementation details
+assert service._internal_counter == 5  # Fragile!
+
+# GOOD: Test public behavior
+assert service.get_counter() == 5
+```
+
+### ❌ Service Lifecycle Anti-Patterns
+
+```python
+# BAD: Manual lifecycle management
+service = MyService()
+await service.start()
+await service.run()  # May hang or not clean up properly
+await service.stop()
+
+# GOOD: Use active_service context manager
+async with active_service(service) as active:
+    # Test functionality
+    pass
+```
+
+### ❌ ZMQ Testing Anti-Patterns
+
+```python
+# BAD: Testing with real ZMQ sockets in unit tests
+service = MyZmqService(config)  # Uses real ZMQ
+await service.start()
+# Flaky, slow, requires ports
+
+# GOOD: Mock ZMQ components
+with patch('my_service.ZmqService') as mock_zmq:
+    service = MyZmqService(config)
+    # Fast, reliable, isolated
+```
+
+### ❌ Error Testing Anti-Patterns
+
+```python
+# BAD: Not testing error scenarios
+async def test_happy_path_only():
+    # Only tests when everything works
+
+# GOOD: Test error handling
+async def test_error_handling():
+    with patch('external.api', side_effect=ConnectionError()):
+        # Test how service handles errors
+```
+
+## Testing Best Practices Summary
+
+### ✅ Do These Things
+
+1. **Use Modern Configuration Patterns**: Always use `BaseServiceConfig.from_overrides()` for test configurations
+2. **Create Reusable Mock Factories**: Build `src/service_name/mocks.py` with factory functions for common test objects
+3. **Use `active_service()` Context Manager**: Let it handle service lifecycle and cleanup
+4. **Test Both Success and Failure Cases**: Include error scenarios in your test coverage
+5. **Mock External Dependencies**: Use `patch()` for external APIs, databases, file systems
+6. **Use Fixtures Effectively**: Create reusable fixtures for common test setup
+7. **Test Configuration Validation**: Verify that invalid configurations raise appropriate errors
+8. **Use Consistent Test Data**: Create sample messages and data in your mocks module
+
+### ❌ Avoid These Things
+
+1. **Manual Service Lifecycle Management**: Don't manually call `start()`, `run()`, and `stop()` in tests
+2. **Testing Implementation Details**: Test public APIs, not private methods or internal state
+3. **String State Comparisons**: Use proper enum values (`ServiceState.STOPPED`) rather than strings
+4. **Temporary Configuration Files**: Use configuration overrides instead of file I/O
+5. **Real ZMQ in Unit Tests**: Mock ZMQ components for fast, reliable unit tests, see `lib/experimance_common/zmq/mocks.py`
+6. **Ignoring Cleanup**: Always ensure services are properly stopped after tests
+7. **Blocking Operations**: Be careful with synchronous operations that could block the asyncio loop
+
+## Debugging Service Tests
+
+If a test is hanging or failing in unexpected ways:
+
+1. **Use debug utilities**: `debug_service_tasks(service)` to print information about service tasks
+2. **Set appropriate timeouts**: Use `wait_for_service_state()` with reasonable timeout values
+3. **Check resource cleanup**: Ensure proper cleanup in custom test fixtures
+4. **Enable debug logging**: Run tests with `pytest --log-cli-level=DEBUG -s`
+5. **Check service state**: Verify services reach expected states before testing functionality
+6. **Inspect mock calls**: Use `mock.assert_called_with()` to verify expected interactions
+
+## Benefits of Modern Testing Patterns
+
+1. **Consistent Lifecycle Management**: Standardizes how services are started, managed, and stopped in tests
+2. **Proper Error Handling**: Ensures services are always stopped, even if tests fail
+3. **State Verification**: Waits for the service to reach the desired state before testing
+4. **Resource Cleanup**: Properly handles task cancellation and service shutdown
+5. **Simplified Test Code**: Eliminates boilerplate start/stop/cleanup code in each test
+6. **Better Test Coverage**: Encourages testing both success and failure scenarios
+7. **Maintainable Tests**: Reusable mock factories reduce code duplication
+8. **Fast Test Execution**: Mocked dependencies eliminate slow I/O operations
 
 ## Avoiding Deadlocks with Self-Stopping Services
 
@@ -247,39 +887,3 @@ Use the background task pattern when testing services that:
 ### When `active_service()` Context Manager Works
 
 The `active_service()` context manager works well for most testing scenarios, but may not be suitable for services that need to stop themselves during the test. If you need to test self-stopping behavior, use the background task pattern instead.
-
-## Benefits of Using `active_service()`
-
-1. **Consistent Lifecycle Management**: Standardizes how services are started, managed, and stopped in tests.
-
-2. **Proper Error Handling**: Ensures services are always stopped, even if tests fail.
-
-3. **State Verification**: Waits for the service to reach the desired state before testing.
-
-4. **Resource Cleanup**: Properly handles task cancellation and service shutdown.
-
-5. **Simplified Test Code**: Eliminates boilerplate start/stop/cleanup code in each test.
-
-## Common Issues to Avoid
-
-1. **Manual Service Lifecycle Management**: Don't manually call `start()`, `run()`, and `stop()` in tests.
-
-2. **Direct Access to Internal State**: Use public properties and methods instead of accessing internal attributes like `_running`.
-
-3. **String State Comparisons**: Use the proper enum values (e.g., `ServiceState.STOPPED`) rather than strings.
-
-4. **Blocking Assertions**: Be careful with synchronous assertions that could block the service's asyncio loop.
-
-5. **Missing Error Validation**: Use `wait_for_service_status()` when testing error conditions.
-
-## Debugging Service Tests
-
-If a test is hanging or failing in unexpected ways:
-
-1. Use `debug_service_tasks(service)` to print information about the service's tasks.
-
-2. Use `wait_for_service_state_and_status()` with appropriate timeouts.
-
-3. Check for proper cleanup of resources in custom test fixtures.
-
-4. Run tests with increased logging: `pytest --log-cli-level=DEBUG -s`
