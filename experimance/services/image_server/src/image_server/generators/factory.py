@@ -64,10 +64,6 @@ def create_generator_from_config(
         "timeout": timeout
     }
     
-    # Add cache directory if provided
-    if cache_dir:
-        base_config["output_dir"] = str(cache_dir)
-    
     # Merge with strategy-specific configuration
     config_dict = {**base_config, **config_data}
     
@@ -77,9 +73,12 @@ def create_generator_from_config(
     
     logger.debug(f"Creating {strategy} generator with config: {config_dict}")
     
-    # Create and return the generator
+    # Create and return the generator with output_dir as constructor parameter
     config = config_class(**config_dict)
-    return generator_class(config=config)
+    if cache_dir:
+        return generator_class(config=config, output_dir=str(cache_dir))
+    else:
+        return generator_class(config=config)
 
 def create_generator(
     config: Union[Dict[str, Any], BaseGeneratorConfig],

@@ -2,10 +2,11 @@
 """
 Image Server Service for the Experimance project.
 
-This service subscribes to RenderRequest messages from the events channel
-and publishes ImageReady messages to the images channel using ZeroMQ.
-It supports multiple image generation strategies including mock, local SDXL,
-FAL.AI, and OpenAI DALL-E.
+This service receives RenderRequest messages via ZMQ worker pattern and 
+publishes ImageReady messages. It supports multiple image generation 
+strategies including mock, local SDXL, FAL.AI, and OpenAI DALL-E.
+
+Uses the new composition-based ZMQ architecture with BaseService + WorkerService.
 """
 
 import argparse
@@ -15,10 +16,11 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from experimance_common.zmq.worker import ZmqWorkerService
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.service_state import ServiceState
+from experimance_common.zmq.services import WorkerService
+from experimance_common.zmq.config import MessageType, MessageDataType
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.config import load_config_with_overrides
 from experimance_common.logger import configure_external_loggers
 
 from .config import ImageServerConfig
@@ -37,31 +39,26 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 
 logger = logging.getLogger(__name__)
 
-class ImageServerService(ZmqWorkerService):
+class ImageServerService(BaseService):
     """Main image server service that handles render requests and publishes generated images.
     
-    This service uses the worker pattern:
-    - Pulls RenderRequest messages from Core service 
-    - Pushes ImageReady messages back to Core service
+    This service uses the new composition-based ZMQ architecture:
+    - BaseService for lifecycle management and error handling
+    - WorkerService for ZMQ worker pattern (PULL/PUSH + PUB/SUB)
     - Supports multiple image generation strategies
     """
-    image_generator: ImageGenerator
-    config: ImageServerConfig
     
-    def __init__(
-        self,
-        config: ImageServerConfig
-    ):
+    def __init__(self, config: ImageServerConfig):
         """Initialize the Image Server Service.
         
         Args:
             config: Service configuration object
-            service_name: Name of this service instance
             
         Raises:
             RuntimeError: If initialization fails
         """
         try:
+            super().__init__(service_name=config.service_name)
             self.config = config
 
             # Create cache directory
@@ -69,15 +66,8 @@ class ImageServerService(ZmqWorkerService):
             
             configure_external_loggers(logging.WARNING)
 
-            # Initialize the base service using worker pattern
-            super().__init__(
-                service_name=self.config.service_name,
-                sub_address=self.config.zmq.events_sub_address,  # For control messages
-                pull_address=f"tcp://localhost:{DEFAULT_PORTS['images']}",  # Pull RENDER_REQUEST from Core
-                push_address=f"tcp://*:{DEFAULT_PORTS['image_results']}",  # Push IMAGE_READY back to Core
-                topics=[],  # No specific subscription topics for now
-                service_type="image-server"
-            )
+            # Initialize ZMQ worker service using composition
+            self.zmq_service = WorkerService(self.config.zmq)
             
             # For compatibility with tests
             self._default_strategy = self.config.generator.default_strategy
@@ -102,55 +92,79 @@ class ImageServerService(ZmqWorkerService):
                 cache_dir=config.cache_dir,
                 timeout=getattr(config.generator, "timeout", 60)
             )
+            # Create the generator
+            self.generator = create_generator_from_config(
+                strategy=strategy,
+                config_data=strategy_config,
+                cache_dir=config.cache_dir,
+                timeout=getattr(config.generator, "timeout", 60)
+            )
             
             logger.info(f"ImageServerService initialized with strategy: {self.config.generator.default_strategy}")
         except Exception as e:
             error_msg = f"Failed to initialize ImageServerService: {e}"
             logger.error(error_msg, exc_info=True)
-            # We can't record an error here yet because super() hasn't been initialized
             raise RuntimeError(error_msg) from e
     
-    def _load_config(self, service_name: str, config: Optional[Dict[str, Any]], 
-                   config_file: Optional[str], args: Optional[Any]) -> ImageServerConfig:
-        """Load and validate configuration using Pydantic.
-        
-        Args:
-            service_name: Service name to use if not overridden
-            config: Configuration dictionary (highest priority)
-            config_file: Path to TOML configuration file
-            args: Command line arguments as an argparse.Namespace
-            
-        Returns:
-            Validated ImageServerConfig instance
-        """
-        # Create default config with service_name
-        default_config = {"service_name": service_name}
-        
-        # Load and validate with Pydantic
-        return ImageServerConfig.from_overrides(
-            override_config=config,
-            config_file=config_file,
-            default_config=default_config,
-            args=args
-        )
-
     async def start(self):
         """Start the image server service."""
         try:
-            # Register message handlers
-            self.register_handler(MessageType.RENDER_REQUEST, self._handle_render_request)
+            # Set up message handlers for the ZMQ service
+            self.zmq_service.set_work_handler(self._handle_render_request)
+            self.zmq_service.add_message_handler(str(MessageType.RENDER_REQUEST), self._handle_topic_render_request)
+            
+            # Start the ZMQ service
+            await self.zmq_service.start()
             
             # Register periodic cache cleanup task (run every 10 minutes)
-            self.add_task(self._periodic_cache_cleanup(interval=600))
+            self.add_task(self._periodic_cache_cleanup(600))
             
-            # Start the base service
+            # Call parent start (this will set state and handle lifecycle)
             await super().start()
+            
+            # Set service status
+            self.status = ServiceStatus.HEALTHY
             
             logger.info(f"ImageServerService started, listening for {MessageType.RENDER_REQUEST} messages")
         except Exception as e:
             self.record_error(e, is_fatal=True, custom_message=f"Failed to start ImageServerService: {e}")
             raise
-    
+
+    async def stop(self):
+        """Stop the image server service."""
+        try:
+            # Stop the ZMQ service
+            if hasattr(self, 'zmq_service'):
+                await self.zmq_service.stop()
+            
+            # Call parent stop
+            await super().stop()
+            
+            logger.info("ImageServerService stopped")
+        except Exception as e:
+            self.record_error(e, is_fatal=False, custom_message=f"Error stopping ImageServerService: {e}")
+
+    def _handle_topic_render_request(self, topic: str, message_data: MessageDataType):
+        """Handle RenderRequest messages received via topic subscription.
+        
+        Args:
+            topic: The topic the message was received on
+            message_data: The message data from the subscription
+        """
+        # Convert MessageDataType to dict if needed
+        if hasattr(message_data, 'model_dump') and callable(getattr(message_data, 'model_dump')):
+            data_dict = message_data.model_dump()  # type: ignore
+        else:
+            data_dict = message_data
+            
+        # Ensure we have a dict
+        if not isinstance(data_dict, dict):
+            logger.error(f"Expected dict but got {type(data_dict)}: {data_dict}")
+            return
+            
+        # Schedule the async handler
+        asyncio.create_task(self._handle_render_request(data_dict))
+
     async def _handle_render_request(self, message: Dict[str, Any]):
         """Handle incoming RenderRequest messages.
         
@@ -376,14 +390,8 @@ class ImageServerService(ZmqWorkerService):
                     # Continue with URI-only message
             
             # Publish the message using push socket
-            success = await self.send_response(message)
-            
-            if success:
-                logger.info(f"Published ImageReady message for request {request_id}")
-            else:
-                error_msg = f"Failed to publish ImageReady message for request {request_id}"
-                # Record non-fatal error but continue service operation
-                self.record_error(RuntimeError(error_msg), is_fatal=False, custom_message=error_msg)
+            await self.zmq_service.send_response(message)            
+            logger.info(f"Published ImageReady message for request {request_id}")
         except Exception as e:
             error_msg = f"Error publishing ImageReady message for request {request_id}: {e}"
             # Record non-fatal error but continue service operation
@@ -406,15 +414,9 @@ class ImageServerService(ZmqWorkerService):
                 "message": f"Image generation failed: {error_message}"
             }
             
-            # Publish the message
-            success = await self.publish_message(message)
-            
-            if success:
-                logger.info(f"Published error message for request {request_id}")
-            else:
-                log_msg = f"Failed to publish error message for request {request_id}"
-                logger.error(log_msg)
-                # We don't record this as an error since it's already handling another error
+            # Publish the message via the publisher component
+            await self.zmq_service.publish(message, str(MessageType.ALERT))            
+            logger.info(f"Published error message for request {request_id}")
         except Exception as e:
             # Just log this error since we're already in an error handling path
             logger.error(f"Error publishing error message for request {request_id}: {e}", exc_info=True)
@@ -466,23 +468,6 @@ class ImageServerService(ZmqWorkerService):
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message=f"Error in periodic cache cleanup: {e}")
             raise
-    
-    async def stop(self):
-        """Stop the image server service."""
-        logger.info("Stopping ImageServerService...")
-        
-        try:
-            # Clean up generators
-            if hasattr(self, 'generator'):
-                await self.generator.stop()
-            
-            # Stop the base service
-            await super().stop()
-            
-            logger.info("ImageServerService stopped")
-        except Exception as e:
-            self.record_error(e, is_fatal=True, custom_message=f"Error during ImageServerService shutdown: {e}")
-            raise  # Re-raise to ensure calling code knows there was an issue
 
 
 async def run_image_server_service(

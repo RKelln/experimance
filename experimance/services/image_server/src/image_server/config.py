@@ -3,16 +3,20 @@
 Configuration schema for the Experimance Image Server service.
 
 This module defines Pydantic models for validating and accessing
-image server configuration in a type-safe way.
+image server configuration in a type-safe way using the new ZMQ architecture.
 """
 
-from typing import Dict, Literal, Optional, Union, Type, Annotated
+from typing import Dict, Literal, Optional
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseConfig
-from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR
+from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.zmq.config import (
+    WorkerServiceConfig, PublisherConfig, SubscriberConfig, 
+    PushConfig, PullConfig, MessageType
+)
 from image_server.generators.config import BaseGeneratorConfig
 
 # Import all generator config types
@@ -26,32 +30,19 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 
 DEFAULT_CONFIG_PATH = f"{IMAGE_SERVER_SERVICE_DIR}/config.toml"
 
-class ZmqConfig(BaseModel):
-    """ZeroMQ configuration for the Image Server service."""
-    
-    events_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-        description="Address for subscribing to event messages (unified events channel)"
-    )
-    
-    events_pub_address: str = Field(
-        default=f"tcp://*:{DEFAULT_PORTS['events']}",
-        description="Address for publishing responses to unified events channel"
-    )
-
 class GeneratorConfig(BaseModel):
     """Configuration for image generator selection and common settings."""
     default_strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
-    #config: GeneratorConfigType = Field(..., discriminator="strategy")
     timeout: int = Field(
         default=60,
         description="Default timeout for image generation in seconds"
     )
 
+
 class ImageServerConfig(BaseConfig):
     """Complete configuration schema for the Image Server service."""
     
-    # General service configuration
+    # Override service name with default for image server
     service_name: str = Field(
         default="image-server",
         description="Name of this service instance"
@@ -69,18 +60,34 @@ class ImageServerConfig(BaseConfig):
         gt=0
     )
     
-    # ZeroMQ configuration
-    zmq: ZmqConfig = Field(
-        default_factory=ZmqConfig,
-        description="ZeroMQ communication settings"
+    # ZeroMQ configuration using new WorkerServiceConfig pattern
+    zmq: WorkerServiceConfig = Field(
+        default_factory=lambda: WorkerServiceConfig(
+            name="image-server",
+            publisher=PublisherConfig(
+                address=ZMQ_TCP_BIND_PREFIX,
+                port=DEFAULT_PORTS['events'],
+                default_topic=str(MessageType.IMAGE_READY)
+            ),
+            subscriber=SubscriberConfig(
+                address=ZMQ_TCP_CONNECT_PREFIX,
+                port=DEFAULT_PORTS['events'],
+                topics=[str(MessageType.RENDER_REQUEST), str(MessageType.HEARTBEAT)]
+            ),
+            push=PushConfig(
+                address=ZMQ_TCP_BIND_PREFIX,
+                port=DEFAULT_PORTS['image_results']
+            ),
+            pull=PullConfig(
+                address=ZMQ_TCP_CONNECT_PREFIX,
+                port=DEFAULT_PORTS['image_requests']
+            )
+        ),
+        description="ZeroMQ communication settings using worker pattern"
     )
     
     # Generator configuration
     generator: GeneratorConfig = Field(
-        # default_factory=lambda: FalComfyGeneratorConfig(
-        #     default_strategy="falai",
-        #     config=FalComfyGeneratorConfig(strategy="falai")
-        # ),
         default_factory=GeneratorConfig,
         description="Image generation settings"
     )
@@ -131,3 +138,41 @@ class ImageServerConfig(BaseConfig):
                 config.update(strategy_config.model_dump())
             
         return config
+
+# =============================================================================
+# HELPER FUNCTIONS FOR QUICK SETUP
+# =============================================================================
+
+def create_image_server_config(
+    service_name: str = "image-server",
+    cache_dir: str = "images",
+    default_strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
+) -> ImageServerConfig:
+    """
+    Create an ImageServerConfig for quick setup and convenience.
+    
+    ⚠️  USAGE GUIDANCE:
+    - **Production services**: Use ImageServerConfig.from_overrides() with proper config files
+    - **Unit/integration tests**: Use mocks or minimal inline configs
+    - **Quick setup/examples/prototypes**: Use this factory function for convenience
+    
+    Args:
+        service_name: Name of the image server service
+        cache_dir: Directory to store generated images
+        default_strategy: Default image generation strategy
+        
+    Returns:
+        ImageServerConfig configured for worker pattern communication
+        
+    Example:
+        # Quick setup for examples
+        config = create_image_server_config(
+            service_name="my-image-server",
+            default_strategy="mock"
+        )
+    """
+    return ImageServerConfig(
+        service_name=service_name,
+        cache_dir=Path(cache_dir),
+        generator=GeneratorConfig(default_strategy=default_strategy)
+    )

@@ -770,7 +770,7 @@ async def test_error_handling():
 ### ✅ Do These Things
 
 1. **Use Modern Configuration Patterns**: Always use `BaseServiceConfig.from_overrides()` for test configurations
-2. **Create Reusable Mock Factories**: Build `src/service_name/mocks.py` with factory functions for common test objects
+2. **Create Reusable Mock Factories**: Build `tests/mocks.py` with factory functions for common test objects
 3. **Use `active_service()` Context Manager**: Let it handle service lifecycle and cleanup
 4. **Test Both Success and Failure Cases**: Include error scenarios in your test coverage
 5. **Mock External Dependencies**: Use `patch()` for external APIs, databases, file systems
