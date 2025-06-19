@@ -17,20 +17,21 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.zmq.subscriber import ZmqSubscriberService
-from experimance_common.schemas import Era, Biome, EraChanged, AgentControlEvent, IdleStatus
-from experimance_common.zmq.zmq_utils import MessageType, ZmqTimeoutError
+from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.service_state import ServiceState
+from experimance_common.zmq.config import PubSubServiceConfig, SubscriberConfig
+from experimance_common.zmq.services import PubSubService
+from experimance_common.zmq.zmq_utils import MessageType, MessageDataType
+from experimance_common.schemas import Era, Biome, EraChanged, AgentControlEvent, IdleStatus, MessageBase
 
+from .config import AudioServiceConfig
 from .config_loader import AudioConfigLoader
 from .osc_bridge import OscBridge, DEFAULT_SCLANG_PATH
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Constants
-EVENTS_CHANNEL_PORT = DEFAULT_PORTS["events"]  # Unified events channel  
-
-class AudioService(ZmqSubscriberService):
+class AudioService(BaseService):
     """
     Audio Service for the Experimance interactive installation.
     
@@ -38,70 +39,68 @@ class AudioService(ZmqSubscriberService):
     audio engine via OSC based on the current state of the installation.
     """
     
-    def __init__(self, 
-                service_name: str = "audio-service",
-                config_dir: Optional[str] = None,
-                osc_host: str = "localhost",
-                osc_port: int = DEFAULT_PORTS["audio_osc_send_port"],
-                auto_start_sc: bool = True,
-                sc_script_path: Optional[str] = None,
-                sclang_path: str = DEFAULT_SCLANG_PATH):
+    def __init__(self, config: Optional[AudioServiceConfig] = None):
         """Initialize the audio service.
         
         Args:
-            service_name: Name of this service instance
-            config_dir: Directory containing audio configuration files
-            osc_host: SuperCollider host address
-            osc_port: SuperCollider OSC listening port
-            auto_start_sc: Whether to automatically start SuperCollider
-            sc_script_path: Path to SuperCollider script to execute
-            sclang_path: Path to SuperCollider language interpreter executable
+            config: Service configuration object. If None, will load from default config file.
         """
-        # Initialize base service with subscription to core events channel
-        super().__init__(
-            service_name=service_name,
-            sub_address=f"tcp://localhost:{EVENTS_CHANNEL_PORT}",
-            topics=[
-                MessageType.ERA_CHANGED,     # Subscribe to era changes
-                MessageType.IDLE_STATUS,     # Subscribe to idle status changes
-                MessageType.AGENT_CONTROL_EVENT, # Subscribe to agent control events (relayed by core)
-            ],
-            service_type="audio"
-        )
+        # Load config if not provided
+        if config is None:
+            self.config = AudioServiceConfig.from_overrides({})
+        else:
+            self.config = config
+            
+        # Initialize base service
+        super().__init__(service_name=self.config.service_name, service_type="audio")
+        
+        # Use ZMQ configuration from config, updating the service name to match
+        self.zmq_config = self.config.zmq
+        self.zmq_config.name = f"{self.config.service_name}-pubsub"
+        
+        # Create ZMQ service using composition
+        self.zmq_service = PubSubService(self.zmq_config)
         
         # Initialize OSC bridge for communication with SuperCollider
-        self.osc = OscBridge(host=osc_host, port=osc_port)
-        
-        # Store SuperCollider startup parameters
-        self.auto_start_sc = auto_start_sc
-        self.sc_script_path = sc_script_path
-        self.sclang_path = sclang_path
+        self.osc = OscBridge(
+            host=self.config.osc.host, 
+            port=self.config.osc.send_port
+        )
         
         # Initialize configuration loader
-        self.config = AudioConfigLoader(config_dir=config_dir)
-        self.config.load_configs()
+        self.audio_config = AudioConfigLoader(config_dir=self.config.audio.config_dir)
+        self.audio_config.load_configs()
         
         # State tracking
         self.current_biome = None
         self.current_era = None
         self.active_tags = set()  # Track which tags are active
         
-        # Volume settings (0.0 to 1.0)
-        self.master_volume = 1.0
-        self.environment_volume = 1.0
-        self.music_volume = 1.0
-        self.sfx_volume = 1.0
-        
+        # Volume settings (initialized from config)
+        self.master_volume = self.config.audio.master_volume
+        self.environment_volume = self.config.audio.environment_volume
+        self.music_volume = self.config.audio.music_volume
+        self.sfx_volume = self.config.audio.sfx_volume
+    
+    @property
+    def auto_start_sc(self) -> bool:
+        """Backward compatibility property for auto_start_sc."""
+        return self.config.supercollider.auto_start
+    
     async def start(self):
         """Start the audio service."""
-        # Initialize the subscriber
-        logger.info(f"Initializing subscriber on {self.sub_address} with topics {self.subscribe_topics}")
-        await super().start()
+        # Start ZMQ service
+        await self.zmq_service.start()
+        
+        # Set up message handlers
+        self.zmq_service.add_message_handler(MessageType.ERA_CHANGED, self._handle_era_changed)
+        self.zmq_service.add_message_handler(MessageType.IDLE_STATUS, self._handle_idle_status)
+        self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._handle_agent_control_event)
         
         # Resolve SuperCollider script path if auto-start is enabled
-        if self.auto_start_sc:
+        if self.config.supercollider.auto_start:
             # If no script path provided, look for it in standard locations
-            if not self.sc_script_path:
+            if not self.config.supercollider.script_path:
                 # Check relative to this file's directory
                 module_dir = Path(__file__).parent.resolve()
                 service_dir = module_dir.parent.parent  # Go up from src/experimance_audio
@@ -111,53 +110,71 @@ class AudioService(ZmqSubscriberService):
                 default_script = sc_script_dir / "experimance_audio.scd"
                 
                 if default_script.exists():
-                    self.sc_script_path = str(default_script)
-                    logger.info(f"Found SuperCollider script at: {self.sc_script_path}")
+                    # Update the config with the found path
+                    self.config.supercollider.script_path = str(default_script)
+                    logger.info(f"Found SuperCollider script at: {self.config.supercollider.script_path}")
                 else:
                     logger.warning("No SuperCollider script path provided and couldn't find default script")
                     logger.warning("SuperCollider auto-start disabled")
-                    self.auto_start_sc = False
+                    # Update config to disable auto-start
+                    self.config.supercollider.auto_start = False
             
             # Start SuperCollider if we have a script path
-            if self.auto_start_sc and self.sc_script_path:
-                if self.osc.start_supercollider(self.sc_script_path, self.sclang_path):
+            if self.config.supercollider.auto_start and self.config.supercollider.script_path:
+                if self.osc.start_supercollider(
+                    self.config.supercollider.script_path, 
+                    self.config.supercollider.sclang_path
+                ):
                     logger.info("SuperCollider started successfully")
                     # Give SuperCollider a moment to initialize
                     await asyncio.sleep(2)
                 else:
                     logger.error("Failed to start SuperCollider")
         
-        # Define wrapper functions for async handlers to work with the register_handler method
-        def era_changed_wrapper(message):
-            asyncio.create_task(self._handle_era_changed(message))
-            
-        def idle_status_wrapper(message):
-            asyncio.create_task(self._handle_idle_status(message))
-            
-        def agent_control_wrapper(message):
-            asyncio.create_task(self._handle_agent_control_event(message))
+        # Call parent start method
+        await super().start()
         
-        # Register handlers for events
-        self.register_handler(MessageType.ERA_CHANGED, era_changed_wrapper)
-        self.register_handler(MessageType.IDLE_STATUS, idle_status_wrapper)
-        self.register_handler(MessageType.AGENT_CONTROL_EVENT, agent_control_wrapper)
-        
+        self.status = ServiceStatus.HEALTHY
         logger.info("Audio service started")
-        
-    # Agent control events are now handled directly through the main subscriber
     
-    async def _handle_era_changed(self, message: Dict[str, Any]):
+    async def stop(self):
+        """Stop the audio service."""
+        logger.info("Stopping audio service...")
+        
+        # Stop ZMQ service
+        if hasattr(self, 'zmq_service'):
+            await self.zmq_service.stop()
+        
+        # Stop SuperCollider if we started it
+        if self.auto_start_sc and hasattr(self, 'osc'):
+            self.osc.stop_supercollider()
+        
+        # Call parent stop method (this will automatically clean up all tasks via _clear_tasks)
+        await super().stop()
+        
+        logger.info("Audio service stopped")
+    
+    async def _handle_era_changed(self, message_data: MessageDataType):
         """Handle era changed events from the coordinator.
         
         Args:
-            message: ERA_CHANGED event data
+            message_data: ERA_CHANGED event data
         """
         try:
-            era = message.get("era")
-            biome = message.get("biome")
+            # Handle both dict and MessageBase types
+            if isinstance(message_data, dict):
+                data = message_data
+            elif isinstance(message_data, MessageBase):
+                data = message_data.model_dump()
+            else:
+                logger.warning(f"Received unexpected message type: {type(message_data)}")
+                return
+                
+            era = data.get("era")
+            biome = data.get("biome")
             
             if not era or not biome:
-                logger.warning(f"Received incomplete EraChanged event: {message}")
+                logger.warning(f"Received incomplete EraChanged event: {data}")
                 return
                 
             logger.info(f"Era changed: {era}, biome: {biome}")
@@ -183,8 +200,9 @@ class AudioService(ZmqSubscriberService):
             # Signal a transition is happening
             self.osc.transition(True)
             
-            # Schedule transition end after a delay
-            asyncio.create_task(self._end_transition_after_delay(5.0))  # 5 second transition
+            # Schedule transition end after a delay using BaseService task management
+            transition_task = self._end_transition_after_delay(5.0)  # 5 second transition
+            self.add_task(transition_task)
                 
         except Exception as e:
             logger.error(f"Error handling era changed event: {e}")
@@ -199,14 +217,23 @@ class AudioService(ZmqSubscriberService):
         self.osc.transition(False)
         logger.debug("Transition ended")
     
-    async def _handle_idle_status(self, message: Dict[str, Any]):
+    async def _handle_idle_status(self, message_data: MessageDataType):
         """Handle idle status events from the coordinator.
         
         Args:
-            message: IDLE_STATUS event data
+            message_data: IDLE_STATUS event data
         """
         try:
-            is_idle = message.get("status", False)
+            # Handle both dict and MessageBase types
+            if isinstance(message_data, dict):
+                data = message_data
+            elif isinstance(message_data, MessageBase):
+                data = message_data.model_dump()
+            else:
+                logger.warning(f"Received unexpected message type: {type(message_data)}")
+                return
+                
+            is_idle = data.get("status", False)
             
             logger.info(f"Idle status changed: {is_idle}")
             
@@ -216,29 +243,28 @@ class AudioService(ZmqSubscriberService):
         except Exception as e:
             logger.error(f"Error handling idle status event: {e}")
     
-    async def _handle_agent_control_event(self, message: Dict[str, Any]):
+    async def _handle_agent_control_event(self, message_data: MessageDataType):
         """Handle agent control events.
         
         Args:
-            message: AGENT_CONTROL_EVENT data
+            message_data: AGENT_CONTROL_EVENT data
         """
         try:
-            # Extract AgentControlEvent data - this message is now coming directly from the main coordinator
-            # rather than through a separate agent_subscriber
-            
-            # The message structure might include topic info from the coordinator, so extract actual payload
-            if "payload" in message and isinstance(message["payload"], dict):
-                # If wrapped in a payload by the coordinator
-                agent_message = message["payload"]
+            # Handle both dict and MessageBase types
+            if isinstance(message_data, dict):
+                data = message_data
+            elif isinstance(message_data, MessageBase):
+                data = message_data.model_dump()
             else:
-                # Direct agent message
-                agent_message = message
+                logger.warning(f"Received unexpected message type: {type(message_data)}")
+                return
                 
-            sub_type = agent_message.get("sub_type")
-            payload = agent_message.get("payload", {})
+            # Extract AgentControlEvent data
+            sub_type = data.get("sub_type")
+            payload = data.get("payload", {})
             
             if not sub_type:
-                logger.warning(f"Received agent control event without sub_type: {agent_message}")
+                logger.warning(f"Received agent control event without sub_type: {data}")
                 return
                 
             logger.debug(f"Agent control event: {sub_type}, payload: {payload}")
@@ -367,53 +393,19 @@ class AudioService(ZmqSubscriberService):
     
     def reload_audio_configs(self):
         """Reload audio configurations and notify SuperCollider."""
-        success = self.config.load_configs()
+        success = self.audio_config.load_configs()
         if success:
             self.osc.reload_configs()
             logger.info("Audio configurations reloaded")
         else:
             logger.error("Failed to reload audio configurations")
     
-    async def stop(self):
-        """Stop the audio service and clean up resources."""
-        logger.info("Stopping audio service")
-        
-        # First stop SuperCollider if we started it
-        if self.auto_start_sc and hasattr(self.osc, 'sc_process') and self.osc.sc_process is not None:
-            logger.info("Stopping SuperCollider")
-            try:
-                success = self.osc.stop_supercollider()
-                if success:
-                    logger.info("SuperCollider stopped successfully")
-                else:
-                    logger.warning("Failed to stop SuperCollider gracefully")
-            except Exception as e:
-                logger.error(f"Error stopping SuperCollider: {e}")
-        
-        # Stop the base service (handles ZMQ socket cleanup)
-        try:
-            await super().stop()
-        except Exception as e:
-            logger.error(f"Error during base service stop: {e}")
-            
-        logger.info("Audio service stopped")
 
-
-async def run_audio_service(config_dir: Optional[str] = None,
-                           osc_host: str = "localhost", 
-                           osc_port: int = 57120,
-                           auto_start_sc: bool = True,
-                           sc_script_path: Optional[str] = None,
-                           sclang_path: str = DEFAULT_SCLANG_PATH):
+async def run_audio_service(config_overrides: Optional[Dict[str, Any]] = None):
     """Run the audio service.
     
     Args:
-        config_dir: Directory containing audio configuration files
-        osc_host: SuperCollider host address
-        osc_port: SuperCollider OSC listening port
-        auto_start_sc: Whether to automatically start SuperCollider
-        sc_script_path: Path to SuperCollider script to execute
-        sclang_path: Path to SuperCollider language interpreter executable
+        config_overrides: Optional configuration overrides
     """
     # Configure logging
     logging.basicConfig(
@@ -424,15 +416,11 @@ async def run_audio_service(config_dir: Optional[str] = None,
         ]
     )
     
+    # Create config with overrides
+    config = AudioServiceConfig.from_overrides(config_overrides or {})
+    
     # Create and start the service
-    service = AudioService(
-        config_dir=config_dir,
-        osc_host=osc_host,
-        osc_port=osc_port,
-        auto_start_sc=auto_start_sc,
-        sc_script_path=sc_script_path,
-        sclang_path=sclang_path
-    )
+    service = AudioService(config=config)
     
     await service.start()
     logger.info("Audio service is running")
@@ -473,14 +461,28 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
-        asyncio.run(run_audio_service(
-            config_dir=args.config_dir,
-            osc_host=args.osc_host,
-            osc_port=args.osc_port,
-            auto_start_sc=not args.no_sc,
-            sc_script_path=args.sc_script,
-            sclang_path=args.sclang_path
-        ))
+        # Build config overrides from command line arguments
+        config_overrides = {}
+        
+        if args.config_dir:
+            config_overrides["audio"] = {"config_dir": args.config_dir}
+        
+        if args.osc_host != "localhost":
+            config_overrides.setdefault("osc", {})["host"] = args.osc_host
+            
+        if args.osc_port != 57120:
+            config_overrides.setdefault("osc", {})["send_port"] = args.osc_port
+            
+        if args.no_sc:
+            config_overrides.setdefault("supercollider", {})["auto_start"] = False
+            
+        if args.sc_script:
+            config_overrides.setdefault("supercollider", {})["script_path"] = args.sc_script
+            
+        if args.sclang_path != DEFAULT_SCLANG_PATH:
+            config_overrides.setdefault("supercollider", {})["sclang_path"] = args.sclang_path
+        
+        asyncio.run(run_audio_service(config_overrides))
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received, exiting")
     except Exception as e:
