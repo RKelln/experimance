@@ -15,7 +15,7 @@ import logging
 from typing import Dict, Optional, Tuple, Any
 from abc import ABC, abstractmethod
 
-from experimance_common.config import Config
+from experimance_common.config import BaseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class LayerRenderer(ABC):
 class LayerManager:
     """Manages multiple rendering layers with proper z-order and compositing."""
     
-    def __init__(self, window_size: Tuple[int, int], config: Config):
+    def __init__(self, window_size: Tuple[int, int], config: BaseConfig):
         """Initialize the layer manager.
         
         Args:

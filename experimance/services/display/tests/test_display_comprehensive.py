@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from experimance_display.display_service import DisplayService
 from experimance_display.config import DisplayServiceConfig, DisplayConfig
 from experimance_common.base_service import ServiceState, ServiceStatus
-from experimance_common.config import Config
+from experimance_common.config import BaseConfig
 from experimance_common.test_utils import active_service
 
 # Configure logging for tests

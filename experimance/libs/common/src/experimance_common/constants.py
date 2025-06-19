@@ -64,8 +64,8 @@ DATA_URL_PREFIX = "data:image/"
 BASE64_PNG_PREFIX = "data:image/png;base64,"
 
 # ZMQ address patterns
-ZMQ_TCP_BIND_PREFIX = "tcp://*:"
-ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost:"
+ZMQ_TCP_BIND_PREFIX = "tcp://*"
+ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost"
 
 # media directories (relative paths)
 MEDIA_DIR = "media"

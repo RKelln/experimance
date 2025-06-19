@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 import numpy as np
 
-from experimance_common.config import Config
+from experimance_common.config import BaseConfig
 from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
 from experimance_common.zmq.controller import ControllerMultiWorkerConfig, WorkerConnectionConfig
 from experimance_common.zmq.zmq_utils import MessageType
@@ -497,7 +497,7 @@ class WorkerConfigHelper(BaseModel):
         
         return ControllerMultiWorkerConfig(workers=workers)
 
-class CoreServiceConfig(Config):
+class CoreServiceConfig(BaseConfig):
     """Complete configuration schema for the Core Service."""
     
     service_name: str = "experimance-core"

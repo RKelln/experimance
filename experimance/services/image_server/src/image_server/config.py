@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from experimance_common.config import Config
+from experimance_common.config import BaseConfig
 from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR
 from image_server.generators.config import BaseGeneratorConfig
 
@@ -48,7 +48,7 @@ class GeneratorConfig(BaseModel):
         description="Default timeout for image generation in seconds"
     )
 
-class ImageServerConfig(Config):
+class ImageServerConfig(BaseConfig):
     """Complete configuration schema for the Image Server service."""
     
     # General service configuration

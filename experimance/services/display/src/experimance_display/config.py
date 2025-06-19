@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from experimance_common.config import Config
+from experimance_common.config import BaseConfig
 from experimance_common.constants import DEFAULT_PORTS, DISPLAY_SERVICE_DIR
 
 DEFAULT_CONFIG_PATH = f"{DISPLAY_SERVICE_DIR}/config.toml"
@@ -266,7 +266,7 @@ class TitleScreenConfig(BaseModel):
     )
 
 
-class DisplayServiceConfig(Config):
+class DisplayServiceConfig(BaseConfig):
     """Complete configuration schema for the Display Service."""
     
     service_name: str = "display-service"

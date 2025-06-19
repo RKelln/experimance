@@ -16,7 +16,7 @@ from experimance_common.config import (
     load_config_with_overrides,
     deep_merge,
     namespace_to_dict,
-    Config,
+    BaseConfig,
     ConfigError
 )
 from experimance_common.cli import (
@@ -201,7 +201,7 @@ class MockZmqConfig(BaseModel):
     port: int = 5555
     host: str = "localhost"
 
-class MockServiceConfig(Config):
+class MockServiceConfig(BaseConfig):
     name: str = "test-service"
     zmq: MockZmqConfig = Field(default_factory=MockZmqConfig)
     log_level: str = "INFO"
@@ -506,7 +506,7 @@ def test_config_from_overrides_with_cli_integration():
         port: int = Field(default=5432, description="Database port")
         ssl: bool = Field(default=True, description="Use SSL")
     
-    class TestServiceConfig(Config):
+    class TestServiceConfig(BaseConfig):
         name: str = Field(default="test-service", description="Service name")
         database: DatabaseConfig = Field(default_factory=DatabaseConfig)
         debug: bool = Field(default=False, description="Debug mode")
@@ -562,7 +562,7 @@ def test_end_to_end_cli_workflow():
         redis_port: int = Field(default=6379, description="Redis port")
         enabled: bool = Field(default=True, description="Enable caching")
     
-    class ServiceConfig(Config):
+    class ServiceConfig(BaseConfig):
         service_name: str = Field(default="my-service", description="Service name")
         port: int = Field(default=8080, description="Service port")
         cache: CacheConfig = Field(default_factory=CacheConfig)
@@ -718,7 +718,7 @@ def test_namespace_to_dict_edge_cases():
 def test_config_from_overrides_priority():
     """Test that CLI args have highest priority in Config.from_overrides."""
     
-    class PriorityConfig(Config):
+    class PriorityConfig(BaseConfig):
         value: str = Field(default="default")
         number: int = Field(default=100)
         
@@ -791,7 +791,7 @@ def test_cli_args_dont_override_config_with_defaults():
     values inappropriately.
     """
     
-    class BooleanConfig(Config):
+    class BooleanConfig(BaseConfig):
         # These booleans have opposite defaults in the class vs config file
         feature_a: bool = Field(default=True, description="Feature A")
         feature_b: bool = Field(default=False, description="Feature B") 
@@ -902,7 +902,7 @@ def test_config_priority_with_mixed_sources():
     This ensures the priority order is maintained and defaults don't interfere.
     """
     
-    class PriorityTestConfig(Config):
+    class PriorityTestConfig(BaseConfig):
         field1: str = Field(default="class_default")
         field2: bool = Field(default=False) 
         field3: int = Field(default=100)

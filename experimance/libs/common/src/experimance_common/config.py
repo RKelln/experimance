@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, TypeVar
 
 import toml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
@@ -144,12 +144,18 @@ def load_config_with_overrides(
     return config
 
 
-T = TypeVar('T', bound='Config')
-class Config(BaseModel):
+T = TypeVar('T', bound='BaseConfig')
+class BaseConfig(BaseModel):
     """Base configuration model with loading methods.
     
     Extend this class with specific configuration fields for each service.
     """
+    
+    model_config = ConfigDict(
+        validate_assignment=True,
+        extra='forbid',
+        str_strip_whitespace=True
+    )
 
     @classmethod
     def from_overrides(cls: Type[T], 
