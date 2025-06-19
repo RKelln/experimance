@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, TypeVar
 
 import toml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
@@ -142,6 +142,15 @@ def load_config_with_overrides(
         config = deep_merge(config, args_dict)
     
     return config
+
+
+# Common config base classes to reduce duplication across services
+class BaseServiceConfig(BaseModel):
+    """Base service configuration with common fields."""
+    
+    service_name: str = Field(
+        description="Name of this service instance"
+    )
 
 
 T = TypeVar('T', bound='BaseConfig')

@@ -57,18 +57,22 @@ Pydantic schemas for type-safe, validated configuration:
 
 ```python
 from experimance_common.zmq.config import (
-    create_local_pubsub_config,
-    create_worker_service_config,
-    create_local_controller_config
+    PubSubServiceConfig, PublisherConfig, SubscriberConfig
 )
 
-# Create configurations using factory functions
-config = create_local_pubsub_config(
+# Simple direct configuration
+config = PubSubServiceConfig(
     name="my-service",
-    pub_port=5555,
-    sub_port=5556,
-    sub_topics=["heartbeat", "status"],
-    default_pub_topic="general"
+    publisher=PublisherConfig(
+        address="tcp://*",
+        port=5555,
+        default_topic="general"
+    ),
+    subscriber=SubscriberConfig(
+        address="tcp://localhost", 
+        port=5556,
+        topics=["heartbeat", "status"]
+    )
 )
 ```
 
@@ -141,7 +145,7 @@ from experimance_common.base_service import BaseService, ServiceStatus
 from experimance_common.service_state import ServiceState
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.zmq.services import PubSubService
-from experimance_common.constants import ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.constants import DEFAULT_PORTS
 
 class MyZmqService(BaseService):
     """Example ZMQ service using BaseService + PubSubService."""
@@ -149,28 +153,19 @@ class MyZmqService(BaseService):
     def __init__(self, name: str = "my-zmq-service"):
         super().__init__(service_name=name, service_type="zmq-example")
         
-        # Create ZMQ configuration using proper BaseConfig integration
-        default_config = {
-            "name": self.service_name,
-            "publisher": {
-                "address": ZMQ_TCP_BIND_PREFIX,
-                "port": 5555,
-                "default_topic": "general"
-            },
-            "subscriber": {
-                "address": ZMQ_TCP_CONNECT_PREFIX,
-                "port": 5556,
-                "topics": ["heartbeat", "status"]
-            }
-        }
-        
-        # Use BaseConfig.from_overrides() for full config integration
-        self.zmq_config = PubSubServiceConfig.from_overrides(
-            default_config=default_config,
-            # Can also load from file, override config, command line args, etc.
-            # config_file="config.toml",
-            # override_config={"log_level": "DEBUG"},
-            # args=parsed_args
+        # Create ZMQ configuration with simple direct instantiation
+        self.zmq_config = PubSubServiceConfig(
+            name=self.service_name,
+            publisher=PublisherConfig(
+                address="tcp://*",
+                port=DEFAULT_PORTS["events"],
+                default_topic="general"
+            ),
+            subscriber=SubscriberConfig(
+                address="tcp://localhost",
+                port=DEFAULT_PORTS["events"],
+                topics=["heartbeat", "status"]
+            )
         )
         
         # Create ZMQ service
@@ -294,69 +289,65 @@ class MyZmqService(BaseService):
 
 ## Configuration System
 
-### BaseConfig Integration (Recommended)
+### Simple Configuration
 
-The ZMQ configuration schemas extend the existing BaseConfig system, providing full integration with file loading, overrides, and command-line arguments:
-
-```python
-from experimance_common.zmq.config import PubSubServiceConfig
-
-# Method 1: Simple default config
-default_config = {
-    "name": "my-service",
-    "publisher": {
-        "address": "tcp://*",
-        "port": 5555,
-        "default_topic": "heartbeat"
-    },
-    "subscriber": {
-        "address": "tcp://localhost",
-        "port": 5556,
-        "topics": ["heartbeat", "status"]
-    }
-}
-
-config = PubSubServiceConfig.from_overrides(
-    default_config=default_config
-)
-
-# Method 2: With file loading and overrides
-config = PubSubServiceConfig.from_overrides(
-    default_config=default_config,
-    config_file="service.toml",           # Load from TOML file
-    override_config={"log_level": "DEBUG"}, # Runtime overrides
-    args=parsed_args                      # Command line arguments
-)
-```
-
-### Factory Functions (Quick Setup & Convenience)
-
-For quick setup, examples, prototypes, and one-off scripts, factory functions provide pre-configured defaults:
-
-⚠️ **Usage**: Examples, prototypes, quick dev - **NOT for production or testing**
+For clear, readable examples and simple services, use direct instantiation:
 
 ```python
 from experimance_common.zmq.config import (
-    create_local_pubsub_config,
-    create_worker_service_config,
-    create_local_controller_config
+    PubSubServiceConfig, PublisherConfig, SubscriberConfig,
+    WorkerServiceConfig, PullConfig, PushConfig,
+    ControllerServiceConfig, WorkerConfig
+)
+from experimance_common.constants import DEFAULT_PORTS
+
+# PubSub service configuration
+pubsub_config = PubSubServiceConfig(
+    name="my-pubsub-service",
+    publisher=PublisherConfig(
+        address="tcp://*",
+        port=DEFAULT_PORTS["events"],
+        default_topic="heartbeat"
+    ),
+    subscriber=SubscriberConfig(
+        address="tcp://localhost",
+        port=DEFAULT_PORTS["events"],
+        topics=["heartbeat", "status"]
+    )
 )
 
-# Quick setup for examples/prototypes - handles complex socket configuration
-config = create_local_pubsub_config(
-    name="example-service",
-    pub_port=5555,
-    sub_port=5556,
-    sub_topics=["heartbeat"],
-    default_pub_topic="status"
+# Worker service configuration
+worker_config = WorkerServiceConfig(
+    name="my-worker",
+    pull=PullConfig(
+        address="tcp://localhost",
+        port=DEFAULT_PORTS["work"]
+    ),
+    push=PushConfig(
+        address="tcp://*",
+        port=DEFAULT_PORTS["results"]
+    )
 )
 
-# Controller with workers - handles multiple socket coordination
-controller_config = create_local_controller_config(
-    name="example-controller",
-    worker_configs={
-        "image": {"push": 5564, "pull": 5565}
-    }
+# Controller service configuration
+controller_config = ControllerServiceConfig(
+    name="my-controller",
+    publisher=PublisherConfig(
+        address="tcp://*",
+        port=DEFAULT_PORTS["events"]
+    ),
+    workers=[
+        WorkerConfig(
+            name="image-worker",
+            push_port=DEFAULT_PORTS["images"],
+            pull_port=DEFAULT_PORTS["image_results"]
+        ),
+        WorkerConfig(
+            name="audio-worker", 
+            push_port=DEFAULT_PORTS["audio"],
+            pull_port=DEFAULT_PORTS["audio_results"]
+        )
+    ]
 )
 ```
 
@@ -393,48 +384,100 @@ def mock_pubsub_config():
 
 ### Configuration Summary
 
-| Use Case                   | Approach                      | Example                             |
-| -------------------------- | ----------------------------- | ----------------------------------- |
-| **Production Services**    | `BaseConfig.from_overrides()` | Full config file + override support |
-| **Production Convenience** | Factory functions             | Standard patterns with defaults     |
-| **Unit Testing**           | Mocks                         | `Mock(spec=PubSubServiceConfig)`    |
-| **Integration Testing**    | Minimal BaseConfig            | Simple override configs             |
+| Use Case                  | Approach                      | Example                             |
+| ------------------------- | ----------------------------- | ----------------------------------- |
+| **Production Services**   | `BaseConfig.from_overrides()` | Full config file + override support |
+| **Examples & Prototypes** | Direct instantiation          | `PubSubServiceConfig(...)`          |
+| **Unit Testing**          | Mocks                         | `Mock(spec=PubSubServiceConfig)`    |
+| **Integration Testing**   | Minimal BaseConfig            | Simple override configs             |
 
-✅ **Recommended**: BaseConfig for production, mocks for testing  
-❌ **Avoid**: Factory functions in tests (harder to control and verify)
+### Production Configuration (Recommended)
+
+For production services, use BaseConfig integration with proper config files and overrides:
 
 ```python
+from experimance_common.zmq.config import (
+    PubSubServiceConfig, WorkerServiceConfig, ControllerServiceConfig
+)
+
 # PubSub service (bidirectional communication)
-config = create_local_pubsub_config(
-    name="my-service",
-    pub_port=5555,
-    sub_port=5556,
-    sub_topics=["heartbeat", "status", "era_events"],
-    default_pub_topic="general"
+default_config = {
+    "name": "my-service",
+    "publisher": {
+        "address": "tcp://*",
+        "port": 5555,
+        "default_topic": "general"
+    },
+    "subscriber": {
+        "address": "tcp://localhost",
+        "port": 5556,
+        "topics": ["heartbeat", "status", "era_events"]
+    }
+}
+
+config = PubSubServiceConfig.from_overrides(
+    default_config=default_config,
+    config_file="service.toml"
 )
 
 # Worker service (receives work, sends results)
-worker_config = create_worker_service_config(
-    name="image-worker",
-    work_pull_port=DEFAULT_PORTS["image_requests"],  # 5564
-    result_push_port=DEFAULT_PORTS["image_results"], # 5565
-    pub_port=5567,
-    sub_port=DEFAULT_PORTS["events"],                # 5555
-    sub_topics=["control", "heartbeat"],
-    default_pub_topic="worker_status"
+worker_default_config = {
+    "name": "image-worker",
+    "work_pull": {
+        "address": "tcp://localhost",
+        "port": 5564  # DEFAULT_PORTS["image_requests"]
+    },
+    "result_push": {
+        "address": "tcp://*", 
+        "port": 5565  # DEFAULT_PORTS["image_results"]
+    },
+    "publisher": {
+        "address": "tcp://*",
+        "port": 5567,
+        "default_topic": "worker_status"
+    },
+    "subscriber": {
+        "address": "tcp://localhost",
+        "port": 5555,  # DEFAULT_PORTS["events"]
+        "topics": ["control", "heartbeat"]
+    }
+}
+
+worker_config = WorkerServiceConfig.from_overrides(
+    default_config=worker_default_config,
+    config_file="worker.toml"
 )
 
 # Controller service (distributes work, collects results)
-controller_config = create_local_controller_config(
-    name="image-controller",
-    pub_port=DEFAULT_PORTS["events"],               # 5555
-    sub_port=DEFAULT_PORTS["events"],               # 5555
-    worker_configs={
+controller_default_config = {
+    "name": "image-controller",
+    "publisher": {
+        "address": "tcp://*",
+        "port": 5555,  # DEFAULT_PORTS["events"]
+        "default_topic": "control"
+    },
+    "subscriber": {
+        "address": "tcp://localhost", 
+        "port": 5555,  # DEFAULT_PORTS["events"]
+        "topics": ["worker_status", "heartbeat"]
+    },
+    "workers": {
         "image": {
-            "push": DEFAULT_PORTS["image_requests"], # 5564
-            "pull": DEFAULT_PORTS["image_results"]   # 5565
+            "push": {
+                "address": "tcp://*",
+                "port": 5564  # DEFAULT_PORTS["image_requests"]
+            },
+            "pull": {
+                "address": "tcp://localhost",
+                "port": 5565  # DEFAULT_PORTS["image_results"] 
+            }
         }
     }
+}
+
+controller_config = ControllerServiceConfig.from_overrides(
+    default_config=controller_default_config,
+    config_file="controller.toml"
 )
 ```
 
@@ -502,7 +545,7 @@ class MyZmqService(BaseService):
         self.last_heartbeat = None             # Runtime timestamps
         
         # Create ZMQ service with original config
-        self.zmq_service = PubSubService(config)
+        self.zmq_service = PubSubService(config.pusub)
     
     async def handle_connection_error(self):
         # ✅ Can modify runtime state
@@ -582,12 +625,24 @@ await service.publish(heartbeat, "heartbeat")
 Use for status updates, events, coordination:
 
 ```python
-# Configuration
-config = create_local_pubsub_config(
-    name="status-service",
-    pub_port=DEFAULT_PORTS["events"],  # All services use this
-    sub_port=DEFAULT_PORTS["events"],
-    sub_topics=["heartbeat", "status", "era_events"]
+# Configuration using BaseConfig integration
+default_config = {
+    "name": "status-service",
+    "publisher": {
+        "address": "tcp://*",
+        "port": 5555,  # DEFAULT_PORTS["events"] - All services use this
+        "default_topic": "status"
+    },
+    "subscriber": {
+        "address": "tcp://localhost",
+        "port": 5555,  # DEFAULT_PORTS["events"]
+        "topics": ["heartbeat", "status", "era_events"]
+    }
+}
+
+config = PubSubServiceConfig.from_overrides(
+    default_config=default_config,
+    config_file="status_service.toml"
 )
 
 # Service
@@ -599,11 +654,22 @@ service = PubSubService(config)
 Use for distributing work across multiple workers:
 
 ```python
-# Worker side
-worker_config = create_worker_service_config(
-    name="image-worker-1",
-    work_pull_port=DEFAULT_PORTS["image_requests"],
-    result_push_port=DEFAULT_PORTS["image_results"]
+# Worker side - BaseConfig integration
+worker_default_config = {
+    "name": "image-worker-1",
+    "work_pull": {
+        "address": "tcp://localhost",
+        "port": 5564  # DEFAULT_PORTS["image_requests"]
+    },
+    "result_push": {
+        "address": "tcp://*",
+        "port": 5565  # DEFAULT_PORTS["image_results"]
+    }
+}
+
+worker_config = WorkerServiceConfig.from_overrides(
+    default_config=worker_default_config,
+    config_file="worker.toml"
 )
 worker = WorkerService(worker_config)
 
@@ -620,15 +686,26 @@ worker.set_work_handler(process_image)
 Use for coordinating multiple workers:
 
 ```python
-# Controller side
-controller_config = create_local_controller_config(
-    name="image-controller",
-    worker_configs={
+# Controller side - BaseConfig integration
+controller_default_config = {
+    "name": "image-controller",
+    "workers": {
         "image": {
-            "push": DEFAULT_PORTS["image_requests"],
-            "pull": DEFAULT_PORTS["image_results"]
+            "push": {
+                "address": "tcp://*",
+                "port": 5564  # DEFAULT_PORTS["image_requests"]
+            },
+            "pull": {
+                "address": "tcp://localhost", 
+                "port": 5565  # DEFAULT_PORTS["image_results"]
+            }
         }
     }
+}
+
+controller_config = ControllerServiceConfig.from_overrides(
+    default_config=controller_default_config,
+    config_file="controller.toml"
 )
 controller = ControllerService(controller_config)
 
@@ -801,7 +878,8 @@ service.set_default_handler(default_handler)
 
 **Problem**: Type errors when publishing messages
 
-**Cause**: Wrong parameter order in publish() calls.
+**Cause**: Wrong parameter order in publish() calls. Topic is optional.
+           (It can be set by the message type or the default topic of the publisher.)
 
 **Solution**: Use correct parameter order:
 
@@ -811,33 +889,47 @@ await service.publish("topic", message_data)
 
 # ✅ CORRECT: data first, topic second  
 await service.publish(message_data, "topic")
-await service.publish(message_data, None)  # Uses default topic
+await service.publish(message_data)  # Uses default topic
 ```
 
 ### Issue 6: Configuration Validation Errors
 
 **Problem**: `ValidationError: port Input should be a valid integer`
 
-**Cause**: Passing None to required configuration fields.
+**Cause**: Incorrect configuration structure or missing required fields.
 
-**Solution**: Use proper factory functions or optional configs:
+**Solution**: Use proper BaseConfig integration with correct structure:
 
 ```python
-# ❌ WRONG: Passing None to required fields
-config = create_local_pubsub_config(sub_port=None)  # Error if subscriber required
+# ❌ WRONG: Missing required configuration structure
+config = {"name": "test", "publisher": None}  # Missing proper structure
 
-# ✅ CORRECT: Use proper configurations
+# ✅ CORRECT: Complete configuration structure
 # Publisher only
-config = create_local_pubsub_config(
-    pub_port=5555,
-    sub_port=None  # Works because we fixed PubSubServiceConfig to allow None
-)
+default_config = {
+    "name": "test-service",
+    "publisher": {
+        "address": "tcp://*",
+        "port": 5555,
+        "default_topic": "general"
+    },
+    "subscriber": None  # Explicitly None for publisher-only
+}
+
+config = PubSubServiceConfig.from_overrides(default_config=default_config)
 
 # Subscriber only  
-config = create_local_pubsub_config(
-    pub_port=None,
-    sub_port=5556
-)
+default_config = {
+    "name": "test-service", 
+    "publisher": None,  # Explicitly None for subscriber-only
+    "subscriber": {
+        "address": "tcp://localhost",
+        "port": 5556,
+        "topics": ["heartbeat"]
+    }
+}
+
+config = PubSubServiceConfig.from_overrides(default_config=default_config)
 ```
 
 ## Error Handling and Best Practices
@@ -892,7 +984,7 @@ except Exception as e:
 ```python
 from experimance_common.base_service import BaseService, ServiceStatus
 from experimance_common.service_state import ServiceState
-from experimance_common.zmq.config import create_local_pubsub_config
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig
 from experimance_common.zmq.services import PubSubService
 import time
 
@@ -900,11 +992,15 @@ class SimplePublisher(BaseService):
     def __init__(self, name: str = "simple-publisher"):
         super().__init__(service_name=name, service_type="publisher")
         
-        self.zmq_config = create_local_pubsub_config(
+        # Simple direct configuration for examples
+        self.zmq_config = PubSubServiceConfig(
             name=self.service_name,
-            pub_port=5555,
-            sub_port=None,  # Publisher only
-            default_pub_topic="general"
+            publisher=PublisherConfig(
+                address="tcp://*",
+                port=5555,
+                default_topic="general"
+            ),
+            subscriber=None  # Publisher only
         )
         self.zmq_service = PubSubService(self.zmq_config)
         self.counter = 0
@@ -963,11 +1059,14 @@ class SimpleSubscriber(BaseService):
     def __init__(self, name: str = "simple-subscriber"):
         super().__init__(service_name=name, service_type="subscriber")
         
-        self.zmq_config = create_local_pubsub_config(
+        self.zmq_config = PubSubServiceConfig(
             name=self.service_name,
-            pub_port=None,  # Subscriber only
-            sub_port=5555,
-            sub_topics=["heartbeat", "status"]
+            publisher=None,  # Subscriber only
+            subscriber=SubscriberConfig(
+                address="tcp://localhost",
+                port=5555,
+                topics=["heartbeat", "status"]
+            )
         )
         self.zmq_service = PubSubService(self.zmq_config)
     

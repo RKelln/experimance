@@ -1,13 +1,25 @@
 # Experimance Common Services
 
-This document describes the base service classes provided in `experimance_common.service` for building distributed applications with ZeroMQ.
+This document describes the base service classes and ZMQ composition patterns provided in `experimance_common` for building distributed applications with ZeroMQ.
+
+**🏗️ Architecture Note**: This guide uses the modern **composition-based ZMQ architecture**. For ZMQ-specific patterns, see [README_ZMQ.md](README_ZMQ.md). The older inheritance-based ZMQ services have been deprecated in favor of this more flexible approach.
+
+## Key Configuration Patterns (Updated 2024)
+
+**📋 Modern Service Configuration Rules:**
+- Extend `BaseServiceConfig` for all service configs (provides common fields like `service_name`)
+- Use direct config instantiation, not factory functions
+- Use shared constants from `experimance_common.constants` 
+- Use shared enums like `MessageType` for ZMQ topics, not strings
+- Override service name with simple field defaults: `service_name: str = "my-service"`
+- Test both default and custom configurations
 
 ## Quick Start Guide for New Services
 
 **TL;DR: The fastest way to create a working service:**
 
-1. **Choose your base class**: `BaseService` for simple services, `ZmqPublisherService`/`ZmqSubscriberService` for messaging
-2. **Use the centralized config system**: Create a Pydantic config class and use `Config.from_overrides()`
+1. **Choose your base class**: `BaseService` for all services, then add ZMQ functionality using composition with `PubSubService`, `WorkerService`, or `ControllerService`
+2. **Use the centralized config system**: Create a `config.py` and add Pydantic config classes that subclass `BaseServiceConfig`
 3. **Follow the lifecycle pattern**: Initialize in `start()`, add tasks, call `super().start()` last
 4. **Use TDD**: Write tests first using the state management system for reliable testing
 5. **Handle errors properly**: Use `record_error()` with appropriate `is_fatal` flags
@@ -17,51 +29,117 @@ This document describes the base service classes provided in `experimance_common
 ### Essential Service Template
 
 ```python
+# src/my_service/config.py
+from experimance_common.config import BaseServiceConfig
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig, MessageType
+from experimance_common.constants import DEFAULT_PUBLISHER_PORT, ZMQ_BIND_ADDRESS
+from pydantic import Field
+
+class MyServiceConfig(BaseServiceConfig):
+    """Configuration for MyService."""
+    
+    # Override service name with sensible default
+    service_name: str = "my-service"
+    
+    # Service-specific fields
+    work_interval: float = Field(default=1.0, description="Work loop interval")
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    
+    # ZMQ configuration using shared patterns
+    zmq: PubSubServiceConfig = Field(
+        default_factory=lambda: PubSubServiceConfig(
+            publisher=PublisherConfig(
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT + 10,  # Offset for your service
+                topics=[MessageType.STATUS, MessageType.HEARTBEAT]
+            ),
+            subscriber=SubscriberConfig(
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT,
+                topics=[MessageType.COMMAND, MessageType.HEARTBEAT]
+            )
+        )
+    )
+
 # src/my_service/my_service.py
 import asyncio
 import logging
-from experimance_common.base_service import BaseService
-from experimance_common.config import Config
+from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.constants import TICK
+from experimance_common.zmq.services import PubSubService
 from .config import MyServiceConfig
 
 logger = logging.getLogger(__name__)
 
 class MyService(BaseService):
-    def __init__(self, config_overrides: dict = None):
-        super().__init__("my_service", "worker")
+    def __init__(self, config: MyServiceConfig):
+        super().__init__(service_name=config.service_name)
         
-        # Load config using centralized system
-        self.config: MyServiceConfig = Config.from_overrides(
-            MyServiceConfig, 
-            config_overrides or {}
-        )
+        # Store immutable config
+        self.config: MyServiceConfig = config
+        
+        # Copy values that need to be mutable during runtime
+        self.retry_count = 0                   # Runtime state
+        self.connection_attempts = 0           # Runtime counters
+        self.last_heartbeat = None             # Runtime timestamps
+        
+        # Create ZMQ service with config
+        self.zmq_service = PubSubService(config.zmq)
         
     async def start(self):
         """Initialize resources before starting."""
+        # Set up message handlers before starting ZMQ service
+        self.zmq_service.add_message_handler("heartbeat", self._handle_heartbeat)
+        self.zmq_service.add_message_handler("commands", self._handle_command)
+        
+        # Start ZMQ service first
+        await self.zmq_service.start()
+        
         # Initialize your resources here
         self.my_resource = await create_resource()
         
         # Register background tasks
         self.add_task(self.main_work_loop())
-        self.add_task(self.health_monitor())
         
         # ALWAYS call super().start() LAST
         await super().start()
+        self.status = ServiceStatus.HEALTHY
         
     async def stop(self):
         """Clean up resources after stopping."""
         # ALWAYS call super().stop() FIRST
         await super().stop()
         
+        # Stop ZMQ service
+        await self.zmq_service.stop()
+        
         # Clean up your resources
         if hasattr(self, 'my_resource'):
             await self.my_resource.close()
             
+    async def _handle_heartbeat(self, message_data):
+        """Handle heartbeat messages."""
+        logger.info(f"Received heartbeat from {message_data.get('service', 'unknown')}")
+        
+    async def _handle_command(self, message_data):
+        """Handle command messages."""
+        command = message_data.get('command', 'unknown')
+        logger.info(f"Received command: {command}")
+        
     async def main_work_loop(self):
         """Main service logic."""
         while self.running:
             try:
                 await self.do_work()
+                
+                # Publish status update
+                status = {
+                    "type": "status",
+                    "service": self.service_name,
+                    "state": self.state.value
+                }
+                await self.zmq_service.publish(status, "status")
+                
             except RetryableError as e:
                 self.record_error(e, is_fatal=False)
                 await self._sleep_if_running(1.0)
@@ -69,28 +147,43 @@ class MyService(BaseService):
                 self.record_error(e, is_fatal=True)
                 break
                 
-            await self._sleep_if_running(0.1)  # Prevent CPU spinning
+            await self._sleep_if_running(TICK)  # Prevent CPU spinning
 ```
 
 ### Essential Config Template
 
 ```python
 # src/my_service/config.py
-from pydantic import BaseModel, Field
-from experimance_common.config import Config
+from experimance_common.config import BaseServiceConfig
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig, MessageType
+from experimance_common.constants import DEFAULT_PUBLISHER_PORT, ZMQ_BIND_ADDRESS
+from pydantic import Field
 
-class MyServiceConfig(Config):
+class MyServiceConfig(BaseServiceConfig):
     """Configuration for MyService."""
+    
+    # Override service name with sensible default
+    service_name: str = "my-service"
     
     # Service-specific settings
     work_interval: float = Field(default=1.0, description="Interval between work cycles")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     
-    # Override base config defaults if needed
-    log_level: str = Field(default="INFO", description="Logging level")
-    
-    class Config:
-        config_file = "config.toml"  # Default config file name
+    # ZMQ configuration using shared patterns
+    zmq: PubSubServiceConfig = Field(
+        default_factory=lambda: PubSubServiceConfig(
+            publisher=PublisherConfig(
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT + 10,  # Offset for your service
+                topics=[MessageType.STATUS, MessageType.HEARTBEAT]
+            ),
+            subscriber=SubscriberConfig(
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT,
+                topics=[MessageType.COMMAND, MessageType.HEARTBEAT]
+            )
+        )
+    )
 ```
 
 ### Essential Test Template
@@ -131,7 +224,7 @@ The `experimance_common.service` module provides a set of base classes designed 
 - **Asynchronous Operations**: Built on `asyncio` for non-blocking I/O.
 - **Lifecycle Management**: Standard `start()`, `stop()`, and `run()` methods.
 - **Graceful Shutdown**: Signal handlers for `SIGINT` and `SIGTERM` with multiple shutdown mechanisms.
-- **Heartbeating**: Automatic heartbeat messages for service discovery and monitoring (for publisher services).
+- **Message Handling**: Message processing patterns for ZMQ services.
 - **Statistics Tracking**: Basic statistics like messages sent/received and uptime.
 - **Configurable Logging**: Consistent logging across services.
 - **Error Handling**: Comprehensive error handling with automatic shutdown for fatal errors.
@@ -201,17 +294,13 @@ name = "my_service_db"
 
 3. **Load config in your service**:
 ```python
-# In your service __init__
+# In your service file:
 class MyService(BaseService):
-    def __init__(self, config_overrides: dict = None):
-        super().__init__("my_service", "worker")
-        
-        # Load with overrides (useful for testing)
-        self.config: MyServiceConfig = Config.from_overrides(
-            MyServiceConfig, 
-            config_overrides or {}
-        )
-        
+    def __init__(self, config: MyServiceConfig):
+        super().__init__(service_name=config.service_name)
+        self.config = config
+        self.zmq_service = PubSubService(config.zmq)
+
         # Access config values
         logger.info(f"Database host: {self.config.database.host}")
         logger.info(f"Work interval: {self.config.work_interval}")
@@ -238,6 +327,176 @@ prod_config = {
     "database": {"host": "prod-db.example.com"}
 }
 service = MyService(config_overrides=prod_config)
+```
+
+### Modern Service Configuration Patterns
+
+Based on recent refactoring work, here are the established patterns for creating maintainable, testable service configurations:
+
+#### 1. Use BaseServiceConfig for Common Fields
+
+All service configs should extend `BaseServiceConfig` to inherit common service fields:
+
+```python
+# src/my_service/config.py
+from experimance_common.config import BaseServiceConfig
+from experimance_common.zmq.config import PubSubServiceConfig, MessageType
+from experimance_common.constants import DEFAULT_PUBLISHER_PORT, ZMQ_BIND_ADDRESS
+from pydantic import Field
+
+class MyServiceConfig(BaseServiceConfig):
+    """Configuration for MyService."""
+    
+    # Override the service name with a sensible default
+    service_name: str = "my-service"
+    
+    # Service-specific fields
+    work_interval: float = Field(default=1.0, description="Work loop interval")
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    
+    # ZMQ configuration using shared patterns
+    zmq: PubSubServiceConfig = Field(
+        default_factory=lambda: PubSubServiceConfig(
+            publisher=PublisherConfig(
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT + 10,  # Offset for your service
+                topics=[MessageType.STATUS, MessageType.HEARTBEAT]
+            ),
+            subscriber=SubscriberConfig(
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT,
+                topics=[MessageType.COMMAND, MessageType.HEARTBEAT]
+            )
+        )
+    )
+```
+
+#### 2. Use Shared Constants and Enums
+
+Always use shared constants and enums instead of hardcoded strings:
+
+```python
+# ✅ Good - Uses shared constants and enums
+from experimance_common.constants import ZMQ_BIND_ADDRESS, DEFAULT_PUBLISHER_PORT
+from experimance_common.zmq.config import MessageType
+
+zmq_config = PubSubServiceConfig(
+    publisher=PublisherConfig(
+        address=ZMQ_BIND_ADDRESS,
+        port=DEFAULT_PUBLISHER_PORT + 10,
+        topics=[MessageType.STATUS, MessageType.HEARTBEAT]
+    )
+)
+
+# ❌ Bad - Hardcoded values and strings
+zmq_config = PubSubServiceConfig(
+    publisher=PublisherConfig(
+        address="tcp://*",
+        port=5555,
+        topics=["status", "heartbeat"]  # String literals
+    )
+)
+```
+
+#### 3. Direct Config Instantiation Pattern
+
+Use direct config instantiation, not factory functions:
+
+```python
+# ✅ Good - Direct instantiation
+class MyService(BaseService):
+    def __init__(self, config: MyServiceConfig):
+        super().__init__(service_name=config.service_name)
+        self.config = config
+        self.zmq_service = PubSubService(config.zmq)
+
+# Usage
+config = MyServiceConfig(service_name="custom-service")
+service = MyService(config)
+
+# ❌ Bad - Factory pattern (deprecated)
+def create_service_config(service_name: str) -> MyServiceConfig:
+    # Don't do this anymore
+    pass
+```
+
+#### 4. Field Override Patterns
+
+Use simple field overrides in config classes:
+
+```python
+class AudioServiceConfig(BaseServiceConfig):
+    # Simple field override with sensible default
+    service_name: str = "audio-service"
+    
+    # Service-specific fields with validation
+    sample_rate: int = Field(default=44100, ge=8000, le=192000)
+    buffer_size: int = Field(default=1024, ge=64, le=8192)
+
+# Can still be overridden at instantiation
+config = AudioServiceConfig(service_name="audio-service-custom")
+```
+
+#### 5. Dynamic Service Naming
+
+Handle dynamic service naming at runtime, not in config:
+
+```python
+class MyService(BaseService):
+    def __init__(self, config: MyServiceConfig):
+        # Dynamic naming happens here, not in config
+        service_name = config.service_name
+        if config.instance_id:
+            service_name = f"{service_name}-{config.instance_id}"
+            
+        super().__init__(service_name=service_name)
+        self.config = config
+        
+        # ZMQ uses original config structure
+        self.zmq_service = PubSubService(config.zmq)
+```
+
+#### 6. Testing with Config Overrides
+
+Write tests that verify both default and custom configurations:
+
+```python
+# tests/test_my_service_config.py
+import pytest
+from my_service.config import MyServiceConfig
+from my_service.my_service import MyService
+
+class TestMyServiceConfig:
+    def test_default_config(self):
+        """Test service with default configuration."""
+        config = MyServiceConfig()
+        assert config.service_name == "my-service"
+        assert config.work_interval == 1.0
+        
+        service = MyService(config)
+        assert service.service_name == "my-service"
+    
+    def test_custom_config(self):
+        """Test service with custom configuration."""
+        config = MyServiceConfig(
+            service_name="custom-service",
+            work_interval=0.5
+        )
+        assert config.service_name == "custom-service"
+        assert config.work_interval == 0.5
+        
+        service = MyService(config)
+        assert service.service_name == "custom-service"
+    
+    def test_zmq_config_uses_enums(self):
+        """Test that ZMQ config uses shared enums."""
+        config = MyServiceConfig()
+        
+        # Check that topics use MessageType enum, not strings
+        from experimance_common.zmq.config import MessageType
+        assert MessageType.STATUS in config.zmq.publisher.topics
+        assert MessageType.HEARTBEAT in config.zmq.publisher.topics
+        assert MessageType.COMMAND in config.zmq.subscriber.topics
 ```
 
 ## Testing Patterns and Best Practices
@@ -1144,7 +1403,7 @@ The state management system consists of two main components:
 
 ### Using State Management in Custom Services
 
-When building custom services by extending `BaseService` or its ZMQ-specific subclasses, the state management system works automatically. The service moves through the proper state transitions during startup, execution, and shutdown without requiring any additional code.
+When building custom services by extending `BaseService` and using ZMQ composition, the state management system works automatically. The service moves through the proper state transitions during startup, execution, and shutdown without requiring any additional code.
 
 For custom methods or advanced use cases, you can access the state management system directly:
 
@@ -1259,174 +1518,272 @@ The fundamental base class for all services. It provides:
 - Task management for background operations.
 - State management across inheritance hierarchies.
 
-### 2. `BaseZmqService`
-Inherits from `BaseService` and adds common ZMQ functionalities:
-- ZMQ context management.
-- Socket creation and configuration utilities.
-- Service name and type.
+### 2. ZMQ Integration (Composition-Based)
 
-### 3. `ZmqPublisherService`
-Inherits from `ZmqService`. A base class for services that publish messages using a ZMQ PUB socket.
-- Manages a PUB socket.
-- Sends periodic heartbeat messages on a configurable topic.
-- Provides a `publish_message()` method.
+Instead of inheritance-based ZMQ services, use **composition** with `BaseService` and ZMQ components:
 
-### 4. `ZmqSubscriberService`
-Inherits from `ZmqService`. A base class for services that subscribe to messages using a ZMQ SUB socket.
-- Manages a SUB socket.
-- Connects to a publisher and subscribes to specified topics.
-- Registers a message handler to process received messages.
-- Runs a listener task to receive and process messages.
+**For messaging services**, use `BaseService` + ZMQ service composition:
 
-### 5. `ZmqPushService`
-Inherits from `ZmqService`. A base class for services that send tasks using a ZMQ PUSH socket.
-- Manages a PUSH socket.
-- Provides a `push_task()` method to send messages.
+```python
+from experimance_common.base_service import BaseService
+from experimance_common.zmq.config import PubSubServiceConfig
+from experimance_common.zmq.services import PubSubService
 
-### 6. `ZmqPullService`
-Inherits from `ZmqService`. A base class for services that receive tasks or results using a ZMQ PULL socket.
-- Manages a PULL socket.
-- Registers a task handler to process received messages.
-- Runs a puller task to receive and process messages.
+class MyMessagingService(BaseService):
+    def __init__(self):
+        super().__init__("my-service", "messaging")
+        
+        # Create ZMQ configuration
+        self.zmq_config = PubSubServiceConfig(...)
+        
+        # Use composition, not inheritance
+        self.zmq_service = PubSubService(self.zmq_config)
+```
 
-## Combined Service Classes
+**Available ZMQ Service Types:**
+- **`PubSubService`**: Bidirectional communication (publisher + subscriber)
+- **`WorkerService`**: Task processing (pull work, push results)
+- **`ControllerService`**: Task distribution (push work, pull results, pub/sub for coordination)
 
-These classes combine functionalities from the base ZMQ service classes.
+**Key Benefits of Composition:**
+- Clear separation of concerns
+- Easier testing with mock ZMQ services
+- More flexible service architectures
+- Better error handling and resource management
 
-### 1. `ZmqPublisherSubscriberService`
-Combines `ZmqPublisherService` and `ZmqSubscriberService`.
-- Suitable for services that need to both publish and subscribe to messages.
-- Example: A service that broadcasts its status and listens for commands.
+## ZMQ Service Patterns
 
-### 2. `ZmqControllerService`
-Inherits from `ZmqPublisherSubscriberService`, `ZmqPushService`, and `ZmqPullService`.
-- Designed for central coordinator or controller services.
-- **Publishes** events or state updates.
-- **Subscribes** to responses or data from other services.
-- **Pushes** tasks to worker services.
-- **Pulls** results or acknowledgments from worker services.
-- Implements a `_handle_worker_response()` method (meant to be overridden by subclasses) to process messages received on the PULL socket.
+### PubSub Pattern (Bidirectional Communication)
+```python
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
+from experimance_common.zmq.services import PubSubService
 
-### 3. `ZmqWorkerService`
-Inherits from `ZmqSubscriberService`, `ZmqPullService`, and `ZmqPushService`.
-- Designed for worker services that process tasks.
-- **Subscribes** to broadcast notifications.
-- **Pulls** tasks from a controller service.
-- **Pushes** results back to the controller.
-- Override `_handle_task()` to implement custom task processing logic.
+class EventService(BaseService):
+    def __init__(self):
+        super().__init__("event-service", "messaging")
+        
+        self.zmq_config = PubSubServiceConfig(
+            name=self.service_name,
+            publisher=PublisherConfig(
+                address="tcp://*",
+                port=5555,
+                default_topic="events"
+            ),
+            subscriber=SubscriberConfig(
+                address="tcp://localhost", 
+                port=5556,
+                topics=["heartbeat", "commands"]
+            )
+        )
+        self.zmq_service = PubSubService(self.zmq_config)
+    
+    async def start(self):
+        # Set up message handlers
+        self.zmq_service.add_message_handler("heartbeat", self._handle_heartbeat)
+        self.zmq_service.add_message_handler("commands", self._handle_command)
+        
+        # Start ZMQ service
+        await self.zmq_service.start()
+        
+        # Register background tasks
+        self.add_task(self._publishing_loop())
+        
+        await super().start()
+        
+    async def _publishing_loop(self):
+        while self.running:
+            event = {"type": "status", "service": self.service_name}
+            await self.zmq_service.publish(event, "events")
+            await self._sleep_if_running(5.0)
+```
+
+### Worker Pattern (Task Processing)
+```python
+from experimance_common.zmq.config import WorkerServiceConfig, PullConfig, PushConfig
+from experimance_common.zmq.services import WorkerService
+
+class ProcessingWorker(BaseService):
+    def __init__(self):
+        super().__init__("processing-worker", "worker")
+        
+        self.zmq_config = WorkerServiceConfig(
+            name=self.service_name,
+            pull=PullConfig(
+                address="tcp://localhost",
+                port=5557  # Receive work from controller
+            ),
+            push=PushConfig(
+                address="tcp://*",
+                port=5558  # Send results to controller
+            )
+        )
+        self.zmq_service = WorkerService(self.zmq_config)
+    
+    async def start(self):
+        # Set up task handler
+        self.zmq_service.set_task_handler(self._process_task)
+        
+        await self.zmq_service.start()
+        await super().start()
+        
+    async def _process_task(self, task_data):
+        # Process the work
+        result = await self.do_work(task_data)
+        
+        # Send result back
+        await self.zmq_service.push_result(result)
+```
+
+### Controller Pattern (Task Distribution)
+```python
+from experimance_common.zmq.config import ControllerServiceConfig, WorkerConfig
+from experimance_common.zmq.services import ControllerService
+
+class TaskController(BaseService):
+    def __init__(self):
+        super().__init__("task-controller", "controller")
+        
+        self.zmq_config = ControllerServiceConfig(
+            name=self.service_name,
+            publisher=PublisherConfig(
+                address="tcp://*",
+                port=5555,
+                default_topic="control"
+            ),
+            workers=[
+                WorkerConfig(
+                    name="image-worker",
+                    push_port=5557,  # Send work to worker
+                    pull_port=5558   # Receive results from worker
+                )
+            ]
+        )
+        self.zmq_service = ControllerService(self.zmq_config)
+    
+    async def start(self):
+        # Set up result handler
+        self.zmq_service.set_result_handler(self._handle_result)
+        
+        await self.zmq_service.start()
+        
+        # Add task distribution logic
+        self.add_task(self._distribute_tasks())
+        
+        await super().start()
+        
+    async def _distribute_tasks(self):
+        while self.running:
+            task = await self.create_task()
+            await self.zmq_service.push_task("image-worker", task)
+            await self._sleep_if_running(1.0)
+            
+    async def _handle_result(self, worker_name: str, result_data):
+        logger.info(f"Received result from {worker_name}: {result_data}")
+```
 
 ## Usage
 
-To create a new service:
-1. Choose the appropriate base class (e.g., `ZmqPublisherService`, `ZmqControllerService`).
-2. Inherit from the chosen class.
-3. Implement the `__init__` method to configure ZMQ addresses, topics, etc.
-4. Override message/task handlers (e.g., `_handle_message` for subscribers, `_handle_task` for pullers, `_handle_worker_response` for `ZmqControllerService`).
-5. Implement any custom logic within the `run()` method or as separate async tasks managed by `_register_task()`.
-6. Ensure `super().__init__(...)` and `await super().start()` (if overriding `start`) are called.
+To create a new service using the composition-based approach:
 
-### Example: Basic Publisher
+1. **Inherit from `BaseService`** for lifecycle management
+2. **Choose the appropriate ZMQ service type** for your communication pattern:
+   - `PubSubService` for bidirectional messaging
+   - `WorkerService` for task processing  
+   - `ControllerService` for task distribution
+3. **Create ZMQ configuration** using the config classes
+4. **Implement message/task handlers** as async methods
+5. **Set up ZMQ service in `start()`** method before calling `super().start()`
+6. **Add background tasks** using `self.add_task()`
+7. **Ensure proper cleanup** in `stop()` method
 
-```python
-# In your service module (e.g., my_publisher_service.py)
-import asyncio
-from experimance_common.zmq.publisher import ZmqPublisherService
-from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.zmq_utils import MessageType
-
-class MyPublisher(ZmqPublisherService):
-    def __init__(self):
-        super().__init__(
-            service_name="MyPublisher",
-            pub_address=f"tcp://*:{DEFAULT_PORTS['events']}",
-            heartbeat_topic="mypub.heartbeat"
-        )
-
-    async def run_custom_logic(self):
-        # Example of publishing a custom message
-        message = {"type": "CUSTOM_EVENT", "data": "hello world"}
-        await self.publish_message(message)
-        self.log_info(f"Published custom message: {message}")
-
-    async def run(self):
-        # Add custom logic to the service's tasks
-        self._register_task(self.run_custom_logic())
-        # The base run() method will keep the service alive
-        # and manage other tasks like heartbeating.
-        # If you don't call super().run(), you need to manage the service loop.
-        await super().run()
-
-async def main():
-    service = MyPublisher()
-    await service.start()
-    # Keep it running until shutdown (e.g., Ctrl+C)
-    # The service's signal handlers will manage cleanup.
-    await service.run()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-### Example: `ZmqControllerService` Outline
+### Example: Modern Service with ZMQ
 
 ```python
-# In your controller service module
+# In your service module (e.g., my_service.py)
 import asyncio
 import logging
-from experimance_common.zmq.controller import ZmqControllerService
+from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
+from experimance_common.zmq.services import PubSubService
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.zmq_utils import MessageType
 
 logger = logging.getLogger(__name__)
 
-class MyController(ZmqControllerService):
+class MyModernService(BaseService):
     def __init__(self):
-        super().__init__(
-            service_name="MyController",
-            pub_address=f"tcp://*:{DEFAULT_PORTS['events']}",      # For publishing on unified events channel
-            sub_address=f"tcp://localhost:{DEFAULT_PORTS['events']}", # For subscribing to unified events channel
-            push_address=f"tcp://*:{DEFAULT_PORTS['transitions_pull']}",        # For pushing tasks to workers
-            pull_address=f"tcp://*:{DEFAULT_PORTS['loops_pull']}",      # For pulling results from workers
-            topics=["worker.status", "sensor.data"], # Topics to subscribe to
-            heartbeat_topic="controller.heartbeat",
-            service_type="controller"
+        super().__init__("my-modern-service", "messaging")
+        
+        # Create ZMQ configuration
+        self.zmq_config = PubSubServiceConfig(
+            name=self.service_name,
+            publisher=PublisherConfig(
+                address="tcp://*",
+                port=DEFAULT_PORTS["events"],
+                default_topic="status"
+            ),
+            subscriber=SubscriberConfig(
+                address="tcp://localhost",
+                port=DEFAULT_PORTS["events"],
+                topics=["heartbeat", "commands"]
+            )
         )
-        # Register the specific handler for messages from the PULL socket
-        # self.register_task_handler(self._handle_worker_response) # This is done in ZmqControllerService base class
-
-    async def _handle_message(self, topic: str, message: dict):
-        """Handles messages received on the SUB socket."""
-        logger.info(f"Received subscribed message on topic '{topic}': {message}")
-        # Process subscribed messages (e.g., worker status, sensor data)
-
-    async def _handle_worker_response(self, message: dict):
-        """Handles messages received on the PULL socket (from workers)."""
-        logger.info(f"Received worker response: {message}")
-        # Process responses/results from worker services
-        # Example: Update internal state, trigger new commands, etc.
-
-    async def perform_control_action(self):
-        # Example: Publish a command
-        command = {"type": MessageType.COMMAND.value, "action": "START_PROCESS", "param": "X"}
-        await self.publish_message(command)
-        logger.info(f"Published command: {command}")
-
-        # Example: Push a task to a worker
-        task = {"type": MessageType.TASK.value, "task_id": "123", "payload": "do_something"}
-        await self.push_task(task)
-        logger.info(f"Pushed task: {task}")
-
-    async def run(self):
-        self._register_task(self.perform_control_action())
-        await super().run() # Manages listener, puller, heartbeats, etc.
+        
+        # Use composition, not inheritance
+        self.zmq_service = PubSubService(self.zmq_config)
+        
+    async def start(self):
+        # Set up message handlers before starting ZMQ
+        self.zmq_service.add_message_handler("heartbeat", self._handle_heartbeat)
+        self.zmq_service.add_message_handler("commands", self._handle_command)
+        
+        # Start ZMQ service first
+        await self.zmq_service.start()
+        
+        # Add background tasks
+        self.add_task(self._status_publisher())
+        
+        # Call BaseService start last
+        await super().start()
+        self.status = ServiceStatus.HEALTHY
+        
+    async def stop(self):
+        # Call BaseService stop first
+        await super().stop()
+        
+        # Stop ZMQ service
+        await self.zmq_service.stop()
+        
+    async def _handle_heartbeat(self, message_data):
+        """Handle heartbeat messages."""
+        service = message_data.get("service", "unknown")
+        logger.info(f"Received heartbeat from {service}")
+        
+    async def _handle_command(self, message_data):
+        """Handle command messages."""
+        command = message_data.get("command", "unknown")
+        logger.info(f"Processing command: {command}")
+        
+    async def _status_publisher(self):
+        """Publish periodic status updates."""
+        while self.running:
+            status = {
+                "type": "status",
+                "service": self.service_name,
+                "state": self.state.value,
+                "uptime": self.uptime
+            }
+            await self.zmq_service.publish(status, "status")
+            await self._sleep_if_running(5.0)
 
 async def main():
-    service = MyController()
-    await service.start()
-    
-    # IMPORTANT: do NOT add try: and catch on KeyboardInterrupt and Exception, 
-    # these are handled for you
-    await service.run() # Service runs until shutdown signal
+    service = MyModernService()
+    try:
+        await service.start()
+        await service.run()  # Runs until signal
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await service.stop()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
