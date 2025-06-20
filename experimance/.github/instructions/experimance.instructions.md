@@ -85,7 +85,7 @@ experimance/
 
 ## Project managed by `uv`
 
-- Use `uv` for running services and scripts
+- **Use `uv`!** ``uv run` for running services and scripts
 - Each service should have a `pyproject.toml` file with dependencies and scripts defined
 - Use `uv run -m` to start services, e.g., `uv run -m experimance_core`
 - Use `uv run -m pytest` for running tests, e.g., `uv run -m pytest utils/tests/`
@@ -138,7 +138,9 @@ experimance/
 
 ## Documention
 
-- There is extensive documentation for writing services:
+- There is extensive documentation:
+  - [Experimance Project Overview](README.md)
+  - [Technical Design](technical_design.md)
   - [Writing Services](libs/common/README_SERVICE.md)
   - [Using ZMQ](libs/common/README_ZMQ.md)
   - [Testing Services](libs/common/README_SERVICE_TESTING.md)
