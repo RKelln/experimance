@@ -145,7 +145,7 @@ SAMPLE_RENDER_REQUEST = {
     "request_id": "test_request_001",
     "prompt": "A beautiful landscape with mountains",
     "era": "current",
-    "biome": "forest",
+    "biome": "mountain",
     "seed": 12345,
     "negative_prompt": "blurry, low quality",
     "style": "photorealistic"
@@ -157,7 +157,7 @@ SAMPLE_IMAGE_READY_RESPONSE = {
     "image_path": "/tmp/test_image.png",
     "prompt": "A beautiful landscape with mountains",
     "era": "current",
-    "biome": "forest"
+    "biome": "mountain"
 }
 
 SAMPLE_ERROR_MESSAGE = {

@@ -61,11 +61,12 @@ class ImageServerConfig(BaseServiceConfig):
     zmq: WorkerServiceConfig = Field(
         default_factory=lambda: WorkerServiceConfig(
             name="image-server",
-            publisher=PublisherConfig(
-                address=ZMQ_TCP_BIND_PREFIX,
-                port=DEFAULT_PORTS['events'],
-                default_topic=str(MessageType.IMAGE_READY)
-            ),
+            publisher=None,
+            # publisher=PublisherConfig(
+            #     address=ZMQ_TCP_BIND_PREFIX,
+            #     port=DEFAULT_PORTS['events'],
+            #     default_topic=str(MessageType.IMAGE_READY)
+            # ),
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS['events'],

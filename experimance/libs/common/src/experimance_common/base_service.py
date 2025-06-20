@@ -146,8 +146,9 @@ class BaseService:
         
         Args:
             task_or_coroutine: Coroutine or asyncio.Task to execute
-                               Tasks will be scheduled immediately. Coroutines will be
-                               stored and converted to tasks when run() is called.
+                               If a coroutine is provided and the service is running,
+                               it will be automatically converted to a task and scheduled.
+                               Otherwise coroutines are stored and converted when run() is called.
         """
         # Make sure we don't add None or invalid objects
         if task_or_coroutine is None:
@@ -155,13 +156,18 @@ class BaseService:
             return
             
         # Make sure we don't accidentally add the same task/coroutine twice
-        # NOTE: Coroutines get converted to tasks on run() so this wouldn't catch duplciate co-routines if run() has been called
-        # NOTE: But if you are adding tasks after calling run() you are probably doing something wrong
         if task_or_coroutine in self.tasks:
             logger.warning(f"{self.service_name}: Task {task_or_coroutine} already registered - ignoring duplicate")
             return
-            
-        self.tasks.append(task_or_coroutine)
+        
+        # If it's a coroutine and we're already running, create and schedule the task immediately
+        if asyncio.iscoroutine(task_or_coroutine) and self.running:
+            task = asyncio.create_task(task_or_coroutine)
+            self.tasks.append(task)
+            logger.debug(f"{self.service_name}: Created and scheduled task immediately")
+        else:
+            # Otherwise, just store it (will be converted to task in run() if needed)
+            self.tasks.append(task_or_coroutine)
     
     async def _sleep_if_running(self, duration: float) -> bool:
         """Sleep for duration and return whether service is still running.

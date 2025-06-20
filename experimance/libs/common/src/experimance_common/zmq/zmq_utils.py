@@ -17,7 +17,7 @@ import zmq
 import zmq.asyncio
 
 # Re-export MessageType for backward compatibility
-from experimance_common.zmq.config import MessageType
+from experimance_common.zmq.config import MessageType, ZmqTimeoutError
 
 
 # Note: Logging is configured by the CLI or service entry point
@@ -41,7 +41,7 @@ from experimance_common.constants import (
     BASE64_PNG_PREFIX,
 )
 
-from experimance_common.schemas import ImageReady, MessageBase
+from experimance_common.schemas import ImageReady, ImageSource, MessageBase
 
 # Image Transport Utilities for ZMQ Communication
 
@@ -170,13 +170,14 @@ def image_ready_to_display_media(
     
     return image_data
 
-def prepare_image_message(
-    image_data: Optional[Union[str, Path, Any]] = None,  # Any for PIL Image, encdoed string or nd.array
+
+def prepare_image_source(
+    image_data: Optional[Union[str, Path, Any]] = None,  # Any for PIL Image, encoded string or nd.array
     target_address: Optional[str] = None,
     transport_mode: str = DEFAULT_IMAGE_TRANSPORT_MODE,
-    **message_kwargs
-) -> Dict[str, Any]:
-    """Prepare a ZMQ message with appropriate image transport method.
+    request_id: Optional[str] = None) -> ImageSource:
+
+    """Prepare a ImageSource with appropriate image transport method.
     
     Args:
         image_data: Image to send (file path, PIL Image, numpy array, or base64 string)
@@ -201,13 +202,10 @@ def prepare_image_message(
         save_pil_image_as_tempfile,
     )
     
-    message = dict(message_kwargs)
+    message = ImageSource()
     
     if image_data is None:
         return message
-    
-    # Extract request_id for temp file naming if available
-    request_id = message.get("request_id") or message.get("source_request_id")
     
     # Determine what we're working with
     file_path = None
@@ -296,6 +294,43 @@ def prepare_image_message(
             # Mark as temp file for caller awareness (cleanup is service responsibility)
             message["_temp_file"] = temp_path
     
+    return message
+
+def prepare_image_message(
+    image_data: Optional[Union[str, Path, Any]] = None,  # Any for PIL Image, encdoed string or nd.array
+    target_address: Optional[str] = None,
+    transport_mode: str = DEFAULT_IMAGE_TRANSPORT_MODE,
+    **message_kwargs
+) -> Dict[str, Any]:
+    """Prepare a ZMQ message with appropriate image transport method.
+    
+    Args:
+        image_data: Image to send (file path, PIL Image, numpy array, or base64 string)
+        target_address: ZMQ target address
+        transport_mode: Transport mode configuration
+        **message_kwargs: Additional message fields
+        
+    Returns:
+        Message dict with uri and/or image_data fields set appropriately.
+        
+    Note:
+        When using file_uri or hybrid modes with numpy arrays or PIL images,
+        temporary files are created and automatically scheduled for perodic cleanup. 
+        The message includes a '_temp_file' key for awareness but cleanup MUST be handled 
+        automatically by the publisher. See `periodic_temp_file_cleanup()`.
+    """
+    
+    if image_data is None:
+        return message_kwargs
+    
+    image_source = prepare_image_source(
+        image_data=image_data,
+        target_address=target_address,
+        transport_mode=transport_mode,
+        request_id=message_kwargs.get("request_id"),
+    )
+    message = image_source.model_dump(exclude_unset=True)
+    message.update(message_kwargs)
     return message
 
 

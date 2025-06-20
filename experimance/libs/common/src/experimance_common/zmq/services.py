@@ -287,13 +287,17 @@ class WorkerService(BaseZmqService):
         self.config = config
         
         # Create all components according to plan
-        self.publisher = PublisherComponent(config.publisher)
-        self.subscriber = SubscriberComponent(config.subscriber)
+        self._components: List[BaseZmqComponent] = [] # used for lifecycle management
+        if config.publisher:
+            self.publisher = PublisherComponent(config.publisher)
+            self._components.append(self.publisher)
+        if config.subscriber:
+            self.subscriber = SubscriberComponent(config.subscriber)
+            self._components.append(self.subscriber)
         self.puller = PullComponent(config.pull)
+        self._components.append(self.puller)
         self.pusher = PushComponent(config.push)
-        
-        # Register all components for lifecycle management
-        self._components = [self.publisher, self.subscriber, self.puller, self.pusher]
+        self._components.append(self.pusher)
         
         # Message handlers for subscriber
         self._message_handlers: Dict[bytes, Callable] = {}
@@ -317,6 +321,8 @@ class WorkerService(BaseZmqService):
         
     async def publish(self, data: MessageDataType, topic: Optional[TopicType] = None) -> None:
         """Publish a message via the publisher component."""
+        if not self.publisher:
+            return
         try:
             resolved_topic = await self.publisher.publish(data, topic)
             self.logger.debug(f"Published message to topic '{resolved_topic}'")
@@ -364,7 +370,8 @@ class WorkerService(BaseZmqService):
         self.puller.set_work_handler(self._handle_work)
         
         # Set up subscriber default handler for routing
-        self.subscriber.set_default_handler(self._handle_subscriber_message)
+        if self.subscriber:
+            self.subscriber.set_default_handler(self._handle_subscriber_message)
         
     async def stop(self) -> None:
         """Stop the service and finish current work."""

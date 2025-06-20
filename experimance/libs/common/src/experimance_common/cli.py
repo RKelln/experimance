@@ -9,7 +9,7 @@ import asyncio
 import logging
 from pathlib import Path
 import sys
-from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, get_args
+from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, get_args, Literal
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -53,9 +53,16 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
             nested_args = extract_cli_args_from_config(field_type, nested_prefix)
             cli_args.update(nested_args)
             continue
+        
+        # Handle Literal types (e.g., Literal["mock", "sdxl", "falai"])
+        is_literal = False
+        literal_choices = None
+        if origin is not None and hasattr(origin, '__name__') and origin.__name__ == 'Literal':
+            is_literal = True
+            literal_choices = list(get_args(field_type))
             
-        # Only handle basic types for CLI
-        if field_type not in (bool, int, float, str):
+        # Only handle basic types and Literal types for CLI
+        if not is_literal and field_type not in (bool, int, float, str):
             continue
             
         # Build the argument name with prefix
@@ -64,7 +71,7 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
         arg_name = f"--{full_field_name.replace('_', '-').replace('.', '-')}"
         arg_config = {}
         
-        # Set the type
+        # Set the type and choices
         if field_type == bool:
             # For boolean fields, use tracked actions to know when they were explicitly set
             if field_info.default is True:
@@ -72,6 +79,11 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
                 arg_name = f"--no-{full_field_name.replace('_', '-').replace('.', '-')}"
             else:
                 arg_config['action'] = TrackedStoreTrueAction
+        elif is_literal:
+            # For Literal types, set choices and use string type
+            arg_config['type'] = str
+            arg_config['choices'] = literal_choices
+            arg_config['action'] = TrackedAction
         else:
             arg_config['type'] = field_type
             arg_config['action'] = TrackedAction
@@ -107,6 +119,9 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
         # Set a clean metavar based on the field type to avoid showing the dotted dest
         if field_type == bool:
             # Boolean fields don't need metavar since they're flags
+            pass
+        elif is_literal:
+            # Literal types show their choices inline, no additional metavar needed
             pass
         elif field_type == int:
             arg_config['metavar'] = 'N'

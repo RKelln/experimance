@@ -16,5 +16,7 @@ def configure_external_loggers(level=logging.WARNING):
         "urllib3",         # Used by requests
         "fal_client",      # FAL.AI client library
         "asyncio",         # Asyncio debugging messages
+        "PIL",             # Python Imaging Library (Pillow)
+        "PIL.PngImagePlugin",  # Specific PIL PNG plugin that's very verbose
     ]:
         logging.getLogger(logger_name).setLevel(level)

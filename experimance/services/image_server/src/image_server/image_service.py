@@ -17,11 +17,14 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.image_utils import ImageLoadFormat, load_image_from_message, png_to_base64url
 from experimance_common.service_state import ServiceState
+from experimance_common.schemas import RenderRequest
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageType, MessageDataType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.logger import configure_external_loggers
+from pydantic import ValidationError
 
 from .config import ImageServerConfig
 from .generators.factory import create_generator_from_config
@@ -111,7 +114,9 @@ class ImageServerService(BaseService):
         try:
             # Set up message handlers for the ZMQ service
             self.zmq_service.set_work_handler(self._handle_render_request)
-            self.zmq_service.add_message_handler(str(MessageType.RENDER_REQUEST), self._handle_topic_render_request)
+            
+            # FIXME: this is for subscriber, but image requests come through PULL socket
+            #self.zmq_service.add_message_handler(str(MessageType.RENDER_REQUEST), self._handle_topic_render_request)
             
             # Start the ZMQ service
             await self.zmq_service.start()
@@ -123,7 +128,7 @@ class ImageServerService(BaseService):
             await super().start()
             
             # Set service status
-            self.status = ServiceStatus.HEALTHY
+            #self.status = ServiceStatus.HEALTHY
             
             logger.info(f"ImageServerService started, listening for {MessageType.RENDER_REQUEST} messages")
         except Exception as e:
@@ -165,7 +170,7 @@ class ImageServerService(BaseService):
         # Schedule the async handler
         asyncio.create_task(self._handle_render_request(data_dict))
 
-    async def _handle_render_request(self, message: Dict[str, Any]):
+    async def _handle_render_request(self, message: MessageDataType):
         """Handle incoming RenderRequest messages.
         
         Args:
@@ -174,9 +179,10 @@ class ImageServerService(BaseService):
         try:
             logger.debug(f"Received RenderRequest message: {message}")
 
-            # Validate required fields
-            if not self._validate_render_request(message):
-                # Record validation error but continue service operation
+            # Ensure message is a RenderRequest object
+            try:
+                request : RenderRequest = RenderRequest.to_message_type(message) # type: ignore
+            except ValidationError as e:
                 self.record_error(
                     ValueError(f"Invalid RenderRequest message: {message}"), 
                     is_fatal=False,
@@ -184,54 +190,48 @@ class ImageServerService(BaseService):
                 )
                 return
             
-            request_id = message["request_id"]
-            prompt = message["prompt"]
-            depth_map_b64 = message.get("depth_map_png")
+            depth_map_b64 : str = ""
+            if request.depth_map is not None:
+                depth_map_b64 = load_image_from_message(request.depth_map, ImageLoadFormat.ENCODED)
             
-            # Extract era and biome for context-aware generation
-            era = message.get("era")
-            biome = message.get("biome")
-            seed = message.get("seed")
-            negative_prompt = message.get("negative_prompt")
-            style = message.get("style")
+            logger.info(f"Processing RenderRequest {request.request_id} for {request.era}/{request.biome}")
+            logger.debug(f"Depth map loaded: {depth_map_b64 is not None}")
             
-            logger.info(f"Processing RenderRequest {request_id} for {era}/{biome}")
-            
-            # Create and properly register image generation task with full context
-            task = self._process_render_request(
-                request_id=request_id, 
-                prompt=prompt, 
+            # Create image generation task - add_task will handle task creation and scheduling
+            logger.debug(f"Creating and scheduling task for request {request.request_id}")
+            self.add_task(self._process_render_request(
+                request_id=request.request_id, 
+                prompt=request.prompt, 
                 depth_map_b64=depth_map_b64,
-                era=era,
-                biome=biome,
-                seed=seed,
-                negative_prompt=negative_prompt,
-                style=style
-            )
-            self.add_task(task)
+                era=request.era,
+                biome=request.biome,
+                seed=request.seed,
+                negative_prompt=request.negative_prompt,
+                style=request.style
+            ))
+            logger.debug(f"Task created and scheduled for request {request.request_id}")
             
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message=f"Error handling RenderRequest: {e}")
     
-    def _validate_render_request(self, message: Dict[str, Any]) -> bool:
+    def _validate_render_request(self, message: RenderRequest) -> bool:
         """Validate a RenderRequest message.
         
         Args:
-            message: The message to validate
+            message: The RenderRequest object to validate
             
         Returns:
             True if message is valid, False otherwise
         """
-        required_fields = ["request_id", "prompt"]
-        
-        for field in required_fields:
-            if field not in message or not message[field]:
-                # Note: We don't log here since the caller will use record_error
-                return False
+        # Check required fields exist and are not empty
+        if not hasattr(message, 'request_id') or not message.request_id:
+            return False
+            
+        if not hasattr(message, 'prompt') or not message.prompt:
+            return False
         
         # Validate message type
-        if message.get("type") != MessageType.RENDER_REQUEST:
-            # Note: We don't log here since the caller will use record_error
+        if not hasattr(message, 'type') or message.type != "RenderRequest":
             return False
         
         return True
@@ -260,7 +260,13 @@ class ImageServerService(BaseService):
             style: Style hint for generation
         """
         try:
+            logger.debug(f"Starting _process_render_request for {request_id}")
+            
+            if depth_map_b64 == "":
+                depth_map_b64 = None
+
             # Generate the image with full context
+            logger.debug(f"Calling _generate_image for {request_id}")
             image_path = await self._generate_image(
                 prompt=prompt,
                 depth_map_b64=depth_map_b64,
@@ -271,8 +277,10 @@ class ImageServerService(BaseService):
                 style=style,
                 request_id=request_id  # Include request_id for filename
             )
-            
+            logger.debug(f"Generated image path: {image_path}")
+
             # Publish ImageReady message with context
+            logger.debug(f"Publishing ImageReady for {request_id}")
             await self._publish_image_ready(
                 request_id=request_id, 
                 image_path=image_path,
@@ -390,6 +398,8 @@ class ImageServerService(BaseService):
                     logger.warning(f"Failed to encode image data for {image_path}: {e}")
                     # Continue with URI-only message
             
+            logger.debug(f"Publish ImageReady for request {request_id}")
+
             # Publish the message using push socket
             await self.zmq_service.send_response(message)            
             logger.info(f"Published ImageReady message for request {request_id}")

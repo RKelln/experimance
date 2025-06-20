@@ -205,27 +205,27 @@ class PubSubServiceConfig(BaseConfig):
     heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
 
 
-class WorkerServiceConfig(BaseConfig):
+class WorkerServiceConfig(PubSubServiceConfig):
     """
     Configuration for WorkerService.
     Combines PubSub with Push/Pull functionality.
     """
     
     # Service identification
-    name: str = Field(default="worker", description="Service name")
-    log_level: str = Field(default="INFO", description="Logging level")
-    timeout: float = Field(default=DEFAULT_TIMEOUT/1000, gt=0, description="Operation timeout in seconds")
+    # name: str = Field(default="worker", description="Service name")
+    # log_level: str = Field(default="INFO", description="Logging level")
+    # timeout: float = Field(default=DEFAULT_TIMEOUT/1000, gt=0, description="Operation timeout in seconds")
     
-    # PubSub configuration
-    publisher: PublisherConfig = Field(..., description="Publisher configuration")
-    subscriber: SubscriberConfig = Field(..., description="Subscriber configuration")
+    # # PubSub configuration
+    # publisher: PublisherConfig = Field(..., description="Publisher configuration")
+    # subscriber: SubscriberConfig = Field(..., description="Subscriber configuration")
     
     # Worker configuration - uses worker-specific configs with correct bind defaults
     push: WorkerPushConfig = Field(..., description="Push configuration for sending results")
     pull: WorkerPullConfig = Field(..., description="Pull configuration for receiving work")
     
     # Service settings
-    heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
+    # heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
     work_timeout: float = Field(default=60.0, gt=0, description="Work processing timeout")
     max_concurrent_tasks: int = Field(default=10, gt=0, description="Maximum concurrent work tasks")
 

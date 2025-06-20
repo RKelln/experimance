@@ -23,12 +23,18 @@ import cv2
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
-from experimance_common.constants import DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES
+from experimance_common.constants import (
+    DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
+)
 from experimance_common.schemas import Era, Biome, ContentType, ImageReady, RenderRequest
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
-from experimance_common.zmq.config import MessageType, MessageDataType, ControllerServiceConfig
-from experimance_common.zmq.zmq_utils import image_ready_to_display_media, prepare_image_message
+from experimance_common.zmq.config import MessageType, MessageDataType
+from experimance_common.zmq.zmq_utils import ( 
+    prepare_image_message,
+    create_display_media_message,
+    prepare_image_source
+)
 from experimance_core.config import (
     CoreServiceConfig, 
     CameraState,
@@ -112,7 +118,7 @@ class ExperimanceCoreService(BaseService):
         self._pending_transition: Optional[Dict[str, Any]] = None  # Store pending transition data
         
         # Internal state
-        self.last_depth_map: Optional[Any] = None
+        self.last_significant_depth_map: Optional[Any] = None
 
         # Depth processing state
         self._depth_processor: Optional[DepthProcessor] = None
@@ -140,6 +146,11 @@ class ExperimanceCoreService(BaseService):
         self.AVAILABLE_BIOMES = list(Biome)
         self.Era = Era  # Expose enum class
         self.Biome = Biome  # Expose enum class
+        
+        # Render request throttling
+        self.last_render_request_time: float = 0.0
+        self.render_request_cooldown: float = self.config.experimance_core.render_request_cooldown
+        self.pending_render_request: bool = False  # Track if we need to send a request
         
         logger.info(f"Experimance Core Service initialized: {self.service_name}")
 
@@ -293,6 +304,9 @@ class ExperimanceCoreService(BaseService):
             # Always update the previous frame for interaction scoring
             if depth_image is not None:
                 self.previous_depth_image = depth_image.copy()
+                if self.last_significant_depth_map is None:
+                    # first depth map recieved use it
+                    self.last_significant_depth_map = depth_image.copy()
             
             # Early exit if hands are detected - we don't process frames with hands
             if hand_detected:
@@ -305,13 +319,13 @@ class ExperimanceCoreService(BaseService):
             raw_change_score = 0.0
             
             # Calculate change compared to last PROCESSED frame (not just previous frame)
-            if self.last_processed_frame is not None and depth_image is not None:
+            if self.last_significant_depth_map is not None and depth_image is not None:
                 # Create eroded mask to reduce edge noise
                 mask = self._create_comparison_mask(depth_image)
                 
                 # Calculate difference with noise reduction
                 raw_change_score, change_map = self._calculate_change_with_mask(
-                    self.last_processed_frame, depth_image, mask
+                    self.last_significant_depth_map, depth_image, mask
                 )
                 
                 # Add raw change score to queue for smoothing
@@ -323,12 +337,12 @@ class ExperimanceCoreService(BaseService):
                 else:
                     smoothed_change_score = 0
                 
-                logger.debug(f"Change scores - raw: {raw_change_score:.4f}, smoothed (min): {smoothed_change_score:.4f}, queue: {list(self.change_score_queue)}")
+                #logger.debug(f"Change scores - raw: {raw_change_score:.4f}, smoothed (min): {smoothed_change_score:.4f}, queue: {list(self.change_score_queue)}")
                 
                 # Only process if smoothed change is significant enough
                 change_threshold = getattr(self.config.camera, 'significant_change_threshold', 0.01)
                 if smoothed_change_score < change_threshold:
-                    logger.debug(f"Smoothed change too small ({smoothed_change_score:.4f}), skipping frame")
+                    #logger.debug(f"Smoothed change too small ({smoothed_change_score:.4f}), skipping frame")
                     # Show visualization even for small changes
                     self._visualize_depth_processing(depth_frame, smoothed_change_score)
                     return
@@ -343,24 +357,20 @@ class ExperimanceCoreService(BaseService):
                 # Update depth difference score for interaction calculations (use smoothed score)
                 self.depth_difference_score = smoothed_change_score
                 
+                # save a copy of the depth map that we can use for delayed render requests
+                self.last_significant_depth_map = depth_image.copy()  # Update last depth map for next frame comparison
+
                 # Calculate interaction intensity (currently just using smoothed change score)
                 interaction_intensity = smoothed_change_score
                 
                 # Update interaction score
                 self.calculate_interaction_score(interaction_intensity)
-                
-                # Update the generated image for display service
-                # TODO: create a prompt and send to image server 
-                #await self._publish_image_request()
+
+                # Request a render update (throttled) when there's significant interaction
+                await self._publish_render_request()
 
                 # Publish change map to display service (with smoothed score)
                 await self._publish_change_map(change_map, smoothed_change_score)
-            
-            # This frame becomes our new reference frame
-            if depth_image is not None:
-                self.last_processed_frame = depth_image.copy()
-                self.last_depth_map = depth_image.copy()
-                logger.debug("Updated reference frame for change detection")
             
             # Visualization for debugging (always show for processed frames)
             # Use smoothed score if available, otherwise raw score
@@ -535,6 +545,9 @@ class ExperimanceCoreService(BaseService):
         
         # Publish EraChanged event
         await self._publish_era_changed_event(old_era, self.current_era)
+
+        # Publish render request
+        await self._publish_render_request(force=True)
         
         logger.info(f"Transitioned from {old_era} to {self.current_era}")
         return True
@@ -742,7 +755,6 @@ class ExperimanceCoreService(BaseService):
     async def _handle_image_ready(self, message: MessageDataType):
         """Handle ImageReady messages from image server."""
         logger.debug(f"Received ImageReady message: {message}")
-        
         try:
             # Convert MessageDataType to ImageReady object for type safety
             from experimance_common.schemas import MessageBase, ImageReady
@@ -779,6 +791,7 @@ class ExperimanceCoreService(BaseService):
         Args:
             task: The IMAGE_READY message from the image server
         """
+        logger.debug(f"Received IMAGE_READY task: {task}")
         try:
             # Convert to dict if it's a Pydantic model
             if hasattr(task, 'model_dump') and callable(getattr(task, 'model_dump')):
@@ -886,8 +899,7 @@ class ExperimanceCoreService(BaseService):
             transition_type: Optional transition type
         """
         try:
-            from experimance_common.zmq.zmq_utils import create_display_media_message
-            from experimance_common.constants import DEFAULT_IMAGE_TRANSPORT_MODE
+            
             
             # Create DisplayMedia message with proper schema
             media_message = create_display_media_message(
@@ -1014,53 +1026,99 @@ class ExperimanceCoreService(BaseService):
         """Primary event coordination loop."""
         logger.info("Main event loop started")
         
+        period = 0
+        sleep = 0.5
+        state_display_period = 30  # seconds
         while self.running:
             try:
-                # Check if we should publish a render request
-                # This should happen when there's significant interaction or era changes
-                if (self.user_interaction_score > self.config.state_machine.interaction_threshold or
-                    self.era_progression_timer < 2.0):  # Recently changed era
-                    
-                    await self._publish_render_request()
-                
+                period += sleep
+
+                await self._check_pending_render_request() # handle pending render requests
+
                 # Periodic state logging for debugging
-                if int(time.time()) % 30 == 0:  # Every 30 seconds
+                if period > state_display_period:  # Every 30 seconds
+                    period = 0
                     logger.info(f"State: era={self.current_era}, biome={self.current_biome}, "
                                f"interaction={self.user_interaction_score:.3f}, "
                                f"idle={self.idle_timer:.1f}s, hand_detected={self.hand_detected}")
                 
                 # Use _sleep_if_running() to respect shutdown requests
-                if not await self._sleep_if_running(0.5):  # Check twice per second
+                if not await self._sleep_if_running(sleep):  # Check twice per second
                     break
                 
             except Exception as e:
                 self.record_error(e, is_fatal=False, 
                                 custom_message="Error in main event loop")
 
-    async def _publish_render_request(self, message: Optional[RenderRequest] = None):
-        """Publish a render request to the image server."""
+
+    async def _publish_render_request(self, message: Optional[RenderRequest] = None, force: bool = False):
+        """Publish a render request to the image server with throttling.
+        
+        Args:
+            message: Optional pre-built RenderRequest message
+            force: If True, bypass throttling (e.g., for era changes)
+        """
+        current_time = time.time()
+        
+        # Check throttling unless forced
+        if not force and (current_time - self.last_render_request_time) < self.render_request_cooldown:
+            logger.debug(f"Render request throttled, {self.render_request_cooldown - (current_time - self.last_render_request_time):.1f}s remaining")
+            self.pending_render_request = True  # Mark that we want to send a request later
+            return
         
         if message is None:
             # Create a default render request using the proper schema
+            request_id = str(uuid.uuid4())
             prompt = self._generate_prompt_for_era_biome(self.current_era, self.current_biome)
             
+            # Prepare the depth map image data for transport
+            image_source = None
+            if self.last_significant_depth_map is not None:
+                image_source = prepare_image_source(
+                    image_data=self.last_significant_depth_map,
+                    transport_mode=IMAGE_TRANSPORT_MODES['FILE_URI'],
+                    request_id=request_id,
+                )
+
             request = RenderRequest(
-                request_id=str(uuid.uuid4()),
+                request_id=request_id,
                 era=self.current_era,
                 biome=self.current_biome,
                 prompt=prompt,
-                seed=int(time.time())  # Use timestamp as seed for variability
+                seed=int(time.time()),  # Use timestamp as seed for variability TODO: retain same seed during an era?
+                depth_map=image_source
             )
         else:
             request = message
         
+        logger.info(f"Publishing render request id: {request.request_id}")
+        
         try:
-            # Send the task to the image server worker via PUSH socket
-            await self.zmq_service.send_work_to_worker("image_server", request)
-            logger.debug(f"Sent render request for {request.era}/{request.biome}")
-            logger.debug(f"Request ID: {request.request_id}")
+            # Send the task to the image server worker via PUSH socket with timeout
+            await asyncio.wait_for(
+                self.zmq_service.send_work_to_worker("image_server", request),
+                timeout=1.0  # 1 second timeout
+            )
+            logger.debug(f"Sent render request {request.request_id} for {request.era}/{request.biome}")
+            
+            # Update throttling state
+            self.last_render_request_time = current_time
+            self.pending_render_request = False
+            
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout sending render request {request.request_id} - image server may not be running")
         except Exception as e:
-            logger.error(f"Error sending render request: {e}")
+            logger.error(f"Error sending render request {request.request_id}: {e}")
+    
+    def _should_send_render_request(self) -> bool:
+        """Check if we should send a render request based on throttling."""
+        current_time = time.time()
+        return (current_time - self.last_render_request_time) >= self.render_request_cooldown
+    
+    async def _check_pending_render_request(self):
+        """Check if we have a pending render request that can now be sent."""
+        if self.pending_render_request and self._should_send_render_request():
+            await self._publish_render_request()
             
     def _generate_prompt_for_era_biome(self, era: Era, biome: Biome) -> str:
         """Generate an appropriate prompt for the given era and biome."""
@@ -1194,7 +1252,8 @@ class ExperimanceCoreService(BaseService):
                 
                 # Update timers
                 self.update_idle_timer(delta_time)
-                self.era_progression_timer += delta_time
+                if self.config.state_machine.era_min_duration > 0:
+                    self.era_progression_timer += delta_time
                 
                 # Check for idle reset to wilderness
                 if self.should_reset_to_wilderness():
@@ -1202,7 +1261,8 @@ class ExperimanceCoreService(BaseService):
                 
                 # Check for era progression based on interaction
                 elif (self.user_interaction_score > self.config.state_machine.interaction_threshold and
-                      self.era_progression_timer >= self.config.state_machine.era_min_duration):
+                      (self.config.state_machine.era_min_duration <= 0 or 
+                       self.era_progression_timer > self.config.state_machine.era_min_duration)):
                     
                     # Check if we can progress to next era
                     next_era = self.get_next_era()

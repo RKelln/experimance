@@ -73,9 +73,11 @@ class DisplayTransitionType(str, Enum):
     VIDEO = "video"                  # Play video transition
 
 
-class MessageBase(BaseModel):
-    """Base class for all message types."""
-    type: str
+class MessageSchema(BaseModel):
+    """Base schema for all messages.
+    
+    Provides helpful utility methods for accessing attributes.
+    """
     
     def get(self, key: str, missing_value: Optional[Any] = None) -> Any:
         """
@@ -99,6 +101,37 @@ class MessageBase(BaseModel):
             True if the key exists, False otherwise
         """
         return hasattr(self, key)
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Get an attribute value using dictionary-style access.
+        
+        Args:
+            key: The attribute name to access
+            
+        Returns:
+            The value of the attribute
+            
+        Raises:
+            KeyError: If the attribute doesn't exist
+        """
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """
+        Set an attribute value using dictionary-style access.
+        
+        Args:
+            key: The attribute name to set
+            value: The value to set
+        """
+        setattr(self, key, value)
+
+class MessageBase(MessageSchema):
+    """Base class for all message types."""
+    type: str
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Union[Dict[str, Any], 'MessageBase']:
@@ -141,31 +174,48 @@ class MessageBase(BaseModel):
             return data
 
     @classmethod
-    def to_message_type(cls, data: Union[Dict[str, Any], 'MessageBase'], target_class) -> Optional['MessageBase']:
+    def to_message_type(cls, data: Union[Dict[str, Any], 'MessageBase'], target_class=None) -> 'MessageBase':
         """
         Convert MessageDataType to a specific message type.
         
         Args:
             data: Message data (dict or MessageBase instance)
-            target_class: Target MessageBase subclass to convert to
+            target_class: Target MessageBase subclass to convert to. If None, uses the calling class.
             
         Returns:
-            Instance of target_class if conversion successful, None otherwise
+            Instance of target_class if conversion successful, None otherwise.
+            When called on a subclass (e.g. RenderRequest.to_message_type(data)), 
+            returns an instance of that subclass type.
+            
+        Raises:
+            ValidationError: If the data doesn't match the target schema
+            
+        Example:
+            # Convert to RenderRequest using the class method
+            try:
+                render_request = RenderRequest.to_message_type(message_data)  # type: RenderRequest | None
+            except ValidationError as e:
+                logger.error(f"Invalid RenderRequest data: {e}")
+            
+            # Or specify target class explicitly (old way still works)
+            render_request = MessageBase.to_message_type(message_data, RenderRequest)
         """
-        try:
-            # If data is already the target type, return it directly
-            if type(data).__name__ == target_class.__name__ and isinstance(data, MessageBase):
-                return data
-            # Convert dict to target class  
-            elif isinstance(data, dict):
-                return target_class(**data)
-            # Convert MessageBase to dict then target class
-            elif isinstance(data, MessageBase):
-                data_dict = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
-                return target_class(**data_dict)
-        except Exception:
-            pass
-        return None
+        # If no target_class specified, use the calling class
+        if target_class is None:
+            target_class = cls
+        
+        # If data is already the target type, return it directly
+        if type(data).__name__ == target_class.__name__ and isinstance(data, MessageBase):
+            return data
+        # Convert dict to target class  
+        elif isinstance(data, dict):
+            return target_class(**data)
+        # Convert MessageBase to dict then target class
+        elif isinstance(data, MessageBase):
+            data_dict = data.model_dump()
+            return target_class(**data_dict)
+        else:
+            raise TypeError(f"Cannot convert {type(data).__name__} to {target_class.__name__}")
     
     @classmethod 
     def _get_all_subclasses(cls):
@@ -183,18 +233,26 @@ class EraChanged(MessageBase):
     biome: Biome
 
 
+# used as a mix-in for schemas that have generated images
+class ImageSource(MessageSchema):
+    """Base class for image sources."""
+    image_data: Optional[str] = None  # Base64 encoded PNG
+    uri: Optional[str] = None
+    _temp_file: Optional[str] = None  # Denotes if temporary file path
+
 class RenderRequest(MessageBase):
     """Request to generate a new image."""
     type: str = "RenderRequest"
-    request_id: str
+    
+    request_id: str  # Unique identifier for tracking the request
     era: Era
     biome: Biome
     prompt: str
     negative_prompt: Optional[str] = None
     style: Optional[str] = None  # Optional style hint
-    depth_map_png: Optional[str] = None  # Base64 encoded PNG
     seed: Optional[int] = None
-
+    reference_image: Optional[ImageSource] = None  # Optional reference image to guide generation
+    depth_map: Optional[ImageSource] = None  # Optional depth map URI for depth-aware generation
 
 class IdleStatus(MessageBase):
     """Event published when the idle status changes."""
@@ -288,7 +346,7 @@ class ContentType(str, Enum):
             return self.value == value
         return super().__eq__(value)
 
-class DisplayMedia(MessageBase):
+class DisplayMedia(MessageBase, ImageSource):
     """Message for sending media content to display service."""
     type: str = "DisplayMedia"
     
@@ -296,9 +354,9 @@ class DisplayMedia(MessageBase):
     content_type: ContentType
     request_id: Optional[str] = None      # Unique identifier tracking the request through pipeline
     
-    # For IMAGE content_type
-    image_data: Optional[Any] = None      # Image data (numpy array, PIL, etc.)
-    uri: Optional[str] = None             # File URI for image
+    # For IMAGE content_type (now part of ImageSource)
+    # image_data: Optional[Any] = None      # Image data (numpy array, PIL, etc.)
+    # uri: Optional[str] = None             # File URI for image
     
     # For IMAGE_SEQUENCE content_type  
     sequence_path: Optional[str] = None   # Path to directory with numbered images

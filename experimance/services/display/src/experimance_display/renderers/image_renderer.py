@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from experimance_common.schemas import MessageBase
-from experimance_common.zmq.config import MessageDataType
+from experimance_common.zmq.config import MessageDataType, MessageType
 import pyglet
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 

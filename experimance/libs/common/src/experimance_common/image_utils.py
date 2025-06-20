@@ -8,6 +8,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional, Union, Tuple
 from pathlib import Path
 
+from experimance_common.schemas import ImageSource
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -29,6 +31,7 @@ class ImageLoadFormat(Enum):
     PIL = "pil"           # Return PIL Image object
     NUMPY = "numpy"       # Return numpy array
     FILEPATH = "filepath" # Return file path (may create temp file)
+    ENCODED = "encoded"   # Return base64 encoded string
 
 
 def cv2_img_to_base64url(img):
@@ -37,6 +40,7 @@ def cv2_img_to_base64url(img):
 
 
 def png_to_base64url(image, format="PNG"):
+    if image is None: return None
     format = format.strip(" .")
     buffered = io.BytesIO()
     image.save(buffered, format=format.upper())
@@ -407,7 +411,7 @@ def cleanup_temp_file(file_path: str | Path) -> bool:
         return False
 
 # Image message receiver utilities
-def extract_image_from_message(message: dict, 
+def extract_image_from_message(message: dict|ImageSource, 
                               prefer_uri: bool = True) -> Optional[Union[str, Image.Image]]:
     """Extract image data from a ZMQ message created by prepare_image_message.
     
@@ -464,7 +468,7 @@ def extract_image_from_message(message: dict,
     return None
 
 
-def load_image_from_message(message: dict, 
+def load_image_from_message(message: dict|ImageSource, 
                            format: ImageLoadFormat = ImageLoadFormat.PIL) -> Optional[Union[Image.Image, 'np.ndarray', str, tuple]]:
     """Load image from ZMQ message in the specified format.
     
@@ -526,6 +530,8 @@ def load_image_from_message(message: dict,
                 logger = logging.getLogger(__name__)
                 logger.error(f"Failed to convert PIL Image to numpy array: {e}")
                 return None
+        elif format == ImageLoadFormat.ENCODED:
+            return png_to_base64url(pil_image) # FIXME: how do we know this is a png?
         else:  # format == ImageLoadFormat.PIL
             return pil_image
             
@@ -536,7 +542,7 @@ def load_image_from_message(message: dict,
         return None
 
 
-def _ensure_file_path(message: dict) -> Optional[tuple]:
+def _ensure_file_path(message: dict|ImageSource) -> Optional[tuple]:
     """Ensure we get a file path from message, creating temp file if needed.
     
     Args:
@@ -614,7 +620,7 @@ def uri_to_file_path(uri: str) -> Optional[str]:
         return None
 
 
-def is_temp_file_message(message: dict) -> bool:
+def is_temp_file_message(message: dict|ImageSource) -> bool:
     """Check if message contains temporary file that should be cleaned up.
     
     Args:
@@ -626,7 +632,7 @@ def is_temp_file_message(message: dict) -> bool:
     return "_temp_file" in message
 
 
-def cleanup_message_temp_file(message: dict) -> bool:
+def cleanup_message_temp_file(message: dict|ImageSource) -> bool:
     """Clean up temporary file from message if present.
     
     Args:

@@ -45,6 +45,11 @@ class ExperimanceCoreConfig(BaseModel):
         default=3,
         description="Size of the change score queue for smoothing (minimum values reduce hand entry/exit artifacts)"
     )
+    
+    render_request_cooldown: float = Field(
+        default=2.0,
+        description="Minimum interval between render requests in seconds (throttling)"
+    )
 
 
 class StateMachineConfig(BaseModel):
@@ -66,8 +71,8 @@ class StateMachineConfig(BaseModel):
     )
     
     era_min_duration: float = Field(
-        default=10.0,
-        description="Minimum time in seconds before era can change"
+        default=60.0,
+        description="Minimum time in seconds before era can change: 0 = disable"
     )
 
 
@@ -464,24 +469,24 @@ class CoreServiceConfig(BaseConfig):
                         port=DEFAULT_PORTS["image_results"]
                     )
                 ),
-                "audio": WorkerConfig(
-                    name="audio",
-                    push_config=ControllerPushConfig(
-                        port=DEFAULT_PORTS["audio_requests"]
-                    ),
-                    pull_config=ControllerPullConfig(
-                        port=DEFAULT_PORTS["audio_results"]
-                    )
-                ),
-                "display": WorkerConfig(
-                    name="display",
-                    push_config=ControllerPushConfig(
-                        port=DEFAULT_PORTS["display_requests"]
-                    ),
-                    pull_config=ControllerPullConfig(
-                        port=DEFAULT_PORTS["display_results"]
-                    )
-                )
+                # "audio": WorkerConfig(
+                #     name="audio",
+                #     push_config=ControllerPushConfig(
+                #         port=DEFAULT_PORTS["audio_requests"]
+                #     ),
+                #     pull_config=ControllerPullConfig(
+                #         port=DEFAULT_PORTS["audio_results"]
+                #     )
+                # ),
+                # "display": WorkerConfig(
+                #     name="display",
+                #     push_config=ControllerPushConfig(
+                #         port=DEFAULT_PORTS["display_requests"]
+                #     ),
+                #     pull_config=ControllerPullConfig(
+                #         port=DEFAULT_PORTS["display_results"]
+                #     )
+                # )
             }
         )
     )
