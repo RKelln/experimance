@@ -6,7 +6,7 @@ import time
 from typing import Optional, Any, Callable, Union, TypeVar, List, Dict, AsyncIterator
 
 from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
-from experimance_common.zmq.zmq_utils import ZmqTimeoutError, MessageType, topic_to_str, topics_to_strs
+from experimance_common.zmq.config import ZmqTimeoutError, MessageType
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ class MockZmqSocketBase:
         self.closed = False
         self.messages = []
         self.address = address
-        self.topic = topic_to_str(topic) if topic else None
+        self.topic = str(topic) if topic else None
         self.topics = topics or ([topic] if topic else [])
-        self.topics = topics_to_strs(self.topics)
+        self.topics = [str(t) for t in self.topics]  # Ensure topics are strings
         self.use_asyncio = kwargs.get('use_asyncio', True)
         
         # Store any additional kwargs for subclass use

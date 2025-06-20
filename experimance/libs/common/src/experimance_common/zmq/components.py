@@ -27,9 +27,8 @@ from contextlib import asynccontextmanager
 
 from experimance_common.zmq.config import (
     MessageDataType, TopicType, ZmqSocketConfig, PublisherConfig, SubscriberConfig, 
-    PushConfig, PullConfig
+    PushConfig, PullConfig, MessageType
 )
-from experimance_common.zmq.zmq_utils import MessageType
 
 logger = logging.getLogger(__name__)
 

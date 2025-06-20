@@ -14,6 +14,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeAlias, Union,
 import zmq
 import zmq.asyncio
 
+# Re-export MessageType for backward compatibility
+from experimance_common.zmq.config import MessageType
+
 
 # Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
