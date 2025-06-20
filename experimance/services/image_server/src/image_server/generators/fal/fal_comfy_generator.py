@@ -47,12 +47,14 @@ class FalComfyGenerator(ImageGenerator):
         logger.info(f"FalComfyGenerator initialized with endpoint: {self.config.endpoint}")
 
     async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, 
-                             config_overrides: Optional[FalComfyGeneratorConfig|dict] = None) -> str:
+                             config_overrides: Optional[FalComfyGeneratorConfig|dict] = None, **kwargs) -> str:
         """Generate an image using FAL.AI API.
         
         Args:
             prompt: Text description of the image to generate
             depth_map_b64: Optional base64-encoded depth map PNG
+            config_overrides: Configuration overrides for this generation
+            **kwargs: Additional parameters including request_id for filename tracking
             config_overrides: Optional configuration overrides for this specific generation
             
         Returns:
@@ -121,7 +123,8 @@ class FalComfyGenerator(ImageGenerator):
             # Download the generated image
             for image_url in self.falai_image_url_generator(response):
                 # we just need one image URL, so we can break after the first
-                return await self._download_image(image_url)
+                request_id = kwargs.get('request_id')
+                return await self._download_image(image_url, request_id=request_id)
 
             # If no image URL was found, raise an error to ensure a str is always returned or an exception is raised
             raise RuntimeError("No image URL found in FAL.AI response.")

@@ -85,7 +85,6 @@ class TestCoreServiceImageReadyHandling:
                 # Create test IMAGE_READY message
                 image_ready_message = {
                     "type": MessageType.IMAGE_READY.value,
-                    "image_id": "test_image_123",
                     "uri": "file:///tmp/test_image.png",
                     "request_id": "render_request_456",
                     "timestamp": datetime.now().isoformat()
@@ -107,7 +106,7 @@ class TestCoreServiceImageReadyHandling:
                 assert call_args["type"] == MessageType.DISPLAY_MEDIA.value
                 assert call_args["content_type"] == ContentType.IMAGE.value
                 assert call_args.get("transition_type") is None  # No transition
-                assert call_args["image_id"] == "test_image_123"
+                assert call_args["request_id"] == "render_request_456"
                 assert "uri" in call_args
         finally:
             service._mock_patcher.stop()
@@ -126,7 +125,6 @@ class TestCoreServiceImageReadyHandling:
                 # Create test IMAGE_READY message
                 image_ready_message = {
                     "type": MessageType.IMAGE_READY.value,
-                    "image_id": "era_change_image",
                     "uri": "file:///tmp/era_change.png",
                     "request_id": "render_request_789",
                     "timestamp": datetime.now().isoformat()
@@ -147,7 +145,7 @@ class TestCoreServiceImageReadyHandling:
                 assert call_args["type"] == MessageType.DISPLAY_MEDIA.value
                 assert call_args["content_type"] == ContentType.IMAGE.value
                 assert call_args.get("transition_type") == "fade"  # Should have transition
-                assert call_args["image_id"] == "era_change_image"
+                assert call_args["request_id"] == "render_request_789"
         finally:
             service._mock_patcher.stop()
     
@@ -205,13 +203,13 @@ class TestCoreServiceImageReadyHandling:
                 # Test single image display media
                 display_media = active._create_display_media(
                     content_type=ContentType.IMAGE,
-                    image_id="single_test_image",
+                    request_id="single_test_image",
                     uri="file:///tmp/single.png"
                 )
                 
                 assert display_media["type"] == MessageType.DISPLAY_MEDIA.value
                 assert display_media["content_type"] == ContentType.IMAGE.value
-                assert display_media["image_id"] == "single_test_image"
+                assert display_media["request_id"] == "single_test_image"
                 assert display_media["uri"] == "file:///tmp/single.png"
                 assert "timestamp" in display_media
         finally:

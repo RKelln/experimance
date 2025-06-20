@@ -62,11 +62,11 @@ class MockImageGenerator(ImageGenerator):
         
         # If we have existing images and are configured to use them, pick one randomly
         if self.config.use_existing_images and self._existing_images:
-            return await self._copy_existing_image(prompt)
+            return await self._copy_existing_image(prompt, **kwargs)
         else:
             return await self._generate_placeholder_image(prompt, **kwargs)
     
-    async def _copy_existing_image(self, prompt: str) -> str:
+    async def _copy_existing_image(self, prompt: str, **kwargs) -> str:
         """Copy a random existing image to the output location."""
         # Pick a random existing image
         source_image = random.choice(self._existing_images)
@@ -76,8 +76,9 @@ class MockImageGenerator(ImageGenerator):
         if output_ext == '.jpeg':
             output_ext = '.jpg'
         
-        # Create output path
-        output_path = self._get_output_path(output_ext.lstrip('.'))
+        # Create output path with request_id if provided
+        request_id = kwargs.get('request_id')
+        output_path = self._get_output_path(output_ext.lstrip('.'), request_id=request_id)
         
         # Copy the image
         shutil.copy2(source_image, output_path)
@@ -110,7 +111,8 @@ class MockImageGenerator(ImageGenerator):
         draw.text((x, y), text, fill=self.config.text_color, font=font)
         
         # Save the image
-        output_path = self._get_output_path("png")
+        request_id = kwargs.get('request_id')
+        output_path = self._get_output_path("png", request_id=request_id)
         image.save(output_path)
         
         logger.info(f"MockImageGenerator: Saved placeholder image to {output_path}")

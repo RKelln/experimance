@@ -268,7 +268,8 @@ class ImageServerService(BaseService):
                 biome=biome,
                 seed=seed,
                 negative_prompt=negative_prompt,
-                style=style
+                style=style,
+                request_id=request_id  # Include request_id for filename
             )
             
             # Publish ImageReady message with context

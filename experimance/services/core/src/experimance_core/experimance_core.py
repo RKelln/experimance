@@ -24,11 +24,11 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
 from experimance_common.constants import DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES
-from experimance_common.schemas import Era, Biome, ContentType, RenderRequest
+from experimance_common.schemas import Era, Biome, ContentType, ImageReady, RenderRequest
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
 from experimance_common.zmq.config import MessageType, MessageDataType, ControllerServiceConfig
-from experimance_common.zmq.zmq_utils import prepare_image_message
+from experimance_common.zmq.zmq_utils import image_ready_to_display_media, prepare_image_message
 from experimance_core.config import (
     CoreServiceConfig, 
     CameraState,
@@ -350,8 +350,8 @@ class ExperimanceCoreService(BaseService):
                 self.calculate_interaction_score(interaction_intensity)
                 
                 # Update the generated image for display service
-                # TODO: This should be a separate task in the future
-
+                # TODO: create a prompt and send to image server 
+                #await self._publish_image_request()
 
                 # Publish change map to display service (with smoothed score)
                 await self._publish_change_map(change_map, smoothed_change_score)
@@ -739,29 +739,39 @@ class ExperimanceCoreService(BaseService):
             self.record_error(e, is_fatal=False, custom_message="Error publishing era change event")
 
     # Message Handler Methods
-    async def _handle_image_ready(self, message: Dict[str, Any]):
+    async def _handle_image_ready(self, message: MessageDataType):
         """Handle ImageReady messages from image server."""
-        request_id = message.get('request_id')
-        logger.debug(f"Received ImageReady message: {request_id}")
+        logger.debug(f"Received ImageReady message: {message}")
         
         try:
-            # Check if this is a response to our render request
-            if not request_id:
+            # Convert MessageDataType to ImageReady object for type safety
+            from experimance_common.schemas import MessageBase, ImageReady
+            image_ready = MessageBase.to_message_type(message, ImageReady)
+            
+            if not image_ready or not isinstance(image_ready, ImageReady):
+                logger.warning("Failed to convert message to ImageReady type")
+                return
+                
+            if not image_ready.request_id:
                 logger.warning("ImageReady message missing request_id")
                 return
             
+            logger.debug(f"Processing ImageReady for request_id: {image_ready.request_id}")
+            
             # Determine if we need a transition
-            needs_transition = await self._should_request_transition(message)
+            #needs_transition = False
+            needs_transition = self._should_request_transition()
             
             if needs_transition:
                 # Request transition from transition service
-                await self._request_transition(message)
+                await self._request_transition(image_ready)
             else:
                 # Send directly to display service
-                await self._send_display_media(message)
+                await self._send_display_media(image_ready)
                 
         except Exception as e:
             logger.error(f"Error handling ImageReady message: {e}")
+            logger.debug(f"Failed message: {message}", exc_info=True)
 
     async def _handle_image_ready_task(self, task: MessageDataType):
         """Handle IMAGE_READY tasks received from the image server via PULL socket.
@@ -789,7 +799,7 @@ class ExperimanceCoreService(BaseService):
             logger.error(f"Error handling image ready task: {e}")
             self.record_error(e, is_fatal=False, custom_message=f"Error handling IMAGE_READY task: {e}")
 
-    async def _should_request_transition(self, image_message: Dict[str, Any]) -> bool:
+    def _should_request_transition(self) -> bool:
         """
         Determine if a transition is needed based on current state.
         
@@ -801,20 +811,20 @@ class ExperimanceCoreService(BaseService):
         """
         # For now, implement simple logic - can be made more sophisticated
         
-        # Always transition on era changes
-        if hasattr(self, '_last_era') and self._last_era != self.current_era:
-            logger.info(f"Era changed from {getattr(self, '_last_era', None)} to {self.current_era}, requesting transition")
-            return True
+        # # Always transition on era changes
+        # if hasattr(self, '_last_era') and self._last_era != self.current_era:
+        #     logger.info(f"Era changed from {getattr(self, '_last_era', None)} to {self.current_era}, requesting transition")
+        #     return True
         
-        # Transition on significant interaction (major changes to the sand table)
-        if self.user_interaction_score > self.config.state_machine.interaction_threshold * 2:
-            logger.info(f"High interaction score ({self.user_interaction_score:.3f}), requesting transition")
-            return True
+        # # Transition on significant interaction (major changes to the sand table)
+        # if self.user_interaction_score > self.config.state_machine.interaction_threshold * 2:
+        #     logger.info(f"High interaction score ({self.user_interaction_score:.3f}), requesting transition")
+        #     return True
         
         # For now, default to no transition for minor changes
         return False
 
-    async def _request_transition(self, image_message: Dict[str, Any]):
+    async def _request_transition(self, image_message: ImageReady):
         """
         Request a transition from the transition service.
         
@@ -867,7 +877,7 @@ class ExperimanceCoreService(BaseService):
         
         return "fade"  # Default
 
-    async def _send_display_media(self, image_message: Dict[str, Any], transition_type: Optional[str] = None):
+    async def _send_display_media(self, image_message: ImageReady, transition_type: Optional[str] = None):
         """
         Send DISPLAY_MEDIA message to display service.
         
@@ -876,42 +886,41 @@ class ExperimanceCoreService(BaseService):
             transition_type: Optional transition type
         """
         try:
-            # Create DISPLAY_MEDIA message
-            display_message = {
-                "type": MessageType.DISPLAY_MEDIA.value,
-                "content_type": ContentType.IMAGE.value,
-                "request_id": image_message.get('request_id'),
-                "timestamp": datetime.now().isoformat(),
-                "era": self.current_era.value,
-                "biome": self.current_biome.value,
-                "interaction_score": self.user_interaction_score
-            }
+            from experimance_common.zmq.zmq_utils import create_display_media_message
+            from experimance_common.constants import DEFAULT_IMAGE_TRANSPORT_MODE
+            
+            # Create DisplayMedia message with proper schema
+            media_message = create_display_media_message(
+                content_type="image",
+                uri=image_message.uri,
+                request_id=image_message.request_id,  # Use request_id consistently
+                era=self.current_era,
+                biome=self.current_biome,
+                target_address=f"tcp://localhost:{DEFAULT_PORTS['events']}",
+                transport_mode=DEFAULT_IMAGE_TRANSPORT_MODE
+            )
             
             # Add transition info if specified
             if transition_type:
-                display_message["transition_type"] = transition_type
-                display_message["transition_duration"] = 2.0  # Default 2 seconds
-            
-            # Copy image transport fields from the ImageReady message
-            image_fields = ["uri", "image_data", "image_format", "image_id", "mask_id"]
-            for field in image_fields:
-                if field in image_message:
-                    display_message[field] = image_message[field]
-            
-            # Publish to display service
-            success = await self.zmq_service.publish(display_message)
-            
-            if success:
-                logger.debug(f"Sent DISPLAY_MEDIA to display service (transition: {transition_type})")
+                media_message["transition_type"] = transition_type
+                media_message["transition_duration"] = 2.0  # Default 2 seconds
                 
-                # Update state tracking
-                self._last_era = self.current_era
-                
-            else:
-                logger.warning("Failed to send DISPLAY_MEDIA message")
+            # Preserve any temp file info for cleanup (check in dict form)
+            temp_file = image_message.get("_temp_file") if hasattr(image_message, 'get') else None
+            if temp_file:
+                media_message["_temp_file"] = temp_file
+            
+            # Publish to display service using the ZMQ service
+            await self.zmq_service.publish(
+                data=media_message,
+                topic=MessageType.DISPLAY_MEDIA
+            )
+            
+            logger.debug(f"Sent DISPLAY_MEDIA to display service (request_id: {image_message.request_id}, transition: {transition_type})")
                 
         except Exception as e:
             logger.error(f"Error sending DISPLAY_MEDIA: {e}")
+            logger.debug(f"Image message: {image_message}", exc_info=True)
 
     async def _handle_agent_control(self, message: Dict[str, Any]):
         """Handle AgentControl messages from agent service."""

@@ -46,6 +46,13 @@ class MessageType(str, Enum):
     def __str__(self) -> str:
         """Return the string representation of the message type."""
         return self.value
+    
+    # allow for comparison with strings
+    def __eq__(self, other: Any) -> bool:
+        """Allow comparison with string values."""
+        if isinstance(other, str):
+            return self.value == other
+        return super().__eq__(other)
 
 class ZmqException(Exception):
     """Base exception for ZMQ-related errors."""

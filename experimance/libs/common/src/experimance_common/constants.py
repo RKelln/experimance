@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 
 DEFAULT_PORTS = {
     # Unified events channel - all services publish and subscribe here
-    "events": 5555,
+    "events": 5555,               # Includes display media 
     
     # Specialized high-bandwidth channels
     "depth": 5556,                # Depth camera data (high frequency) currenly unused
@@ -19,10 +19,6 @@ DEFAULT_PORTS = {
     "video_results": 5563,        # Resulting generated videos
     "image_requests": 5564,       # Work distribution for image generation 
     "image_results": 5565,        # Results from image generation
-    "audio_requests": 5566,       # Work distribution for audio processing
-    "audio_results": 5567,        # Results from audio processing
-    "display_requests": 5568,     # Work distribution for display commands
-    "display_results": 5569,      # Results from display commands
     
     # Audio OSC bridge ports
     "audio_osc_send_port": 5570,  # Audio service → SuperCollider

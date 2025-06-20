@@ -117,9 +117,8 @@ def core_service(test_config):
     service.record_error = Mock()
     service._sleep_if_running = AsyncMock(return_value=False)
     
-    # Add compatibility for legacy tests
-    service.publish_message = mock_zmq_service.publish  # Point to the same mock
-    
+    service.zmq_service = mock_zmq_service
+
     # Store patcher for cleanup
     service._test_patcher = patcher
     
@@ -206,7 +205,7 @@ class TestStateMachine:
         assert success
         assert core_service.current_era == Era.PRE_INDUSTRIAL
         assert core_service.era_progression_timer == 0.0
-        core_service.publish_message.assert_called_once()
+        core_service.zmq_service.publish.assert_called_once()
     
     def test_biome_selection(self, core_service):
         """Test biome selection for different eras."""
@@ -285,8 +284,8 @@ class TestEventPublishing:
         """Test era changed event publishing."""
         await core_service._publish_era_changed_event(Era.WILDERNESS.value, Era.PRE_INDUSTRIAL.value)
         
-        core_service.publish_message.assert_called_once()
-        call_args = core_service.publish_message.call_args[0][0]
+        core_service.zmq_service.publish.assert_called_once()
+        call_args = core_service.zmq_service.publish.call_args[0][0]
         assert call_args["type"] == "EraChanged"
         assert call_args["old_era"] == Era.WILDERNESS.value
         assert call_args["new_era"] == Era.PRE_INDUSTRIAL.value
@@ -295,8 +294,8 @@ class TestEventPublishing:
         """Test interaction sound event publishing."""
         await core_service._publish_interaction_sound(True)
         
-        core_service.publish_message.assert_called_once()
-        call_args = core_service.publish_message.call_args[0][0]
+        core_service.zmq_service.publish.assert_called_once()
+        call_args = core_service.zmq_service.publish.call_args[0][0]
         assert call_args["type"] == "AudioCommand"
         assert call_args["trigger"] == "interaction_start"
         assert call_args["hand_detected"] == True
@@ -310,8 +309,8 @@ class TestEventPublishing:
         change_map = np.zeros_like(np.random.randint(0, 255, (512, 512), dtype=np.uint8))
         await core_service._publish_change_map(change_map, change_score=0.7)
         
-        core_service.publish_message.assert_called_once()
-        call_args = core_service.publish_message.call_args[0][0]
+        core_service.zmq_service.publish.assert_called_once()
+        call_args = core_service.zmq_service.publish.call_args[0][0]
         assert call_args["type"] == "ChangeMap"
         assert call_args["change_score"] == 0.7
         assert call_args["has_change_map"] == True
@@ -322,8 +321,8 @@ class TestEventPublishing:
         
         await core_service._publish_idle_state_changed()
         
-        core_service.publish_message.assert_called_once()
-        call_args = core_service.publish_message.call_args[0][0]
+        core_service.zmq_service.publish.assert_called_once()
+        call_args = core_service.zmq_service.publish.call_args[0][0]
         assert call_args["type"] == "IdleStatus"
         assert call_args["idle_duration"] == 25.5
     
@@ -394,13 +393,13 @@ class TestErrorHandling:
     async def test_message_publishing_error_handling(self, core_service):
         """Test that message publishing errors are handled gracefully."""
         # Mock publish_message to raise an exception
-        core_service.publish_message.side_effect = Exception("ZMQ Error")
+        core_service.zmq_service.publish.side_effect = Exception("ZMQ Error")
         
         # Should not raise exception
         await core_service._publish_era_changed_event(Era.WILDERNESS.value, Era.PRE_INDUSTRIAL.value)
         
         # Error should be logged but not propagated
-        core_service.publish_message.assert_called_once()
+        core_service.zmq_service.publish.assert_called_once()
     
     def test_state_validation_and_correction(self, core_service):
         """Test state validation and correction."""
@@ -450,7 +449,7 @@ class TestDepthProcessingIntegration:
         assert core_service.previous_depth_image is not None
         
         # Should have published interaction sound
-        core_service.publish_message.assert_called()
+        core_service.zmq_service.publish.assert_called()
 
 
 class TestConfigurationValidation:

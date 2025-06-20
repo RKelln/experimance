@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import socket
+import time
+import glob
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeAlias, Union, cast
@@ -39,7 +41,7 @@ from experimance_common.constants import (
     BASE64_PNG_PREFIX,
 )
 
-from experimance_common.schemas import MessageBase
+from experimance_common.schemas import ImageReady, MessageBase
 
 # Image Transport Utilities for ZMQ Communication
 
@@ -139,6 +141,35 @@ def choose_image_transport_mode(
     return IMAGE_TRANSPORT_MODES["BASE64"]
 
 
+def image_ready_to_display_media(
+    message: ImageReady,
+    target_address: Optional[str] = None,
+    transport_mode: str = DEFAULT_IMAGE_TRANSPORT_MODE) -> Dict[str, Any]:
+    """Convert a ZMQ IMAGE_READY message with image data into a DISPLAY_MEDIA format."""
+
+    if not isinstance(message, ImageReady):
+        raise TypeError("Expected message to be an instance of ImageReady")
+    
+    # Create DisplayMedia message structure
+    display_message = {
+        "type": "DisplayMedia",
+        "content_type": "image",
+        "uri": message.uri,
+        "request_id": message.request_id,  # Use the same request_id throughout pipeline
+        # Preserve any temp file info for cleanup
+        "_temp_file": message.get("_temp_file", None)
+    }
+    
+    # Apply image transport logic for ZMQ optimization
+    image_data = prepare_image_message(
+        image_data=message.uri,  # Use the URI from ImageReady
+        target_address=target_address,
+        transport_mode=transport_mode,
+        **display_message
+    )
+    
+    return image_data
+
 def prepare_image_message(
     image_data: Optional[Union[str, Path, Any]] = None,  # Any for PIL Image, encdoed string or nd.array
     target_address: Optional[str] = None,
@@ -174,6 +205,9 @@ def prepare_image_message(
     
     if image_data is None:
         return message
+    
+    # Extract request_id for temp file naming if available
+    request_id = message.get("request_id") or message.get("source_request_id")
     
     # Determine what we're working with
     file_path = None
@@ -216,13 +250,13 @@ def prepare_image_message(
             message["uri"] = f"{FILE_URI_PREFIX}{os.path.abspath(file_path)}"
         elif numpy_array is not None:
             # Save numpy array as temporary file
-            temp_path = save_ndarray_as_tempfile(numpy_array)
+            temp_path = save_ndarray_as_tempfile(numpy_array, request_id=request_id)
             message["uri"] = f"{FILE_URI_PREFIX}{os.path.abspath(temp_path)}"
             # Mark as temp file for caller awareness (cleanup is service responsibility)
             message["_temp_file"] = temp_path
         elif pil_image:
             # Save PIL image as temporary file
-            temp_path = save_pil_image_as_tempfile(pil_image)
+            temp_path = save_pil_image_as_tempfile(pil_image, request_id=request_id)
             message["uri"] = f"{FILE_URI_PREFIX}{os.path.abspath(temp_path)}"
             # Mark as temp file for caller awareness (cleanup is service responsibility)
             message["_temp_file"] = temp_path
@@ -351,3 +385,48 @@ async def periodic_temp_file_cleanup(interval_seconds: int = TEMP_FILE_CLEANUP_I
         except Exception as e:
             logger.error(f"Error in periodic temp file cleanup: {e}")
             await asyncio.sleep(interval_seconds)
+
+def create_display_media_message(
+    content_type: str,
+    image_data: Optional[Union[str, Path, Any]] = None,
+    uri: Optional[str] = None,
+    target_address: Optional[str] = None,
+    transport_mode: str = DEFAULT_IMAGE_TRANSPORT_MODE,
+    **kwargs
+) -> Dict[str, Any]:
+    """Create a properly structured DisplayMedia message.
+    
+    Args:
+        content_type: Type of content ("image", "video", "image_sequence")  
+        image_data: Image to send (file path, PIL Image, numpy array, or base64 string)
+        uri: URI to existing content (alternative to image_data)
+        target_address: ZMQ target address for transport optimization
+        transport_mode: Transport mode configuration
+        **kwargs: Additional DisplayMedia fields (era, biome, duration, etc.)
+        
+    Returns:
+        DisplayMedia message dict with proper image transport
+    """
+    # Start with DisplayMedia message structure
+    message = {
+        "type": "DisplayMedia",
+        "content_type": content_type,
+        **kwargs
+    }
+    
+    # Handle URI directly if provided and no image_data
+    if uri is not None and image_data is None:
+        message["uri"] = uri
+        return message
+    
+    # Handle image data if provided
+    if image_data is not None:
+        prepared_message = prepare_image_message(
+            image_data=image_data,
+            target_address=target_address,
+            transport_mode=transport_mode,
+            **message
+        )
+        return prepared_message
+    
+    return message

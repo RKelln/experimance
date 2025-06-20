@@ -45,10 +45,10 @@ class ImageRenderer(LayerRenderer):
         # Current state
         self.current_image = None
         self.current_sprite = None
-        self.current_image_id_value = None  # Store image_id separately
+        self.current_image_id_value = None  # Store request_id separately
         self.next_image = None
         self.next_sprite = None
-        self.next_image_id_value = None  # Store next image_id separately
+        self.next_image_id_value = None  # Store next request_id separately
         
         # Transition state
         self.transition_active = False
@@ -56,7 +56,7 @@ class ImageRenderer(LayerRenderer):
         self.transition_duration = transitions_config.default_crossfade_duration
         
         # Resource management
-        self.image_cache = {}  # image_id -> (image, sprite)
+        self.image_cache = {}  # request_id -> (image, sprite)
         self.max_cache_size = 10  # Limit memory usage
         
         # Visibility and opacity
@@ -162,38 +162,45 @@ class ImageRenderer(LayerRenderer):
         logger.debug(f"Image transition completed to: {self.current_image_id_value}")
     
     async def handle_display_media(self, message: MessageDataType):
-        """Handle ImageReady message.
+        """Handle DisplayMedia message.
         
         Args:
-            message: ImageReady message with image_id and uri, and optionally image_data
+            message: DisplayMedia message with request_id and uri, and optionally image_data
         """
         try:
+            if message is None:
+                logger.error("Received None message in handle_display_media")
+                return
+            if message.get("type") != MessageType.DISPLAY_MEDIA:
+                logger.error(f"Invalid display media message type: {message.get('type')}")
+                return
+            
             if isinstance(message, MessageBase):
                 message = message.model_dump()
                 
-            image_id = message.get("image_id", None)
-            if not image_id:
-                logger.error("ImageReady message missing 'image_id'")
+            request_id = message.get("request_id", None)
+            if not request_id:
+                logger.error("DisplayMedia message missing 'request_id'")
                 return
             
-            logger.info(f"Loading image: {image_id}")
+            logger.info(f"Loading image: {request_id}")
             
             # Check cache first
-            if image_id in self.image_cache:
-                logger.debug(f"Using cached image: {image_id}")
-                image, sprite = self.image_cache[image_id]
-                self._start_transition_to_image(image, sprite, image_id)
+            if request_id in self.image_cache:
+                logger.debug(f"Using cached image: {request_id}")
+                image, sprite = self.image_cache[request_id]
+                self._start_transition_to_image(image, sprite, request_id)
                 return
             
             # Use the robust image loading utility - it will handle fallbacks automatically
             pyglet_image, temp_file_path = load_pyglet_image_from_message(
                 message=message,  # Pass the entire message
-                image_id=image_id,
+                image_id=request_id,  # Use request_id as image_id for the utility
                 set_center_anchor=True
             )
             
             if not pyglet_image:
-                logger.error(f"Failed to load image {image_id} - no valid data source")
+                logger.error(f"Failed to load image {request_id} - no valid data source")
                 return
             
             try:
@@ -201,12 +208,12 @@ class ImageRenderer(LayerRenderer):
                 sprite = create_positioned_sprite(pyglet_image, self.window_size)
                 
                 # Cache the image
-                self._cache_image(image_id, pyglet_image, sprite)
+                self._cache_image(request_id, pyglet_image, sprite)
                 
-                logger.info(f"Successfully loaded image: {image_id}")
+                logger.info(f"Successfully loaded image: {request_id}")
                 
                 # Start transition to new image
-                self._start_transition_to_image(pyglet_image, sprite, image_id)
+                self._start_transition_to_image(pyglet_image, sprite, request_id)
                 
             finally:
                 # Clean up temporary file if one was created

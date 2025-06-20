@@ -212,13 +212,14 @@ def crop_to_content(image, size:tuple=(1024, 1024), bounds:Optional[tuple]=None)
 
     return resized_image, bounds
 
-def save_ndarray_as_tempfile(ndarray, suffix=TEMP_FILE_SUFFIX, prefix=TEMP_FILE_PREFIX):
+def save_ndarray_as_tempfile(ndarray, suffix=TEMP_FILE_SUFFIX, prefix=TEMP_FILE_PREFIX, request_id=None):
     """Save numpy array as a temporary image file.
     
     Args:
         ndarray: Numpy array representing an image
         suffix: File extension (default: .png)
         prefix: Filename prefix for temp file
+        request_id: Optional request ID to include in filename for traceability
         
     Returns:
         str: Path to the saved temporary file
@@ -248,39 +249,55 @@ def save_ndarray_as_tempfile(ndarray, suffix=TEMP_FILE_SUFFIX, prefix=TEMP_FILE_
     else:
         raise ValueError(f"Unsupported array dimensions: {len(ndarray.shape)}")
     
+    # Create filename with timestamp and request_id if provided
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
+    if request_id:
+        file_prefix = f"{prefix}{timestamp}_{request_id}_"
+    else:
+        file_prefix = f"{prefix}{timestamp}_"
+    
     # Create temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=prefix) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=file_prefix) as temp_file:
         temp_path = temp_file.name
         pil_image.save(temp_path)
     
     return temp_path
 
 
-def save_pil_image_as_tempfile(pil_image, suffix=TEMP_FILE_SUFFIX, prefix=TEMP_FILE_PREFIX):
+def save_pil_image_as_tempfile(pil_image, suffix=TEMP_FILE_SUFFIX, prefix=TEMP_FILE_PREFIX, request_id=None):
     """Save PIL Image as a temporary file.
     
     Args:
         pil_image: PIL Image object
         suffix: File extension (default: .png)
         prefix: Filename prefix for temp file
+        request_id: Optional request ID to include in filename for traceability
         
     Returns:
         str: Path to the saved temporary file
     """
+    # Create filename with timestamp and request_id if provided
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
+    if request_id:
+        file_prefix = f"{prefix}{timestamp}_{request_id}_"
+    else:
+        file_prefix = f"{prefix}{timestamp}_"
+    
     # Create temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=prefix) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=file_prefix) as temp_file:
         temp_path = temp_file.name
         pil_image.save(temp_path)
     
     return temp_path
 
-def ndarray_to_temp_file(ndarray, prefix=TEMP_FILE_PREFIX, suffix=TEMP_FILE_SUFFIX) -> str:
+def ndarray_to_temp_file(ndarray, prefix=TEMP_FILE_PREFIX, suffix=TEMP_FILE_SUFFIX, request_id=None) -> str:
     """Save numpy array to a temporary file and return the file path.
     
     Args:
         ndarray: Numpy array representing an image
         prefix: Prefix for temporary filename
         suffix: File extension (default: .png)
+        request_id: Optional request ID to include in filename for traceability
         
     Returns:
         str: Path to the temporary file
@@ -310,8 +327,15 @@ def ndarray_to_temp_file(ndarray, prefix=TEMP_FILE_PREFIX, suffix=TEMP_FILE_SUFF
     else:
         raise ValueError(f"Unsupported array dimensions: {len(ndarray.shape)}")
     
+    # Create filename with timestamp and request_id if provided
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
+    if request_id:
+        file_prefix = f"{prefix}{timestamp}_{request_id}_"
+    else:
+        file_prefix = f"{prefix}{timestamp}_"
+    
     # Create temporary file
-    fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+    fd, temp_path = tempfile.mkstemp(prefix=file_prefix, suffix=suffix)
     try:
         # Close the file descriptor since PIL will open its own
         os.close(fd)
@@ -327,21 +351,29 @@ def ndarray_to_temp_file(ndarray, prefix=TEMP_FILE_PREFIX, suffix=TEMP_FILE_SUFF
         raise e
 
 
-def pil_to_temp_file(pil_image, prefix=TEMP_FILE_PREFIX, suffix=TEMP_FILE_SUFFIX) -> str:
+def pil_to_temp_file(pil_image, prefix=TEMP_FILE_PREFIX, suffix=TEMP_FILE_SUFFIX, request_id=None) -> str:
     """Save PIL Image to a temporary file and return the file path.
     
     Args:
         pil_image: PIL Image object
         prefix: Prefix for temporary filename
         suffix: File extension (default: .png)
+        request_id: Optional request ID to include in filename for traceability
         
     Returns:
         str: Path to the temporary file
     """
     import tempfile
     
+    # Create filename with timestamp and request_id if provided
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
+    if request_id:
+        file_prefix = f"{prefix}{timestamp}_{request_id}_"
+    else:
+        file_prefix = f"{prefix}{timestamp}_"
+    
     # Create temporary file
-    fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+    fd, temp_path = tempfile.mkstemp(prefix=file_prefix, suffix=suffix)
     try:
         # Close the file descriptor since PIL will open its own
         os.close(fd)

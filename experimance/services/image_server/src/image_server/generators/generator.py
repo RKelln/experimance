@@ -79,8 +79,13 @@ class ImageGenerator(ABC):
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
     
-    def _get_output_path(self, file_or_extension: str = "png") -> str:
-        """Generate a unique output path for an image."""
+    def _get_output_path(self, file_or_extension: str = "png", request_id: Optional[str] = None) -> str:
+        """Generate a unique output path for an image.
+        
+        Args:
+            file_or_extension: File extension or full filename
+            request_id: Optional request ID to include in filename for traceability
+        """
         name = None
         if file_or_extension in VALID_EXTENSIONS:
             # If a file extension is provided, use it directly
@@ -93,17 +98,21 @@ class ImageGenerator(ABC):
         if extension[1:] not in VALID_EXTENSIONS:
             raise ValueError(f"Unsupported image format: {extension}. Must be one of png, jpg, jpeg, webp")
             
-        # set id as class name and current date time 
+        # Create ID using request_id if provided, otherwise fall back to timestamp
         image_id = f"{self.__class__.__name__.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        if request_id:
+            image_id += f"_{request_id}"
         if name:
             image_id += f"_{name}"
         return str(self.output_dir / f"{image_id}{extension}")
         
-    async def _download_image(self, image_url: str) -> str:
+    async def _download_image(self, image_url: str, request_id: Optional[str] = None) -> str:
         """Download the generated image from the provided URL.
         
         Args:
             image_url: URL of the generated image
+            request_id: Optional request ID to include in filename for traceability
         Returns:
             Path to the downloaded image file   
         Raises:
@@ -117,7 +126,7 @@ class ImageGenerator(ABC):
             
             # get extension from URL
             
-            output_path = self._get_output_path(image_url)
+            output_path = self._get_output_path(image_url, request_id=request_id)
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as response:

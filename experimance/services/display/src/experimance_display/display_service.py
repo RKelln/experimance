@@ -19,6 +19,7 @@ import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
+from experimance_common.schemas import ContentType
 import pyglet
 from pyglet import clock
 from pyglet.window import key
@@ -64,7 +65,7 @@ class DisplayService(BaseService):
         
         self.config = config
         logger.debug(f"Initializing DisplayService with config: {self.config}")
-        
+
         # Initialize ZMQ service using composition
         self.zmq_service = PubSubService(config=config.zmq)
         
@@ -263,6 +264,7 @@ class DisplayService(BaseService):
     
     def _register_zmq_handlers(self):
         """Register ZMQ message handlers using the composition pattern."""
+
         self.zmq_service.add_message_handler(MessageType.DISPLAY_MEDIA, self._handle_display_media)
         self.zmq_service.add_message_handler(MessageType.CHANGE_MAP, self._handle_video_mask)
         self.zmq_service.add_message_handler(MessageType.TEXT_OVERLAY, self._handle_text_overlay)
@@ -286,13 +288,28 @@ class DisplayService(BaseService):
         try:
             logger.debug(f"Received DisplayMedia: {message}")
             
-            # Validate message
-            if not self._validate_image_ready(message):
+            if message is None:
+                logger.error("Received None message in handle_display_media")
+                return
+            if message.get("type") != MessageType.DISPLAY_MEDIA:
+                logger.error(f"Invalid display media message type: {message.get('type')}")
                 return
             
-            # Pass to image renderer
-            if self.image_renderer:
-                await self.image_renderer.handle_display_media(message)
+            # could differnet types of media
+            match message.get("content_type"):
+                case ContentType.IMAGE:
+                    if self.image_renderer:
+                        await self.image_renderer.handle_display_media(message)
+
+                case ContentType.VIDEO:
+                    if self.video_overlay_renderer:
+                        logger.debug("Handling video overlay")
+                        #await self.video_overlay_renderer.handle_display_media(message)
+            
+                case ContentType.IMAGE_SEQUENCE:
+                    if self.image_renderer:
+                        logger.debug("Handling video sequence")
+                        #await self.image_renderer.handle_image_sequence(message)
             
         except Exception as e:
             logger.error(f"Error handling DisplayMedia: {e}", exc_info=True)

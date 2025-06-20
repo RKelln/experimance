@@ -139,6 +139,33 @@ class MessageBase(BaseModel):
         else:
             # Unknown message type, return as dict
             return data
+
+    @classmethod
+    def to_message_type(cls, data: Union[Dict[str, Any], 'MessageBase'], target_class) -> Optional['MessageBase']:
+        """
+        Convert MessageDataType to a specific message type.
+        
+        Args:
+            data: Message data (dict or MessageBase instance)
+            target_class: Target MessageBase subclass to convert to
+            
+        Returns:
+            Instance of target_class if conversion successful, None otherwise
+        """
+        try:
+            # If data is already the target type, return it directly
+            if type(data).__name__ == target_class.__name__ and isinstance(data, MessageBase):
+                return data
+            # Convert dict to target class  
+            elif isinstance(data, dict):
+                return target_class(**data)
+            # Convert MessageBase to dict then target class
+            elif isinstance(data, MessageBase):
+                data_dict = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
+                return target_class(**data_dict)
+        except Exception:
+            pass
+        return None
     
     @classmethod 
     def _get_all_subclasses(cls):
@@ -178,8 +205,7 @@ class IdleStatus(MessageBase):
 class ImageReady(MessageBase):
     """Event published when a new image is ready."""
     type: str = "ImageReady"
-    request_id: Optional[str] = None
-    image_id: str
+    request_id: str
     uri: str  # URI to the image (file://, http://, etc.)
 
 
@@ -253,6 +279,14 @@ class ContentType(str, Enum):
     IMAGE_SEQUENCE = "image_sequence"  # Sequence of images (for transitions)
     VIDEO = "video"                    # Video file
 
+    def __str__(self):
+        """Return the string representation of the content type."""
+        return self.value
+    
+    def __eq__(self, value: object) -> bool:
+        if isinstance(value, str):
+            return self.value == value
+        return super().__eq__(value)
 
 class DisplayMedia(MessageBase):
     """Message for sending media content to display service."""
@@ -260,6 +294,7 @@ class DisplayMedia(MessageBase):
     
     # Content specification
     content_type: ContentType
+    request_id: Optional[str] = None      # Unique identifier tracking the request through pipeline
     
     # For IMAGE content_type
     image_data: Optional[Any] = None      # Image data (numpy array, PIL, etc.)
@@ -280,4 +315,3 @@ class DisplayMedia(MessageBase):
     # Context information
     era: Optional[Era] = None
     biome: Optional[Biome] = None
-    source_request_id: Optional[str] = None  # Links back to original render request
