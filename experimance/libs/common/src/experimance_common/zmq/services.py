@@ -28,12 +28,12 @@ from .components import (
 )
 from .config import (
     PubSubServiceConfig,
+    WorkerPushConfig,
+    WorkerPullConfig,
     WorkerServiceConfig,
     ControllerServiceConfig,
     PublisherConfig,
     SubscriberConfig,
-    PushConfig,
-    PullConfig,
     MessageDataType,
     TopicType
 )
@@ -691,8 +691,8 @@ async def test_services():
         config = WorkerServiceConfig(
             publisher=PublisherConfig(address="tcp://*", port=9903),
             subscriber=SubscriberConfig(address="tcp://localhost", port=9904, topics=["status"]),
-            pull=PullConfig(address="tcp://*", port=9905, bind=True),
-            push=PushConfig(address="tcp://localhost", port=9906, bind=False),
+            pull=WorkerPullConfig(address="tcp://*", port=9905, bind=True),
+            push=WorkerPushConfig(address="tcp://localhost", port=9906, bind=False),
             max_concurrent_tasks=5
         )
         

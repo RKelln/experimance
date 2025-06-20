@@ -10,7 +10,7 @@ vsync = true                  # Whether to use vertical sync
 debug_overlay = true          # Whether to show debug overlay
 
 # ZeroMQ configuration
-[zmq]
+#[zmq]
 #events_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
 
 # Transitions

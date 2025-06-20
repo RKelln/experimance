@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from experimance_common.zmq.config import (
     ZmqSocketConfig, PublisherConfig, SubscriberConfig, PushConfig, PullConfig,
+    ControllerPushConfig, ControllerPullConfig, WorkerPushConfig, WorkerPullConfig,
     WorkerConfig, PubSubServiceConfig, WorkerServiceConfig, ControllerServiceConfig,
     MessageType
 )
@@ -101,8 +102,8 @@ class TestWorkerConfig:
     
     def test_valid_worker_config(self):
         """Test valid worker configuration."""
-        push_config = PushConfig(address="tcp://localhost", port=5555)
-        pull_config = PullConfig(address="tcp://*", port=5556)
+        push_config = ControllerPushConfig(port=5555)
+        pull_config = ControllerPullConfig(port=5556)
         
         config = WorkerConfig(
             name="test_worker",
@@ -119,8 +120,8 @@ class TestWorkerConfig:
     
     def test_worker_name_validation(self):
         """Test worker name validation."""
-        push_config = PushConfig(address="tcp://localhost", port=5555)
-        pull_config = PullConfig(address="tcp://*", port=5556)
+        push_config = ControllerPushConfig(port=5555)
+        pull_config = ControllerPullConfig(port=5556)
         
         # Empty name should fail
         with pytest.raises(ValidationError):
@@ -140,8 +141,8 @@ class TestWorkerConfig:
     
     def test_worker_config_immutability(self):
         """Test that worker configs are frozen."""
-        push_config = PushConfig(address="tcp://localhost", port=5555)
-        pull_config = PullConfig(address="tcp://*", port=5556)
+        push_config = ControllerPushConfig(port=5555)
+        pull_config = ControllerPullConfig(port=5556)
         
         config = WorkerConfig(
             name="test_worker",
@@ -202,14 +203,14 @@ class TestServiceConfigs:
         
         worker1 = WorkerConfig(
             name="worker1",
-            push_config=PushConfig(address="tcp://localhost", port=5557),
-            pull_config=PullConfig(address="tcp://*", port=5558)
+            push_config=ControllerPushConfig(port=5557),
+            pull_config=ControllerPullConfig(port=5558)
         )
         
         worker2 = WorkerConfig(
             name="worker2",
-            push_config=PushConfig(address="tcp://localhost", port=5559),
-            pull_config=PullConfig(address="tcp://*", port=5560)
+            push_config=ControllerPushConfig(port=5559),
+            pull_config=ControllerPullConfig(port=5560)
         )
         
         config = ControllerServiceConfig(
@@ -232,14 +233,14 @@ class TestServiceConfigs:
         # Create workers with conflicting ports
         worker1 = WorkerConfig(
             name="worker1",
-            push_config=PushConfig(address="tcp://localhost", port=5557),
-            pull_config=PullConfig(address="tcp://*", port=5558)
+            push_config=ControllerPushConfig(port=5557),
+            pull_config=ControllerPullConfig(port=5558)
         )
         
         worker2 = WorkerConfig(
             name="worker2",
-            push_config=PushConfig(address="tcp://localhost", port=5557),  # Same port!
-            pull_config=PullConfig(address="tcp://*", port=5559)
+            push_config=ControllerPushConfig(port=5557),  # Same port!
+            pull_config=ControllerPullConfig(port=5559)
         )
         
         with pytest.raises(ValidationError, match="Port conflict"):

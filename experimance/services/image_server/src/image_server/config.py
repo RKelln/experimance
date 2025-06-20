@@ -15,7 +15,7 @@ from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
 from experimance_common.zmq.config import (
     WorkerServiceConfig, PublisherConfig, SubscriberConfig, 
-    PushConfig, PullConfig, MessageType
+    WorkerPushConfig, WorkerPullConfig, MessageType
 )
 from image_server.generators.config import BaseGeneratorConfig
 
@@ -71,12 +71,10 @@ class ImageServerConfig(BaseServiceConfig):
                 port=DEFAULT_PORTS['events'],
                 topics=[str(MessageType.RENDER_REQUEST), str(MessageType.HEARTBEAT)]
             ),
-            push=PushConfig(
-                address=ZMQ_TCP_BIND_PREFIX,
+            push=WorkerPushConfig(
                 port=DEFAULT_PORTS['image_results']
             ),
-            pull=PullConfig(
-                address=ZMQ_TCP_CONNECT_PREFIX,
+            pull=WorkerPullConfig(
                 port=DEFAULT_PORTS['image_requests']
             )
         ),

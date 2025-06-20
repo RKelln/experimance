@@ -14,6 +14,10 @@ from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, g
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
+CLI_ONLY_ARGS = {
+    "log_level",  # Log level for the service
+    "config",     # Path to the configuration file
+}
 
 def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = "") -> Dict[str, Dict[str, Any]]:
     """Extract CLI arguments from a Pydantic config class.
@@ -177,6 +181,10 @@ def create_service_parser(
             action=TrackedAction,
             help=f'Path to configuration file (default: {default_config_path})'
         )
+
+    # NOTE: if you add any further standard arguments, make sure to add them
+    # to the CLI_ONLY_ARGS used in run_service_cli to avoid pydantic
+    # validation errors when passing args to the service runner.
     
     # Auto-generate arguments from config class
     if config_class:
@@ -226,22 +234,27 @@ async def run_service_cli(
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Experimance {service_name} Service with log level: {args.log_level}")
     
-    # remove cli only options from args (like log-level and thos in extra-args
-    # so they aren't validated by the pydantic config class    
+    # Extract config path before filtering
     config_path = getattr(args, 'config', default_config_path)
-    # remove config path from args if it exists
-    if config_path:
-        del args.config
-    if args.log_level:
-        del args.log_level
-    for arg in extra_args or {}:
-        if hasattr(args, arg.lstrip('--')):
-            delattr(args, arg.lstrip('--')) 
     
+    # Create filtered args dict for pydantic config, excluding CLI-only options
+    cli_only_args = CLI_ONLY_ARGS.copy()  # Always exclude these
+    
+    # Add extra CLI-only args if specified
+    if extra_args:
+        for arg_name in extra_args.keys():
+            # Convert --arg-name to arg_name for attribute lookup
+            attr_name = arg_name.lstrip('--').replace('-', '_')
+            cli_only_args.add(attr_name)
+
+    # Remove CLI-only arguments from the original namespace to avoid pydantic validation errors
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+
     try:
         # Call the service runner with the parsed arguments
         if config_class:
-            # Pass args for CLI overrides and config path
             await service_runner(args=args, config_path=config_path)
         elif default_config_path:
             await service_runner(config_path=config_path)

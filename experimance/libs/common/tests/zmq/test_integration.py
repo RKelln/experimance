@@ -13,7 +13,8 @@ from experimance_common.zmq.mocks import (
 from experimance_common.zmq.config import (
     PubSubServiceConfig, ControllerServiceConfig,
     PublisherConfig, SubscriberConfig, WorkerConfig,
-    PushConfig, PullConfig, MessageType
+    PushConfig, PullConfig, MessageType,
+    ControllerPushConfig, ControllerPullConfig, WorkerPushConfig, WorkerPullConfig
 )
 
 
@@ -23,7 +24,7 @@ class TestCommunicationPatterns:
     @pytest.mark.asyncio
     async def test_push_pull_binding_patterns(self):
         """Test correct PUSH/PULL binding patterns for controller/worker setup."""
-        # Controller config - should connect PUSH, bind PULL
+        # Controller config - controller binds both PUSH and PULL (acts as server)
         controller_config = ControllerServiceConfig(
             name="pattern_controller",
             publisher=PublisherConfig(address="tcp://*", port=5555),
@@ -31,8 +32,8 @@ class TestCommunicationPatterns:
             workers={
                 "test_worker": WorkerConfig(
                     name="test_worker",
-                    push_config=PushConfig(address="tcp://localhost", port=5557),  # Connect to worker
-                    pull_config=PullConfig(address="tcp://*", port=5558),  # Bind for results
+                    push_config=ControllerPushConfig(address="tcp://*", port=5557),  # Bind to distribute work
+                    pull_config=ControllerPullConfig(address="tcp://*", port=5558),  # Bind for results
                     message_types=["test.work"]
                 )
             }
@@ -41,9 +42,9 @@ class TestCommunicationPatterns:
         # Verify binding patterns
         worker_config = controller_config.workers["test_worker"]
         
-        # Controller PUSH should connect (bind=False) to distribute work
-        assert worker_config.push_config.bind is False
-        assert worker_config.push_config.address == "tcp://localhost"
+        # Controller PUSH should bind (bind=True) to distribute work
+        assert worker_config.push_config.bind is True
+        assert worker_config.push_config.address == "tcp://*"
         
         # Controller PULL should bind (bind=True) to collect results
         assert worker_config.pull_config.bind is True
@@ -112,11 +113,11 @@ class TestCommunicationPatterns:
                         alerts_sub.set_message_handler(alerts_handler)
                         
                         # Publish various messages
-                        await publisher.publish("events.user", {"action": "login"})
-                        await publisher.publish("events.system", {"status": "startup"})
-                        await publisher.publish("alerts.error", {"error": "database_down"})
-                        await publisher.publish("alerts.warning", {"warning": "high_memory"})
-                        await publisher.publish("other.topic", {"ignored": True})
+                        await publisher.publish({"action": "login"}, "events.user")
+                        await publisher.publish({"status": "startup"}, "events.system")
+                        await publisher.publish({"error": "database_down"}, "alerts.error")
+                        await publisher.publish({"warning": "high_memory"}, "alerts.warning")
+                        await publisher.publish({"ignored": True}, "other.topic")
                         
                         await asyncio.sleep(0.1)
                         
@@ -156,9 +157,9 @@ class TestCommunicationPatterns:
                 service.set_message_handler(handler)
                 
                 # Publish using enum values
-                await service.publish(MessageType.HEARTBEAT, {"timestamp": 1234567890})
-                await service.publish(MessageType.IMAGE_READY, {"image_id": "img_001"})
-                await service.publish(MessageType.ERA_CHANGED, {"new_era": "digital"})
+                await service.publish({"timestamp": 1234567890}, MessageType.HEARTBEAT)
+                await service.publish({"image_id": "img_001"}, MessageType.IMAGE_READY)
+                await service.publish({"new_era": "digital"}, MessageType.ERA_CHANGED)
                 
                 await asyncio.sleep(0.1)
                 
@@ -187,14 +188,14 @@ class TestRealWorldScenarios:
             workers={
                 "image_generator": WorkerConfig(
                     name="image_generator",
-                    push_config=PushConfig(address="tcp://localhost", port=5557),
-                    pull_config=PullConfig(address="tcp://*", port=5558),
+                    push_config=ControllerPushConfig(address="tcp://localhost", port=5557),
+                    pull_config=ControllerPullConfig(address="tcp://*", port=5558),
                     message_types=["image.generate"]
                 ),
                 "transition_creator": WorkerConfig(
                     name="transition_creator",
-                    push_config=PushConfig(address="tcp://localhost", port=5559),
-                    pull_config=PullConfig(address="tcp://*", port=5560),
+                    push_config=ControllerPushConfig(address="tcp://localhost", port=5559),
+                    pull_config=ControllerPullConfig(address="tcp://*", port=5560),
                     message_types=["transition.create"]
                 )
             }
@@ -266,15 +267,15 @@ class TestRealWorldScenarios:
                 assert transition_tasks[0]["request_id"] == "req_001"
                 
                 # Simulate worker completing tasks and publishing results
-                await controller.publish("image.ready", {
+                await controller.publish({
                     "image_id": "img_renaissance_001",
                     "path": "/tmp/renaissance.jpg"
-                })
+                }, "image.ready")
                 
-                await controller.publish("transition.ready", {
+                await controller.publish({
                     "transition_id": "trans_001",
                     "duration": 2.5
-                })
+                }, "transition.ready")
                 
                 # Verify results published
                 published = controller.published_messages
@@ -321,10 +322,10 @@ class TestRealWorldScenarios:
                         received_heartbeats.append(message)
                         # Monitor responds to heartbeats
                         if message.get("status") == "unhealthy":
-                            asyncio.create_task(monitor.publish("alerts", {
+                            asyncio.create_task(monitor.publish({
                                 "level": "critical",
                                 "message": f"Service {message['service']} unhealthy"
-                            }))
+                            }, "alerts"))
                     
                     def shutdown_handler(topic, message):
                         shutdown_commands.append(message)
@@ -333,26 +334,26 @@ class TestRealWorldScenarios:
                     core.set_message_handler(shutdown_handler)
                     
                     # Simulate heartbeat sequence
-                    await core.publish("heartbeat", {
+                    await core.publish({
                         "service": "core",
                         "status": "healthy",
                         "timestamp": 1000
-                    })
+                    }, "heartbeat")
                     
-                    await core.publish("heartbeat", {
+                    await core.publish({
                         "service": "core",
                         "status": "unhealthy",
                         "timestamp": 2000,
                         "error": "database_connection_lost"
-                    })
+                    }, "heartbeat")
                     
                     await asyncio.sleep(0.1)
                     
                     # Monitor publishes shutdown command
-                    await monitor.publish("system.shutdown", {
+                    await monitor.publish({
                         "reason": "core_service_unhealthy",
                         "timestamp": 3000
-                    })
+                    }, "system.shutdown")
                     
                     await asyncio.sleep(0.1)
                     
@@ -391,7 +392,7 @@ class TestErrorRecoveryAndResilience:
             service1 = MockPubSubService(config)
             await service1.start()
             
-            await service1.publish("status", {"phase": "startup"})
+            await service1.publish({"phase": "startup"}, "status")
             assert len(service1.get_published_messages()) == 1
             
             # Simulate crash/stop
@@ -406,7 +407,7 @@ class TestErrorRecoveryAndResilience:
             assert service2.is_running
             assert len(service2.get_published_messages()) == 0  # Fresh state
             
-            await service2.publish("status", {"phase": "restart"})
+            await service2.publish({"phase": "restart"}, "status")
             assert len(service2.get_published_messages()) == 1
             
             await service2.stop()

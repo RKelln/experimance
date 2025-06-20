@@ -47,6 +47,8 @@ import json
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 
+from experimance_common.zmq.config import ControllerPullConfig, ControllerPushConfig
+
 try:
     # Relative import when used as a module
     from .config import (
@@ -808,8 +810,8 @@ if __name__ == "__main__":
                 workers={
                     "demo_worker": WorkerConfig(
                         name="demo_worker",
-                        push_config=PushConfig(address="tcp://localhost", port=5559),
-                        pull_config=PullConfig(address="tcp://*", port=5560),
+                        push_config=ControllerPushConfig(address="tcp://localhost", port=5559),
+                        pull_config=ControllerPullConfig(address="tcp://*", port=5560),
                         message_types=["demo.work"]
                     )
                 }

@@ -18,7 +18,7 @@ from experimance_common.config import BaseConfig
 from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
 from experimance_common.zmq.config import (
     ControllerServiceConfig, WorkerConfig, PublisherConfig, 
-    SubscriberConfig, PushConfig, PullConfig, MessageType
+    SubscriberConfig, ControllerPushConfig, ControllerPullConfig, MessageType
 )
 
 # Define the default configuration path relative to the project root
@@ -457,34 +457,28 @@ class CoreServiceConfig(BaseConfig):
             workers={
                 "image_server": WorkerConfig(
                     name="image_server",
-                    push_config=PushConfig(
-                        address="tcp://*",
+                    push_config=ControllerPushConfig(
                         port=DEFAULT_PORTS["image_requests"]
                     ),
-                    pull_config=PullConfig(
-                        address="tcp://localhost",
+                    pull_config=ControllerPullConfig(
                         port=DEFAULT_PORTS["image_results"]
                     )
                 ),
                 "audio": WorkerConfig(
                     name="audio",
-                    push_config=PushConfig(
-                        address="tcp://*",
+                    push_config=ControllerPushConfig(
                         port=DEFAULT_PORTS["audio_requests"]
                     ),
-                    pull_config=PullConfig(
-                        address="tcp://localhost",
+                    pull_config=ControllerPullConfig(
                         port=DEFAULT_PORTS["audio_results"]
                     )
                 ),
                 "display": WorkerConfig(
                     name="display",
-                    push_config=PushConfig(
-                        address="tcp://*",
+                    push_config=ControllerPushConfig(
                         port=DEFAULT_PORTS["display_requests"]
                     ),
-                    pull_config=PullConfig(
-                        address="tcp://localhost",
+                    pull_config=ControllerPullConfig(
                         port=DEFAULT_PORTS["display_results"]
                     )
                 )

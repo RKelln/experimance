@@ -121,11 +121,39 @@ class PullConfig(ZmqSocketConfig):
 
 
 # =============================================================================
+# SPECIALIZED CONFIGS FOR CONTROLLER/WORKER PATTERNS
+# =============================================================================
+
+class ControllerPushConfig(PushConfig):
+    """Push configuration for controllers that distribute work to workers."""
+    bind: bool = Field(default=True, description="Controllers bind to distribute work to workers")
+    address: str = Field(default=ZMQ_TCP_BIND_PREFIX, description="Controllers use bind addresses")
+
+
+class ControllerPullConfig(PullConfig):
+    """Pull configuration for controllers that collect results from workers."""
+    bind: bool = Field(default=True, description="Controllers bind to collect results from workers")
+    address: str = Field(default=ZMQ_TCP_BIND_PREFIX, description="Controllers use bind addresses")
+
+
+class WorkerPushConfig(PushConfig):
+    """Push configuration for workers that send results to controllers."""
+    bind: bool = Field(default=False, description="Workers connect to controllers to send results")
+    address: str = Field(default=ZMQ_TCP_CONNECT_PREFIX, description="Workers use connect addresses")
+
+
+class WorkerPullConfig(PullConfig):
+    """Pull configuration for workers that receive work from controllers."""
+    bind: bool = Field(default=False, description="Workers connect to controllers to receive work")
+    address: str = Field(default=ZMQ_TCP_CONNECT_PREFIX, description="Workers use connect addresses")
+
+
+# =============================================================================
 # WORKER CONFIGURATION
 # =============================================================================
 
 class WorkerConfig(BaseModel):
-    """Configuration for a worker (PUSH/PULL pair)."""
+    """Configuration for a worker (PUSH/PULL pair) as defined by a controller."""
     model_config = ConfigDict(
         frozen=True,
         validate_assignment=True,
@@ -133,8 +161,8 @@ class WorkerConfig(BaseModel):
     )
     
     name: str = Field(..., description="Worker name")
-    push_config: PushConfig = Field(..., description="PUSH socket configuration")
-    pull_config: PullConfig = Field(..., description="PULL socket configuration")
+    push_config: ControllerPushConfig = Field(..., description="Controller's PUSH socket configuration for this worker")
+    pull_config: ControllerPullConfig = Field(..., description="Controller's PULL socket configuration for this worker")
     message_types: List[str] = Field(default_factory=list, description="Message types this worker handles")
     max_queue_size: int = Field(default=1000, ge=1, description="Maximum queue size")
     
@@ -185,9 +213,9 @@ class WorkerServiceConfig(BaseConfig):
     publisher: PublisherConfig = Field(..., description="Publisher configuration")
     subscriber: SubscriberConfig = Field(..., description="Subscriber configuration")
     
-    # Worker configuration
-    push: PushConfig = Field(..., description="Push configuration for outgoing work")
-    pull: PullConfig = Field(..., description="Pull configuration for incoming work")
+    # Worker configuration - uses worker-specific configs with correct bind defaults
+    push: WorkerPushConfig = Field(..., description="Push configuration for sending results")
+    pull: WorkerPullConfig = Field(..., description="Pull configuration for receiving work")
     
     # Service settings
     heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
@@ -359,15 +387,11 @@ def create_local_controller_config(
     for worker_name, ports in worker_configs.items():
         workers[worker_name] = WorkerConfig(
             name=worker_name,
-            push_config=PushConfig(
-                address=ZMQ_TCP_CONNECT_PREFIX,  # Controller connects to workers
-                port=ports["push"],
-                bind=False  # PUSH connects to worker's PULL
+            push_config=ControllerPushConfig(
+                port=ports["push"]
             ),
-            pull_config=PullConfig(
-                address=ZMQ_TCP_BIND_PREFIX,     # Controller binds for results
-                port=ports["pull"],
-                bind=True   # PULL binds to receive worker results
+            pull_config=ControllerPullConfig(
+                port=ports["pull"]
             ),
             message_types=[f"{worker_name}.generate", f"{worker_name}.process"]
         )
@@ -451,15 +475,11 @@ def create_worker_service_config(
             port=sub_port,
             topics=sub_topics
         ),
-        pull=PullConfig(
-            address=ZMQ_TCP_BIND_PREFIX,      # Worker binds to receive work
-            port=work_pull_port,
-            bind=True
+        pull=WorkerPullConfig(
+            port=work_pull_port
         ),
-        push=PushConfig(
-            address=ZMQ_TCP_CONNECT_PREFIX,   # Worker connects to send results
-            port=result_push_port,
-            bind=False
+        push=WorkerPushConfig(
+            port=result_push_port
         )
     )
 

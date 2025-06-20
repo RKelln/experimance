@@ -13,7 +13,8 @@ from experimance_common.zmq.mocks import (
 )
 from experimance_common.zmq.config import (
     PubSubServiceConfig, WorkerServiceConfig, ControllerServiceConfig,
-    PublisherConfig, SubscriberConfig, PushConfig, PullConfig, WorkerConfig
+    PublisherConfig, SubscriberConfig, PushConfig, PullConfig, WorkerConfig,
+    WorkerPushConfig, WorkerPullConfig, ControllerPushConfig, ControllerPullConfig
 )
 
 
@@ -31,8 +32,8 @@ class TestMockPubSubService:
         async with mock_environment():
             async with MockPubSubService(config) as service:
                 # Test publishing
-                await service.publish("test.topic", {"message": "hello"})
-                await service.publish("test.topic", {"message": "world"})
+                await service.publish({"message": "hello"}, "test.topic")
+                await service.publish({"message": "world"}, "test.topic")
                 
                 # Check published messages
                 published = service.get_published_messages()
@@ -108,7 +109,7 @@ class TestMockPubSubService:
                 
                 # Process command and publish response
                 if received_commands:
-                    await service.publish("responses", {"status": "started"})
+                    await service.publish({"status": "started"}, "responses")
                 
                 # Verify
                 assert len(received_commands) == 1
@@ -139,7 +140,7 @@ class TestMockPubSubService:
             assert service.uptime is not None
             
             # Can publish when running
-            await service.publish("test", {"running": True})
+            await service.publish({"running": True}, "test")
             assert len(service.get_published_messages()) == 1
             
             # Stop service
@@ -148,7 +149,7 @@ class TestMockPubSubService:
             
             # Cannot publish when stopped
             with pytest.raises(RuntimeError):
-                await service.publish("test", {"stopped": True})
+                await service.publish({"stopped": True}, "test")
 
 
 class TestMockWorkerService:
@@ -161,8 +162,8 @@ class TestMockWorkerService:
             name="test_worker",
             publisher=PublisherConfig(address="tcp://*", port=5555),
             subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=["tasks"]),
-            push=PushConfig(address="tcp://localhost", port=5557),
-            pull=PullConfig(address="tcp://*", port=5558)
+            push=WorkerPushConfig(address="tcp://localhost", port=5557),
+            pull=WorkerPullConfig(address="tcp://*", port=5558)
         )
         
         received_tasks = []
@@ -215,14 +216,14 @@ class TestMockControllerService:
             workers={
                 "image_worker": WorkerConfig(
                     name="image_worker",
-                    push_config=PushConfig(address="tcp://localhost", port=5557),
-                    pull_config=PullConfig(address="tcp://*", port=5558),
+                    push_config=ControllerPushConfig(address="tcp://localhost", port=5557),
+                    pull_config=ControllerPullConfig(address="tcp://*", port=5558),
                     message_types=["image.process"]
                 ),
                 "text_worker": WorkerConfig(
                     name="text_worker",
-                    push_config=PushConfig(address="tcp://localhost", port=5559),
-                    pull_config=PullConfig(address="tcp://*", port=5560),
+                    push_config=ControllerPushConfig(address="tcp://localhost", port=5559),
+                    pull_config=ControllerPullConfig(address="tcp://*", port=5560),
                     message_types=["text.analyze"]
                 )
             }
@@ -249,7 +250,7 @@ class TestMockControllerService:
                 controller.set_worker_handler("text_worker", text_handler)
                 
                 # Test publishing status
-                await controller.publish("heartbeat", {"controller": "alive"})
+                await controller.publish({"controller": "alive"}, "heartbeat")
                 
                 # Test worker task distribution
                 await controller.push_to_worker("image_worker", {"image": "process.jpg"})
@@ -283,8 +284,8 @@ class TestMockControllerService:
             workers={
                 "test_worker": WorkerConfig(
                     name="test_worker",
-                    push_config=PushConfig(address="tcp://localhost", port=5557),
-                    pull_config=PullConfig(address="tcp://*", port=5558)
+                    push_config=ControllerPushConfig(address="tcp://localhost", port=5557),
+                    pull_config=ControllerPullConfig(address="tcp://*", port=5558)
                 )
             }
         )
@@ -298,9 +299,11 @@ class TestMockControllerService:
                 
                 # Check worker messages
                 worker_messages = controller.get_worker_messages("test_worker")
-                assert len(worker_messages) == 2
-                assert worker_messages[0].content == {"task": 1}
-                assert worker_messages[1].content == {"task": 2}
+                # Filter to messages from the controller (not duplicates from message_bus)
+                controller_messages = [msg for msg in worker_messages if msg.sender_id == 'tracking_controller']
+                assert len(controller_messages) == 2
+                assert controller_messages[0].content == {"task": 1}
+                assert controller_messages[1].content == {"task": 2}
                 
                 # Test invalid worker
                 with pytest.raises(ValueError):
@@ -339,7 +342,7 @@ class TestMessageBusIntegration:
                     subscriber.set_message_handler(notification_handler)
                     
                     # Publisher sends notification
-                    await publisher.publish("notifications", {"alert": "system ready"})
+                    await publisher.publish({"alert": "system ready"}, "notifications")
                     await asyncio.sleep(0.1)
                     
                     # Verify cross-service communication
@@ -390,7 +393,7 @@ class TestErrorHandling:
             
             # Should fail when not running
             with pytest.raises(RuntimeError):
-                await service.publish("test", {"should": "fail"})
+                await service.publish({"should": "fail"}, "test")
     
     @pytest.mark.asyncio
     async def test_missing_components_errors(self):
@@ -405,7 +408,7 @@ class TestErrorHandling:
             async with MockPubSubService(config) as service:
                 # Should fail - no publisher configured
                 with pytest.raises(RuntimeError):
-                    await service.publish("test", {"no": "publisher"})
+                    await service.publish({"no": "publisher"}, "test")
     
     @pytest.mark.asyncio
     async def test_handler_error_recovery(self):

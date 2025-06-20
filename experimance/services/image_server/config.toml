@@ -6,12 +6,10 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # ZeroMQ configuration
 #[zmq]
-#image_request_pub = "tcp://localhost:5555"  # Address to subscribe to events on
-#images_pub_address = "tcp://*:5558"         # Address to publish images on
 
 # Generator configuration
 [generator]
-default_strategy = "falai"     # Options: "falai", "openai", "local", "mock"
+default_strategy = "falai"     # Options: "falai", "openai", "sdxl", "mock"
 
 # FAL.AI configuration
 [falai]
@@ -27,8 +25,8 @@ model = "dall-e-3"
 dimensions = [1024, 1024]
 quality = "standard"
 
-# Local SDXL configuration
-[local]
+# Local SDXL configuration  
+[sdxl]
 model_path = "models/sdxl-base"
 device = "cuda"
 dimensions = [1024, 1024]

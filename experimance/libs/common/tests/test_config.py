@@ -20,6 +20,7 @@ from experimance_common.config import (
     ConfigError
 )
 from experimance_common.cli import (
+    CLI_ONLY_ARGS,
     extract_cli_args_from_config,
     create_service_parser,
     TrackedAction,
@@ -952,3 +953,437 @@ def test_config_priority_with_mixed_sources():
         
     finally:
         os.unlink(temp_file)
+
+
+def test_cli_args_filtering_for_pydantic_config():
+    """Test that CLI arguments are properly filtered to prevent pydantic validation errors."""
+    
+    class TestServiceConfig(BaseConfig):
+        name: str = Field(default="test-service", description="Service name")
+        port: int = Field(default=8080, description="Port number")
+        debug: bool = Field(default=False, description="Debug mode")
+    
+    # Create parser with config class - this will add service arguments
+    parser = create_service_parser(
+        service_name="Test", 
+        description="Test service",
+        default_config_path="/tmp/config.toml",
+        config_class=TestServiceConfig
+    )
+    
+    # Parse arguments including CLI-only args like --log-level and --config
+    args = parser.parse_args([
+        "--name", "custom-service", 
+        "--port", "9090", 
+        "--debug",
+        "--log-level", "DEBUG",
+        "--config", "/custom/config.toml"
+    ])
+    
+    # Verify all arguments were parsed initially
+    assert args.name == "custom-service"
+    assert args.port == 9090
+    assert args.debug is True
+    assert args.log_level == "DEBUG"
+    assert args.config == "/custom/config.toml"
+    
+    # Simulate the filtering that happens in run_service_cli
+    from experimance_common.cli import CLI_ONLY_ARGS
+    cli_only_args = CLI_ONLY_ARGS.copy()
+    
+    # Remove CLI-only arguments from the namespace
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+    
+    # Verify CLI-only args were removed
+    assert not hasattr(args, 'log_level')
+    assert not hasattr(args, 'config')
+    
+    # Verify config args remain
+    assert hasattr(args, 'name')
+    assert hasattr(args, 'port')
+    assert hasattr(args, 'debug')
+    assert args.name == "custom-service"
+    assert args.port == 9090
+    assert args.debug is True
+    
+    # Test that we can create config from filtered args without pydantic errors
+    config = TestServiceConfig.from_overrides(args=args)
+    
+    assert config.name == "custom-service"
+    assert config.port == 9090
+    assert config.debug is True
+
+
+def test_namespace_filtering_for_service_runner():
+    """Test that CLI filtering works as implemented in run_service_cli."""
+    
+    class MockServiceConfig(BaseConfig):
+        service_name: str = Field(default="mock", description="Service name")
+        timeout: float = Field(default=30.0, description="Timeout in seconds")
+    
+    parser = create_service_parser(
+        service_name="Mock",
+        description="Mock service", 
+        default_config_path="/tmp/mock.toml",
+        config_class=MockServiceConfig
+    )
+    
+    # Parse args with both config and CLI-only arguments
+    args = parser.parse_args([
+        "--service-name", "test-mock",
+        "--timeout", "60.0", 
+        "--log-level", "WARNING",
+        "--config", "/path/to/config.toml"
+    ])
+    
+    # Verify initial state
+    assert args.service_name == "test-mock"
+    assert args.timeout == 60.0
+    assert args.log_level == "WARNING"
+    assert args.config == "/path/to/config.toml"
+    
+    # Simulate the filtering that happens in run_service_cli
+    from experimance_common.cli import CLI_ONLY_ARGS
+    cli_only_args = CLI_ONLY_ARGS.copy()
+    
+    # Store CLI values before they're removed (like run_service_cli does)
+    config_path = getattr(args, 'config', '/tmp/mock.toml')
+    log_level = getattr(args, 'log_level', 'INFO')
+    
+    # Remove CLI-only arguments from the namespace
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+    
+    # Verify CLI-only args were removed
+    assert not hasattr(args, 'log_level')
+    assert not hasattr(args, 'config')
+    
+    # Verify config args remain
+    assert hasattr(args, 'service_name')
+    assert hasattr(args, 'timeout')
+    assert args.service_name == "test-mock"
+    assert args.timeout == 60.0
+    
+    # Test that config creation works without validation errors
+    config = MockServiceConfig.from_overrides(args=args)
+    assert config.service_name == "test-mock" 
+    assert config.timeout == 60.0
+    
+    # Verify that CLI values were preserved separately
+    assert config_path == "/path/to/config.toml"
+    assert log_level == "WARNING"
+
+
+def test_cli_filtering_removes_cli_only_args():
+    """Test that CLI-only arguments are filtered out when calling service runner."""
+    import argparse
+    from experimance_common.cli import TrackedAction
+    
+    # Create a parser with both config and CLI-only args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', action=TrackedAction)
+    parser.add_argument('--log-level', action=TrackedAction, default='INFO')
+    parser.add_argument('--service-arg', action=TrackedAction)
+    
+    # Parse arguments that include CLI-only ones
+    args = parser.parse_args(['--config', 'test.toml', '--log-level', 'DEBUG', '--service-arg', 'value'])
+    
+    # Verify initial state
+    assert hasattr(args, 'config')
+    assert hasattr(args, 'log_level')
+    assert hasattr(args, 'service_arg')
+    assert hasattr(args, '_explicitly_set')
+    assert 'config' in args._explicitly_set
+    assert 'log_level' in args._explicitly_set
+    assert 'service_arg' in args._explicitly_set
+    
+    # Simulate the CLI filtering logic from run_service_cli
+    cli_only_args = CLI_ONLY_ARGS
+    
+    # Remove CLI-only arguments (actual implementation only does delattr)
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+    
+    # Verify CLI-only args are removed
+    assert not hasattr(args, 'config')
+    assert not hasattr(args, 'log_level')
+    assert hasattr(args, 'service_arg')  # Should still be there
+    
+    # Verify _explicitly_set still contains all original values (not filtered in actual implementation)
+    assert 'config' in args._explicitly_set  # Still there in _explicitly_set
+    assert 'log_level' in args._explicitly_set  # Still there in _explicitly_set
+    assert 'service_arg' in args._explicitly_set  # Should still be there
+
+def test_cli_filtering_handles_missing_attributes():
+    """Test that CLI filtering works even when some attributes don't exist."""
+    import argparse
+    from experimance_common.cli import TrackedAction
+    
+    # Create a parser with only some args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--service-arg', action=TrackedAction)
+    
+    args = parser.parse_args(['--service-arg', 'value'])
+    
+    # Simulate filtering including non-existent args (actual implementation from run_service_cli)
+    cli_only_args = CLI_ONLY_ARGS.copy()
+    cli_only_args.add('nonexistant')
+    
+    # This should not raise an error even though some args don't exist
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+    
+    # Should still have the service arg
+    assert hasattr(args, 'service_arg')
+    assert args.service_arg == 'value'
+    assert 'service_arg' in args._explicitly_set
+
+def test_cli_filtering_handles_extra_args():
+    """Test that extra_args specified in create_service_parser are filtered out as CLI-only."""
+    import argparse
+    from experimance_common.cli import TrackedAction
+    
+    # Create a parser with config args and extra args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', action=TrackedAction)
+    parser.add_argument('--log-level', action=TrackedAction, default='INFO')
+    parser.add_argument('--service-arg', action=TrackedAction)
+    
+    # Add extra args that should be filtered (like those passed to create_service_parser)
+    parser.add_argument('--verbose-mode', action=TrackedAction)
+    parser.add_argument('--debug-flag', action=TrackedAction)
+    
+    args = parser.parse_args([
+        '--config', 'test.toml', 
+        '--log-level', 'DEBUG', 
+        '--service-arg', 'value',
+        '--verbose-mode', 'on',
+        '--debug-flag', 'true'
+    ])
+    
+    # Verify initial state
+    assert hasattr(args, 'config')
+    assert hasattr(args, 'log_level')
+    assert hasattr(args, 'service_arg')
+    assert hasattr(args, 'verbose_mode')
+    assert hasattr(args, 'debug_flag')
+    
+    # Simulate the CLI filtering logic from run_service_cli with extra_args
+    from experimance_common.cli import CLI_ONLY_ARGS
+    cli_only_args = CLI_ONLY_ARGS.copy()
+    
+    # Simulate adding extra_args (mimicking the conversion in run_service_cli)
+    extra_args = {'--verbose-mode': {}, '--debug-flag': {}}
+    if extra_args:
+        for arg_name in extra_args.keys():
+            # Convert --arg-name to arg_name for attribute lookup
+            attr_name = arg_name.lstrip('--').replace('-', '_')
+            cli_only_args.add(attr_name)
+    
+    # Remove CLI-only arguments (actual implementation)
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+    
+    # Verify standard CLI-only args are removed
+    assert not hasattr(args, 'config')
+    assert not hasattr(args, 'log_level')
+    
+    # Verify extra CLI-only args are removed
+    assert not hasattr(args, 'verbose_mode')
+    assert not hasattr(args, 'debug_flag')
+    
+    # Verify service args remain
+    assert hasattr(args, 'service_arg')
+    assert args.service_arg == 'value'
+    
+    # Verify _explicitly_set still contains all original values (not filtered in actual implementation)
+    assert 'config' in args._explicitly_set
+    assert 'log_level' in args._explicitly_set
+    assert 'verbose_mode' in args._explicitly_set
+    assert 'debug_flag' in args._explicitly_set
+    assert 'service_arg' in args._explicitly_set
+
+def test_create_service_parser_with_extra_args():
+    """Test that create_service_parser correctly handles extra_args for CLI-only functionality."""
+    from experimance_common.cli import create_service_parser, TrackedAction
+    from experimance_common.config import BaseConfig
+    from pydantic import Field
+    
+    class TestConfig(BaseConfig):
+        service_port: int = Field(default=8080, description="Service port")
+        enable_feature: bool = Field(default=False, description="Enable feature")
+    
+    # Define extra args that should be CLI-only
+    extra_args = {
+        '--dry-run': {
+            'action': TrackedAction,
+            'help': 'Perform a dry run without making changes'
+        },
+        '--force-restart': {
+            'action': TrackedAction,
+            'help': 'Force restart even if already running'
+        }
+    }
+    
+    parser = create_service_parser(
+        service_name="Test",
+        description="Test service",
+        default_config_path="/tmp/test.toml",
+        config_class=TestConfig,
+        extra_args=extra_args
+    )
+    
+    # Parse arguments with both config and extra CLI args
+    args = parser.parse_args([
+        '--service-port', '9090',
+        '--enable-feature',
+        '--log-level', 'DEBUG',
+        '--config', '/custom/config.toml',
+        '--dry-run', 'true',
+        '--force-restart', 'yes'
+    ])
+    
+    # Verify all arguments were parsed
+    assert args.service_port == 9090
+    assert args.enable_feature is True
+    assert args.log_level == 'DEBUG'
+    assert args.config == '/custom/config.toml'
+    assert args.dry_run == 'true'
+    assert args.force_restart == 'yes'
+    
+    # Now simulate the filtering that would happen in run_service_cli
+    from experimance_common.cli import CLI_ONLY_ARGS
+    cli_only_args = CLI_ONLY_ARGS.copy()
+    
+    # Add extra args to CLI-only set (as done in run_service_cli)
+    if extra_args:
+        for arg_name in extra_args.keys():
+            attr_name = arg_name.lstrip('--').replace('-', '_')
+            cli_only_args.add(attr_name)
+    
+    # Remove CLI-only arguments
+    for attr_name in cli_only_args:
+        if hasattr(args, attr_name):
+            delattr(args, attr_name)
+    
+    # Verify CLI-only args are removed
+    assert not hasattr(args, 'log_level')
+    assert not hasattr(args, 'config')
+    assert not hasattr(args, 'dry_run')
+    assert not hasattr(args, 'force_restart')
+    
+    # Verify config args remain for pydantic
+    assert hasattr(args, 'service_port')
+    assert hasattr(args, 'enable_feature')
+    assert args.service_port == 9090
+    assert args.enable_feature is True
+    
+    # Test that we can create config from remaining args
+    config = TestConfig.from_overrides(args=args)
+    assert config.service_port == 9090
+    assert config.enable_feature is True
+
+
+# ============================================================================
+# CLI ARGUMENT FILTERING TESTS (Class-based)
+# ============================================================================
+
+class TestCLIArgumentFiltering:
+    """Test CLI argument filtering functionality."""
+    
+    def test_cli_arg_filtering_preserves_tracking(self):
+        """Test that CLI argument filtering preserves _explicitly_set tracking data."""
+        import argparse
+        from experimance_common.cli import TrackedAction
+        
+        # Create a parser with tracked actions
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--config', action=TrackedAction, help="Config file path")
+        parser.add_argument('--log-level', action=TrackedAction, help="Logging level")
+        parser.add_argument('--some-config-arg', action=TrackedAction, help="Config argument")
+        parser.add_argument('--another-arg', action=TrackedAction, help="Another config argument")
+        
+        # Parse some arguments
+        args = parser.parse_args(['--config', 'test.toml', '--log-level', 'DEBUG', '--some-config-arg', 'value'])
+        
+        # Verify tracking is working
+        assert hasattr(args, '_explicitly_set')
+        assert 'config' in args._explicitly_set
+        assert 'log_level' in args._explicitly_set  
+        assert 'some_config_arg' in args._explicitly_set
+        assert 'another_arg' not in args._explicitly_set
+        
+        # Simulate the filtering logic from create_simple_main
+        cli_only_args = {'log_level', 'config'}
+        
+        # Create filtered namespace by copying args and removing CLI-only attributes
+        filtered_namespace = argparse.Namespace()
+        
+        # Copy all attributes except CLI-only ones
+        for attr_name in dir(args):
+            if not attr_name.startswith('_') and attr_name not in cli_only_args:
+                setattr(filtered_namespace, attr_name, getattr(args, attr_name))
+        
+        # Preserve the _explicitly_set tracking data, but filter out CLI-only args
+        if hasattr(args, '_explicitly_set'):
+            filtered_namespace._explicitly_set = args._explicitly_set - cli_only_args
+        
+        # Verify filtering worked correctly
+        assert hasattr(filtered_namespace, '_explicitly_set')
+        assert 'config' not in filtered_namespace._explicitly_set  # Should be filtered out
+        assert 'log_level' not in filtered_namespace._explicitly_set  # Should be filtered out
+        assert 'some_config_arg' in filtered_namespace._explicitly_set  # Should be preserved
+        assert 'another_arg' not in filtered_namespace._explicitly_set  # Wasn't set originally
+        
+        # Verify CLI-only attributes were removed
+        assert not hasattr(filtered_namespace, 'config')
+        assert not hasattr(filtered_namespace, 'log_level')
+        
+        # Verify config attributes were preserved
+        assert hasattr(filtered_namespace, 'some_config_arg')
+        assert filtered_namespace.some_config_arg == 'value'
+        assert hasattr(filtered_namespace, 'another_arg')
+    
+    def test_cli_filtering_without_tracking(self):
+        """Test that CLI filtering works even without tracked actions."""
+        import argparse
+        
+        # Create a parser without tracked actions
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--config', help="Config file path")
+        parser.add_argument('--log-level', help="Logging level")
+        parser.add_argument('--some-config-arg', help="Config argument")
+        
+        # Parse some arguments
+        args = parser.parse_args(['--config', 'test.toml', '--log-level', 'DEBUG', '--some-config-arg', 'value'])
+        
+        # Verify no tracking is present
+        assert not hasattr(args, '_explicitly_set')
+        
+        # Simulate the filtering logic from create_simple_main
+        cli_only_args = {'log_level', 'config'}
+        
+        # Create filtered namespace by copying args and removing CLI-only attributes
+        filtered_namespace = argparse.Namespace()
+        
+        # Copy all attributes except CLI-only ones
+        for attr_name in dir(args):
+            if not attr_name.startswith('_') and attr_name not in cli_only_args:
+                setattr(filtered_namespace, attr_name, getattr(args, attr_name))
+        
+        # No _explicitly_set to preserve in this case
+        assert not hasattr(filtered_namespace, '_explicitly_set')
+        
+        # Verify CLI-only attributes were removed
+        assert not hasattr(filtered_namespace, 'config')
+        assert not hasattr(filtered_namespace, 'log_level')
+        
+        # Verify config attributes were preserved
+        assert hasattr(filtered_namespace, 'some_config_arg')
+        assert filtered_namespace.some_config_arg == 'value'

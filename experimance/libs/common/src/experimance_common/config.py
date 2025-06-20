@@ -35,6 +35,11 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
     for key, value in override.items():
         # If both values are dictionaries, recursively merge them
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # Warn if empty dict is overriding a non-empty dict
+            if not value and result[key]:
+                logger.warning(f"Empty config section '[{key}]' is clearing defaults. "
+                              f"Remove the section from config file to use defaults, "
+                              f"or add configuration values to customize.")
             result[key] = deep_merge(result[key], value)
         # Otherwise, override with the new value
         else:
