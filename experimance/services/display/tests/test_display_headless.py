@@ -215,7 +215,7 @@ class TestDisplayServiceMessaging:
             # Note: In real implementation, this would be scheduled via pyglet clock
     
     @pytest.mark.asyncio
-    async def test_image_ready_message(self, test_config, mock_pyglet, mock_zmq_subscriber):
+    async def test_display_media_message(self, test_config, mock_pyglet, mock_zmq_subscriber):
         """Test image ready message handling."""
         from services.display.src.experimance_display.display_service import DisplayService
         from experimance_common.test_utils import active_service
@@ -224,7 +224,7 @@ class TestDisplayServiceMessaging:
         async with active_service(service) as active:
             # Mock the image renderer
             active.image_renderer = Mock()
-            active.image_renderer.handle_image_ready = AsyncMock()
+            active.image_renderer.handle_display_media = AsyncMock()
             
             # Test image message
             image_message = {
@@ -237,10 +237,10 @@ class TestDisplayServiceMessaging:
             assert active._validate_image_ready(image_message) is True
             
             # Test handling
-            await active._handle_image_ready(image_message)
+            await active._handle_display_media(image_message)
             
             # Verify the handler was called
-            active.image_renderer.handle_image_ready.assert_called_once_with(image_message)
+            active.image_renderer.handle_display_media.assert_called_once_with(image_message)
     
     @pytest.mark.asyncio
     async def test_video_mask_message(self, test_config, mock_pyglet, mock_zmq_subscriber):
@@ -425,7 +425,7 @@ class TestErrorHandling:
             invalid_message = {"invalid": "data"}
             
             # These should not raise exceptions
-            await active._handle_image_ready(invalid_message)
+            await active._handle_display_media(invalid_message)
             await active._handle_text_overlay(invalid_message)
             await active._handle_video_mask(invalid_message)
     
@@ -446,7 +446,7 @@ class TestErrorHandling:
         valid_text_msg = {'text_id': 'test', 'content': 'Hello'}
         valid_mask_msg = {'mask_data': 'dGVzdA=='}  # base64 'test'
         
-        await service._handle_image_ready(valid_image_msg)
+        await service._handle_display_media(valid_image_msg)
         await service._handle_text_overlay(valid_text_msg)
         await service._handle_video_mask(valid_mask_msg)
 

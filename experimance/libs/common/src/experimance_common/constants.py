@@ -19,10 +19,14 @@ DEFAULT_PORTS = {
     "video_results": 5563,        # Resulting generated videos
     "image_requests": 5564,       # Work distribution for image generation 
     "image_results": 5565,        # Results from image generation
+    "audio_requests": 5566,       # Work distribution for audio processing
+    "audio_results": 5567,        # Results from audio processing
+    "display_requests": 5568,     # Work distribution for display commands
+    "display_results": 5569,      # Results from display commands
     
     # Audio OSC bridge ports
-    "audio_osc_send_port": 5567,  # Audio service → SuperCollider
-    "audio_osc_recv_port": 5568,  # SuperCollider → Audio service
+    "audio_osc_send_port": 5570,  # Audio service → SuperCollider
+    "audio_osc_recv_port": 5571,  # SuperCollider → Audio service
 }
 
 # Timeout settings

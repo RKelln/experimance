@@ -9,6 +9,7 @@ from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
 
 from experimance_common.zmq.zmq_utils import IMAGE_TRANSPORT_MODES
+from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_core.experimance_core import ExperimanceCoreService
 from experimance_core.config import CoreServiceConfig
 
@@ -20,6 +21,7 @@ class TestCoreServiceImagePublishing:
         """Set up test fixtures."""
         # Create minimal config for testing
         self.mock_config = Mock(spec=CoreServiceConfig)
+        self.mock_config.service_name = "test_core"  # Required by new architecture
         self.mock_config.experimance_core = Mock()
         self.mock_config.experimance_core.name = "test_core"
         self.mock_config.experimance_core.heartbeat_interval = 5.0
@@ -32,9 +34,46 @@ class TestCoreServiceImagePublishing:
         self.mock_config.camera = Mock()
         self.mock_config.camera.debug_mode = False
         
-        # Use the reusable mock from mocks.py
-        from .mocks import create_mock_core_service_with_custom_config
-        self.service = create_mock_core_service_with_custom_config(self.mock_config)
+        # Add ZMQ config for new architecture
+        self.mock_config.zmq = ControllerServiceConfig(
+            name="test_zmq",
+            publisher=PublisherConfig(address="tcp://*", port=5555),
+            subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=[]),
+            workers={}
+        )
+        
+        # Create a mock instance with AsyncMock methods
+        self.mock_zmq_service = Mock()
+        self.mock_zmq_service.start = AsyncMock()
+        self.mock_zmq_service.stop = AsyncMock()
+        self.mock_zmq_service.publish = AsyncMock()
+        self.mock_zmq_service.send_work_to_worker = AsyncMock()
+        self.mock_zmq_service.add_message_handler = Mock()
+        self.mock_zmq_service.add_response_handler = Mock()
+        
+        # Start the patch
+        self.controller_patcher = patch('experimance_core.experimance_core.ControllerService')
+        mock_controller_class = self.controller_patcher.start()
+        mock_controller_class.return_value = self.mock_zmq_service
+        
+        self.service = ExperimanceCoreService(config=self.mock_config)
+        
+        # Mock essential methods
+        self.service.add_task = Mock()
+        self.service.record_error = Mock()
+        self.service._sleep_if_running = AsyncMock(return_value=False)
+        # Don't mock _publish_change_map since we want to test it
+    
+    def teardown_method(self):
+        """Clean up after each test."""
+        if hasattr(self, 'controller_patcher'):
+            self.controller_patcher.stop()
+    
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        # Stop any mock patchers
+        if hasattr(self.service, '_mock_patcher'):
+            self.service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_publish_change_map_uses_enum_transport_modes(self):
@@ -81,7 +120,7 @@ class TestCoreServiceImagePublishing:
             assert 'change_map_' in call_args[1]['mask_id']
         
         # Verify the message was published
-        self.service.publish_message.assert_called_once()
+        self.mock_zmq_service.publish.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_publish_change_map_handles_numpy_arrays_correctly(self):
@@ -153,7 +192,7 @@ class TestCoreServiceImagePublishing:
             await self.service._publish_change_map(change_map, change_score)
             
             # Verify the message that was published has the expected format
-            published_message = self.service.publish_message.call_args[0][0]
+            published_message = self.mock_zmq_service.publish.call_args[0][0]
             
             # Should contain image data (base64 or URI)
             assert "image_data" in published_message or "uri" in published_message

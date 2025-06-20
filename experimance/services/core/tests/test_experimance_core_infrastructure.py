@@ -79,40 +79,42 @@ class TestExperimanceCoreServiceInfrastructure:
     def test_service_uses_correct_zmq_ports(self, test_config):
         """Test that service configures correct ZMQ ports for unified events channel."""
         # Mock ZMQ initialization to avoid needing actual ZMQ attributes
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None) as mock_init, \
-             patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None):
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_zmq_service.return_value = mock_instance
             
             service = ExperimanceCoreService(config=test_config)
             
             # Initialize essential attributes
-            setattr(service, 'worker_connections', {})
             setattr(service, 'service_name', test_config.experimance_core.name)
             setattr(service, 'tasks', [])
             setattr(service, '_running', False)
             
             # Should use the unified events port
             expected_port = DEFAULT_PORTS["events"]
-            expected_pub_address = f"tcp://*:{expected_port}"
-            expected_sub_address = f"tcp://localhost:{expected_port}"
             
-            # Verify the parent class was initialized with correct addresses
-            mock_init.assert_called_once()
-            call_kwargs = mock_init.call_args.kwargs
-            assert call_kwargs['pub_address'] == expected_pub_address
-            assert call_kwargs['sub_address'] == expected_sub_address
+            # Verify the ZMQ service was initialized correctly
+            mock_zmq_service.assert_called_once()
+            call_args = mock_zmq_service.call_args
+            if call_args.args:
+                config_passed = call_args.args[0]
+            else:
+                # If called with keyword arguments, get the config parameter
+                config_passed = call_args.kwargs['config'] if 'config' in call_args.kwargs else call_args.kwargs[list(call_args.kwargs.keys())[0]]
+            assert config_passed.publisher.port == expected_port
 
     @pytest.mark.asyncio
     async def test_service_lifecycle_start_stop(self, test_config):
         """Test basic service lifecycle - start and stop."""
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None), \
-             patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.start') as mock_start, \
-             patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.stop') as mock_stop, \
-             patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None):
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_instance.start = AsyncMock()
+            mock_instance.stop = AsyncMock()
+            mock_zmq_service.return_value = mock_instance
             
             service = ExperimanceCoreService(config=test_config)
             
             # Initialize essential attributes
-            setattr(service, 'worker_connections', {})
             setattr(service, 'service_name', test_config.experimance_core.name)
             setattr(service, 'tasks', [])
             setattr(service, '_running', False)
@@ -124,19 +126,22 @@ class TestExperimanceCoreServiceInfrastructure:
             
             # Test service lifecycle
             await service.start()
-            mock_start.assert_called_once()
+            mock_instance.start.assert_called_once()
             
             await service.stop()
-            mock_stop.assert_called_once()
+            mock_instance.stop.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_service_registers_message_handlers(self, test_config):
         """Test that service registers handlers for expected message types."""
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_instance.add_message_handler = Mock()
+            mock_zmq_service.return_value = mock_instance
+            
             service = ExperimanceCoreService(config=test_config)
             
-            # Mock the register_handler method to track what handlers are registered
-            service.register_handler = Mock()
+            # Mock required methods
             service.publish_message = AsyncMock()
             service.add_task = Mock()
             
@@ -144,17 +149,20 @@ class TestExperimanceCoreServiceInfrastructure:
             service._register_message_handlers()
             
             # Check that handlers are registered for expected message types
-            expected_handlers = ['ImageReady', 'AgentControl', 'AudioStatus']
+            expected_handlers = ['AgentControl', 'AudioStatus']  # ImageReady is handled via worker pull socket
             
-            # Verify that register_handler was called for each expected handler
-            assert service.register_handler.call_count >= len(expected_handlers)
+            # Verify that add_message_handler was called for each expected handler
+            assert mock_instance.add_message_handler.call_count >= len(expected_handlers)
             
-            # Check that the service has the _message_handlers attribute
-            assert hasattr(service, '_message_handlers')
+            # Check that the service has the zmq_service attribute
+            assert hasattr(service, 'zmq_service')
 
     def test_service_has_required_attributes(self, test_config):
         """Test that service has all required attributes for core functionality."""
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_zmq_service.return_value = mock_instance
+            
             service = ExperimanceCoreService(config=test_config)
             
             # State management attributes
@@ -177,19 +185,25 @@ class TestExperimanceCoreServiceInfrastructure:
         # Test with default configuration - should use default values
         default_config = CoreServiceConfig.from_overrides(override_config={})
         
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_zmq_service.return_value = mock_instance
+            
             service = ExperimanceCoreService(config=default_config)
             assert service is not None
             # Should use default configuration values
             assert service.config.experimance_core.name == "experimance_core"
 
     def test_service_inherits_from_correct_base_class(self, test_config):
-        """Test that service properly inherits from ZmqControllerMultiWorkerService."""
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
+        """Test that service properly uses ControllerService composition."""
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_zmq_service.return_value = mock_instance
+            
             service = ExperimanceCoreService(config=test_config)
             
-            # Should have publisher and subscriber capabilities
-            assert hasattr(service, 'publish_message')
+            # Should have ZMQ service capabilities through composition
+            assert hasattr(service, 'zmq_service')
             assert hasattr(service, '_register_message_handlers')
 
     @pytest.mark.skip(reason="ZmqPublisher mock needs adjustment - functionality works correctly")
@@ -209,7 +223,10 @@ class TestExperimanceCoreServiceInfrastructure:
 
     def test_service_has_state_persistence_attributes(self, test_config):
         """Test that service has attributes for state persistence."""
-        with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None):
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_zmq_service.return_value = mock_instance
+            
             service = ExperimanceCoreService(config=test_config)
             
             assert hasattr(service, 'session_start_time')

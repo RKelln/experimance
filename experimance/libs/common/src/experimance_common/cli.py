@@ -7,6 +7,7 @@ for consistent command line argument parsing, logging setup, and service executi
 import argparse
 import asyncio
 import logging
+from pathlib import Path
 import sys
 from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, get_args
 
@@ -225,13 +226,25 @@ async def run_service_cli(
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Experimance {service_name} Service with log level: {args.log_level}")
     
+    # remove cli only options from args (like log-level and thos in extra-args
+    # so they aren't validated by the pydantic config class    
+    config_path = getattr(args, 'config', default_config_path)
+    # remove config path from args if it exists
+    if config_path:
+        del args.config
+    if args.log_level:
+        del args.log_level
+    for arg in extra_args or {}:
+        if hasattr(args, arg.lstrip('--')):
+            delattr(args, arg.lstrip('--')) 
+    
     try:
         # Call the service runner with the parsed arguments
         if config_class:
             # Pass args for CLI overrides and config path
-            await service_runner(args=args, config_path=getattr(args, 'config', default_config_path))
+            await service_runner(args=args, config_path=config_path)
         elif default_config_path:
-            await service_runner(config_path=args.config)
+            await service_runner(config_path=config_path)
         else:
             await service_runner()
     except KeyboardInterrupt:

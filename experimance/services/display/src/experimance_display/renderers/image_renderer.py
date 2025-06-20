@@ -16,6 +16,8 @@ from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 from urllib.parse import urlparse
 
+from experimance_common.schemas import MessageBase
+from experimance_common.zmq.config import MessageDataType
 import pyglet
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 
@@ -159,14 +161,20 @@ class ImageRenderer(LayerRenderer):
         
         logger.debug(f"Image transition completed to: {self.current_image_id_value}")
     
-    async def handle_image_ready(self, message: Dict[str, Any]):
+    async def handle_display_media(self, message: MessageDataType):
         """Handle ImageReady message.
         
         Args:
             message: ImageReady message with image_id and uri, and optionally image_data
         """
         try:
-            image_id = message["image_id"]
+            if isinstance(message, MessageBase):
+                message = message.model_dump()
+                
+            image_id = message.get("image_id", None)
+            if not image_id:
+                logger.error("ImageReady message missing 'image_id'")
+                return
             
             logger.info(f"Loading image: {image_id}")
             

@@ -887,3 +887,209 @@ Use the background task pattern when testing services that:
 ### When `active_service()` Context Manager Works
 
 The `active_service()` context manager works well for most testing scenarios, but may not be suitable for services that need to stop themselves during the test. If you need to test self-stopping behavior, use the background task pattern instead.
+
+
+## Modernizing Existing Service Tests for New ZMQ Architecture
+
+**🎯 Key Insight**: When refactoring services to use the new ZMQ composition architecture (ControllerService, PublisherService, etc.), existing tests need to be updated to use proper mocking patterns.
+
+### The Challenge: Legacy vs Modern ZMQ Patterns
+
+**Legacy Pattern (OLD):**
+```python
+# Old pattern - services inherited from ZmqControllerMultiWorkerService
+class OldService(ZmqControllerMultiWorkerService):
+    def __init__(self, config):
+        super().__init__(config)
+        # Service had publish_message() method directly
+        
+# Tests used this directly
+service.publish_message(message)
+```
+
+**Modern Pattern (NEW):**
+```python
+# New pattern - services use composition with ControllerService
+class ModernService(BaseService):
+    def __init__(self, config):
+        super().__init__(config)
+        self.zmq_service = ControllerService(config.zmq)  # Composition
+        
+# Tests need to mock the composed service
+service.zmq_service.publish(message)
+```
+
+### Successful Refactoring Pattern for Test Fixtures
+
+When updating test fixtures for the new architecture, use this proven pattern:
+
+```python
+# Updated test fixture pattern that works
+@pytest.fixture
+def core_service(test_config):
+    """Create core service with properly mocked ZMQ components."""
+    # Add ZMQ config to test configuration
+    test_config.zmq = ControllerServiceConfig(
+        name="test_zmq",
+        publisher=PublisherConfig(address="tcp://*", port=5555),
+        subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=[]),
+        workers={}
+    )
+    
+    # Create a mock ZMQ service with proper AsyncMock methods
+    mock_zmq_service = Mock()
+    mock_zmq_service.start = AsyncMock()
+    mock_zmq_service.stop = AsyncMock()
+    mock_zmq_service.publish = AsyncMock()
+    mock_zmq_service.send_work_to_worker = AsyncMock()
+    mock_zmq_service.add_message_handler = Mock()
+    mock_zmq_service.add_response_handler = Mock()
+    
+    # Patch the ControllerService class to return our mock
+    with patch('my_service.my_service.ControllerService', return_value=mock_zmq_service):
+        service = MyService(config=test_config)
+        
+        # Store reference to mock for test assertions
+        service.zmq_service = mock_zmq_service
+        
+        yield service
+```
+
+### Converting Test Classes to Direct Patching
+
+For test classes that don't use fixtures, use direct patching in setup_method:
+
+```python
+class TestServiceImagePublishing:
+    """Test class updated for new ZMQ architecture."""
+    
+    def setup_method(self):
+        """Set up test fixtures with proper ZMQ mocking."""
+        # Create test config with ZMQ configuration
+        self.mock_config = Mock(spec=ServiceConfig)
+        self.mock_config.service_name = "test_service"
+        # ...other config setup...
+        
+        # Add proper ZMQ config (not Mock objects!)
+        self.mock_config.zmq = ControllerServiceConfig(
+            name="test_zmq",
+            publisher=PublisherConfig(address="tcp://*", port=5555),
+            subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=[]),
+            workers={}
+        )
+        
+        # Create mock ZMQ service with AsyncMock methods
+        self.mock_zmq_service = Mock()
+        self.mock_zmq_service.start = AsyncMock()
+        self.mock_zmq_service.stop = AsyncMock()
+        self.mock_zmq_service.publish = AsyncMock()
+        self.mock_zmq_service.send_work_to_worker = AsyncMock()
+        self.mock_zmq_service.add_message_handler = Mock()
+        self.mock_zmq_service.add_response_handler = Mock()
+        
+        # Start the patch
+        self.controller_patcher = patch('my_service.my_service.ControllerService')
+        mock_controller_class = self.controller_patcher.start()
+        mock_controller_class.return_value = self.mock_zmq_service
+        
+        # Create service with mocked ZMQ
+        self.service = MyService(config=self.mock_config)
+        
+        # Mock other essential methods as needed
+        self.service.add_task = Mock()
+        self.service.record_error = Mock()
+        self.service._sleep_if_running = AsyncMock(return_value=False)
+    
+    def teardown_method(self):
+        """Clean up after each test."""
+        if hasattr(self, 'controller_patcher'):
+            self.controller_patcher.stop()
+    
+    @pytest.mark.asyncio
+    async def test_message_publishing(self):
+        """Test that message publishing works with new architecture."""
+        await self.service._publish_change_map(test_data, 0.5)
+        
+        # Assert on the mock ZMQ service, not the service itself
+        self.mock_zmq_service.publish.assert_called_once()
+        published_data = self.mock_zmq_service.publish.call_args[0][0]
+        assert published_data["type"] == "ChangeMap"
+```
+
+### Key Refactoring Steps
+
+1. **Update Config Creation**: Replace Mock zmq config with real ControllerServiceConfig objects
+2. **Create Proper Mock ZMQ Service**: Use AsyncMock for async methods (publish, send_work_to_worker)
+3. **Patch the ControllerService Class**: Use `patch('module.ControllerService')` not service attributes
+4. **Update Test Assertions**: Change `service.publish_message.assert_called()` to `service.zmq_service.publish.assert_called()`
+5. **Handle Method Differences**: Some methods changed (e.g., `publish_message` → `publish`, render requests use `send_work_to_worker`)
+
+### Common Pitfalls and Solutions
+
+#### ❌ Wrong: Mock objects in ZMQ config
+```python
+# This fails because Mock objects aren't iterable
+self.mock_config.zmq = Mock()
+self.mock_config.zmq.workers = {}  # Mock object, not real dict!
+```
+
+#### ✅ Right: Real config objects for ZMQ
+```python
+# This works because it creates real config objects
+self.mock_config.zmq = ControllerServiceConfig(
+    name="test_zmq",
+    publisher=PublisherConfig(address="tcp://*", port=5555),
+    workers={}  # Real dict, not Mock
+)
+```
+
+#### ❌ Wrong: Patching after service creation
+```python
+service = MyService(config)  # Service already created ControllerService
+service.zmq_service = Mock()  # Too late, real ControllerService already exists
+```
+
+#### ✅ Right: Patching before service creation
+```python
+with patch('my_service.ControllerService', return_value=mock_zmq_service):
+    service = MyService(config)  # Now gets the mocked ControllerService
+```
+
+#### ❌ Wrong: Using wrong assertion methods
+```python
+# Old pattern - service had publish_message directly
+service.publish_message.assert_called_once()
+
+# New pattern - but wrong method name
+service.zmq_service.publish_message.assert_called_once()  # Doesn't exist!
+```
+
+#### ✅ Right: Using correct method names
+```python
+# Correct for publishing
+service.zmq_service.publish.assert_called_once()
+
+# Correct for worker communication  
+service.zmq_service.send_work_to_worker.assert_called_once()
+```
+
+### Migration Checklist for Existing Tests
+
+When updating existing service tests for the new ZMQ architecture:
+
+- [ ] **Update imports**: Add ControllerServiceConfig, PublisherConfig, SubscriberConfig
+- [ ] **Fix config creation**: Replace Mock zmq config with real config objects
+- [ ] **Create proper mock ZMQ service**: Use AsyncMock for async methods
+- [ ] **Add proper patching**: Patch ControllerService class before service creation
+- [ ] **Update test assertions**: Change from `publish_message` to appropriate ZMQ service methods
+- [ ] **Handle method differences**: Check if service uses `publish` vs `send_work_to_worker`
+- [ ] **Add cleanup**: Include teardown_method to stop patches
+- [ ] **Test the changes**: Verify tests pass with `uv run -m pytest`
+
+### Benefits of Updated Test Pattern
+
+1. **Proper Isolation**: ZMQ components are fully mocked, no real network sockets
+2. **Faster Tests**: No network I/O or port conflicts
+3. **Reliable Assertions**: AsyncMock provides proper call tracking
+4. **Future-Proof**: Works with composition-based ZMQ architecture
+5. **Clear Intent**: Test code clearly shows what's being mocked and asserted

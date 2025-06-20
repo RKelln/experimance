@@ -23,6 +23,8 @@ from experimance_core.depth_processor import DepthProcessor
 from experimance_core.mock_depth_processor import MockDepthProcessor
 from experimance_core.depth_utils import detect_difference, simple_obstruction_detect
 from experimance_common.test_utils import active_service
+from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
 
 @pytest.fixture
@@ -152,6 +154,35 @@ class TestDepthProcessorUnit:
 class TestDepthProcessingIntegration:
     """Test depth processing integration with core service."""
     
+    def create_mocked_service(self, test_config):
+        """Create a properly mocked test service for depth integration tests."""
+        # Create mock ZMQ service
+        mock_zmq_service = Mock()
+        mock_zmq_service.start = AsyncMock()
+        mock_zmq_service.stop = AsyncMock()
+        mock_zmq_service.publish = AsyncMock()
+        mock_zmq_service.send_work_to_worker = AsyncMock()
+        mock_zmq_service.add_message_handler = Mock()
+        mock_zmq_service.add_response_handler = Mock()
+        
+        # Patch and create service
+        patcher = patch('experimance_core.experimance_core.ControllerService')
+        mock_controller_class = patcher.start()
+        mock_controller_class.return_value = mock_zmq_service
+        
+        service = ExperimanceCoreService(config=test_config)
+        
+        # Mock essential methods
+        service.add_task = Mock()
+        service.record_error = Mock()
+        service._sleep_if_running = AsyncMock(return_value=False)
+        
+        # Store patcher and mock for test access
+        service._mock_patcher = patcher
+        service._mock_zmq_service = mock_zmq_service
+        
+        return service
+    
     @pytest.mark.asyncio
     async def test_depth_frame_processing_with_mock_processor(self, test_config, camera_config):
         """Test depth frame processing using mock processor directly."""
@@ -192,26 +223,27 @@ class TestDepthProcessingIntegration:
             mock_processor = MockDepthProcessor(camera_config)
             mock_factory.return_value = mock_processor
             
-            service = ExperimanceCoreService(config=test_config)
+            service = self.create_mocked_service(test_config)
             
-            # Mock the publish_message method to track events
-            service.publish_message = AsyncMock()
-            
-            # Test direct frame processing
-            test_frame = DepthFrame(
-                depth_image=np.ones((256, 256), dtype=np.uint8) * 128,
-                hand_detected=False,
-                change_score=0.5,
-                frame_number=1,
-                timestamp=time.time()
-            )
-            
-            # Process the frame
-            await service._process_depth_frame(test_frame)
-            
-            # Verify frame was processed (should update previous_depth_image)
-            assert service.previous_depth_image is not None
-            assert np.array_equal(service.previous_depth_image, test_frame.depth_image)
+            try:
+                # Test direct frame processing
+                test_frame = DepthFrame(
+                    depth_image=np.ones((256, 256), dtype=np.uint8) * 128,
+                    hand_detected=False,
+                    change_score=0.5,
+                    frame_number=1,
+                    timestamp=time.time()
+                )
+                
+                # Process the frame
+                await service._process_depth_frame(test_frame)
+                
+                # Verify frame was processed (should update previous_depth_image)
+                assert service.previous_depth_image is not None
+                assert np.array_equal(service.previous_depth_image, test_frame.depth_image)
+            finally:
+                if hasattr(service, '_mock_patcher'):
+                    service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_hand_detection_triggers_interaction_sound(self, test_config, camera_config):
@@ -220,35 +252,38 @@ class TestDepthProcessingIntegration:
             mock_processor = MockDepthProcessor(camera_config)
             mock_factory.return_value = mock_processor
             
-            service = ExperimanceCoreService(config=test_config)
-            service.publish_message = AsyncMock()
+            service = self.create_mocked_service(test_config)
             
-            # Test hand detection state change
-            frame_with_hands = DepthFrame(
-                depth_image=np.ones((256, 256), dtype=np.uint8) * 100,
-                hand_detected=True,
-                change_score=0.3,
-                frame_number=1,
-                timestamp=time.time()
-            )
-            
-            frame_without_hands = DepthFrame(
-                depth_image=np.ones((256, 256), dtype=np.uint8) * 120,
-                hand_detected=False,
-                change_score=0.1,
-                frame_number=2,
-                timestamp=time.time()
-            )
-            
-            # Process frames to trigger hand state changes
-            await service._process_depth_frame(frame_with_hands)
-            initial_calls = service.publish_message.call_count
-            
-            await service._process_depth_frame(frame_without_hands)
-            final_calls = service.publish_message.call_count
-            
-            # Should have published at least one additional message for the state change
-            assert final_calls > initial_calls
+            try:
+                # Test hand detection state change
+                frame_with_hands = DepthFrame(
+                    depth_image=np.ones((256, 256), dtype=np.uint8) * 100,
+                    hand_detected=True,
+                    change_score=0.3,
+                    frame_number=1,
+                    timestamp=time.time()
+                )
+                
+                frame_without_hands = DepthFrame(
+                    depth_image=np.ones((256, 256), dtype=np.uint8) * 120,
+                    hand_detected=False,
+                    change_score=0.1,
+                    frame_number=2,
+                    timestamp=time.time()
+                )
+                
+                # Process frames to trigger hand state changes
+                await service._process_depth_frame(frame_with_hands)
+                initial_calls = service._mock_zmq_service.publish.call_count
+                
+                await service._process_depth_frame(frame_without_hands)
+                final_calls = service._mock_zmq_service.publish.call_count
+                
+                # Should have published at least one additional message for the state change
+                assert final_calls > initial_calls
+            finally:
+                if hasattr(service, '_mock_patcher'):
+                    service._mock_patcher.stop()
 
 
 class TestDepthUtilityFunctions:
@@ -423,29 +458,42 @@ class TestMockDepthProcessorAdvanced:
     
     @pytest.mark.asyncio
     async def test_mock_processor_realistic_hand_detection_patterns(self, camera_config):
-        """Test mock processor generates realistic hand detection patterns."""
+        """Test mock processor generates deterministic hand detection patterns with 0% and 100% rates."""
         processor = MockDepthProcessor(camera_config)
         await processor.initialize()
         
-        hand_detections = []
-        
         try:
-            # Collect many frames to test statistical properties
+            # Test with 0% hand detection rate - should never detect hands
+            processor.set_hand_detection_rate(0.0)
+            
+            hand_detections_zero = []
             frame_count = 0
+            
             async for frame in processor.stream_frames():
-                hand_detections.append(frame.hand_detected)
+                hand_detections_zero.append(frame.hand_detected)
                 frame_count += 1
                 
-                if frame_count >= 20:
+                if frame_count >= 10:
                     break
             
-            # Should have a mix of True and False (not all one value)
-            assert True in hand_detections
-            assert False in hand_detections
+            # With 0% rate, should have no hand detections
+            assert not any(hand_detections_zero), f"Expected no hands with 0% rate, got {hand_detections_zero}"
             
-            # Hand detection rate should be reasonable (not too high)
-            hand_rate = sum(hand_detections) / len(hand_detections)
-            assert 0.0 <= hand_rate <= 0.3  # Should be relatively low
+            # Test with 100% hand detection rate - should always detect hands
+            processor.set_hand_detection_rate(1.0)
+            
+            hand_detections_hundred = []
+            frame_count = 0
+            
+            async for frame in processor.stream_frames():
+                hand_detections_hundred.append(frame.hand_detected)
+                frame_count += 1
+                
+                if frame_count >= 10:
+                    break
+            
+            # With 100% rate, should have all hand detections
+            assert all(hand_detections_hundred), f"Expected all hands with 100% rate, got {hand_detections_hundred}"
             
         finally:
             processor.stop()

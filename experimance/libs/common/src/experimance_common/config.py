@@ -126,7 +126,8 @@ def load_config_with_overrides(
                 with open(config_path, 'r') as f:
                     file_config = toml.load(f)
                     config = deep_merge(config, file_config)
-                    logger.info(f"Loaded configuration from {config_file}")
+                    logger.info(f"Loaded configuration from {config_path.relative_to(Path.cwd())}")
+                    logger.debug(config)
             except Exception as e:
                 logger.warning(f"Error loading config from {config_file}: {e}")
         else:
@@ -197,6 +198,9 @@ class BaseConfig(BaseModel):
         # Then validate with Pydantic and return instance
         return cls(**merged_config)
 
+    def __str__(self) -> str:
+        """String representation of the configuration."""
+        return f"{self.__class__.__name__}:\n{self.model_dump_json(indent=2)}"
 # =============================================================================
 # SERVICE CONFIGURATION BASE CLASSES
 # =============================================================================

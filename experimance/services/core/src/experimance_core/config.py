@@ -16,8 +16,10 @@ import numpy as np
 
 from experimance_common.config import BaseConfig
 from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
-from experimance_common.zmq.controller import ControllerMultiWorkerConfig, WorkerConnectionConfig
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.zmq.config import (
+    ControllerServiceConfig, WorkerConfig, PublisherConfig, 
+    SubscriberConfig, PushConfig, PullConfig, MessageType
+)
 
 # Define the default configuration path relative to the project root
 DEFAULT_CONFIG_PATH = f"{CORE_SERVICE_DIR}/config.toml"
@@ -42,20 +44,6 @@ class ExperimanceCoreConfig(BaseModel):
     change_smoothing_queue_size: int = Field(
         default=3,
         description="Size of the change score queue for smoothing (minimum values reduce hand entry/exit artifacts)"
-    )
-
-
-class ZmqConfig(BaseModel):
-    """ZeroMQ configuration for the Core Service."""
-    
-    events_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-        description="Address for subscribing to unified events channel"
-    )
-    
-    events_pub_address: str = Field(
-        default=f"tcp://*:{DEFAULT_PORTS['events']}",
-        description="Address for publishing to unified events channel"
     )
 
 
@@ -440,63 +428,6 @@ class PromptingConfig(BaseModel):
     )
 
 
-class WorkerConfigHelper(BaseModel):
-    """Helper configuration for creating multi-controller worker config."""
-    
-    non_blocking: bool = Field(
-        default=False,
-        description="If True, worker pull connections will use optimized non-block path"
-    )
-
-    image_worker: bool = Field(
-        default=True,
-        description="Enable image processing worker"
-    )
-    
-    transition_worker: bool = Field(
-        default=True,
-        description="Enable transition processing worker"
-    )
-    
-    video_worker: bool = Field(
-        default=False,  # Optional for now
-        description="Enable loop/video processing worker"
-    )
-    
-    def create_controller_config(self) -> ControllerMultiWorkerConfig:
-        """Create a ControllerMultiWorkerConfig from this helper config.
-        
-        Returns:
-            Properly configured ControllerMultiWorkerConfig instance
-        """
-        workers = {}
-        
-        if self.image_worker:
-            workers["image"] = WorkerConnectionConfig(
-                push_address=f"tcp://*:{DEFAULT_PORTS['image_requests']}",
-                pull_address=f"tcp://*:{DEFAULT_PORTS['image_results']}",
-                push_message_types=[MessageType.RENDER_REQUEST],
-                pull_message_types=[MessageType.IMAGE_READY]
-            )
-        
-        if self.transition_worker:
-            workers["transition"] = WorkerConnectionConfig(
-                push_address=f"tcp://*:{DEFAULT_PORTS['transition_requests']}",
-                pull_address=f"tcp://*:{DEFAULT_PORTS['transition_results']}",
-                push_message_types=[MessageType.TRANSITION_REQUEST],
-                pull_message_types=[MessageType.TRANSITION_READY]
-            )
-        
-        if self.video_worker:
-            workers["video"] = WorkerConnectionConfig(
-                push_address=f"tcp://*:{DEFAULT_PORTS['video_requests']}",
-                pull_address=f"tcp://*:{DEFAULT_PORTS['video_results']}",
-                push_message_types=[MessageType.LOOP_REQUEST],
-                pull_message_types=[MessageType.LOOP_READY]
-            )
-        
-        return ControllerMultiWorkerConfig(workers=workers)
-
 class CoreServiceConfig(BaseConfig):
     """Complete configuration schema for the Core Service."""
     
@@ -510,18 +441,58 @@ class CoreServiceConfig(BaseConfig):
     
     # Main configuration sections
     experimance_core: ExperimanceCoreConfig = Field(default_factory=ExperimanceCoreConfig)
-    zmq: ZmqConfig = Field(default_factory=ZmqConfig)
-    workers: WorkerConfigHelper = Field(default_factory=WorkerConfigHelper)
+    zmq: ControllerServiceConfig = Field(
+        default_factory=lambda: ControllerServiceConfig(
+            name="experimance-core",
+            publisher=PublisherConfig(
+                address="tcp://*",
+                port=DEFAULT_PORTS["events"],
+                default_topic="core.events"
+            ),
+            subscriber=SubscriberConfig(
+                address="tcp://localhost",
+                port=DEFAULT_PORTS["events"],
+                topics=["heartbeat", "status", "AudioStatus", MessageType.AGENT_CONTROL_EVENT.value]
+            ),
+            workers={
+                "image_server": WorkerConfig(
+                    name="image_server",
+                    push_config=PushConfig(
+                        address="tcp://*",
+                        port=DEFAULT_PORTS["image_requests"]
+                    ),
+                    pull_config=PullConfig(
+                        address="tcp://localhost",
+                        port=DEFAULT_PORTS["image_results"]
+                    )
+                ),
+                "audio": WorkerConfig(
+                    name="audio",
+                    push_config=PushConfig(
+                        address="tcp://*",
+                        port=DEFAULT_PORTS["audio_requests"]
+                    ),
+                    pull_config=PullConfig(
+                        address="tcp://localhost",
+                        port=DEFAULT_PORTS["audio_results"]
+                    )
+                ),
+                "display": WorkerConfig(
+                    name="display",
+                    push_config=PushConfig(
+                        address="tcp://*",
+                        port=DEFAULT_PORTS["display_requests"]
+                    ),
+                    pull_config=PullConfig(
+                        address="tcp://localhost",
+                        port=DEFAULT_PORTS["display_results"]
+                    )
+                )
+            }
+        )
+    )
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     depth_processing: DepthProcessingConfig = Field(default_factory=DepthProcessingConfig)  # Legacy compatibility
     audio: AudioConfig = Field(default_factory=AudioConfig)
     prompting: PromptingConfig = Field(default_factory=PromptingConfig)
-    
-    def get_controller_config(self) -> ControllerMultiWorkerConfig:
-        """Get the ControllerMultiWorkerConfig for the ZMQ controller service.
-        
-        Returns:
-            Configured ControllerMultiWorkerConfig instance
-        """
-        return self.workers.create_controller_config()

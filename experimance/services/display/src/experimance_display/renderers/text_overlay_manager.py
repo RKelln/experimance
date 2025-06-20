@@ -15,6 +15,7 @@ import logging
 import time
 from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING, List
 
+from experimance_common.zmq.config import MessageDataType
 from experimance_display.config import TextStylesConfig, TransitionsConfig, FadeDurationType
 from pyglet.text import Label
 
@@ -246,17 +247,20 @@ class TextOverlayManager(LayerRenderer):
         except Exception as e:
             logger.error(f"Error rendering text overlays: {e}", exc_info=True)
     
-    async def handle_text_overlay(self, message: Dict[str, Any]):
+    async def handle_text_overlay(self, message: MessageDataType):
         """Handle TextOverlay message.
         
         Args:
             message: TextOverlay message
         """
         try:
-            text_id = message["text_id"]
-            content = message["content"]
+            text_id = message.get("text_id")
+            content = message.get("content")
+            if not text_id or not content:
+                logger.error("TextOverlay message missing 'text_id' or 'content'")
+                return
             speaker = message.get("speaker", "system")
-            duration = message.get("duration")
+            duration = message.get("duration", None)
             style_overrides = message.get("style", {})
             
             logger.info(f"Adding text overlay: {text_id} ({speaker}): {content}")
@@ -297,14 +301,14 @@ class TextOverlayManager(LayerRenderer):
         except Exception as e:
             logger.error(f"Error handling TextOverlay: {e}", exc_info=True)
     
-    async def handle_remove_text(self, message: Dict[str, Any]):
+    async def handle_remove_text(self, message: MessageDataType):
         """Handle RemoveText message.
         
         Args:
             message: RemoveText message with text_id
         """
         try:
-            text_id = message["text_id"]
+            text_id = message.get("text_id")
             
             if text_id in self.text_items:
                 logger.info(f"Removing text overlay: {text_id}")

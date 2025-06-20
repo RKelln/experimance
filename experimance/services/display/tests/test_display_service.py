@@ -87,14 +87,14 @@ class TestDisplayService:
         assert hasattr(zmq_service, 'add_message_handler')
     
     @pytest.mark.asyncio
-    async def test_handle_image_ready(self, mock_service):
+    async def test_handle_display_media(self, mock_service):
         """Test handling of ImageReady messages."""
         message = create_test_message("image_ready")
         
-        await mock_service._handle_image_ready(message)
+        await mock_service._handle_display_media(message)
         
         # Verify the image renderer was called
-        mock_service.image_renderer.handle_image_ready.assert_called_once_with(message)
+        mock_service.image_renderer.handle_display_media.assert_called_once_with(message)
     
     @pytest.mark.asyncio
     async def test_handle_text_overlay(self, mock_service):
@@ -248,7 +248,7 @@ class TestDisplayServiceIntegration:
             await handler(message)
         
         # Verify all handlers were called
-        service.image_renderer.handle_image_ready.assert_called_once()
+        service.image_renderer.handle_display_media.assert_called_once()
         service.text_overlay_manager.handle_text_overlay.assert_called_once()
         service.video_overlay_renderer.handle_video_mask.assert_called_once()
         service.text_overlay_manager.handle_remove_text.assert_called_once()

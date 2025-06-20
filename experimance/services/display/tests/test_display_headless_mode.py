@@ -148,7 +148,7 @@ class TestHeadlessMode:
         
         # Mock renderers
         service.image_renderer = Mock()
-        service.image_renderer.handle_image_ready = AsyncMock()
+        service.image_renderer.handle_display_media = AsyncMock()
         service.text_overlay_manager = Mock()
         service.text_overlay_manager.handle_text_overlay = AsyncMock()
         
@@ -159,8 +159,8 @@ class TestHeadlessMode:
         }
         
         # Test message handling
-        await service._handle_image_ready(image_message)
-        service.image_renderer.handle_image_ready.assert_called_once_with(image_message)
+        await service._handle_display_media(image_message)
+        service.image_renderer.handle_display_media.assert_called_once_with(image_message)
         
         # Test text message
         text_message = {
@@ -206,7 +206,7 @@ class TestHeadlessMode:
         
         # These should not raise exceptions, and should return without processing
         with patch.object(service, '_validate_image_ready', return_value=False):
-            await service._handle_image_ready(invalid_message)
+            await service._handle_display_media(invalid_message)
         
         with patch.object(service, '_validate_text_overlay', return_value=False):
             await service._handle_text_overlay(invalid_message)

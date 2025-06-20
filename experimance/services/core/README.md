@@ -19,21 +19,40 @@ Experimance is an interactive art installation that responds to human presence a
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐
-│   Depth Camera  │───▶│   Core Service   │
-│   (RealSense)   │    │   (Coordinator)  │
-└─────────────────┘    └──────────────────┘
-                              │
-                              ▼
-                       ┌──────────────────┐    ┌─────────────────┐
-                       │  ZMQ Event Bus   │───▶│  Other Services │
-                       │   (tcp://5555)   │    │ Audio/Display/  │
-                       └──────────────────┘    │ Image/Agent/etc │
-                                               └─────────────────┘
+┌─────────────────┐    ┌──────────────────────────────────────────┐
+│   Depth Camera  │───▶│            Core Service                  │
+│   (RealSense)   │    │  ┌─────────────────────────────────────┐ │
+└─────────────────┘    │  │      ControllerService              │ │
+                       │  │  ┌─────────────┬─────────────────┐  │ │
+                       │  │  │ Publisher   │  Subscriber     │  │ │
+                       │  │  │ (events)    │  (coordination) │  │ │
+                       │  │  └─────────────┴─────────────────┘  │ │
+                       │  │  ┌─────────────────────────────────┐  │ │
+                       │  │  │         Workers                 │  │ │
+                       │  │  │  ┌─────────┬─────────┬───────┐  │  │ │
+                       │  │  │  │ Image   │ Audio   │Display│  │  │ │
+                       │  │  │  │Server   │Service  │Service│  │  │ │
+                       │  │  │  │Push/Pull│Push/Pull│Push/  │  │  │ │
+                       │  │  │  │         │         │Pull   │  │  │ │
+                       │  │  │  └─────────┴─────────┴───────┘  │  │ │
+                       │  │  └─────────────────────────────────┘  │ │
+                       │  └─────────────────────────────────────┘ │
+                       └──────────────────────────────────────────┘
+                                          │
+                                          ▼
+                      ┌───────────────────────────────────────────────┐
+                      │             ZMQ Communication                 │
+                      │   ┌─────────────┬─────────────┬─────────────┐ │
+                      │   │PubSub Events│Push/Pull    │Worker Results│ │
+                      │   │(tcp://5555) │Work Distrib │(tcp://556x) │ │
+                      │   │             │(tcp://556x) │             │ │
+                      │   └─────────────┴─────────────┴─────────────┘ │
+                      └───────────────────────────────────────────────┘
 ```
 
 ### Service Type
-- **Publisher/Subscriber Service**: Extends `ZMQPublisherSubscriberService`
+- **Controller Service**: Uses `BaseService` + `ControllerService` composition pattern
+- **Multi-Worker Coordination**: Manages push/pull workers for image, audio, and display services
 - **Async Processing**: Built on `asyncio` for concurrent operations
 - **Event-Driven**: Responds to user interactions and service coordination events
 
@@ -136,14 +155,55 @@ For detailed camera setup and troubleshooting, see [README_DEPTH.md](README_DEPT
 ```toml
 [experimance_core]
 name = "experimance_core"
-publish_port = 5555           # ZMQ event publishing port
-heartbeat_interval = 3.0      # Service health broadcast interval
 
 [state_machine] 
 idle_timeout = 45.0           # Seconds before idle drift starts
 wilderness_reset = 300.0      # Seconds to full reset to wilderness
 interaction_threshold = 0.3   # Minimum score for era advancement
 era_min_duration = 10.0       # Minimum time in era before advancement
+
+[zmq]
+name = "experimance-core"     # ZMQ service name
+log_level = "INFO"            # ZMQ logging level
+timeout = 5.0                 # Operation timeout in seconds
+heartbeat_interval = 3.0      # Service health broadcast interval
+
+[zmq.publisher]
+address = "tcp://*"           # Publisher bind address
+port = 5555                   # ZMQ event publishing port
+default_topic = "core.events" # Default publishing topic
+
+[zmq.subscriber]
+address = "tcp://localhost"   # Subscriber connect address
+port = 5555                   # ZMQ event subscription port
+topics = ["heartbeat", "status", "AudioStatus", "AgentControlEvent"]
+
+[zmq.workers.image_server]
+name = "image_server"
+[zmq.workers.image_server.push_config]
+address = "tcp://*"
+port = 5564                   # Send work to image server
+[zmq.workers.image_server.pull_config]
+address = "tcp://localhost"
+port = 5565                   # Receive results from image server
+
+[zmq.workers.audio]
+name = "audio"
+[zmq.workers.audio.push_config]
+address = "tcp://*"
+port = 5566                   # Send work to audio service
+[zmq.workers.audio.pull_config] 
+address = "tcp://localhost"
+port = 5567                   # Receive results from audio service
+
+[zmq.workers.display]
+name = "display"
+[zmq.workers.display.push_config]
+address = "tcp://*"
+port = 5568                   # Send work to display service
+[zmq.workers.display.pull_config]
+address = "tcp://localhost"
+port = 5569                   # Receive results from display service
 
 [depth_processing]
 camera_config_path = ""       # Optional RealSense advanced config JSON
@@ -155,7 +215,6 @@ max_depth = 0.56             # Maximum depth range (meters)
 output_size = [1024, 1024]   # Processed output resolution
 
 [audio]
-zmq_address = "tcp://*:5560"  # Audio service coordination
 interaction_sound_duration = 2.0  # Duration for interaction sounds
 
 [prompting]
@@ -191,7 +250,43 @@ dev_config = CameraConfig(
 
 ## Event System
 
-The Core Service communicates with other services through ZMQ events published on port 5555.
+The Core Service communicates with other services through a modern ZMQ architecture using the composition pattern:
+
+### ZMQ Architecture
+
+- **ControllerService Composition**: Uses `BaseService` + `ControllerService` from `experimance_common.zmq.services`
+- **Publisher/Subscriber**: Broadcasts events and receives coordination messages on port 5555
+- **Push/Pull Workers**: Distributes work to and receives results from worker services
+- **Type-Safe Configuration**: All ZMQ settings defined via `ControllerServiceConfig` from `experimance_common.zmq.config`
+
+### Worker Communication Patterns
+
+#### Image Server Worker
+```python
+# Send render request to image server
+await self.zmq_service.send_work_to_worker("image_server", render_request)
+
+# Receive image ready response via pull socket
+# Handled automatically by worker response handler
+```
+
+#### Audio Service Worker
+```python
+# Send audio command to audio service  
+await self.zmq_service.send_work_to_worker("audio", audio_command)
+
+# Receive audio status via pull socket
+# Handled automatically by worker response handler
+```
+
+#### Display Service Worker
+```python
+# Send display media to display service
+await self.zmq_service.send_work_to_worker("display", display_media)
+
+# Receive display confirmation via pull socket
+# Handled automatically by worker response handler
+```
 
 ### Published Events
 
@@ -278,21 +373,19 @@ The service listens for coordination events from other services:
 ```
 services/core/
 ├── README.md                    # This file
-├── DESIGN.md                    # Detailed architecture documentation
+├── DESIGN.md                    # Detailed architecture documentation  
 ├── README_DEPTH.md              # Camera setup and troubleshooting
 ├── config.toml                  # Service configuration
 ├── pyproject.toml              # Python dependencies and scripts
 ├── src/
 │   └── experimance_core/
 │       ├── __init__.py
-│       ├── experimance_core.py  # Main service class
-│       ├── robust_camera.py     # Modern camera interface
-│       ├── camera_utils.py      # Camera diagnostics and utilities
-│       ├── mock_depth_processor.py  # Mock camera for development
+│       ├── experimance_core.py  # Main service class with ControllerService composition
+│       ├── config.py           # Configuration classes using ControllerServiceConfig
+│       ├── depth_processor.py   # Modern camera interface
+│       ├── depth_visualizer.py  # Camera visualization and debugging
 │       ├── depth_factory.py     # Camera factory function
-│       ├── config.py           # Configuration classes
-│       ├── prompter.py         # Text prompt generation
-│       └── depth_finder.py     # Legacy camera module (deprecated)
+│       └── prompter.py         # Text prompt generation
 ├── tests/
 │   ├── test_camera.py          # Camera testing and visualization
 │   ├── test_integration.py     # Service integration tests
@@ -553,11 +646,23 @@ CMD ["uv", "run", "-m", "experimance_core"]
 
 ### Architecture Guidelines
 
-- **Modularity**: Keep camera, state machine, and coordination separate
+- **Composition over Inheritance**: Uses `BaseService` + `ControllerService` composition pattern
+- **Standard Configuration**: All ZMQ config via `ControllerServiceConfig` from common library
 - **Event-Driven**: Use ZMQ events for all service coordination
+- **Type Safety**: Full type hints with Pydantic configuration validation
+- **Worker Coordination**: Push/pull patterns for distributed work processing
 - **Configuration**: All behavior configurable via `config.toml`
 - **Monitoring**: Include metrics and health checks
 - **Documentation**: Keep README and design docs updated
+
+### Benefits of New ZMQ Architecture
+
+- **Standardization**: Uses proven patterns from `experimance_common` library
+- **Type Safety**: Pydantic models ensure configuration correctness
+- **Maintainability**: Clear separation between service logic and ZMQ communication
+- **Scalability**: Worker patterns support distributed processing
+- **Reliability**: Built-in error handling and recovery patterns
+- **Testing**: Easy to mock and test with standard interfaces
 
 ## Related Documentation
 

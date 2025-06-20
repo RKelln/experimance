@@ -87,6 +87,19 @@ class MessageBase(BaseModel):
         """
         return getattr(self, key, missing_value)
 
+    # allow for "key in MessageBase"
+    def __contains__(self, key: str) -> bool:
+        """
+        Check if the message contains a specific key.
+        
+        Args:
+            key: The key to check for in the message
+            
+        Returns:
+            True if the key exists, False otherwise
+        """
+        return hasattr(self, key)
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Union[Dict[str, Any], 'MessageBase']:
         """

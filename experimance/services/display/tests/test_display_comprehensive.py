@@ -483,11 +483,11 @@ class TestImageDisplay:
                 mock_current_image_id = "test_image_1"
                 with patch.object(type(active.image_renderer), 'current_image_id', new_callable=PropertyMock) as mock_prop:
                     # Mock the direct image handling to bypass actual file loading
-                    async def mock_handle_image(message):
+                    async def mock_display_media(message):
                         # Update our mock property value
                         mock_prop.return_value = message["image_id"]
                     
-                    active._handle_image_ready = mock_handle_image
+                    active._handle_display_media = mock_display_media
                     
                     # Test image loading
                     image_message = {
@@ -497,7 +497,7 @@ class TestImageDisplay:
                     }
                     
                     # Call handler directly
-                    await active._handle_image_ready(image_message)
+                    await active._handle_display_media(image_message)
                     
                     # Verify image was processed by checking our mock
                     assert mock_prop.return_value == "test_image_1"
@@ -540,7 +540,7 @@ class TestImageDisplay:
                 active.image_renderer.transition_active = False
                 
                 # Custom handler to control transition behavior
-                async def mock_handle_image(message):
+                async def mock_display_media(message):
                     image_id = message["image_id"]
                     
                     assert active.image_renderer is not None
@@ -560,7 +560,7 @@ class TestImageDisplay:
                             active.image_renderer.next_image_id_value = None
                             active.image_renderer.transition_active = False
                     
-                active._handle_image_ready = mock_handle_image
+                active._handle_display_media = mock_display_media
                 
                 # Load first image
                 image1_message = {
@@ -568,7 +568,7 @@ class TestImageDisplay:
                     "uri": f"file://{mock_image_files['image1']}",
                     "image_type": "satellite_landscape"
                 }
-                await active._handle_image_ready(image1_message)
+                await active._handle_display_media(image1_message)
                 
                 # Verify first image is loaded
                 assert active.image_renderer.current_image_id == "image_1"
@@ -583,7 +583,7 @@ class TestImageDisplay:
                 }
                 
                 # Start transition
-                transition_task = asyncio.create_task(active._handle_image_ready(image2_message))
+                transition_task = asyncio.create_task(active._handle_display_media(image2_message))
                 
                 # Check transition is active
                 await asyncio.sleep(0.05)

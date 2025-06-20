@@ -608,18 +608,38 @@ class MockControllerService:
         
         logger.debug(f"MockControllerService '{self.name}' published to {resolved_topic}: {message}")
     
-    async def push_to_worker(self, worker_name: str, message: Dict[str, Any]):
-        """Push message to specific worker."""
+    async def send_work_to_worker(self, worker_name: str, work_data: Any) -> None:
+        """Send work to a specific worker (matching real ControllerService interface)."""
         if not self.running:
             raise RuntimeError(f"MockControllerService '{self.name}' not running")
         
         if worker_name not in self.config.workers:
             raise ValueError(f"Unknown worker: {worker_name}")
         
+        # Convert work_data to dict if needed
+        if isinstance(work_data, dict):
+            message = work_data
+        else:
+            # Assume it's a MessageBase or similar with a dict() method
+            message = work_data.dict() if hasattr(work_data, 'dict') else dict(work_data)
+        
+        # Store message for testing
+        mock_msg = MockMessage(topic=f"worker.{worker_name}", content=message, sender_id=self.name)
+        self.worker_messages[worker_name].append(mock_msg)
+        
         # Send via message bus for cross-service testing
         await mock_message_bus.push_to_worker(worker_name, message, self.name)
         
-        logger.debug(f"MockControllerService '{self.name}' pushed to worker {worker_name}: {message}")
+        logger.debug(f"MockControllerService '{self.name}' sent work to worker {worker_name}: {message}")
+    
+    async def send_work_to_all_workers(self, work_data: Any) -> None:
+        """Send work to all workers (matching real ControllerService interface)."""
+        for worker_name in self.config.workers:
+            await self.send_work_to_worker(worker_name, work_data)
+    
+    async def push_to_worker(self, worker_name: str, message: Dict[str, Any]):
+        """Push message to specific worker (legacy method name for compatibility)."""
+        await self.send_work_to_worker(worker_name, message)
     
     def set_message_handler(self, handler: Callable):
         """Set message handler for received messages."""
@@ -639,6 +659,18 @@ class MockControllerService:
             raise ValueError(f"Unknown worker: {worker_name}")
         
         self.worker_handlers[worker_name].append(handler)
+    
+    def add_response_handler(self, handler: Callable) -> None:
+        """Add a response handler for worker responses (matching real ControllerService interface)."""
+        if not hasattr(self, '_response_handlers'):
+            self._response_handlers = []
+        self._response_handlers.append(handler)
+        logger.debug(f"MockControllerService '{self.name}' added response handler")
+    
+    def set_default_handler(self, handler: Callable[[str, "MessageDataType"], None]) -> None:
+        """Set default handler for unmatched subscriber topics (matching real ControllerService interface)."""
+        self._default_handler = handler
+        logger.debug(f"MockControllerService '{self.name}' set default message handler")
     
     async def _handle_message(self, topic: str, message: Dict[str, Any]):
         """Handle incoming message."""

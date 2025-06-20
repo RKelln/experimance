@@ -135,19 +135,21 @@ class TestExperimanceCoreServiceStateManagement:
     @pytest.mark.asyncio
     async def test_era_change_triggers_events(self, test_config):
         """Test that era changes trigger appropriate events."""
-        service = ExperimanceCoreService(config=test_config)
-        
-        # Mock the publish_message method
-        service.publish_message = Mock()
-        
-        # Change era
-        old_era = service.current_era
-        await service.transition_to_era("pre_industrial")
-        
-        # Should publish EraChanged event
-        service.publish_message.assert_called()
-        call_args = service.publish_message.call_args[0][0]
-        assert call_args["type"] == "EraChanged"
+        with patch('experimance_core.experimance_core.ControllerService') as mock_zmq_service:
+            mock_instance = Mock()
+            mock_instance.publish = AsyncMock()
+            mock_zmq_service.return_value = mock_instance
+            
+            service = ExperimanceCoreService(config=test_config)
+            
+            # Change era
+            old_era = service.current_era
+            await service.transition_to_era("pre_industrial")
+            
+            # Should publish EraChanged event
+            mock_instance.publish.assert_called()
+            call_args = mock_instance.publish.call_args[0][0]
+            assert call_args["type"] == "EraChanged"
         assert call_args["old_era"] == old_era.value
         assert call_args["new_era"] == "pre_industrial"
 

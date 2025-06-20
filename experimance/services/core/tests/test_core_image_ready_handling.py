@@ -10,6 +10,7 @@ from datetime import datetime
 
 from experimance_common.schemas import Era, Biome, ContentType, DisplayMedia
 from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.test_utils import active_service
 from experimance_core.experimance_core import ExperimanceCoreService
 from experimance_core.config import CoreServiceConfig
@@ -18,23 +19,64 @@ from experimance_core.config import CoreServiceConfig
 class TestCoreServiceImageReadyHandling:
     """Test Core Service handling of IMAGE_READY messages and DISPLAY_MEDIA publishing."""
     
+    def create_test_service(self):
+        """Create a properly mocked test service."""
+        # Create minimal config for testing
+        mock_config = Mock(spec=CoreServiceConfig)
+        mock_config.service_name = "test_core"
+        mock_config.experimance_core = Mock()
+        mock_config.experimance_core.name = "test_core"
+        mock_config.experimance_core.heartbeat_interval = 1.0
+        mock_config.experimance_core.change_smoothing_queue_size = 5
+        mock_config.state_machine = Mock()
+        mock_config.state_machine.idle_timeout = 300.0
+        mock_config.state_machine.interaction_threshold = 0.5
+        mock_config.state_machine.era_min_duration = 60.0
+        mock_config.visualize = False
+        mock_config.camera = Mock()
+        mock_config.camera.debug_mode = False
+        
+        # Add ZMQ config
+        mock_config.zmq = ControllerServiceConfig(
+            name="test_zmq",
+            publisher=PublisherConfig(address="tcp://*", port=5555),
+            subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=[]),
+            workers={}
+        )
+        
+        # Create mock ZMQ service
+        mock_zmq_service = Mock()
+        mock_zmq_service.start = AsyncMock()
+        mock_zmq_service.stop = AsyncMock()
+        mock_zmq_service.publish = AsyncMock()
+        mock_zmq_service.send_work_to_worker = AsyncMock()
+        mock_zmq_service.add_message_handler = Mock()
+        mock_zmq_service.add_response_handler = Mock()
+        
+        # Patch and create service
+        patcher = patch('experimance_core.experimance_core.ControllerService')
+        mock_controller_class = patcher.start()
+        mock_controller_class.return_value = mock_zmq_service
+        
+        service = ExperimanceCoreService(config=mock_config)
+        
+        # Mock essential methods
+        service.add_task = Mock()
+        service.record_error = Mock()
+        service._sleep_if_running = AsyncMock(return_value=False)
+        
+        # Store patcher and mock for test access
+        service._mock_patcher = patcher
+        service._mock_zmq_service = mock_zmq_service
+        
+        return service
+    
     @pytest.mark.asyncio
     async def test_image_ready_same_era_direct_display(self):
         """Test IMAGE_READY handling when no transition is needed (same era)."""
-        # Create config using the recommended pattern
-        override_config = {
-            "experimance_core": {
-                "name": "test_core",
-                "heartbeat_interval": 1.0
-            }
-        }
-        config = CoreServiceConfig.from_overrides(override_config=override_config)
-        service = ExperimanceCoreService(config=config)
+        service = self.create_test_service()
         
-        # Mock the publish_message method
-        with patch.object(service, 'publish_message', new_callable=AsyncMock) as mock_publish:
-            mock_publish.return_value = True
-            
+        try:
             async with active_service(service) as active:
                 # Set initial era
                 active.current_era = Era.MODERN
@@ -55,7 +97,7 @@ class TestCoreServiceImageReadyHandling:
                 # Verify DISPLAY_MEDIA was published directly (no transition)
                 # Service may publish multiple messages (heartbeats, etc), so check for DISPLAY_MEDIA specifically
                 display_media_calls = [
-                    call for call in mock_publish.call_args_list 
+                    call for call in service._mock_zmq_service.publish.call_args_list 
                     if call[0][0].get("type") == MessageType.DISPLAY_MEDIA.value
                 ]
                 
@@ -67,22 +109,15 @@ class TestCoreServiceImageReadyHandling:
                 assert call_args.get("transition_type") is None  # No transition
                 assert call_args["image_id"] == "test_image_123"
                 assert "uri" in call_args
+        finally:
+            service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_image_ready_era_change_requests_transition(self):
         """Test IMAGE_READY handling when era changes and transition is needed."""
-        override_config = {
-            "experimance_core": {
-                "name": "test_core",
-                "heartbeat_interval": 1.0
-            }
-        }
-        config = CoreServiceConfig.from_overrides(override_config=override_config)
-        service = ExperimanceCoreService(config=config)
+        service = self.create_test_service()
         
-        with patch.object(service, 'publish_message', new_callable=AsyncMock) as mock_publish:
-            mock_publish.return_value = True
-            
+        try:
             async with active_service(service) as active:
                 # Set up era change scenario
                 active.current_era = Era.CURRENT
@@ -102,7 +137,7 @@ class TestCoreServiceImageReadyHandling:
                 
                 # Check for specific DISPLAY_MEDIA calls, ignoring other service messages
                 display_media_calls = [
-                    call for call in mock_publish.call_args_list 
+                    call for call in service._mock_zmq_service.publish.call_args_list 
                     if call[0][0].get("type") == MessageType.DISPLAY_MEDIA.value
                 ]
                 
@@ -113,22 +148,15 @@ class TestCoreServiceImageReadyHandling:
                 assert call_args["content_type"] == ContentType.IMAGE.value
                 assert call_args.get("transition_type") == "fade"  # Should have transition
                 assert call_args["image_id"] == "era_change_image"
+        finally:
+            service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_transition_ready_publishes_display_media(self):
         """Test TRANSITION_READY handling publishes DISPLAY_MEDIA with transition."""
-        override_config = {
-            "experimance_core": {
-                "name": "test_core", 
-                "heartbeat_interval": 1.0
-            }
-        }
-        config = CoreServiceConfig.from_overrides(override_config=override_config)
-        service = ExperimanceCoreService(config=config)
+        service = self.create_test_service()
         
-        with patch.object(service, 'publish_message', new_callable=AsyncMock) as mock_publish:
-            mock_publish.return_value = True
-            
+        try:
             async with active_service(service) as active:
                 # Set up pending transition state
                 active._pending_transition = {
@@ -152,8 +180,8 @@ class TestCoreServiceImageReadyHandling:
                 await active._handle_transition_ready(transition_ready_message)
                 
                 # Verify DISPLAY_MEDIA was published with transition
-                mock_publish.assert_called_once()
-                call_args = mock_publish.call_args[0][0]
+                service._mock_zmq_service.publish.assert_called_once()
+                call_args = service._mock_zmq_service.publish.call_args[0][0]
                 
                 assert call_args["type"] == MessageType.DISPLAY_MEDIA.value
                 assert call_args["content_type"] == ContentType.IMAGE_SEQUENCE.value
@@ -164,76 +192,79 @@ class TestCoreServiceImageReadyHandling:
                 
                 # Verify pending transition was cleared
                 assert active._pending_transition is None
+        finally:
+            service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_display_media_creation_with_single_image(self):
         """Test _create_display_media method for single image content."""
-        override_config = {}
-        config = CoreServiceConfig.from_overrides(override_config=override_config)
-        service = ExperimanceCoreService(config=config)
+        service = self.create_test_service()
         
-        async with active_service(service) as active:
-            # Test single image display media
-            image_data = {
-                "image_id": "single_test_image",
-                "uri": "file:///tmp/single.png"
-            }
-            
-            display_media = active._create_display_media(
-                content_type=ContentType.IMAGE,
-                image_data=image_data
-            )
-            
-            assert display_media["type"] == MessageType.DISPLAY_MEDIA.value
-            assert display_media["content_type"] == ContentType.IMAGE.value
-            assert display_media["transition_type"] is None
-            assert display_media["image_id"] == "single_test_image"
-            assert display_media["uri"] == "file:///tmp/single.png"
-            assert "timestamp" in display_media
+        try:
+            async with active_service(service) as active:
+                # Test single image display media
+                display_media = active._create_display_media(
+                    content_type=ContentType.IMAGE,
+                    image_id="single_test_image",
+                    uri="file:///tmp/single.png"
+                )
+                
+                assert display_media["type"] == MessageType.DISPLAY_MEDIA.value
+                assert display_media["content_type"] == ContentType.IMAGE.value
+                assert display_media["image_id"] == "single_test_image"
+                assert display_media["uri"] == "file:///tmp/single.png"
+                assert "timestamp" in display_media
+        finally:
+            if hasattr(service, '_mock_patcher'):
+                service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_display_media_creation_with_image_sequence(self):
         """Test _create_display_media method for image sequence content."""
-        override_config = {}
-        config = CoreServiceConfig.from_overrides(override_config=override_config)
-        service = ExperimanceCoreService(config=config)
+        service = self.create_test_service()
         
-        async with active_service(service) as active:
-            # Test image sequence display media
-            display_media = active._create_display_media(
-                content_type=ContentType.IMAGE_SEQUENCE,
-                transition_type="morph",
-                sequence_path="/tmp/morph_sequence/",
-                duration=3.0,
-                final_image_id="morphed_result"
-            )
-            
-            assert display_media["type"] == MessageType.DISPLAY_MEDIA.value
-            assert display_media["content_type"] == ContentType.IMAGE_SEQUENCE.value
-            assert display_media["transition_type"] == "morph"
-            assert display_media["sequence_path"] == "/tmp/morph_sequence/"
-            assert display_media["duration"] == 3.0
-            assert display_media["final_image_id"] == "morphed_result"
+        try:
+            async with active_service(service) as active:
+                # Test image sequence display media
+                display_media = active._create_display_media(
+                    content_type=ContentType.IMAGE_SEQUENCE,
+                    transition_type="morph",
+                    sequence_path="/tmp/morph_sequence/",
+                    duration=3.0,
+                    final_image_id="morphed_result"
+                )
+                
+                assert display_media["type"] == MessageType.DISPLAY_MEDIA.value
+                assert display_media["content_type"] == ContentType.IMAGE_SEQUENCE.value
+                assert display_media["transition_type"] == "morph"
+                assert display_media["sequence_path"] == "/tmp/morph_sequence/"
+                assert display_media["duration"] == 3.0
+                assert display_media["final_image_id"] == "morphed_result"
+        finally:
+            if hasattr(service, '_mock_patcher'):
+                service._mock_patcher.stop()
     
     @pytest.mark.asyncio
     async def test_era_change_detection(self):
         """Test _needs_transition method for era change detection."""
-        override_config = {}
-        config = CoreServiceConfig.from_overrides(override_config=override_config)
-        service = ExperimanceCoreService(config=config)
+        service = self.create_test_service()
         
-        async with active_service(service) as active:
-            # Test case 1: Same era, no transition needed
-            active.current_era = Era.MODERN
-            active._last_era = Era.MODERN
-            assert not active._needs_transition()
-            
-            # Test case 2: Era change, transition needed
-            active.current_era = Era.CURRENT
-            active._last_era = Era.MODERN
-            assert active._needs_transition()
-            
-            # Test case 3: First image (no last era), no transition needed
-            active.current_era = Era.WILDERNESS
-            active._last_era = None
-            assert not active._needs_transition()
+        try:
+            async with active_service(service) as active:
+                # Test case 1: Same era, no transition needed
+                active.current_era = Era.MODERN
+                active._last_era = Era.MODERN
+                assert not active._needs_transition()
+                
+                # Test case 2: Era change, transition needed
+                active.current_era = Era.CURRENT
+                active._last_era = Era.MODERN
+                assert active._needs_transition()
+                
+                # Test case 3: First image (no last era), no transition needed
+                active.current_era = Era.WILDERNESS
+                active._last_era = None
+                assert not active._needs_transition()
+        finally:
+            if hasattr(service, '_mock_patcher'):
+                service._mock_patcher.stop()

@@ -14,8 +14,10 @@ from unittest.mock import AsyncMock, patch, Mock
 from datetime import datetime
 
 from experimance_core.experimance_core import ExperimanceCoreService
+from experimance_core.config import CoreServiceConfig
 from experimance_common.schemas import Era, Biome, ContentType
 from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
 
 
 class TestCoreImageReadyHandling:
@@ -24,28 +26,51 @@ class TestCoreImageReadyHandling:
     @pytest.fixture
     async def service(self):
         """Create a test core service instance."""
-        # Use the reusable mock from mocks.py
-        from .mocks import create_mock_core_service
+        # Create minimal config for testing
+        mock_config = Mock(spec=CoreServiceConfig)
+        mock_config.service_name = "test_core"
+        mock_config.experimance_core = Mock()
+        mock_config.experimance_core.name = "test_core"
+        mock_config.experimance_core.heartbeat_interval = 5.0
+        mock_config.experimance_core.change_smoothing_queue_size = 5
+        mock_config.state_machine = Mock()
+        mock_config.state_machine.idle_timeout = 300.0
+        mock_config.state_machine.interaction_threshold = 0.5
+        mock_config.state_machine.era_min_duration = 60.0
+        mock_config.visualize = False
+        mock_config.camera = Mock()
+        mock_config.camera.debug_mode = False
         
-        # Create service with custom config overrides for this test
-        service = create_mock_core_service(config_overrides={
-            "experimance_core": {
-                "name": "test_core",
-                "heartbeat_interval": 5.0,
-                "change_smoothing_queue_size": 5
-            },
-            "state_machine": {
-                "idle_timeout": 300.0,
-                "interaction_threshold": 0.5,
-                "era_min_duration": 60.0
-            },
-            "camera": {
-                "debug_mode": False
-            },
-            "visualize": False
-        })
+        # Add ZMQ config for new architecture
+        mock_config.zmq = ControllerServiceConfig(
+            name="test_zmq",
+            publisher=PublisherConfig(address="tcp://*", port=5555),
+            subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=[]),
+            workers={}
+        )
         
-        return service
+        # Create mock ZMQ service
+        mock_zmq_service = Mock()
+        mock_zmq_service.start = AsyncMock()
+        mock_zmq_service.stop = AsyncMock()
+        mock_zmq_service.publish = AsyncMock()
+        mock_zmq_service.send_work_to_worker = AsyncMock()
+        mock_zmq_service.add_message_handler = Mock()
+        mock_zmq_service.add_response_handler = Mock()
+        
+        # Patch ControllerService 
+        with patch('experimance_core.experimance_core.ControllerService', return_value=mock_zmq_service):
+            service = ExperimanceCoreService(config=mock_config)
+            
+            # Mock essential methods
+            service.add_task = Mock()
+            service.record_error = Mock()
+            service._sleep_if_running = AsyncMock(return_value=False)
+            
+            # Store mock for test access
+            service._mock_zmq_service = mock_zmq_service
+            
+            return service
     
     @pytest.mark.asyncio
     async def test_handle_image_ready_no_transition_needed(self, service):
@@ -64,9 +89,9 @@ class TestCoreImageReadyHandling:
             # Call the handler
             await service._handle_image_ready(image_ready_message)
         
-        # Verify DISPLAY_MEDIA message was published
-        service.publish_message.assert_called_once()
-        published_message = service.publish_message.call_args[0][0]
+        # Verify DISPLAY_MEDIA message was published using new ZMQ service
+        service._mock_zmq_service.publish.assert_called_once()
+        published_message = service._mock_zmq_service.publish.call_args[0][0]
         
         # Check DISPLAY_MEDIA message structure
         assert published_message["type"] == MessageType.DISPLAY_MEDIA.value
@@ -95,8 +120,8 @@ class TestCoreImageReadyHandling:
         await service._handle_image_ready(image_ready_message)
         
         # Verify DISPLAY_MEDIA message was published with transition
-        service.publish_message.assert_called_once()
-        published_message = service.publish_message.call_args[0][0]
+        service._mock_zmq_service.publish.assert_called_once()
+        published_message = service._mock_zmq_service.publish.call_args[0][0]
         
         assert published_message["type"] == MessageType.DISPLAY_MEDIA.value
         assert published_message["content_type"] == ContentType.IMAGE.value
@@ -173,8 +198,8 @@ class TestCoreImageReadyHandling:
         await service._send_display_media(image_message, transition_type="fade")
         
         # Verify all image fields were copied
-        service.publish_message.assert_called_once()
-        published_message = service.publish_message.call_args[0][0]
+        service._mock_zmq_service.publish.assert_called_once()
+        published_message = service._mock_zmq_service.publish.call_args[0][0]
         
         assert published_message["uri"] == image_message["uri"]
         assert published_message["image_data"] == image_message["image_data"]
@@ -196,7 +221,7 @@ class TestCoreImageReadyHandling:
         await service._handle_image_ready(bad_message)
         
         # Should not have published anything
-        service.publish_message.assert_not_called()
+        service._mock_zmq_service.publish.assert_not_called()
     
     @pytest.mark.asyncio
     async def test_handle_image_ready_updates_last_era(self, service):

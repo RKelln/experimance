@@ -3,10 +3,14 @@ Mock utilities for testing the Experimance Core Service.
 
 This module provides mock classes and factory functions specifically for testing
 the core service without requiring real hardware or network dependencies.
+Updated for the new ZMQ composition architecture with ControllerService.
 """
+import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from experimance_core.experimance_core import ExperimanceCoreService
 from experimance_core.config import CoreServiceConfig
+from experimance_common.zmq.mocks import MockControllerService
+from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
 
 
 def create_mock_core_service(config_overrides=None):
@@ -24,9 +28,9 @@ def create_mock_core_service(config_overrides=None):
     """
     # Default config overrides for testing
     default_overrides = {
+        "service_name": "test_core",
         "experimance_core": {
             "name": "test_core",
-            "heartbeat_interval": 1.0,
             "change_smoothing_queue_size": 1  # Small queue for faster test setup
         },
         "state_machine": {
@@ -42,6 +46,24 @@ def create_mock_core_service(config_overrides=None):
             "resolution": [640, 480],
             "output_size": [512, 512],
             "significant_change_threshold": 0.01  # Low threshold for test reliability
+        },
+        "zmq": {
+            "name": "test_core_zmq",
+            "log_level": "DEBUG",
+            "timeout": 1.0,
+            "heartbeat_interval": 1.0,
+            "publisher": {
+                "address": "tcp://*",
+                "port": 5555,
+                "bind": True
+            },
+            "subscriber": {
+                "address": "tcp://localhost",
+                "port": 5556,
+                "bind": False,
+                "topics": []
+            },
+            "workers": {}
         },
         "visualize": False  # Disable visualization for tests
     }
@@ -61,28 +83,41 @@ def create_mock_core_service(config_overrides=None):
     
     config = CoreServiceConfig.from_overrides(override_config=default_overrides)
     
-    # Mock ZMQ initialization to avoid network dependencies
-    with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None), \
-         patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None):
-        
+    # Use the real MockControllerService from experimance_common
+    mock_zmq_service = MockControllerService(config.zmq)
+    
+    # Replace key methods with AsyncMocks for easier testing
+    mock_zmq_service.publish = AsyncMock()
+    mock_zmq_service.send_work_to_worker = AsyncMock()
+    
+    # Mark the mock service as running so it can handle calls
+    mock_zmq_service.running = True
+    
+    # Patch the ControllerService class to return our mock
+    # Note: This patching will be global for the test - make sure tests clean up
+    patcher = patch('experimance_core.experimance_core.ControllerService', return_value=mock_zmq_service)
+    patcher.start()
+    
+    try:
         service = ExperimanceCoreService(config=config)
         
-        # Initialize the essential attributes that would normally be set by the base class
-        # Using setattr to avoid type checker issues with mocked objects
-        setattr(service, 'worker_connections', {})
-        setattr(service, 'service_name', config.experimance_core.name)
-        setattr(service, 'tasks', [])
-        setattr(service, '_running', False)
-        
-        # Mock essential methods
-        service.publish_message = AsyncMock()
+        # Mock essential methods that would normally be inherited from BaseService
         service.add_task = Mock()
         service.record_error = Mock()
         service._sleep_if_running = AsyncMock(return_value=False)
         service._publish_change_map = AsyncMock()  # Mock the change map publishing method
-        service.setup_workers_from_config_provider = Mock()  # Mock worker setup
+        
+        # Add compatibility attributes for legacy tests
+        service.publish_message = AsyncMock()  # Legacy method name, delegates to zmq_service.publish
+        service.service_name = config.service_name if hasattr(config, 'service_name') else "test_core"
+        
+        # Store the patcher on the service for cleanup
+        service._mock_patcher = patcher
         
         return service
+    except Exception:
+        patcher.stop()
+        raise
 
 
 def mock_zmq_for_core_service():
@@ -94,7 +129,7 @@ def mock_zmq_for_core_service():
             service = ExperimanceCoreService(config)
             # Service now has mocked ZMQ components
     """
-    return patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None)
+    return patch('experimance_core.experimance_core.ControllerService')
 
 
 def create_mock_core_service_with_custom_config(config):
@@ -110,26 +145,33 @@ def create_mock_core_service_with_custom_config(config):
     Returns:
         A mocked ExperimanceCoreService ready for testing
     """
-    # Mock ZMQ initialization to avoid network dependencies
-    with patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None), \
-         patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None):
-        
+    # Use the real MockControllerService from experimance_common
+    # Need to ensure config.zmq exists
+    if hasattr(config, 'zmq'):
+        mock_zmq_service = MockControllerService(config.zmq)
+    else:
+        # Create a minimal zmq config for testing
+        zmq_config = ControllerServiceConfig(
+            name="test_zmq",
+            publisher=PublisherConfig(address="tcp://*", port=5555),
+            subscriber=SubscriberConfig(address="tcp://localhost", port=5556, topics=[]),
+            workers={}
+        )
+        mock_zmq_service = MockControllerService(zmq_config)
+    
+    # Patch the ControllerService class to return our mock
+    with patch('experimance_core.experimance_core.ControllerService', return_value=mock_zmq_service):
         service = ExperimanceCoreService(config=config)
         
-        # Initialize the essential attributes that would normally be set by the base class
-        # Using setattr to avoid type checker issues with mocked objects
-        setattr(service, 'worker_connections', {})
-        setattr(service, 'service_name', getattr(config.experimance_core, 'name', 'test_core'))
-        setattr(service, 'tasks', [])
-        setattr(service, '_running', False)
-        
-        # Mock essential methods
-        service.publish_message = AsyncMock()
+        # Mock essential methods that would normally be inherited from BaseService
         service.add_task = Mock()
         service.record_error = Mock()
         service._sleep_if_running = AsyncMock(return_value=False)
         service._publish_change_map = AsyncMock()  # Mock the change map publishing method
-        service.setup_workers_from_config_provider = Mock()  # Mock worker setup
+        
+        # Add compatibility attributes for legacy tests
+        service.publish_message = AsyncMock()  # Legacy method name, delegates to zmq_service.publish
+        service.service_name = config.service_name if hasattr(config, 'service_name') else "test_core"
         
         return service
 
@@ -146,12 +188,7 @@ def comprehensive_core_service_mock():
             service = ExperimanceCoreService(config=my_config)
             # Service now has all necessary mocks applied
     """
-    return patch.multiple(
-        'experimance_core.experimance_core',
-        ZmqControllerMultiWorkerService=Mock,
-        # Mock the base class constructor
-        **{'ZmqControllerMultiWorkerService.__init__': Mock(return_value=None)}
-    )
+    return patch('experimance_core.experimance_core.ControllerService')
 
 
 def mock_core_service_for_testing(config=None):
@@ -171,9 +208,9 @@ def mock_core_service_for_testing(config=None):
     if config is None:
         # Create default test config
         config = CoreServiceConfig.from_overrides(override_config={
+            "service_name": "test_core",
             "experimance_core": {
                 "name": "test_core",
-                "heartbeat_interval": 1.0,
                 "change_smoothing_queue_size": 1
             },
             "state_machine": {
@@ -190,35 +227,45 @@ def mock_core_service_for_testing(config=None):
                 "output_size": [512, 512],
                 "significant_change_threshold": 0.01
             },
+            "zmq": {
+                "name": "test_core_zmq",
+                "log_level": "DEBUG", 
+                "timeout": 1.0,
+                "heartbeat_interval": 1.0
+            },
             "visualize": False
         })
     
     # Create patches for ZMQ components
     patches = [
-        patch('experimance_core.experimance_core.ZmqControllerMultiWorkerService.__init__', return_value=None),
-        patch.object(ExperimanceCoreService, 'setup_workers_from_config_provider', return_value=None)
+        patch('experimance_core.experimance_core.ControllerService')
     ]
     
-    # Start all patches
-    for p in patches:
-        p.start()
+    # Start all patches and get the mock controller service
+    mock_controller_service = patches[0].start()  # The ControllerService patch is the first one
     
     try:
+        # Create a mock controller service instance
+        mock_zmq_service = Mock()
+        mock_zmq_service.start = AsyncMock()
+        mock_zmq_service.stop = AsyncMock()
+        mock_zmq_service.publish = AsyncMock()
+        mock_zmq_service.send_work_to_worker = AsyncMock()
+        mock_zmq_service.add_message_handler = Mock()
+        mock_zmq_service.add_response_handler = Mock()
+        mock_controller_service.return_value = mock_zmq_service
+        
         service = ExperimanceCoreService(config=config)
         
-        # Initialize essential attributes
-        setattr(service, 'worker_connections', {})
-        setattr(service, 'service_name', config.experimance_core.name)
-        setattr(service, 'tasks', [])
-        setattr(service, '_running', False)
-        
         # Mock essential methods
-        service.publish_message = AsyncMock()
         service.add_task = Mock()
         service.record_error = Mock()
         service._sleep_if_running = AsyncMock(return_value=False)
-        service._publish_change_map = AsyncMock()
-        service.setup_workers_from_config_provider = Mock()
+        service._publish_change_map = AsyncMock()  # Mock the change map publishing method
+        
+        # Add compatibility attributes for legacy tests
+        service.publish_message = AsyncMock()  # Legacy method name, delegates to zmq_service.publish
+        service.service_name = config.service_name if hasattr(config, 'service_name') else "test_core"
         
         # Create cleanup function
         def cleanup():

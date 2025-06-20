@@ -14,6 +14,8 @@ import os
 import asyncio
 from typing import Dict, Any, Optional, Tuple
 
+from experimance_common.schemas import MessageBase
+from experimance_common.zmq.config import MessageDataType
 import pyglet
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 
@@ -176,14 +178,17 @@ class VideoOverlayRenderer(LayerRenderer):
         if self._current_alpha > 0.01:
             logger.debug(f"Would render video overlay with alpha: {self._current_alpha:.2f}")
     
-    async def handle_video_mask(self, message: Dict[str, Any]):
+    async def handle_video_mask(self, message: MessageDataType):
         """Handle VideoMask message.
         
         Args:
             message: VideoMask message with mask image URI or image data
         """
         try:
-            mask_id = message["mask_id"]
+            if isinstance(message, MessageBase):
+                message = message.model_dump()
+                
+            mask_id = message.get("mask_id")
             fade_in_duration = message.get("fade_in_duration", self.fade_in_duration)
             fade_out_duration = message.get("fade_out_duration", self.fade_out_duration)
             

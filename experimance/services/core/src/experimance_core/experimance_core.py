@@ -25,8 +25,10 @@ from typing import Dict, Any, Optional, Tuple
 
 from experimance_common.constants import DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES
 from experimance_common.schemas import Era, Biome, ContentType, RenderRequest
-from experimance_common.zmq.controller import ZmqControllerMultiWorkerService, ControllerMultiWorkerConfig, WorkerConnectionConfig
-from experimance_common.zmq.zmq_utils import MessageType, MessageDataType, prepare_image_message
+from experimance_common.base_service import BaseService
+from experimance_common.zmq.services import ControllerService
+from experimance_common.zmq.config import MessageType, MessageDataType, ControllerServiceConfig
+from experimance_common.zmq.zmq_utils import prepare_image_message
 from experimance_core.config import (
     CoreServiceConfig, 
     CameraState,
@@ -68,12 +70,14 @@ ERA_BIOMES = {
     Era.RUINS: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.SWAMP, Biome.PLAINS]  # Nature reclaiming
 }
 
-class ExperimanceCoreService(ZmqControllerMultiWorkerService):
+class ExperimanceCoreService(BaseService):
     """
     Central coordinator service for the Experimance interactive art installation.
     
     Manages the experience state machine, coordinates with other services via ZMQ,
     and drives the narrative progression through different eras of human development.
+    
+    Uses composition pattern with ControllerService for ZMQ communication.
     """
 
     def __init__(self, config: CoreServiceConfig):
@@ -85,26 +89,14 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         """
         self.config = config
         
-        # Extract service configuration
-        service_name = self.config.experimance_core.name
-        heartbeat_interval = self.config.experimance_core.heartbeat_interval
-        
-        # Initialize ZMQ addresses for PUB/SUB
-        pub_address = f"tcp://*:{DEFAULT_PORTS['events']}"
-        sub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
-        
-        # Initialize parent service with PUB/SUB and multi-worker capabilities
+        # Initialize base service
         super().__init__(
-            service_name=service_name,
-            pub_address=pub_address,
-            sub_address=sub_address,
-            topics=[],  # Will subscribe to all messages and filter by type
-            heartbeat_topic=f"{service_name}.heartbeat",
+            service_name=config.service_name,
             service_type="core_coordinator"
         )
         
-        # Configure workers from Pydantic configuration
-        self.setup_workers_from_config_provider(self.config)
+        # Initialize ZMQ controller service using composition
+        self.zmq_service = ControllerService(config=config.zmq)
         
         # State machine variables
         self.current_era: Era = Era.WILDERNESS
@@ -149,7 +141,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         self.Era = Era  # Expose enum class
         self.Biome = Biome  # Expose enum class
         
-        logger.info(f"Experimance Core Service initialized: {service_name}")
+        logger.info(f"Experimance Core Service initialized: {self.service_name}")
 
 
 
@@ -159,6 +151,9 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         
         # Initialize message handlers
         self._register_message_handlers()
+        
+        # Start the ZMQ service
+        await self.zmq_service.start()
         
         # Register background tasks - best practice is to add tasks in start()
         self.add_task(self._main_event_loop())
@@ -454,7 +449,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
                 mask_id=f"change_map_{int(time.time() * 1000)}"
             )
             
-            success = await self.publish_message(message)
+            success = await self.zmq_service.publish(message)
             if success:
                 logger.debug(f"Published change map: score={change_score:.4f}")
             else:
@@ -472,7 +467,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         }
         
         try:
-            success = await self.publish_message(event)
+            success = await self.zmq_service.publish(event)
             if success:
                 logger.debug(f"Published interaction sound: {'start' if hand_detected else 'stop'}")
             else:
@@ -491,7 +486,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         }
         
         try:
-            success = await self.publish_message(event)
+            success = await self.zmq_service.publish(event)
             if success:
                 logger.debug(f"Published idle state: {self.idle_timer:.1f}s")
             else:
@@ -501,17 +496,14 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
 
     def _register_message_handlers(self):
         """Register handlers for different message types."""
-        message_handlers = {
-            "AgentControl": self._handle_agent_control,
-            "AudioStatus": self._handle_audio_status,
-        }
-
-        # Register handlers with the pubsub system
-        for message_type, handler in message_handlers.items():
-            self.register_handler(message_type, handler)
-
-        # Register worker handlers for responses from push/pull workers
-        self.register_worker_handler("image", self._handle_image_ready_task)
+        # Register PubSub message handlers
+        self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._zmq_handle_agent_control)
+        self.zmq_service.add_message_handler("AudioStatus", self._zmq_handle_audio_status)
+        
+        # Register worker response handler for responses from push/pull workers
+        self.zmq_service.add_response_handler(self._handle_worker_response)
+        
+        logger.info("Message handlers registered with ZMQ service")
         
 
     # State Management Methods
@@ -738,7 +730,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         
         try:
             # Simply await the publish operation
-            success = await self.publish_message(event)
+            success = await self.zmq_service.publish(event)
             if success:
                 logger.debug(f"Published era change event: {old_era} -> {new_era}")
             else:
@@ -907,7 +899,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
                     display_message[field] = image_message[field]
             
             # Publish to display service
-            success = await self.publish_message(display_message)
+            success = await self.zmq_service.publish(display_message)
             
             if success:
                 logger.debug(f"Sent DISPLAY_MEDIA to display service (transition: {transition_type})")
@@ -977,7 +969,7 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
                 return
             
             # Publish DISPLAY_MEDIA
-            await self.publish_message(display_media)
+            await self.zmq_service.publish(display_media)
             logger.info(f"Published DISPLAY_MEDIA with {transition_type} transition")
             
             # Clear pending transition
@@ -1054,15 +1046,12 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
             request = message
         
         try:
-            # Push the task to the image server via PUSH socket
-            success = await self.push_task(request)
-            if success:
-                logger.debug(f"Pushed render request for {request.era}/{request.biome}")
-                logger.debug(f"Request ID: {request.request_id}")
-            else:
-                logger.warning("Failed to push render request")
+            # Send the task to the image server worker via PUSH socket
+            await self.zmq_service.send_work_to_worker("image_server", request)
+            logger.debug(f"Sent render request for {request.era}/{request.biome}")
+            logger.debug(f"Request ID: {request.request_id}")
         except Exception as e:
-            logger.error(f"Error pushing render request: {e}")
+            logger.error(f"Error sending render request: {e}")
             
     def _generate_prompt_for_era_biome(self, era: Era, biome: Biome) -> str:
         """Generate an appropriate prompt for the given era and biome."""
@@ -1225,37 +1214,35 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
                                 custom_message="Error in state machine")
 
     async def stop(self):
-        """Stop the service gracefully."""
+        """Stop the service and clean up resources."""
         logger.info("Stopping Experimance Core Service")
-        # debugging print the caller of stop
-        logger.info(f"Stop called from: {traceback.format_stack()[-2].strip()}")
         
-        # Clean up visualization window if it was used
-        if self.config.visualize:
-            try:
-                cv2.destroyAllWindows()
-            except Exception as e:
-                logger.warning(f"Error cleaning up visualization window: {e}")
-        
-        # Call parent stop first to ensure proper shutdown sequence
-        await super().stop()
-        
-        # Clean up depth processing
-        if self._depth_processor is not None:
-            try:
+        try:
+            # Stop ZMQ service first to ensure subscriber tasks are cancelled
+            if self.zmq_service and self.zmq_service.is_running():
+                logger.debug("Stopping ZMQ service...")
+                await self.zmq_service.stop()
+                logger.debug("ZMQ service stopped")
+            
+            # Clean up depth processor
+            if self._depth_processor:
                 self._depth_processor.stop()
                 self._depth_processor = None
-                self._camera_state = CameraState.DISCONNECTED
-            except Exception as e:
-                logger.error(f"Error cleaning up depth processor: {e}")
-        
-        # Clean up depth visualizer
-        if self._depth_visualizer is not None:
-            try:
+            
+            # Clean up depth visualizer
+            if self._depth_visualizer:
                 self._depth_visualizer.destroy_window()
                 self._depth_visualizer = None
-            except Exception as e:
-                logger.error(f"Error cleaning up depth visualizer: {e}")
+                
+            logger.info("Core service components stopped")
+            
+        except Exception as e:
+            logger.error(f"Error during Core service component shutdown: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
+            # Continue with base service stop even if components fail
+        
+        # Stop base service last
+        await super().stop()
         
         logger.info("Experimance Core Service stopped")
 
@@ -1362,6 +1349,58 @@ class ExperimanceCoreService(ZmqControllerMultiWorkerService):
         except Exception as e:
             logger.warning(f"Visualization error: {e}")
         
+# ZMQ Message Handler Adapters
+    # These methods adapt between the new ZMQ signature (topic, data) and the old message handler signature
+    
+    def _zmq_handle_agent_control(self, topic: str, data: MessageDataType):
+        """ZMQ adapter for agent control messages."""
+        try:
+            if isinstance(data, dict):
+                # Create a task for async execution
+                asyncio.create_task(self._handle_agent_control(data))
+            else:
+                logger.warning(f"Unexpected agent control data type: {type(data)}")
+        except Exception as e:
+            logger.error(f"Error handling agent control message: {e}")
+    
+    def _zmq_handle_audio_status(self, topic: str, data: MessageDataType):
+        """ZMQ adapter for audio status messages."""
+        try:
+            if isinstance(data, dict):
+                # Create a task for async execution
+                asyncio.create_task(self._handle_audio_status(data))
+            else:
+                logger.warning(f"Unexpected audio status data type: {type(data)}")
+        except Exception as e:
+            logger.error(f"Error handling audio status message: {e}")
+
+    async def _handle_worker_response(self, worker_name: str, response_data: MessageDataType):
+        """Handle responses from workers via pull sockets.
+        
+        Args:
+            worker_name: Name of the worker that sent the response
+            response_data: The response data from the worker
+        """
+        try:
+            logger.debug(f"Received response from worker '{worker_name}'")
+            
+            # Route to appropriate handler based on worker name
+            if worker_name == "image_server":
+                await self._handle_image_ready_task(response_data)
+            elif worker_name == "audio":
+                # TODO: Add audio worker response handler when available
+                logger.debug(f"Received audio worker response: {response_data}")
+            elif worker_name == "display":
+                # TODO: Add display worker response handler when available  
+                logger.debug(f"Received display worker response: {response_data}")
+            else:
+                logger.warning(f"Unknown worker response from '{worker_name}': {response_data}")
+                
+        except Exception as e:
+            logger.error(f"Error handling worker response from '{worker_name}': {e}")
+            self.record_error(e, is_fatal=False, custom_message=f"Error handling worker response from {worker_name}")
+
+
 async def run_experimance_core_service(
     config_path: str = DEFAULT_CONFIG_PATH, 
     args:Optional[argparse.Namespace] = None

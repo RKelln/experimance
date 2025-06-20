@@ -40,6 +40,7 @@ def test_config():
     """Create a test configuration for the core service."""
     # Use config overrides instead of TOML files for testing
     config_overrides = {
+        "service_name": "test_core",
         "experimance_core": {
             "name": "test_core",
             "heartbeat_interval": 1.0
@@ -66,6 +67,24 @@ def test_config():
             "locations_file": "locations.json",
             "developments_file": "anthropocene.json"
         },
+        "zmq": {
+            "name": "test_zmq",
+            "log_level": "DEBUG",
+            "timeout": 1.0,
+            "heartbeat_interval": 1.0,
+            "publisher": {
+                "address": "tcp://*",
+                "port": 5555,
+                "bind": True
+            },
+            "subscriber": {
+                "address": "tcp://localhost",
+                "port": 5556,
+                "bind": False,
+                "topics": []
+            },
+            "workers": {}
+        },
         "visualize": False  # Disable visualization for tests
     }
     
@@ -75,11 +94,39 @@ def test_config():
 @pytest.fixture
 def core_service(test_config):
     """Create a core service instance for testing."""
-    from .mocks import create_mock_core_service
+    from unittest.mock import Mock, AsyncMock, patch
+    from experimance_core.experimance_core import ExperimanceCoreService
     
-    # Use the proper mock function with the test config 
-    # The mock function will use its defaults for any missing fields
-    return create_mock_core_service()
+    # Create a mock instance with AsyncMock methods
+    mock_zmq_service = Mock()
+    mock_zmq_service.start = AsyncMock()
+    mock_zmq_service.stop = AsyncMock()
+    mock_zmq_service.publish = AsyncMock()
+    mock_zmq_service.send_work_to_worker = AsyncMock()
+    mock_zmq_service.add_message_handler = Mock()
+    mock_zmq_service.add_response_handler = Mock()
+    
+    # Patch the ControllerService class to return our mock
+    patcher = patch('experimance_core.experimance_core.ControllerService', return_value=mock_zmq_service)
+    patcher.start()
+    
+    service = ExperimanceCoreService(config=test_config)
+    
+    # Mock essential methods
+    service.add_task = Mock()
+    service.record_error = Mock()
+    service._sleep_if_running = AsyncMock(return_value=False)
+    
+    # Add compatibility for legacy tests
+    service.publish_message = mock_zmq_service.publish  # Point to the same mock
+    
+    # Store patcher for cleanup
+    service._test_patcher = patcher
+    
+    yield service
+    
+    # Cleanup
+    patcher.stop()
 
 
 class TestServiceInitialization:
@@ -288,11 +335,15 @@ class TestEventPublishing:
         
         await core_service._publish_render_request()
         
-        core_service.publish_message.assert_called_once()
-        call_args = core_service.publish_message.call_args[0][0]
-        assert call_args["type"] == "RenderRequest"
-        assert call_args["current_era"] == Era.MODERN
-        assert call_args["current_biome"] == Biome.COASTAL
+        # This method uses send_work_to_worker, not publish
+        core_service.zmq_service.send_work_to_worker.assert_called_once()
+        call_args = core_service.zmq_service.send_work_to_worker.call_args[0]
+        worker_name = call_args[0]
+        request_data = call_args[1]
+        
+        assert worker_name == "image_server"
+        assert request_data.era == Era.MODERN
+        assert request_data.biome == Biome.COASTAL
 
 
 class TestStatePersistence:

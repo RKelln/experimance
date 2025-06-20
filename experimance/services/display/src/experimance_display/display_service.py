@@ -25,7 +25,7 @@ from pyglet.window import key
 
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import PubSubService
-from experimance_common.zmq.config import MessageType
+from experimance_common.zmq.config import MessageDataType, MessageType
 from experimance_common.constants import DEFAULT_PORTS, TICK, DISPLAY_SERVICE_DIR
 from experimance_common.service_state import ServiceState
 
@@ -63,6 +63,7 @@ class DisplayService(BaseService):
         )
         
         self.config = config
+        logger.debug(f"Initializing DisplayService with config: {self.config}")
         
         # Initialize ZMQ service using composition
         self.zmq_service = PubSubService(config=config.zmq)
@@ -280,7 +281,7 @@ class DisplayService(BaseService):
         logger.info("Direct interface handlers registered")
     
     # ZMQ Message Handlers
-    async def _handle_display_media(self, message: Dict[str, Any]):
+    async def _handle_display_media(self, message: MessageDataType):
         """Handle DisplayMedia messages."""
         try:
             logger.debug(f"Received DisplayMedia: {message}")
@@ -291,57 +292,13 @@ class DisplayService(BaseService):
             
             # Pass to image renderer
             if self.image_renderer:
-                await self.image_renderer.handle_image_ready(message)
+                await self.image_renderer.handle_display_media(message)
             
         except Exception as e:
             logger.error(f"Error handling DisplayMedia: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
 
-    async def _handle_image_ready(self, message: Dict[str, Any]):
-        """Handle ImageReady messages."""
-        try:
-            logger.debug(f"Received ImageReady: {message}")
-            
-            # Validate message
-            if not self._validate_image_ready(message):
-                return
-            
-            # Pass to image renderer
-            if self.image_renderer:
-                await self.image_renderer.handle_image_ready(message)
-            
-        except Exception as e:
-            logger.error(f"Error handling ImageReady: {e}", exc_info=True)
-            self.record_error(e, is_fatal=False)
-    
-    async def _handle_transition_ready(self, message: Dict[str, Any]):
-        """Handle TransitionReady messages."""
-        try:
-            logger.debug(f"Received TransitionReady: {message}")
-            
-            # Pass to image renderer for custom transitions
-            if self.image_renderer:
-                await self.image_renderer.handle_transition_ready(message)
-            
-        except Exception as e:
-            logger.error(f"Error handling TransitionReady: {e}", exc_info=True)
-            self.record_error(e, is_fatal=False)
-    
-    async def _handle_loop_ready(self, message: Dict[str, Any]):
-        """Handle LoopReady messages (future enhancement)."""
-        try:
-            logger.debug(f"Received LoopReady: {message}")
-            
-            # Future: pass to image renderer for animated loops
-            # if self.image_renderer:
-            #     await self.image_renderer.handle_loop_ready(message)
-            logger.info("LoopReady support not yet implemented")
-            
-        except Exception as e:
-            logger.error(f"Error handling LoopReady: {e}", exc_info=True)
-            self.record_error(e, is_fatal=False)
-    
-    async def _handle_text_overlay(self, message: Dict[str, Any]):
+    async def _handle_text_overlay(self, message: MessageDataType):
         """Handle TextOverlay messages."""
         try:
             logger.info(f"Processing TextOverlay message: {message}")
@@ -365,7 +322,7 @@ class DisplayService(BaseService):
             logger.error(f"Error handling TextOverlay: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
     
-    async def _handle_remove_text(self, message: Dict[str, Any]):
+    async def _handle_remove_text(self, message: MessageDataType):
         """Handle RemoveText messages."""
         try:
             logger.debug(f"Received RemoveText: {message}")
@@ -378,7 +335,7 @@ class DisplayService(BaseService):
             logger.error(f"Error handling RemoveText: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
     
-    async def _handle_video_mask(self, message: Dict[str, Any]):
+    async def _handle_video_mask(self, message: MessageDataType):
         """Handle VideoMask messages."""
         try:
             logger.debug(f"Received VideoMask: {message}")
@@ -405,7 +362,7 @@ class DisplayService(BaseService):
     
     # Direct Interface for Testing
     
-    def trigger_display_update(self, update_type: str, data: Dict[str, Any]):
+    def trigger_display_update(self, update_type: str, data: MessageDataType):
         """Direct interface for triggering display updates (for testing).
         
         Args:
@@ -424,7 +381,7 @@ class DisplayService(BaseService):
     
     # Validation Methods
     
-    def _validate_image_ready(self, message: Dict[str, Any]) -> bool:
+    def _validate_image_ready(self, message: MessageDataType) -> bool:
         """Validate ImageReady message."""
         required_fields = ["image_id", "uri"]
         for field in required_fields:
@@ -433,7 +390,7 @@ class DisplayService(BaseService):
                 return False
         return True
     
-    def _validate_text_overlay(self, message: Dict[str, Any]) -> bool:
+    def _validate_text_overlay(self, message: MessageDataType) -> bool:
         """Validate TextOverlay message."""
         required_fields = ["text_id", "content"]
         for field in required_fields:
