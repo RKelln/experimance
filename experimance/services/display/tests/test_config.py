@@ -16,10 +16,10 @@ from services.display.src.experimance_display.config import (
     DisplayServiceConfig, 
     DisplayConfig, 
     TextStyleConfig,
-    ZmqConfig,
     RenderingConfig,
     TransitionsConfig
 )
+from experimance_common.zmq.config import PubSubServiceConfig
 
 
 class TestConfigurationSchemas:
@@ -44,9 +44,9 @@ class TestConfigurationSchemas:
         assert config.padding == 10
     
     def test_zmq_config_defaults(self):
-        """Test ZmqConfig default values."""
-        config = ZmqConfig()
-        assert "tcp://localhost:" in config.events_sub_address
+        """Test PubSubServiceConfig default values."""
+        config = PubSubServiceConfig()
+        assert config.name == "pubsub"
     
     def test_complete_config_defaults(self):
         """Test complete DisplayServiceConfig defaults."""
@@ -110,9 +110,10 @@ position = "top_center"
 [text_styles.system]
 color = [0, 255, 0, 255]
 
-[zmq]
-images_sub_address = "tcp://localhost:9999"
-events_sub_address = "tcp://localhost:8888"
+[zmq.subscriber]
+address = "tcp://localhost"
+port = 9999
+topics = ["image.ready", "text.overlay"]
 """
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
@@ -131,7 +132,9 @@ events_sub_address = "tcp://localhost:8888"
             assert config.text_styles.agent.position == "top_center"
             assert config.text_styles.system.color == (0, 255, 0, 255)
             
-            assert config.zmq.events_sub_address == "tcp://localhost:8888"
+            assert config.zmq.subscriber.address == "tcp://localhost"
+            assert config.zmq.subscriber.port == 9999
+            assert config.zmq.subscriber.topics == ["image.ready", "text.overlay"]
         
         # Clean up
         Path(f.name).unlink()

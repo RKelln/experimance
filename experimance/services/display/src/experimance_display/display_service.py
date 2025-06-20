@@ -23,10 +23,11 @@ import pyglet
 from pyglet import clock
 from pyglet.window import key
 
-from experimance_common.zmq.subscriber import ZmqSubscriberService
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.base_service import BaseService
+from experimance_common.zmq.services import PubSubService
+from experimance_common.zmq.config import MessageType
 from experimance_common.constants import DEFAULT_PORTS, TICK, DISPLAY_SERVICE_DIR
-from experimance_common.base_service import ServiceState
+from experimance_common.service_state import ServiceState
 
 from .config import DisplayServiceConfig
 from .renderers.layer_manager import LayerManager
@@ -38,7 +39,7 @@ from .renderers.debug_overlay_renderer import DebugOverlayRenderer
 logger = logging.getLogger(__name__)
 
 
-class DisplayService(ZmqSubscriberService):
+class DisplayService(BaseService):
     """Main display service that renders the Experimance visual output.
     
     This service subscribes to multiple ZMQ channels and coordinates all visual
@@ -54,25 +55,17 @@ class DisplayService(ZmqSubscriberService):
         
         Args:
             config: Service configuration object
-            service_name: Name of this service instance
         """
+        # Initialize base service
+        super().__init__(
+            service_name=config.service_name,
+            service_type="display"
+        )
+        
         self.config = config
         
-        # Initialize ZMQ subscriber service for images channel
-        super().__init__(
-            service_name=self.config.service_name,
-            service_type="display",
-            sub_address=self.config.zmq.events_sub_address,
-            topics=[
-                MessageType.IMAGE_READY,
-                MessageType.TRANSITION_READY,
-                MessageType.LOOP_READY,
-                MessageType.TEXT_OVERLAY,
-                MessageType.REMOVE_TEXT,
-                MessageType.CHANGE_MAP,
-                MessageType.ERA_CHANGED,
-            ]
-        )
+        # Initialize ZMQ service using composition
+        self.zmq_service = PubSubService(config=config.zmq)
         
         # Pyglet window and rendering components
         self.window = None
@@ -90,7 +83,7 @@ class DisplayService(ZmqSubscriberService):
         # Direct interface for testing (non-ZMQ control)
         self._direct_handlers: Dict[str, Callable] = {}
         
-        logger.info(f"DisplayService initialized: {self.config.service_name}")
+        logger.info(f"DisplayService initialized with strategy: {self.config.service_name}")
     
     async def start(self):
         """Start the display service."""
@@ -108,10 +101,13 @@ class DisplayService(ZmqSubscriberService):
         # Register direct interface handlers for testing
         self._register_direct_handlers()
         
-        # Register background tasks before calling super().start()
+        # Add rendering task before calling super().start()
         self.add_task(self._run_pyglet_loop())
         
-        # Start the base ZMQ service
+        # Start the ZMQ service
+        await self.zmq_service.start()
+        
+        # Start the base service
         await super().start()
         
         # DON'T schedule pyglet clock for frame updates - we'll handle this manually
@@ -265,32 +261,42 @@ class DisplayService(ZmqSubscriberService):
             raise
     
     def _register_zmq_handlers(self):
-        """Register ZMQ message handlers."""
-        self.register_handler(MessageType.IMAGE_READY, self._handle_image_ready)
-        self.register_handler(MessageType.TRANSITION_READY, self._handle_transition_ready)
-        self.register_handler(MessageType.LOOP_READY, self._handle_loop_ready)
-        self.register_handler(MessageType.TEXT_OVERLAY, self._handle_text_overlay)
-        self.register_handler(MessageType.REMOVE_TEXT, self._handle_remove_text)
-        self.register_handler(MessageType.CHANGE_MAP, self._handle_video_mask)
-        self.register_handler(MessageType.ERA_CHANGED, self._handle_era_changed)
+        """Register ZMQ message handlers using the composition pattern."""
+        self.zmq_service.add_message_handler(MessageType.DISPLAY_MEDIA, self._handle_display_media)
+        self.zmq_service.add_message_handler(MessageType.CHANGE_MAP, self._handle_video_mask)
+        self.zmq_service.add_message_handler(MessageType.TEXT_OVERLAY, self._handle_text_overlay)
+        self.zmq_service.add_message_handler(MessageType.REMOVE_TEXT, self._handle_remove_text)
         
-        logger.info("ZMQ message handlers registered")
+        logger.info("ZMQ message handlers registered using composition pattern")
     
     def _register_direct_handlers(self):
         """Register direct interface handlers for testing."""
         self._direct_handlers = {
-            "image_ready": self._handle_image_ready,
             "text_overlay": self._handle_text_overlay,
             "remove_text": self._handle_remove_text,
-            "video_mask": self._handle_video_mask,
-            "transition_ready": self._handle_transition_ready,
-            "loop_ready": self._handle_loop_ready,
-            "era_changed": self._handle_era_changed,
+            "change_map": self._handle_video_mask,
+            "display_media": self._handle_display_media,
         }
         logger.info("Direct interface handlers registered")
     
     # ZMQ Message Handlers
-    
+    async def _handle_display_media(self, message: Dict[str, Any]):
+        """Handle DisplayMedia messages."""
+        try:
+            logger.debug(f"Received DisplayMedia: {message}")
+            
+            # Validate message
+            if not self._validate_image_ready(message):
+                return
+            
+            # Pass to image renderer
+            if self.image_renderer:
+                await self.image_renderer.handle_image_ready(message)
+            
+        except Exception as e:
+            logger.error(f"Error handling DisplayMedia: {e}", exc_info=True)
+            self.record_error(e, is_fatal=False)
+
     async def _handle_image_ready(self, message: Dict[str, Any]):
         """Handle ImageReady messages."""
         try:
@@ -642,10 +648,14 @@ class DisplayService(ZmqSubscriberService):
     async def stop(self):
         """Stop the display service."""
         logger.info("Stopping DisplayService...")
-        # Stop ZMQ service (must be first)
-        await super().stop()
         
         try:
+            # Stop ZMQ service first to ensure subscriber tasks are cancelled
+            if self.zmq_service and self.zmq_service.is_running():
+                logger.debug("Stopping ZMQ service...")
+                await self.zmq_service.stop()
+                logger.debug("ZMQ service stopped")
+            
             # Stop clock updates
             clock.unschedule(self._update_frame)
             
@@ -658,12 +668,17 @@ class DisplayService(ZmqSubscriberService):
                 self.window.close()
                 self.window = None
         
-            logger.info("DisplayService stopped")
+            logger.info("DisplayService components stopped")
             
         except Exception as e:
-            logger.error(f"Error during DisplayService shutdown: {e}", exc_info=True)
+            logger.error(f"Error during DisplayService component shutdown: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
-            raise
+            # Continue with base service stop even if components fail
+        
+        # Stop base service last
+        await super().stop()
+        
+        logger.info("DisplayService stopped")
     
     async def _show_title_screen(self):
         """Display the title screen if enabled in configuration."""

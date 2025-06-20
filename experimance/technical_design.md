@@ -29,28 +29,62 @@ The DISPLAY_MEDIA message type represents a significant architectural improvemen
 
 ### Message Flow
 
-TODO: make into diagram?
+```mermaid
+sequenceDiagram
+    participant Core
+    participant ImageServer
+    participant TransitionWorker
+    participant Display
+    participant Agent
 
-core -> RENDER_REQUEST (push)  -> image server
-core <- IMAGE_READY (pull)     <- image server
-core -> DISPLAY_MEDIA (pubsub) -> display
+    %% Main flow
+    Core->>ImageServer: RENDER_REQUEST (push)
+    ImageServer-->>Core: IMAGE_READY (pull)
+    Core->>Display: DISPLAY_MEDIA (pubsub)
 
-With future:
-core -> TRANSITION_REQUEST (push) -> transition service
-core <- TRANSITION_READY (pull)   <- transition serrvice
-core -> DISPLAY_MEDIA (pubsub) -> display
+    %% Future: transitions
+    Core->>TransitionWorker: TRANSITION_REQUEST (push)
+    TransitionWorker-->>Core: TRANSITION_READY (pull)
+    Core->>Display: DISPLAY_MEDIA (pubsub)
 
-and possible:
-core -> LOOP_REQUEST (push) -> image server
-core <- LOOP_READY (pull)   <- image server
-core -> DISPLAY_MEDIA (pubsub) -> display
+    %% Possible: loops
+    Core->>ImageServer: LOOP_REQUEST (push)
+    ImageServer-->>Core: LOOP_READY (pull)
+    Core->>Display: DISPLAY_MEDIA (pubsub)
 
-and additional core events:
-core -> CHANGE_MAP (push) -> display
+    %% Additional core events
+    Core->>Display: CHANGE_MAP (push)
 
-core <- AGENT_CONTROL_EVENT (???) <- agent
-agent -> TEXT_OVERLAY (push)      -> display
-agent -> REMOVE_TEXT (push)       -> display
+    %% Agent interactions
+    Agent-->>Core: AGENT_CONTROL_EVENT (pubsub)
+    Agent->>Display: TEXT_OVERLAY (push)
+    Agent->>Display: REMOVE_TEXT (push)
+```
+
+```
+Main flow:
+  Core         -> ImageServer:      RENDER_REQUEST (push)
+  ImageServer  -> Core:             IMAGE_READY (pull)
+  Core         -> Display:          DISPLAY_MEDIA (pubsub)
+
+Transitions: [TBD]
+  Core         -> TransitionWorker: TRANSITION_REQUEST (push)
+  TransitionWorker -> Core:         TRANSITION_READY (pull)
+  Core         -> Display:          DISPLAY_MEDIA (pubsub)
+
+Video loops: [TBD]
+  Core         -> ImageServer:      LOOP_REQUEST (push)
+  ImageServer  -> Core:             LOOP_READY (pull)
+  Core         -> Display:          DISPLAY_MEDIA (pubsub)
+
+Additional core events:
+  Core         -> Display:          CHANGE_MAP (push)
+
+Agent interactions:
+  Agent        -> Core:             AGENT_CONTROL_EVENT (pubsub)
+  Agent        -> Display:          TEXT_OVERLAY (push)
+  Agent        -> Display:          REMOVE_TEXT (push)
+```
 
 
 ### Transition Logic

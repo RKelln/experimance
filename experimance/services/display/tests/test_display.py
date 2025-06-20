@@ -114,7 +114,10 @@ def schedule_more_text(dt, service):
 
 def schedule_cleanup(dt, service):
     """Schedule service cleanup."""
-    asyncio.create_task(service.stop())
+    # Instead of manually stopping, just exit the app
+    # The active_service context manager will handle cleanup
+    import pyglet
+    pyglet.app.exit()
     print("Scheduled cleanup")
 
 

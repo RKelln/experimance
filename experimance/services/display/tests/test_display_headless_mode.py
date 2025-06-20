@@ -21,27 +21,22 @@ import sys
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from services.display.src.experimance_display.config import DisplayServiceConfig
+from services.display.src.experimance_display.config import DisplayServiceConfig, DisplayConfig
 from services.display.src.experimance_display.display_service import DisplayService
+from experimance_common.test_utils import active_service
 
 
 @pytest.fixture
 def headless_config():
     """Create a test configuration for headless mode."""
-    return DisplayServiceConfig.from_overrides(
-        override_config={
-            'service_name': 'test-display-headless',
-            'display': {
-                'fullscreen': False,
-                'resolution': [800, 600],
-                'debug_overlay': True,
-                'headless': True  # Enable headless mode
-            },
-            'zmq': {
-                'images_sub_address': 'tcp://localhost:15558',  # Different port for testing
-                'events_sub_address': 'tcp://localhost:15555'
-            }
-        }
+    return DisplayServiceConfig(
+        service_name='test-display-headless',
+        display=DisplayConfig(
+            fullscreen=False,
+            resolution=(800, 600),
+            debug_overlay=True,
+            headless=True  # Enable headless mode
+        )
     )
 
 
@@ -130,22 +125,19 @@ class TestHeadlessMode:
             # Add async cleanup method to layer manager
             mock_layer.return_value.cleanup = AsyncMock()
             
-            await service.start()
+            # Use active_service for proper lifecycle management
+            async with active_service(service) as active:
+                # Check that window was created in headless mode
+                assert active.window is not None
+                assert not hasattr(active.window, 'on_draw')  # Headless window won't have event handlers
+                
+                # Check that renderers were created
+                assert active.layer_manager is not None
+                assert active.image_renderer is not None
+                assert active.video_overlay_renderer is not None
+                assert active.text_overlay_manager is not None
             
-            # Check that window was created in headless mode
-            assert service.window is not None
-            assert not hasattr(service.window, 'on_draw')  # Headless window won't have event handlers
-            
-            # Check that renderers were created
-            assert service.layer_manager is not None
-            assert service.image_renderer is not None
-            assert service.video_overlay_renderer is not None
-            assert service.text_overlay_manager is not None
-            
-            # Stop the service
-            await service.stop()
-            
-            # Verify cleanup was called
+            # Verify cleanup was called after service stopped
             mock_clock.unschedule.assert_called()
             service.layer_manager.cleanup.assert_called_once()
     
@@ -191,9 +183,9 @@ class TestHeadlessMode:
         with patch('services.display.src.experimance_display.display_service.clock') as mock_clock:
             mock_clock.schedule_once = Mock()
             
-            # Test direct update
+            # Test direct update with a valid handler
             test_data = {'test': 'data'}
-            service.trigger_display_update('image_ready', test_data)
+            service.trigger_display_update('display_media', test_data)
             
             # Should have scheduled a task
             mock_clock.schedule_once.assert_called_once()

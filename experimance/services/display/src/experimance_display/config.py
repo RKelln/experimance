@@ -3,7 +3,7 @@
 Configuration schema for the Experimance Display Service.
 
 This module defines Pydantic models for validating and accessing
-display service configuration in a type-safe way.
+display service configuration in a type-safe way using the new ZMQ architecture.
 """
 
 from typing import Dict, List, Literal, Optional, Tuple, TypeAlias
@@ -11,18 +11,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from experimance_common.config import BaseConfig
-from experimance_common.constants import DEFAULT_PORTS, DISPLAY_SERVICE_DIR
+from experimance_common.config import BaseConfig, BaseServiceConfig
+from experimance_common.constants import DEFAULT_PORTS, DISPLAY_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.zmq.config import (
+    PubSubServiceConfig, SubscriberConfig, MessageType
+)
 
 DEFAULT_CONFIG_PATH = f"{DISPLAY_SERVICE_DIR}/config.toml"
-
-class ZmqConfig(BaseModel):
-    """ZeroMQ configuration for the Display Service."""
-    
-    events_sub_address: str = Field(
-        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-        description="Address for subscribing to unified events channel"
-    )
 
 
 
@@ -266,15 +261,56 @@ class TitleScreenConfig(BaseModel):
     )
 
 
-class DisplayServiceConfig(BaseConfig):
+class DisplayServiceConfig(BaseServiceConfig):
     """Complete configuration schema for the Display Service."""
     
+    # Override service name with default for display service
     service_name: str = "display-service"
     
+    # ZeroMQ configuration using new PubSubServiceConfig pattern
+    zmq: PubSubServiceConfig = Field(
+        default_factory=lambda: PubSubServiceConfig(
+            name="display-service",
+            subscriber=SubscriberConfig(
+                address=ZMQ_TCP_CONNECT_PREFIX,
+                port=DEFAULT_PORTS['events'],
+                topics=[
+                    str(MessageType.DISPLAY_MEDIA),
+                    str(MessageType.TEXT_OVERLAY),
+                    str(MessageType.REMOVE_TEXT),
+                    str(MessageType.CHANGE_MAP)
+                ]
+            )
+        ),
+        description="ZeroMQ communication settings using subscriber pattern"
+    )
+    
     # Main configuration sections
-    zmq: ZmqConfig = Field(default_factory=ZmqConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
     rendering: RenderingConfig = Field(default_factory=RenderingConfig)
     transitions: TransitionsConfig = Field(default_factory=TransitionsConfig)
     text_styles: TextStylesConfig = Field(default_factory=TextStylesConfig)
     title_screen: TitleScreenConfig = Field(default_factory=TitleScreenConfig)
+
+
+def create_test_display_config(**overrides) -> DisplayServiceConfig:
+    """
+    Create a DisplayServiceConfig suitable for testing.
+    
+    Args:
+        **overrides: Configuration overrides
+        
+    Returns:
+        DisplayServiceConfig instance with test-friendly defaults
+    """
+    test_config = {
+        "service_name": "test-display-service",
+        "display": {
+            "headless": True,  # No window creation in tests
+            "debug_overlay": False,
+            "fps_limit": 30
+        },
+        **overrides
+    }
+    
+    return DisplayServiceConfig.from_overrides(default_config=test_config)

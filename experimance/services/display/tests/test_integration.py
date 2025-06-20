@@ -336,54 +336,55 @@ class IntegrationTestRunner:
                 )
             )
             
-            # Create and start service
-            self.service = DisplayService(config=config)
-            await self.service.start()
-            logger.info("Display service started successfully")
+            # Create service and use active_service context manager
+            service = DisplayService(config=config)
             
-            # Show welcome message
-            welcome = {
-                "text_id": "welcome",
-                "content": "Integration Test Started - Testing all display features",
-                "speaker": "system",
-                "duration": 3.0
-            }
-            self.service.trigger_display_update("text_overlay", welcome)
-            await asyncio.sleep(3)
-            
-            # Run test sequences
-            await self.run_text_overlay_test()
-            await asyncio.sleep(1)
-            
-            await self.run_image_transition_test()
-            await asyncio.sleep(1)
-            
-            await self.run_video_overlay_test()
-            await asyncio.sleep(1)
-            
-            # Final message
-            final_msg = {
-                "text_id": "complete",
-                "content": "Integration Test Complete! Press ESC or Q to exit",
-                "speaker": "agent",
-                "duration": None
-            }
-            self.service.trigger_display_update("text_overlay", final_msg)
-            
-            # Keep running until user exits
-            logger.info("Integration test complete. Window will remain open.")
-            logger.info("Press ESC or Q in the window to exit, or Ctrl+C in terminal.")
-            
-            # Run until shutdown
-            await self.service.run()
+            async with active_service(service) as active:
+                # Store reference for test methods
+                self.service = active
+                logger.info("Display service started successfully")
+                
+                # Show welcome message
+                welcome = {
+                    "text_id": "welcome",
+                    "content": "Integration Test Started - Testing all display features",
+                    "speaker": "system",
+                    "duration": 3.0
+                }
+                active.trigger_display_update("text_overlay", welcome)
+                await asyncio.sleep(3)
+                
+                # Run test sequences
+                await self.run_text_overlay_test()
+                await asyncio.sleep(1)
+                
+                await self.run_image_transition_test()
+                await asyncio.sleep(1)
+                
+                await self.run_video_overlay_test()
+                await asyncio.sleep(1)
+                
+                # Final message
+                final_msg = {
+                    "text_id": "complete",
+                    "content": "Integration Test Complete! Press ESC or Q to exit",
+                    "speaker": "agent",
+                    "duration": None
+                }
+                active.trigger_display_update("text_overlay", final_msg)
+                
+                # Keep running until user exits
+                logger.info("Integration test complete. Window will remain open.")
+                logger.info("Press ESC or Q in the window to exit, or Ctrl+C in terminal.")
+                
+                # Run until shutdown
+                await active.run()
             
         except KeyboardInterrupt:
             logger.info("Test interrupted by user")
         except Exception as e:
             logger.error(f"Test failed: {e}", exc_info=True)
         finally:
-            if self.service:
-                await self.service.stop()
             self.cleanup()
 
 
@@ -403,26 +404,24 @@ async def run_quick_test():
     service = DisplayService(config=config)
     
     try:
-        await service.start()
-        
-        # Quick text test
-        test_msg = {
-            "text_id": "quick_test",
-            "content": "Quick Test - Display service is working!",
-            "speaker": "agent", 
-            "duration": 5.0
-        }
-        service.trigger_display_update("text_overlay", test_msg)
-        
-        logger.info("Quick test running for 5 seconds...")
-        await asyncio.sleep(5)
-        
-        logger.info("Quick test completed successfully!")
+        # Use active_service for proper lifecycle management
+        async with active_service(service) as active:
+            # Quick text test
+            test_msg = {
+                "text_id": "quick_test",
+                "content": "Quick Test - Display service is working!",
+                "speaker": "agent", 
+                "duration": 5.0
+            }
+            active.trigger_display_update("text_overlay", test_msg)
+            
+            logger.info("Quick test running for 5 seconds...")
+            await asyncio.sleep(5)
+            
+            logger.info("Quick test completed successfully!")
         
     except Exception as e:
         logger.error(f"Quick test failed: {e}")
-    finally:
-        await service.stop()
 
 
 async def main():

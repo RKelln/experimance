@@ -27,6 +27,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from services.display.src.experimance_display.config import DisplayServiceConfig
+from experimance_common.test_utils import active_service
 
 
 @pytest.fixture
@@ -124,8 +125,11 @@ def test_config():
                 'debug_overlay': True
             },
             'zmq': {
-                'images_sub_address': 'tcp://localhost:15558',  # Different port for testing
-                'events_sub_address': 'tcp://localhost:15555'
+                'subscriber': {
+                    'address': 'tcp://localhost',
+                    'port': 15555,
+                    'topics': ['image.ready', 'text.overlay']
+                }
             }
         }
     )
@@ -164,19 +168,15 @@ class TestDisplayServiceBasic:
         
         service = DisplayService(config=test_config)
         
-        # Start service
-        await service.start()
-        
-        # Verify mocks were called
-        mock_pyglet['window_class'].assert_called_once()
-        
-        # Verify service state - after start() it should be STARTED, not RUNNING
-        assert service.state == ServiceState.STARTED
-        assert service.window is not None
-        assert service.layer_manager is not None
-        
-        # Stop service
-        await service.stop()
+        # Use active_service for proper lifecycle management
+        async with active_service(service) as active:
+            # Verify mocks were called
+            mock_pyglet['window_class'].assert_called_once()
+            
+            # Verify service state - when using active_service, it should be RUNNING
+            assert active.state == ServiceState.RUNNING
+            assert active.window is not None
+            assert active.layer_manager is not None
         
         # Verify cleanup - check that service is stopped
         assert service.state == ServiceState.STOPPED
@@ -388,8 +388,10 @@ fps_limit = 30
 font_size = 36
 color = [255, 0, 0, 255]
 
-[zmq]
-events_sub_address = "tcp://localhost:9999"
+[zmq.subscriber]
+address = "tcp://localhost"
+port = 9999
+topics = ["image.ready", "text.overlay"]
 """)
             f.flush()
             
@@ -401,7 +403,8 @@ events_sub_address = "tcp://localhost:9999"
             assert config.display.fps_limit == 30
             assert config.text_styles.agent.font_size == 36
             assert config.text_styles.agent.color == (255, 0, 0, 255)
-            assert config.zmq.events_sub_address == "tcp://localhost:9999"
+            assert config.zmq.subscriber.address == "tcp://localhost"
+            assert config.zmq.subscriber.port == 9999
         
         # Clean up
         Path(f.name).unlink()
