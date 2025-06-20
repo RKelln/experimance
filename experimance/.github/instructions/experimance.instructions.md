@@ -120,12 +120,13 @@ experimance/
 
 ## Testing
 
+- Read README_SERVICE_TESTING.md for service-specific testing instructions
 - Write unit tests with pytest, using pytest fixtures for setup
 - Use pytest-asyncio for testing async code
 - Mock external dependencies as needed, check for existing mocks and reuse
 - Test failure cases as well as success
 - Use fixtures for common setup
-- Place tests in `utils/tests/` directory for common or in `service/NAME/tests/` for service-specific tests
+- Place inter-service tests in `utils/tests/` directory or in `service/NAME/tests/` for service-specific tests
 - Put usage examples that can guide others  in `utils/examples/`
 
 ## Commenting Conventions
@@ -134,3 +135,13 @@ experimance/
 - Document public APIs with complete docstrings
 - Include examples in docstrings for complex functionality
 - Use TODO comments for future work with a brief explanation
+
+## Documention
+
+- There is extensive documentation for writing services:
+  - [Writing Services](libs/common/README_SERVICE.md)
+  - [Using ZMQ](libs/common/README_ZMQ.md)
+  - [Testing Services](libs/common/README_SERVICE_TESTING.md)
+- Before major changes, read the documentation to understand existing patterns
+- Use Markdown for documentation files
+- Keep documentation up-to-date with code changes
