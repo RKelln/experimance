@@ -297,7 +297,7 @@ class PublisherComponent(BaseZmqComponent):
             
         # 2. Extract topic from message if it has a message_type
         if isinstance(message, dict) and 'type' in message:
-            message_type = message['type']
+            return message['type']
         if isinstance(message, MessageBase):
             return str(message.type)
             
