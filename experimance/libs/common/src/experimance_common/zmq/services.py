@@ -288,6 +288,8 @@ class WorkerService(BaseZmqService):
         
         # Create all components according to plan
         self._components: List[BaseZmqComponent] = [] # used for lifecycle management
+        self.publisher = None
+        self.subscriber = None
         if config.publisher:
             self.publisher = PublisherComponent(config.publisher)
             self._components.append(self.publisher)

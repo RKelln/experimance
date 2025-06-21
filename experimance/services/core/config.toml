@@ -7,12 +7,13 @@ visualize = false            # enable visual debugging - display depth image and
 name = "experimance_core_dev"
 heartbeat_interval = 3.0
 change_smoothing_queue_size = 4   # size of change score queue for smoothing (reduces hand artifacts)
+render_request_cooldown = 2.0     # minimum interval between render requests in seconds (throttling)
 
 [state_machine]
 idle_timeout = 45.0          # seconds
 wilderness_reset = 300.0     # seconds to full reset
-interaction_threshold = 0.3  # threshold for user interaction detection
-era_min_duration = 10.0      # minimum time in seconds before era can change
+interaction_threshold = 100  # threshold for user interaction detection
+era_min_duration = 0         # minimum time in seconds before era can change
 
 [camera]
 # Core camera settings
@@ -31,9 +32,8 @@ change_threshold = 10                # threshold for depth differences per pixel
 significant_change_threshold = 0.01  # threshold for depth change detection per image
 detect_hands = true          # enable hand detection
 crop_to_content = true       # crop output to content area
-warm_up_frames = 10          # number of frames to skip during warmup
 lightweight_mode = false     # skip some processing for higher FPS
-verbose_performance = true   # show detailed performance timing
+verbose_performance = false   # show detailed performance timing
 debug_mode = false           # include intermediate images for visualization
 
 # Mask stability and bowl detection

@@ -18,6 +18,7 @@ endpoint = "comfy/RKelln/experimancexilightningdepth"
 model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"
 lora_url = "https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor"
 lora_strength = 0.8
+timeout = 90
 
 # OpenAI configuration (DALLE)
 [openai]
@@ -31,3 +32,12 @@ model_path = "models/sdxl-base"
 device = "cuda"
 dimensions = [1024, 1024]
 num_inference_steps = 30
+
+# Fake image generator
+[mock]
+#strategy: Literal["mock"] = "mock"
+#image_size: tuple = (1024, 1024)
+#background_color: tuple = (100, 150, 200)
+#text_color: tuple = (255, 255, 255)
+use_existing_images = true
+existing_images_dir = "media/images/generated"

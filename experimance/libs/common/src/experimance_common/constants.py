@@ -9,10 +9,12 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 
 DEFAULT_PORTS = {
     # Unified events channel - all services publish and subscribe here
-    "events": 5555,               # Includes display media 
+    "events": 5555,               # Pubsub from core to services, includes display media 
+    # Updates from services (e.g. agent state, image generation status)
+    "updates": 5556,              # Currently not functional
     
     # Specialized high-bandwidth channels
-    "depth": 5556,                # Depth camera data (high frequency) currenly unused
+    "depth": 5566,                # Depth camera data (high frequency) [currenly unused]
     "transition_requests": 5560,  # Work distribution for transition rendering
     "transition_results": 5561,   # Results from transition rendering
     "video_requests": 5562,       # Work distribution for video generation
