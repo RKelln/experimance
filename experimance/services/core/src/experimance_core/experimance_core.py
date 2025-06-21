@@ -43,6 +43,7 @@ from experimance_core.config import (
     CAMERA_RESET_TIMEOUT
 )
 from experimance_core.depth_factory import create_depth_processor
+from experimance_core.prompt_generator import PromptGenerator, PromptManager, RandomStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -152,8 +153,42 @@ class ExperimanceCoreService(BaseService):
         self.render_request_cooldown: float = self.config.experimance_core.render_request_cooldown
         self.pending_render_request: bool = False  # Track if we need to send a request
         
+        # Initialize prompt generation system
+        self.prompt_generator: Optional[PromptGenerator] = None
+        self.prompt_manager: Optional[PromptManager] = None
+        self._initialize_prompt_system()
+        
         logger.info(f"Experimance Core Service initialized: {self.service_name}")
 
+    def _initialize_prompt_system(self):
+        """Initialize the prompt generation system."""
+        try:
+            # Initialize prompt generator with data path from config or default
+            from pathlib import Path
+            data_path_str = getattr(self.config, 'data_path', 'data/')
+            data_path = Path(data_path_str)
+            
+            self.prompt_generator = PromptGenerator(
+                data_path=data_path,
+                strategy=RandomStrategy.SHUFFLE
+            )
+            
+            # Initialize prompt manager with current state
+            self.prompt_manager = PromptManager(
+                generator=self.prompt_generator,
+                initial_era=self.current_era,
+                initial_biome=self.current_biome
+            )
+            
+            logger.info("Prompt generation system initialized successfully")
+            logger.info(f"Available eras: {[e.value for e in self.prompt_manager.get_available_eras()]}")
+            logger.info(f"Available biomes: {[b.value for b in self.prompt_manager.get_available_biomes()]}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize prompt system: {e}")
+            logger.info("Falling back to simple prompt generation")
+            self.prompt_generator = None
+            self.prompt_manager = None
 
 
     async def start(self):
@@ -537,20 +572,24 @@ class ExperimanceCoreService(BaseService):
             return False
             
         old_era = self.current_era
-        self.current_era = Era(new_era)
-        self.era_progression_timer = 0.0
-        
-        # Select appropriate biome for new era
-        self.select_biome_for_era(self.current_era)
-        
-        # Publish EraChanged event
-        await self._publish_era_changed_event(old_era, self.current_era)
+        # Use the advance_era method which handles prompt manager updates
+        era_changed = self.advance_era(Era(new_era))
+        if era_changed:
+            self.era_progression_timer = 0.0
+            
+            # Select appropriate biome for new era
+            self.select_biome_for_era(self.current_era)
+            
+            # Publish EraChanged event
+            await self._publish_era_changed_event(old_era, self.current_era)
 
-        # Publish render request
-        await self._publish_render_request(force=True)
+            # Publish render request
+            await self._publish_render_request(force=True)
+            
+            logger.info(f"Transitioned from {old_era} to {self.current_era}")
+            return True
         
-        logger.info(f"Transitioned from {old_era} to {self.current_era}")
-        return True
+        return False
     
     def can_transition_to_era(self, target_era: str) -> bool:
         """Check if transition to target era is allowed."""
@@ -608,7 +647,8 @@ class ExperimanceCoreService(BaseService):
             
         # Otherwise, select randomly from available biomes
         new_biome = random.choice(available_biomes)
-        self.current_biome = new_biome
+        # Use switch_biome method which handles prompt manager updates
+        self.switch_biome(new_biome)
         logger.info(f"Selected biome {self.current_biome} for era {era_enum}")
         return self.current_biome
     
@@ -624,8 +664,9 @@ class ExperimanceCoreService(BaseService):
     async def reset_to_wilderness(self):
         """Reset the system to wilderness state."""
         old_era = self.current_era
-        self.current_era = Era.WILDERNESS
-        self.current_biome = Biome.TEMPERATE_FOREST
+        # Use the advance_era and switch_biome methods for prompt manager consistency
+        self.advance_era(Era.WILDERNESS)
+        self.switch_biome(Biome.TEMPERATE_FOREST)
         self.idle_timer = 0.0
         self.user_interaction_score = 0.0
         self.audience_present = False
@@ -670,10 +711,14 @@ class ExperimanceCoreService(BaseService):
         """Load state from dictionary."""
         # Handle enum values from string data
         era_str = state_data.get("current_era", Era.WILDERNESS.value)
-        self.current_era = Era(era_str) if isinstance(era_str, str) else era_str
+        era = Era(era_str) if isinstance(era_str, str) else era_str
         
         biome_str = state_data.get("current_biome", Biome.TEMPERATE_FOREST.value)
-        self.current_biome = Biome(biome_str) if isinstance(biome_str, str) else biome_str
+        biome = Biome(biome_str) if isinstance(biome_str, str) else biome_str
+        
+        # Use advance_era and switch_biome to maintain prompt manager consistency
+        self.advance_era(era)
+        self.switch_biome(biome)
         
         self.user_interaction_score = state_data.get("user_interaction_score", 0.0)
         self.idle_timer = state_data.get("idle_timer", 0.0)
@@ -710,12 +755,12 @@ class ExperimanceCoreService(BaseService):
         # Validate era
         if not self.is_valid_era(self.current_era):
             logger.warning(f"Invalid era {self.current_era}, resetting to wilderness")
-            self.current_era = Era.WILDERNESS
+            self.advance_era(Era.WILDERNESS)
         
         # Validate biome
         if not self.is_valid_biome(self.current_biome):
             logger.warning(f"Invalid biome {self.current_biome}, resetting to temperate forest")
-            self.current_biome = Biome.TEMPERATE_FOREST
+            self.switch_biome(Biome.TEMPERATE_FOREST)
         
         # Validate biome is available for current era
         era_enum = Era(self.current_era) if isinstance(self.current_era, str) else self.current_era
@@ -1069,7 +1114,7 @@ class ExperimanceCoreService(BaseService):
         if message is None:
             # Create a default render request using the proper schema
             request_id = str(uuid.uuid4())
-            prompt = self._generate_prompt_for_era_biome(self.current_era, self.current_biome)
+            positive_prompt, negative_prompt = self._generate_prompt_for_era_biome(self.current_era, self.current_biome)
             
             # Prepare the depth map image data for transport
             image_source = None
@@ -1084,7 +1129,8 @@ class ExperimanceCoreService(BaseService):
                 request_id=request_id,
                 era=self.current_era,
                 biome=self.current_biome,
-                prompt=prompt,
+                prompt=positive_prompt,
+                negative_prompt=negative_prompt,
                 seed=int(time.time()),  # Use timestamp as seed for variability TODO: retain same seed during an era?
                 depth_map=image_source
             )
@@ -1120,9 +1166,26 @@ class ExperimanceCoreService(BaseService):
         if self.pending_render_request and self._should_send_render_request():
             await self._publish_render_request()
             
-    def _generate_prompt_for_era_biome(self, era: Era, biome: Biome) -> str:
-        """Generate an appropriate prompt for the given era and biome."""
-        # Map eras to descriptive periods
+    def _generate_prompt_for_era_biome(self, era: Era, biome: Biome) -> Tuple[str, str]:
+        """Generate an appropriate prompt for the given era and biome.
+        
+        Returns:
+            Tuple of (positive_prompt, negative_prompt)
+        """
+        if self.prompt_manager is not None:
+            try:
+                # Update prompt manager state if era/biome changed
+                if era != self.prompt_manager.current_era or biome != self.prompt_manager.current_biome:
+                    self.prompt_manager.set_era_and_biome(era, biome)
+                
+                # Get current prompt (cached, no state advancement)
+                return self.prompt_manager.current_prompt()
+                
+            except Exception as e:
+                logger.warning(f"Error generating prompt with prompt manager: {e}")
+                # Fall back to simple generation
+        
+        # Fallback to simple prompt generation
         era_descriptions = {
             Era.WILDERNESS: "pristine wilderness",
             Era.PRE_INDUSTRIAL: "pre-industrial settlement", 
@@ -1135,7 +1198,6 @@ class ExperimanceCoreService(BaseService):
             Era.RUINS: "overgrown ruins"
         }
         
-        # Map biomes to environmental descriptions
         biome_descriptions = {
             Biome.RAINFOREST: "dense rainforest",
             Biome.TEMPERATE_FOREST: "temperate forest",
@@ -1155,10 +1217,107 @@ class ExperimanceCoreService(BaseService):
         era_desc = era_descriptions.get(era, "landscape")
         biome_desc = biome_descriptions.get(biome, "natural area")
         
-        # Create a descriptive prompt for satellite imagery
-        prompt = f"Satellite view of {biome_desc} in {era_desc}, aerial perspective, detailed topography"
+        positive = f"Satellite view of {biome_desc} in {era_desc}, aerial perspective, detailed topography"
+        negative = "blurry, low quality, distorted"
         
-        return prompt
+        return positive, negative
+
+    def advance_era(self, new_era: Optional[Era] = None) -> bool:
+        """Advance to the next era or set a specific era.
+        
+        Args:
+            new_era: Specific era to advance to, or None for automatic progression
+            
+        Returns:
+            True if era changed, False otherwise
+        """
+        old_era = self.current_era
+        
+        if new_era is not None:
+            # Set specific era
+            if new_era != self.current_era:
+                self.current_era = new_era
+                self._last_era = old_era
+                
+                # Update prompt manager
+                if self.prompt_manager is not None:
+                    self.prompt_manager.advance_era(new_era)
+                
+                logger.info(f"Era advanced from {old_era.value} to {new_era.value}")
+                return True
+        else:
+            # Automatic progression
+            possible_eras = ERA_PROGRESSION.get(self.current_era, [])
+            if possible_eras:
+                new_era = random.choice(possible_eras)
+                if new_era != self.current_era:
+                    self.current_era = new_era
+                    self._last_era = old_era
+                    
+                    # Update prompt manager
+                    if self.prompt_manager is not None:
+                        self.prompt_manager.advance_era(new_era)
+                    
+                    logger.info(f"Era advanced from {old_era.value} to {new_era.value}")
+                    return True
+        
+        return False
+    
+    def switch_biome(self, new_biome: Optional[Biome] = None) -> bool:
+        """Switch to a new biome.
+        
+        Args:
+            new_biome: Specific biome to switch to, or None for random selection
+            
+        Returns:
+            True if biome changed, False otherwise
+        """
+        old_biome = self.current_biome
+        
+        if new_biome is not None:
+            # Set specific biome
+            if new_biome != self.current_biome:
+                self.current_biome = new_biome
+                
+                # Update prompt manager
+                if self.prompt_manager is not None:
+                    self.prompt_manager.switch_biome(new_biome)
+                
+                logger.info(f"Biome switched from {old_biome.value} to {new_biome.value}")
+                return True
+        else:
+            # Random selection from era-appropriate biomes
+            available_biomes = ERA_BIOMES.get(self.current_era, list(Biome))
+            if available_biomes:
+                # Remove current biome from choices to ensure change
+                choices = [b for b in available_biomes if b != self.current_biome]
+                if choices:
+                    new_biome = random.choice(choices)
+                    self.current_biome = new_biome
+                    
+                    # Update prompt manager
+                    if self.prompt_manager is not None:
+                        self.prompt_manager.switch_biome(new_biome)
+                    
+                    logger.info(f"Biome switched from {old_biome.value} to {new_biome.value}")
+                    return True
+        
+        return False
+    
+    def get_prompt_variation(self) -> Tuple[str, str]:
+        """Get a new prompt variation for the current era/biome combination.
+        
+        Returns:
+            Tuple of (positive_prompt, negative_prompt)
+        """
+        if self.prompt_manager is not None:
+            try:
+                return self.prompt_manager.next_variation()
+            except Exception as e:
+                logger.warning(f"Error getting prompt variation: {e}")
+        
+        # Fallback to current prompt
+        return self._generate_prompt_for_era_biome(self.current_era, self.current_biome)
 
     async def _depth_processing_task(self):
         """Handle depth camera data processing with improved retry logic using robust camera."""
