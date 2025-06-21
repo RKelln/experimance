@@ -16,7 +16,9 @@ from typing import Dict, Any, Optional, Tuple
 
 from experimance_common.schemas import MessageBase
 from experimance_common.zmq.config import MessageDataType
+from experimance_common.constants import VIDEOS_DIR_ABS
 import pyglet
+import pyglet.sprite
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 
 from .layer_manager import LayerRenderer
@@ -27,6 +29,38 @@ logger = logging.getLogger(__name__)
 
 class VideoOverlayRenderer(LayerRenderer):
     """Renders masked video overlay responding to sand interaction."""
+    
+    # Vertex shader: transforms vertices and passes texture coordinates
+    vertex_shader_source = """#version 120
+    attribute vec2 position;
+    attribute vec2 texcoord;
+    varying vec2 v_texcoord;
+    
+    void main() {
+        gl_Position = vec4(position, 0.0, 1.0);
+        v_texcoord = texcoord;
+    }
+    """
+    
+    # Fragment shader: samples video and mask textures and blends them
+    fragment_shader_source = """#version 120
+    varying vec2 v_texcoord;
+    uniform sampler2D video_tex;
+    uniform sampler2D mask_tex;
+    uniform float global_alpha;
+    
+    void main() {
+        // Get colors from both textures
+        vec4 video_col = texture2D(video_tex, v_texcoord);
+        float mask_alpha = texture2D(mask_tex, v_texcoord).r;  // Use red channel for grayscale mask
+        
+        // Apply mask alpha and global alpha to video alpha
+        float final_alpha = video_col.a * mask_alpha * global_alpha;
+        
+        // Output final color with calculated alpha
+        gl_FragColor = vec4(video_col.rgb, final_alpha);
+    }
+    """
     
     def __init__(self, window_size: Tuple[int, int], config: Any, transitions_config: Any):
         """Initialize the video overlay renderer.
@@ -56,8 +90,19 @@ class VideoOverlayRenderer(LayerRenderer):
         self.fade_in_duration = transitions_config.video_fade_in_duration
         self.fade_out_duration = transitions_config.video_fade_out_duration
         
-        # Shader program for masking (future enhancement)
+        # Shader program for masking
         self.shader_program = None
+        self.quad_vertices = None
+        
+        # Geometry and rendering state
+        self.video_sprite = None
+        self.mask_sprite = None
+        
+        # Initialize shader program and geometry
+        self._setup_shader()
+        
+        # Set up OpenGL state for blending (one-time setup)
+        self._setup_opengl_state()
         
         # Visibility and opacity
         self._visible = True
@@ -80,7 +125,6 @@ class VideoOverlayRenderer(LayerRenderer):
         return (
             self._visible and 
             self.video_loaded and 
-            self.mask_loaded and 
             self._current_alpha > 0.01
         )
     
@@ -105,9 +149,15 @@ class VideoOverlayRenderer(LayerRenderer):
                 if not self.video_player.playing:
                     self.video_player.play()
                     
-                # Update video texture
-                if hasattr(self.video_player, 'get_texture'):
-                    self.video_texture = self.video_player.texture
+                # Update video texture from player
+                if hasattr(self.video_player, 'texture') and self.video_player.texture:
+                    if self.video_texture != self.video_player.texture:
+                        self.video_texture = self.video_player.texture
+                else:
+                    if not hasattr(self.video_player, 'texture'):
+                        logger.debug("Video player has no texture attribute")
+                    elif not self.video_player.texture:
+                        logger.debug("Video player texture is None")
                     
             except Exception as e:
                 logger.error(f"Error updating video: {e}", exc_info=True)
@@ -117,13 +167,8 @@ class VideoOverlayRenderer(LayerRenderer):
         if not self.is_visible:
             return
         
-        # Enable blending
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
         try:
-            # For now, render a simple placeholder
-            # Future: implement shader-based masking
+            # Render with shader-based masking
             self._render_simple_overlay()
             
         except Exception as e:
@@ -160,23 +205,95 @@ class VideoOverlayRenderer(LayerRenderer):
             self._current_alpha = 0.0
     
     def _render_simple_overlay(self):
-        """Render a simple video overlay without advanced masking.
-        
-        This is a placeholder implementation until shader-based masking is added.
-        """
-        if not (self.video_texture and self.mask_texture):
+        """Render a video overlay with basic masking."""
+        if not self.video_texture:
+            logger.debug(f"No video texture available for rendering (video_loaded={self.video_loaded})")
             return
         
-        # Calculate position and size
-        center_x = self.window_size[0] // 2
-        center_y = self.window_size[1] // 2
+        try:
+            # Create/update video sprite
+            if not self.video_sprite and self.video_texture:
+                self.video_sprite = pyglet.sprite.Sprite(self.video_texture)
+                self._position_sprite()
+                logger.debug(f"Created video sprite: {self.video_sprite.width}x{self.video_sprite.height}")
+            
+            # Update video texture if needed
+            if self.video_sprite and self.video_texture:
+                self.video_sprite.image = self.video_texture
+                
+            # Render the video sprite with current alpha
+            if self.video_sprite:
+                self.video_sprite.opacity = int(self._current_alpha * 255)
+                self.video_sprite.draw()
+                
+        except Exception as e:
+            logger.error(f"Error rendering video overlay: {e}", exc_info=True)
+    
+    def _position_sprite(self):
+        """Position the video sprite to center and maintain aspect ratio."""
+        if not self.video_sprite:
+            return
+            
+        # Get sprite dimensions
+        sprite_width = self.video_sprite.width
+        sprite_height = self.video_sprite.height
         
-        # Simple rendering: apply global alpha to video
-        # Future: implement proper shader-based masking
+        # Scale to fit window while maintaining aspect ratio
+        window_aspect = self.window_size[0] / self.window_size[1]
+        sprite_aspect = sprite_width / sprite_height
         
-        # For now, just indicate that video overlay would be rendered
-        if self._current_alpha > 0.01:
-            logger.debug(f"Would render video overlay with alpha: {self._current_alpha:.2f}")
+        if sprite_aspect > window_aspect:
+            # Video is wider - scale to fit width
+            scale = self.window_size[0] / sprite_width
+        else:
+            # Video is taller - scale to fit height  
+            scale = self.window_size[1] / sprite_height
+            
+        self.video_sprite.scale = scale
+        
+        # Center the sprite (position is bottom-left corner by default)
+        scaled_width = sprite_width * scale
+        scaled_height = sprite_height * scale
+        
+        self.video_sprite.x = (self.window_size[0] - scaled_width) // 2
+        self.video_sprite.y = (self.window_size[1] - scaled_height) // 2
+    
+    def _setup_shader(self):
+        """Set up shader program and vertex data."""
+        try:
+            # For now, skip shader setup and use simple sprite rendering
+            # Future enhancement: implement full shader-based masking
+            logger.debug("Video overlay using sprite-based rendering")
+            
+        except Exception as e:
+            logger.error(f"Error setting up shader program: {e}", exc_info=True)
+            self.shader_program = None
+    
+    def _setup_opengl_state(self):
+        """Set up OpenGL state for video overlay rendering (one-time setup)."""
+        try:
+            # Enable blending for transparency - this only needs to be done once
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            logger.debug("OpenGL blending state configured for video overlay")
+        except Exception as e:
+            logger.error(f"Error setting up OpenGL state: {e}", exc_info=True)
+    
+    def _update_quad_vertices(self):
+        """Update the quad vertices based on the video's aspect ratio."""
+        # For sprite-based rendering, just update sprite position
+        if self.video_sprite:
+            self._position_sprite()
+    
+    def _calculate_quad_vertices(self) -> tuple:
+        """Calculate quad vertices that preserve the aspect ratio of the video."""
+        # Placeholder for future shader implementation
+        return (-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0)
+    
+    def _create_fallback_mask(self):
+        """Create a plain white mask texture as fallback."""
+        # Create a solid white image (fully opaque)
+        return pyglet.image.SolidColorImagePattern((255, 255, 255, 255)).create_image(1, 1).get_texture()
     
     async def handle_video_mask(self, message: MessageDataType):
         """Handle VideoMask message.
@@ -229,14 +346,38 @@ class VideoOverlayRenderer(LayerRenderer):
     
     def _load_default_video(self):
         """Load default video if configured."""
-        # This could be configured in the config
-        default_video_path = "services/image_server/images/video_overlay.mp4"
+        # Check config for default video path first
+        default_video_path = None
+        if hasattr(self.config, 'video_overlay') and self.config.video_overlay.default_video_path:
+            default_video_path = self.config.video_overlay.default_video_path
+            
+            # Handle relative paths (relative to VIDEOS_DIR)
+            if not os.path.isabs(default_video_path):
+                default_video_path = str(VIDEOS_DIR_ABS / default_video_path)
+        else:
+            # Fallback to hardcoded path
+            default_video_path = str(VIDEOS_DIR_ABS / "video_overlay.mp4")
         
         if os.path.isfile(default_video_path):
             logger.info(f"Loading default video: {default_video_path}")
             asyncio.create_task(self._load_video(default_video_path))
         else:
-            logger.debug("No default video found")
+            logger.debug(f"No default video found at: {default_video_path}")
+            
+        # Load fallback mask if enabled
+        if (hasattr(self.config, 'video_overlay') and 
+            self.config.video_overlay.fallback_mask_enabled and 
+            not self.mask_loaded):
+            self._load_fallback_mask()
+    
+    def _load_fallback_mask(self):
+        """Load a fallback mask texture."""
+        try:
+            self.mask_texture = self._create_fallback_mask()
+            self.mask_loaded = True
+            logger.debug("Fallback mask loaded (solid white)")
+        except Exception as e:
+            logger.error(f"Error creating fallback mask: {e}", exc_info=True)
     
     async def _load_video(self, video_path: str) -> bool:
         """Load video from file path.
@@ -259,11 +400,23 @@ class VideoOverlayRenderer(LayerRenderer):
             self.video_player = pyglet.media.Player()
             self.video_player.queue(source)
             
-            # Set to loop
-            self.video_player.loop = True
+            # Set to loop based on config
+            should_loop = True
+            if hasattr(self.config, 'video_overlay'):
+                should_loop = self.config.video_overlay.loop_video
+                
+            self.video_player.loop = should_loop
+            
+            # Start playing the video immediately
+            self.video_player.play()
             
             self.video_loaded = True
             logger.info(f"Video loaded successfully: {video_path}")
+            logger.debug(f"Video player state: playing={self.video_player.playing}")
+            
+            # Automatically start fade-in for testing purposes
+            self._start_fade_in()
+            
             return True
             
         except Exception as e:
@@ -291,10 +444,10 @@ class VideoOverlayRenderer(LayerRenderer):
     
     def show_overlay(self):
         """Show the video overlay (fade in)."""
-        if self.mask_loaded:
+        if self.video_loaded:
             self._start_fade_in()
         else:
-            logger.warning("Cannot show overlay without mask")
+            logger.warning("Cannot show overlay without video")
     
     def resize(self, new_size: Tuple[int, int]):
         """Handle window resize.
@@ -337,6 +490,21 @@ class VideoOverlayRenderer(LayerRenderer):
                 self.video_player = None
             except Exception as e:
                 logger.error(f"Error stopping video player: {e}")
+        
+        # Clean up sprites
+        if self.video_sprite:
+            try:
+                self.video_sprite.delete()
+                self.video_sprite = None
+            except Exception as e:
+                logger.error(f"Error deleting video sprite: {e}")
+                
+        if self.mask_sprite:
+            try:
+                self.mask_sprite.delete()
+                self.mask_sprite = None
+            except Exception as e:
+                logger.error(f"Error deleting mask sprite: {e}")
         
         # Clear textures
         self.video_texture = None

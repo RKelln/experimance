@@ -261,6 +261,30 @@ class TitleScreenConfig(BaseModel):
     )
 
 
+class VideoOverlayConfig(BaseModel):
+    """Configuration for video overlay with masking."""
+    
+    enabled: bool = Field(
+        default=True,
+        description="Whether video overlay is enabled"
+    )
+    
+    default_video_path: Optional[str] = Field(
+        default=None,
+        description="Path to default video file (relative to VIDEOS_DIR or absolute)"
+    )
+    
+    loop_video: bool = Field(
+        default=True,
+        description="Whether to loop the video playback"
+    )
+    
+    fallback_mask_enabled: bool = Field(
+        default=True,
+        description="Whether to create fallback mask if none provided"
+    )
+
+
 class DisplayServiceConfig(BaseServiceConfig):
     """Complete configuration schema for the Display Service."""
     
@@ -291,6 +315,7 @@ class DisplayServiceConfig(BaseServiceConfig):
     transitions: TransitionsConfig = Field(default_factory=TransitionsConfig)
     text_styles: TextStylesConfig = Field(default_factory=TextStylesConfig)
     title_screen: TitleScreenConfig = Field(default_factory=TitleScreenConfig)
+    video_overlay: VideoOverlayConfig = Field(default_factory=VideoOverlayConfig)
 
 
 def create_test_display_config(**overrides) -> DisplayServiceConfig:

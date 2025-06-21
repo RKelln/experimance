@@ -119,7 +119,19 @@ class DisplayService(BaseService):
         
         # Show title screen if enabled
         await self._show_title_screen()
-        
+
+        # wait 5 sec then fade out the video
+        if self.video_overlay_renderer and self.config.video_overlay.enabled:
+            # display video overlay if configured
+            self.video_overlay_renderer.show_overlay()
+
+            async def fade_out_video_overlay():
+                logger.info("Waiting 5 seconds before fading out video overlay")
+                await asyncio.sleep(5)
+                if self.video_overlay_renderer:
+                    self.video_overlay_renderer.hide_overlay()
+            self.add_task(asyncio.create_task(fade_out_video_overlay()))
+
         # Show debug text if enabled
         if self.config.display.debug_text:
             await self._show_debug_text()

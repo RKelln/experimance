@@ -28,8 +28,15 @@ backend = "opengl"            # Options: "opengl", "SDL", "godot"
 [title_screen]
 enabled = true                # Whether to show title screen on startup
 text = "Experimance"          # Text to display
-duration = 5.0                # Duration in seconds
+duration = 10.0                # Duration in seconds
 fade_out_duration = 10.0      # Fade out duration in seconds
+
+# Video overlay with masking
+[video_overlay]
+enabled = true                     # Whether video overlay is enabled
+default_video_path = "video_overlay.mp4"  # Path to default video (relative to media/videos/ or absolute)
+loop_video = true                  # Whether to loop the video playback
+fallback_mask_enabled = true       # Whether to create fallback mask if none provided
 
 # Text styles for different speakers
 [text_styles.title]

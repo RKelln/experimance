@@ -9,7 +9,7 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # Generator configuration
 [generator]
-default_strategy = "falai"     # Options: "falai", "openai", "sdxl", "mock"
+default_strategy = "mock"     # Options: "falai", "openai", "sdxl", "mock"
 
 # FAL.AI configuration
 [falai]
