@@ -19,14 +19,14 @@ crossfade_duration = 1.0      # Duration of crossfade in seconds
 preload_frames = true         # Whether to preload transition frames
 max_preload_mb = 500          # Maximum memory to use for preloading in MB
 
-# Rendering
-[rendering]
-shader_path = "shaders/"      # Path to shader files
-backend = "opengl"            # Options: "opengl", "SDL", "godot"
+# Rendering [NOT USED]
+#[rendering]
+#shader_path = "shaders/"      # Path to shader files
+#backend = "opengl"            # Options: "opengl", "SDL", "godot"
 
 # Title screen
 [title_screen]
-enabled = true                # Whether to show title screen on startup
+enabled = false                # Whether to show title screen on startup
 text = "Experimance"          # Text to display
 duration = 10.0                # Duration in seconds
 fade_out_duration = 10.0      # Fade out duration in seconds
@@ -37,6 +37,8 @@ enabled = true                     # Whether video overlay is enabled
 default_video_path = "video_overlay.mp4"  # Path to default video (relative to media/videos/ or absolute)
 loop_video = true                  # Whether to loop the video playback
 fallback_mask_enabled = true       # Whether to create fallback mask if none provided
+start_mask_path = "images/ring_map.png"  # Path to mask file to load on startup
+
 
 # Text styles for different speakers
 [text_styles.title]

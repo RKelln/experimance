@@ -486,7 +486,7 @@ class ExperimanceCoreService(BaseService):
             message = prepare_image_message(
                 image_data=change_map,
                 target_address=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-                transport_mode=IMAGE_TRANSPORT_MODES["AUTO"],  # Auto-detect optimal transport
+                transport_mode=IMAGE_TRANSPORT_MODES["FILE_URI"],
                 type=MessageType.CHANGE_MAP.value,
                 change_score=change_score,
                 has_change_map=True,
@@ -494,11 +494,9 @@ class ExperimanceCoreService(BaseService):
                 mask_id=f"change_map_{int(time.time() * 1000)}"
             )
             
-            success = await self.zmq_service.publish(message)
-            if success:
-                logger.debug(f"Published change map: score={change_score:.4f}")
-            else:
-                logger.warning("Failed to publish change map event")
+            await self.zmq_service.publish(message)
+            logger.debug(f"Published change map: score={change_score:.4f}")
+
         except Exception as e:
             logger.error(f"Error publishing change map: {e}")
 

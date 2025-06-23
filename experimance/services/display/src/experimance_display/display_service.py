@@ -244,8 +244,7 @@ class DisplayService(BaseService):
             
             self.video_overlay_renderer = VideoOverlayRenderer(
                 window_size=window_size,
-                config=self.config.rendering,
-                transitions_config=self.config.transitions
+                config=self.config
             )
             
             self.text_overlay_manager = TextOverlayManager(

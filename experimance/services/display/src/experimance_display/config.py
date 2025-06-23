@@ -284,6 +284,11 @@ class VideoOverlayConfig(BaseModel):
         description="Whether to create fallback mask if none provided"
     )
 
+    start_mask_path: Optional[str] = Field(
+        default=None,
+        description="Path to mask file to load on startup"
+    )
+
 
 class DisplayServiceConfig(BaseServiceConfig):
     """Complete configuration schema for the Display Service."""
@@ -316,7 +321,7 @@ class DisplayServiceConfig(BaseServiceConfig):
     text_styles: TextStylesConfig = Field(default_factory=TextStylesConfig)
     title_screen: TitleScreenConfig = Field(default_factory=TitleScreenConfig)
     video_overlay: VideoOverlayConfig = Field(default_factory=VideoOverlayConfig)
-
+    
 
 def create_test_display_config(**overrides) -> DisplayServiceConfig:
     """
