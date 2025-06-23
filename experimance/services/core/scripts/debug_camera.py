@@ -366,8 +366,6 @@ def suggest_performance_fixes():
     print("   # Reset back to powersave/ondemand after testing")
     
     print("\n3. 💾 Memory/Cache Optimization:")
-    print("   # Increase camera warmup frames")
-    print("   # In config.toml: warm_up_frames = 30")
     print("   # Pre-allocate numpy arrays")
     print("   # Use memory mapping for large buffers")
     

@@ -15,7 +15,7 @@
 - ✅ Add new MessageType enums to experimance_common.zmq_utils:
   - TEXT_OVERLAY
   - REMOVE_TEXT  
-  - VIDEO_MASK
+  - CHANGE_MAP
 - ✅ Implement message routing to appropriate handlers
 - ✅ Add validation for incoming messages
 

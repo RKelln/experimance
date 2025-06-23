@@ -312,7 +312,6 @@ async def test_camera_visualization(use_mock: bool = True, duration: int = 0):
     
     # Override specific settings for better visualization experience
     config.output_resolution = (512, 512)  # Smaller for display
-    config.warm_up_frames = 3  # Faster warmup for testing
     config.debug_mode = True  # Enable debug images
     config.verbose_performance = True  # Show performance stats
     
