@@ -20,6 +20,7 @@ from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
 from experimance_common.schemas import ContentType
+from experimance_display.pyglet_test import MainWindow
 import pyglet
 from pyglet import clock
 from pyglet.window import key
@@ -122,9 +123,7 @@ class DisplayService(BaseService):
 
         # wait 5 sec then fade out the video
         if self.video_overlay_renderer and self.config.video_overlay.enabled:
-            # display video overlay if configured
-            self.video_overlay_renderer.show_overlay()
-
+            
             async def fade_out_video_overlay():
                 logger.info("Waiting 5 seconds before fading out video overlay")
                 await asyncio.sleep(5)
@@ -179,11 +178,11 @@ class DisplayService(BaseService):
     
     def _create_headless_window(self):
         """Create a mock window object for headless mode."""
-        class HeadlessWindow:
+        class HeadlessWindow(pyglet.window.BaseWindow):
             def __init__(self, width: int, height: int):
                 self.width = width
                 self.height = height
-                self.fullscreen = False
+                #self.fullscreen = False
                 self.has_exit = False
                 
             def clear(self):
@@ -212,7 +211,7 @@ class DisplayService(BaseService):
                 
             def set_fullscreen(self, fullscreen: bool):
                 """Mock set_fullscreen operation."""
-                self.fullscreen = fullscreen
+                self._fullscreen = fullscreen
         
         width, height = self.config.display.resolution
         return HeadlessWindow(width, height)
@@ -227,37 +226,46 @@ class DisplayService(BaseService):
                 self.record_error(RuntimeError(error_msg), is_fatal=True)
                 return
                 
-            window_size = (self.window.width, self.window.height)
+            #window_size = (self.window.width, self.window.height)
             
+            batch = pyglet.graphics.Batch()
+
             # Create layer manager to coordinate rendering order
             self.layer_manager = LayerManager(
-                window_size=window_size,
-                config=self.config
+                config=self.config,
+                window=self.window,
+                batch=batch,
             )
             
             # Create individual renderers
             self.image_renderer = ImageRenderer(
-                window_size=window_size,
-                config=self.config.rendering,
-                transitions_config=self.config.transitions
+                config=self.config,
+                window=self.window,
+                batch=batch,
+                order=0,
             )
             
             self.video_overlay_renderer = VideoOverlayRenderer(
-                window_size=window_size,
-                config=self.config
+                config=self.config,
+                window=self.window,
+                batch=batch,
+                order=1,
             )
             
             self.text_overlay_manager = TextOverlayManager(
-                window_size=window_size,
-                config=self.config.text_styles,
-                transitions_config=self.config.transitions
+                config=self.config,
+                window=self.window,
+                batch=batch,
+                order=2,
             )
             
             # Create debug overlay renderer
             self.debug_overlay_renderer = DebugOverlayRenderer(
-                window_size=window_size,
                 config=self.config,
-                layer_manager=self.layer_manager
+                window=self.window,
+                batch=batch,
+                layer_manager=self.layer_manager,
+                order=3
             )
             
             # Register renderers with layer manager (re-enable all renderers)

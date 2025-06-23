@@ -14,17 +14,21 @@ import os
 import asyncio
 from typing import Dict, Any, Optional, Tuple
 
+from experimance_common.config import BaseConfig
 from experimance_common.schemas import MessageBase
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import VIDEOS_DIR_ABS
+from experimance_display.config import DisplayServiceConfig
 import pyglet
 import pyglet.sprite
 from pyglet.gl import (
     GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
-    GL_TEXTURE_2D, GL_TRIANGLE_FAN, glBindTexture, glActiveTexture,
+    GL_TEXTURE_2D, GL_TRIANGLE_STRIP, glBindTexture, glActiveTexture,
     GL_TEXTURE0, GL_TEXTURE1
 )
 from pyglet.graphics.shader import Shader, ShaderProgram
+from pyglet.graphics.vertexdomain import VertexList
+from pyglet.image import AbstractImage
 
 from .layer_manager import LayerRenderer
 from ..utils.pyglet_utils import load_pyglet_image_from_message, cleanup_temp_file
@@ -34,9 +38,10 @@ logger = logging.getLogger(__name__)
 
 class VideoOverlayRenderer(LayerRenderer):
     """Renders masked video overlay responding to sand interaction."""
-    
+    quad: VertexList
+
     # Vertex shader: transforms vertices and passes texture coordinates
-    vertex_shader_source = """#version 150 core
+    vertex_shader_source = """#version 120
     attribute vec2 position;
     attribute vec2 texcoord;
     varying vec2 v_texcoord;
@@ -46,9 +51,22 @@ class VideoOverlayRenderer(LayerRenderer):
         v_texcoord = texcoord;
     }
     """
+
+    vertex_shader_source = """
+    #version 330 core
+    in vec2 position;
+    in vec2 uv;
+    out vec2 v_uv;
+    uniform WindowBlock { mat4 proj; mat4 view; } window;
+    void main()
+    {
+        gl_Position = window.proj * window.view * vec4(position, 0.0, 1.0);
+        v_uv = uv;
+    }
+    """
     
     # Fragment shader: samples video and mask textures and blends them
-    fragment_shader_source = """#version 150 core
+    fragment_shader_source = """#version 120
     varying vec2 v_texcoord;
     uniform sampler2D video_tex;
     uniform sampler2D mask_tex;
@@ -66,16 +84,29 @@ class VideoOverlayRenderer(LayerRenderer):
         gl_FragColor = vec4(video_col.rgb, final_alpha);
     }
     """
+
+    fragment_shader_source = """
+        #version 330 core
+        in  vec2 v_uv;
+        out vec4 frag;
+        uniform sampler2D video_tex;
+        uniform sampler2D mask_tex;
+        uniform float global_alpha;
+
+        void main()
+        {
+            vec4 vid  = texture(video_tex, v_uv);
+            float m   = texture(mask_tex, v_uv).r;   // assume grayscale mask
+            frag = vec4(vid.rgb * m, global_alpha);
+        }
+    """
     
-    def __init__(self, window_size: Tuple[int, int], config: Any):
-        """Initialize the video overlay renderer.
-        
-        Args:
-            window_size: (width, height) of the display window
-            config: Complete display service configuration
-        """
-        self.window_size = window_size
-        self.config = config
+    def __init__(self, config: DisplayServiceConfig, 
+                 window: pyglet.window.BaseWindow, 
+                 batch: pyglet.graphics.Batch,
+                 order: int = 1):
+        """Initialize the video overlay renderer."""
+        super().__init__(config=config, window=window, batch=batch, order=order)
         
         # Extract video overlay specific config
         self.video_config = config.video_overlay
@@ -99,14 +130,10 @@ class VideoOverlayRenderer(LayerRenderer):
         
         # Shader program for masking
         self.shader_program = None
-        self.quad_vertices = None
         
         # Geometry and rendering state
         self.video_sprite = None
         self.mask_sprite = None
-        
-        # Initialize shader program and geometry
-        self._setup_shader()
         
         # Set up OpenGL state for blending (one-time setup)
         self._setup_opengl_state()
@@ -119,16 +146,24 @@ class VideoOverlayRenderer(LayerRenderer):
         # Default video (if configured)
         self._load_default_video()
         
-        # Load startup mask first (if configured), then fallback mask if needed
+        # Load all white mask (i.e. none) or start-up mask
+        self._load_mask()
         self._load_startup_mask()
-        
+
+        # Initialize shader program and geometry
+        self._setup_shader()
+        if not self.shader_program:
+            logger.error("Failed to initialize shader program for video overlay")
+            return
+
+
         # Disable fallback mask loading entirely for debugging
         # if (not self.mask_loaded and 
         #     hasattr(self.video_config, 'fallback_mask_enabled') and 
         #     self.video_config.fallback_mask_enabled):
         #     self._load_fallback_mask()
         
-        logger.info(f"VideoOverlayRenderer initialized for {window_size[0]}x{window_size[1]}")
+        logger.info(f"VideoOverlayRenderer initialized for {self.window}")
     
     @property
     def is_fading(self) -> bool:
@@ -148,15 +183,48 @@ class VideoOverlayRenderer(LayerRenderer):
     def opacity(self) -> float:
         """Get the layer opacity (0.0 to 1.0)."""
         return self._opacity * self._current_alpha
-    
+
+    def set_state(self):
+        """Set OpenGL state for rendering the video overlay."""
+        if not self.shader_program:
+            logger.error("Shader program not initialized, cannot set state")
+            return
+        self._update_quad_vertices()
+
+        self.shader_program.use()
+
+        # -- video frame ---------------------------------------------------------
+        if self.video_player is not None:
+            self.video_player.update_texture()              # make sure ‘texture’ is fresh
+            tex = self.video_player.texture
+            if tex:
+                glActiveTexture(GL_TEXTURE0)
+                glBindTexture(tex.target, tex.id)
+                self.shader_program["video_tex"] = 0
+            else:
+                return  # no frame yet – skip binding
+
+        # -- mask ----------------------------------------------------------------
+        if self.mask_texture is not None:
+            glActiveTexture(GL_TEXTURE1)
+            glBindTexture(self.mask_texture.target, self.mask_texture.id)
+            self.shader_program["mask_tex"] = 1
+
+
+    def unset_state(self):
+        """Unset OpenGL state after rendering the video overlay."""
+        if not self.shader_program: return
+        self.shader_program.stop()
+
+
     def update(self, dt: float):
         """Update video and animation state.
         
         Args:
             dt: Time elapsed since last update in seconds
         """
-        # Update fade animation
-        self._update_fade_animation(dt)
+        # Disable fade animation for debugging
+        # self._update_fade_animation(dt)
         
         # Update video playback
         if self.video_player and self.video_loaded:
@@ -178,17 +246,20 @@ class VideoOverlayRenderer(LayerRenderer):
             except Exception as e:
                 logger.error(f"Error updating video: {e}", exc_info=True)
     
-    def render(self):
-        """Render the masked video overlay."""
-        if not self.is_visible:
-            return
+    # def render(self):
+    #     """Render the masked video overlay."""
+    #     if not self.is_visible:
+    #         logger.debug(f"Video not visible: _visible={self._visible}, video_loaded={self.video_loaded}, alpha={self._current_alpha}")
+    #         return
         
-        try:
-            # Render with shader-based masking
-            self._render_simple_overlay()
+    #     logger.debug(f"RENDERING VIDEO: alpha={self._current_alpha}, mask_loaded={self.mask_loaded}")
+        
+    #     try:
+    #         # Render with shader-based masking
+    #         self._render_simple_overlay()
             
-        except Exception as e:
-            logger.error(f"Error rendering video overlay: {e}", exc_info=True)
+    #     except Exception as e:
+    #         logger.error(f"Error rendering video overlay: {e}", exc_info=True)
     
     def _update_fade_animation(self, dt: float):
         """Update fade animation state.
@@ -220,148 +291,127 @@ class VideoOverlayRenderer(LayerRenderer):
         else:  # hidden
             self._current_alpha = 0.0
     
-    def _render_simple_overlay(self):
-        """Render a video overlay with shader-based masking."""
-        if not self.video_texture:
-            logger.debug(f"No video texture available for rendering (video_loaded={self.video_loaded})")
-            return
+    # def _render_simple_overlay(self):
+    #     """Render a video overlay with shader-based masking."""
+    #     if not self.video_texture:
+    #         logger.debug(f"No video texture available for rendering (video_loaded={self.video_loaded})")
+    #         return
         
-        # Debug: Check what we have available
-        logger.debug(f"Render check: video_texture={self.video_texture is not None}, "
-                    f"mask_texture={self.mask_texture is not None}, "
-                    f"shader_program={self.shader_program is not None}, "
-                    f"mask_loaded={self.mask_loaded}")
+    #     # Debug: Check what we have available
+    #     logger.debug(f"Render check: video_texture={self.video_texture is not None}, "
+    #                 f"mask_texture={self.mask_texture is not None}, "
+    #                 f"shader_program={self.shader_program is not None}, "
+    #                 f"mask_loaded={self.mask_loaded}")
         
-        # Add frame counter to track renders
-        if not hasattr(self, '_frame_counter'):
-            self._frame_counter = 0
-        self._frame_counter += 1
-        
-        logger.debug(f"FRAME {self._frame_counter}: Rendering video overlay")
-        
-        # Only render if we have both video and mask textures and a shader program
-        if self.mask_texture and self.shader_program and self.mask_loaded:
-            logger.debug(f"FRAME {self._frame_counter}: Using shader-based rendering with mask")
-            # Verify mask texture ID hasn't changed
-            if hasattr(self, '_last_mask_id'):
-                if self._last_mask_id != self.mask_texture.id:
-                    logger.warning(f"FRAME {self._frame_counter}: Mask texture ID changed! {self._last_mask_id} -> {self.mask_texture.id}")
-            self._last_mask_id = self.mask_texture.id
-            
-            self._render_with_shader()
-        else:
-            # For debugging: Don't render anything if no proper mask is loaded
-            logger.debug(f"FRAME {self._frame_counter}: No mask loaded - skipping video rendering entirely (for debugging)")
-            logger.debug(f"FRAME {self._frame_counter}: mask_texture={self.mask_texture}, shader_program={self.shader_program}, mask_loaded={self.mask_loaded}")
-            return
+    #     # Only render if we have both video and mask textures and a shader program
+    #     if self.mask_texture and self.shader_program and self.mask_loaded:
+    #         logger.debug("Using shader-based rendering with mask")
+    #         self._render_with_shader()
+    #     else:
+    #         # For debugging: Don't render anything if no proper mask is loaded
+    #         logger.debug("No mask loaded - skipping video rendering entirely (for debugging)")
+    #         return
     
-    def _render_with_shader(self):
-        """Render video with mask using shaders."""
-        try:
-            logger.debug("SHADER RENDERING: Starting shader-based masked video rendering")
+    # def _render_with_shader(self):
+    #     """Render video with mask using shaders."""
+    #     try:
+    #         logger.debug("SHADER RENDERING: Starting shader-based masked video rendering")
             
-            if self.shader_program is None:
-                logger.error("Shader program not initialized! Cannot render with shader.")
-                return
+    #         # Update quad vertices to maintain aspect ratio with current texture
+    #         self._update_quad_vertices()
+            
+    #         # Use the shader program
+    #         logger.debug(f"Using shader program, current alpha: {self._current_alpha}")
+    #         self.shader_program.use()
+            
+    #         # Bind video texture to unit 0
+    #         glActiveTexture(GL_TEXTURE0)
+    #         glBindTexture(GL_TEXTURE_2D, self.video_texture.id)
+    #         logger.debug(f"Bound video texture ID: {self.video_texture.id} to unit 0")
+            
+    #         # Bind mask texture to unit 1
+    #         glActiveTexture(GL_TEXTURE1)
+    #         glBindTexture(GL_TEXTURE_2D, self.mask_texture.id)
+    #         logger.debug(f"Bound mask texture ID: {self.mask_texture.id} to unit 1")
+            
+    #         # Set global alpha
+    #         self.shader_program['global_alpha'] = self._current_alpha
+    #         logger.debug(f"SHADER DEBUG: Set global_alpha uniform to: {self._current_alpha}")
+    #         logger.debug(f"SHADER DEBUG: fade_state={self.fade_state}, mask_loaded={self.mask_loaded}")
+    #         logger.debug(f"SHADER DEBUG: video_texture_id={self.video_texture.id}, mask_texture_id={self.mask_texture.id}")
+            
+    #         # Check if we have a valid quad
+    #         if hasattr(self, 'quad') and self.quad:
+    #             logger.debug(f"Drawing quad with {self.quad.count} vertices")
+    #             self.quad.draw(GL_TRIANGLE_FAN)
+    #             logger.debug("SHADER RENDERING: Quad draw completed")
+    #         else:
+    #             logger.warning("No quad vertex list available for shader rendering")
+            
+    #     except Exception as e:
+    #         logger.error(f"Error rendering with shader: {e}", exc_info=True)
+    #     finally:
+    #         # Clean up shader state
+    #         if self.shader_program:
+    #             self.shader_program.stop()
+    #         # Reset to texture unit 0
+    #         glActiveTexture(GL_TEXTURE0)
+    #         logger.debug("Shader rendering cleanup completed")
+    
+    # def _render_with_sprite(self):
+    #     """Fallback sprite rendering without masking."""
+    #     try:
+    #         logger.debug("SPRITE RENDERING: Creating sprite-based video rendering (no masking)")
+            
+    #         # Create/update video sprite
+    #         if not self.video_sprite and self.video_texture:
+    #             self.video_sprite = pyglet.sprite.Sprite(self.video_texture)
+    #             self._position_sprite()
+    #             logger.debug(f"Created video sprite: {self.video_sprite.width}x{self.video_sprite.height}")
+            
+    #         # Update video texture if needed
+    #         if self.video_sprite and self.video_texture:
+    #             self.video_sprite.image = self.video_texture
+                
+    #         # Render the video sprite with current alpha
+    #         if self.video_sprite:
+    #             self.video_sprite.opacity = int(self._current_alpha * 255)
+    #             self.video_sprite.draw()
+    #             logger.debug(f"SPRITE RENDERING: Drew sprite with opacity {self.video_sprite.opacity}")
+                
+    #     except Exception as e:
+    #         logger.error(f"Error rendering video overlay: {e}", exc_info=True)
+    
+    # def _position_sprite(self):
+    #     """Position the video sprite to center and maintain aspect ratio."""
+    #     if not self.video_sprite:
+    #         return
+            
+    #     # Get sprite dimensions
+    #     sprite_width = self.video_sprite.width
+    #     sprite_height = self.video_sprite.height
+        
+    #     w, h =  self.window.get_size()
 
-            # Update quad vertices to maintain aspect ratio with current texture
-            self._update_quad_vertices()
-            
-            # Use the shader program
-            logger.debug(f"Using shader program, current alpha: {self._current_alpha}")
-            self.shader_program.use()
-            
-            # Set texture uniforms every frame to ensure proper binding
-            self.shader_program['video_tex'] = 0  # Texture unit 0
-            self.shader_program['mask_tex'] = 1   # Texture unit 1
-            logger.debug("Set texture uniforms: video_tex=0, mask_tex=1")
-            
-            # Bind video texture to unit 0
-            glActiveTexture(GL_TEXTURE0)
-            glBindTexture(GL_TEXTURE_2D, self.video_texture.id)
-            logger.debug(f"Bound video texture ID: {self.video_texture.id} to unit 0")
-            
-            # Bind mask texture to unit 1
-            glActiveTexture(GL_TEXTURE1)
-            glBindTexture(GL_TEXTURE_2D, self.mask_texture.id)
-            logger.debug(f"Bound mask texture ID: {self.mask_texture.id} to unit 1")
-            
-            # Set global alpha
-            self.shader_program['global_alpha'] = self._current_alpha
-            logger.debug(f"SHADER DEBUG: Set global_alpha uniform to: {self._current_alpha}")
-            logger.debug(f"SHADER DEBUG: fade_state={self.fade_state}, mask_loaded={self.mask_loaded}")
-            logger.debug(f"SHADER DEBUG: video_texture_id={self.video_texture.id}, mask_texture_id={self.mask_texture.id}")
-            
-            # Check if we have a valid quad
-            if hasattr(self, 'quad') and self.quad:
-                logger.debug(f"Drawing quad with {self.quad.count} vertices")
-                self.quad.draw(GL_TRIANGLE_FAN)
-                logger.debug("SHADER RENDERING: Quad draw completed")
-            else:
-                logger.warning("No quad vertex list available for shader rendering")
-            
-        except Exception as e:
-            logger.error(f"Error rendering with shader: {e}", exc_info=True)
-        finally:
-            # Clean up shader state
-            if self.shader_program:
-                self.shader_program.stop()
-            # Reset to texture unit 0
-            glActiveTexture(GL_TEXTURE0)
-            logger.debug("Shader rendering cleanup completed")
-    
-    def _render_with_sprite(self):
-        """Fallback sprite rendering without masking."""
-        logger.error(f"UNEXPECTED: _render_with_sprite called! This should not happen with our debugging setup")
-        try:
-            logger.debug("SPRITE RENDERING: Creating sprite-based video rendering (no masking)")
-            
-            # Create/update video sprite
-            if not self.video_sprite and self.video_texture:
-                self.video_sprite = pyglet.sprite.Sprite(self.video_texture)
-                self._position_sprite()
-                logger.debug(f"Created video sprite: {self.video_sprite.width}x{self.video_sprite.height}")
-            
-            # Update video texture if needed
-            if self.video_sprite and self.video_texture:
-                self.video_sprite.image = self.video_texture
-                
-            # Render the video sprite with current alpha
-            if self.video_sprite:
-                self.video_sprite.opacity = int(self._current_alpha * 255)
-                self.video_sprite.draw()
-                
-        except Exception as e:
-            logger.error(f"Error rendering video overlay: {e}", exc_info=True)
-    
-    def _position_sprite(self):
-        """Position the video sprite to center and maintain aspect ratio."""
-        if not self.video_sprite:
-            return
-            
-        # Get sprite dimensions
-        sprite_width = self.video_sprite.width
-        sprite_height = self.video_sprite.height
+    #     # Scale to fit window while maintaining aspect ratio
+    #     window_aspect = w / h
+    #     sprite_aspect = sprite_width / sprite_height
         
-        # Scale to fit window while maintaining aspect ratio
-        window_aspect = self.window_size[0] / self.window_size[1]
-        sprite_aspect = sprite_width / sprite_height
-        
-        if sprite_aspect > window_aspect:
-            # Video is wider - scale to fit width
-            scale = self.window_size[0] / sprite_width
-        else:
-            # Video is taller - scale to fit height  
-            scale = self.window_size[1] / sprite_height
+    #     if sprite_aspect > window_aspect:
+    #         # Video is wider - scale to fit width
+    #         scale = w / sprite_width
+    #     else:
+    #         # Video is taller - scale to fit height  
+    #         scale = h / sprite_height
             
-        self.video_sprite.scale = scale
+    #     self.video_sprite.scale = scale
         
-        # Center the sprite (position is bottom-left corner by default)
-        scaled_width = sprite_width * scale
-        scaled_height = sprite_height * scale
+    #     # Center the sprite (position is bottom-left corner by default)
+    #     scaled_width = sprite_width * scale
+    #     scaled_height = sprite_height * scale
         
-        self.video_sprite.x = (self.window_size[0] - scaled_width) // 2
-        self.video_sprite.y = (self.window_size[1] - scaled_height) // 2
+    #     self.video_sprite.x = (w - scaled_width) // 2
+    #     self.video_sprite.y = (h - scaled_height) // 2
     
     def _setup_shader(self):
         """Set up shader program and vertex data."""
@@ -375,24 +425,24 @@ class VideoOverlayRenderer(LayerRenderer):
             self.shader_program['video_tex'] = 0  # Will use texture unit 0
             self.shader_program['mask_tex'] = 1   # Will use texture unit 1
             
-            # Define quad vertices that preserve aspect ratio
-            positions = self._calculate_quad_vertices()
-            
-            # Define texture coordinates
-            texcoords = (
-                0.0, 0.0,  # bottom-left
-                1.0, 0.0,  # bottom-right
-                1.0, 1.0,  # top-right
-                0.0, 1.0   # top-left
+            w, h = self.window.get_size()
+            # FIXME:
+            # Accordingto docs: 
+            # When using GL_LINE_STRIP and GL_TRIANGLE_STRIP, care must be taken to insert degenerate vertices at the beginning and end of each vertex list
+            # This doesn't actually seem to be the case!
+            positions = (
+                0, 0, # bottom-left
+                w, 0, # bottom-right
+                0, h, # top left
+                w, h  # top right
             )
-            
-            # Create vertex list - properly pass attributes to avoid "too many values to unpack" error
-            self.quad = self.shader_program.vertex_list(
-                4,                                    # 4 vertices for a quad
-                GL_TRIANGLE_FAN,                      # Drawing mode
-                position=('f', positions),           # Format: 'f' = float, followed by the data
-                texcoord=('f', texcoords)            # Format: 'f' = float, followed by the data 
-            )
+            uvs        = ( 0,  0,   1,  0,    0, 1,   1, 1)
+
+            self.quad = self.shader_program.vertex_list(4,
+                    pyglet.gl.GL_TRIANGLE_STRIP,
+                    batch=self.batch, group=self,
+                    position=("f", positions),
+                    uv=("f", uvs))
             
             # Track dimensions for optimization
             self.last_texture_width = None
@@ -405,7 +455,7 @@ class VideoOverlayRenderer(LayerRenderer):
         except Exception as e:
             logger.error(f"Error setting up shader program: {e}", exc_info=True)
             self.shader_program = None
-            self.quad = None
+            #self.quad = None
     
     def _setup_opengl_state(self):
         """Set up OpenGL state for video overlay rendering (one-time setup)."""
@@ -422,10 +472,9 @@ class VideoOverlayRenderer(LayerRenderer):
         # Only update vertex positions if we have the shader setup
         if not self.shader_program or not self.quad or not self.video_texture:
             return
-            
+        
         # Get current window dimensions
-        current_window_width = self.window_size[0]
-        current_window_height = self.window_size[1]
+        current_window_width, current_window_height = self.window.get_size()
         
         # Check if update is needed based on texture or window dimensions
         needs_update = (
@@ -441,7 +490,7 @@ class VideoOverlayRenderer(LayerRenderer):
                 new_positions = self._calculate_quad_vertices(self.video_texture)
                 
                 # Update the existing vertex list
-                self.quad.position[:] = new_positions
+                self.quad.position[:] = new_positions # type: ignore
                 
                 # Store current dimensions
                 self.last_texture_width = self.video_texture.width
@@ -462,8 +511,11 @@ class VideoOverlayRenderer(LayerRenderer):
         Returns:
             tuple: Quad vertex positions adjusted for aspect ratio
         """
+        logger.debug("_calculate_quad_vertices")
+
         # Default to filling the screen while preserving aspect ratio
         # If no texture is provided yet, use a 1:1 aspect ratio
+        # FIXME: get aspect from video player?
         video_aspect = 1.0
         
         if texture:
@@ -472,8 +524,7 @@ class VideoOverlayRenderer(LayerRenderer):
             logger.debug(f"Video dimensions: {texture.width}x{texture.height}, aspect ratio: {video_aspect:.2f}")
         
         # Get window dimensions and calculate aspect ratio
-        window_width = self.window_size[0]
-        window_height = self.window_size[1]
+        window_width, window_height = self.window.get_size()
         window_aspect = window_width / window_height
         logger.debug(f"Window dimensions: {window_width}x{window_height}, aspect ratio: {window_aspect:.2f}")
         
@@ -488,15 +539,21 @@ class VideoOverlayRenderer(LayerRenderer):
             scale_x = (video_aspect / window_aspect)
             scale_y = 1.0
             logger.debug(f"Video is taller than window, scaling width by: {scale_x:.2f}")
-            
-        # Generate quad positions that preserve aspect ratio
-        positions = (
-            -scale_x, -scale_y,  # bottom-left
-             scale_x, -scale_y,  # bottom-right
-             scale_x,  scale_y,  # top-right
-            -scale_x,  scale_y   # top-left
-        )
         
+        scaled_width = window_width * scale_x
+        scaled_height = window_height * scale_y
+        # Calculate offsets to center the quad
+        x_offset = (window_width - scaled_width) / 2
+        y_offset = (window_height - scaled_height) / 2
+
+        # Define quad vertices (bottom-left, bottom-right, top-left, top-right)
+        positions = (
+            x_offset, y_offset,  # bottom-left
+            x_offset + scaled_width, y_offset,  # bottom-right
+            x_offset, y_offset + scaled_height,  # top-left
+            x_offset + scaled_width, y_offset + scaled_height,  # top-right
+        )
+
         return positions
     
     def _create_fallback_mask(self):
@@ -533,9 +590,7 @@ class VideoOverlayRenderer(LayerRenderer):
                     return
                 
                 # Set the mask texture
-                self.mask_texture = mask_image.get_texture()
-                self.current_mask = mask_image
-                self.mask_loaded = True
+                self._load_mask(mask_image)
                 
                 logger.info(f"Mask {mask_id} loaded successfully")
                 
@@ -553,6 +608,26 @@ class VideoOverlayRenderer(LayerRenderer):
         except Exception as e:
             logger.error(f"Error handling VideoMask: {e}", exc_info=True)
     
+    def _load_mask(self, mask_image:Optional[AbstractImage] = None):
+        """Load a mask texture from an image.
+
+        Args:
+            mask_image: Pyglet image to use as mask
+        """
+        logger.debug(f"Loading mask texture from image: {mask_image}")
+        if mask_image:
+            try:
+                self.mask_texture = mask_image.get_texture()
+            except Exception as e:
+                logger.error(f"Error loading mask texture: {e}", exc_info=True)
+        else:
+            # create an all white mask (i.e. no mask)
+            self.mask_texture = self._create_fallback_mask()
+
+        self.current_mask = mask_image
+        self.mask_loaded = True
+        logger.info("Mask loaded successfully")
+
     def _load_default_video(self):
         """Load default video if configured."""
         # Check config for default video path first
@@ -573,11 +648,7 @@ class VideoOverlayRenderer(LayerRenderer):
         else:
             logger.debug(f"No default video found at: {default_video_path}")
             
-        # Load fallback mask if enabled
-        if (hasattr(self.config, 'video_overlay') and 
-            self.config.video_overlay.fallback_mask_enabled and 
-            not self.mask_loaded):
-            self._load_fallback_mask()
+        # Note: Fallback mask loading is handled after startup mask loading in __init__
     
     def _load_fallback_mask(self):
         """Load a fallback mask texture."""
@@ -587,7 +658,9 @@ class VideoOverlayRenderer(LayerRenderer):
             logger.debug("Fallback mask loaded (solid white)")
         except Exception as e:
             logger.error(f"Error creating fallback mask: {e}", exc_info=True)
-    
+
+
+
     async def _load_video(self, video_path: str) -> bool:
         """Load video from file path.
         
@@ -623,9 +696,15 @@ class VideoOverlayRenderer(LayerRenderer):
             logger.info(f"Video loaded successfully: {video_path}")
             logger.debug(f"Video player state: playing={self.video_player.playing}")
             
-            # Automatically start fade-in for testing purposes
-            self._start_fade_in()
-            
+            # For debugging: Set video to immediately visible instead of fading in
+            self.fade_state = "visible"
+            self._current_alpha = 1.0
+            logger.debug("Set video overlay to immediately visible (no fade) for debugging")
+
+            self._update_quad_vertices()  # Update vertices based on video aspect ratio
+
+            self.show_overlay()
+
             return True
             
         except Exception as e:
@@ -652,9 +731,12 @@ class VideoOverlayRenderer(LayerRenderer):
         self._start_fade_out()
     
     def show_overlay(self):
-        """Show the video overlay (fade in)."""
+        """Show the video overlay (immediately visible for debugging)."""
         if self.video_loaded:
-            self._start_fade_in()
+            # For debugging: Set immediately visible instead of fading
+            self.fade_state = "visible"
+            self._current_alpha = 1.0
+            logger.debug("DEBUG: Video overlay set to immediately visible (no fade)")
         else:
             logger.warning("Cannot show overlay without video")
     
@@ -664,10 +746,15 @@ class VideoOverlayRenderer(LayerRenderer):
         Args:
             new_size: New (width, height) of the window
         """
-        if new_size != self.window_size:
-            logger.debug(f"VideoOverlayRenderer resize: {self.window_size} -> {new_size}")
-            self.window_size = new_size
+        if new_size != self.window.get_size():
+            logger.debug(f"VideoOverlayRenderer resize: {new_size}")
+            # self.window_size = new_size
             
+            # w, h = new_size
+            # self.quad.position[:] = (0, 0, w, 0, 0, h, w, h)
+
+            self._update_quad_vertices()
+
             # Future: update shader uniforms for new window size
     
     def set_visibility(self, visible: bool):
@@ -696,7 +783,6 @@ class VideoOverlayRenderer(LayerRenderer):
             # Clean up vertex list (shader-based rendering)
             if hasattr(self, 'quad') and self.quad:
                 self.quad.delete()
-                self.quad = None
         
             # Stop and clean up video player
             if self.video_player:
@@ -740,13 +826,9 @@ class VideoOverlayRenderer(LayerRenderer):
     
     def _load_startup_mask(self):
         """Load startup mask if configured."""
+
         if not hasattr(self.video_config, 'start_mask_path') or not self.video_config.start_mask_path:
             logger.debug("No startup mask path configured")
-            return
-            
-        # Prevent double loading
-        if self.mask_loaded:
-            logger.debug("Mask already loaded, skipping startup mask loading")
             return
             
         mask_path = self.video_config.start_mask_path
@@ -793,13 +875,11 @@ class VideoOverlayRenderer(LayerRenderer):
                 return
                 
             # Load the mask image
-            mask_image = pyglet.image.load(mask_path)
-            self.current_mask = mask_image
-            self.mask_texture = mask_image.get_texture()
-            self.mask_loaded = True
+            self._load_mask(pyglet.image.load(mask_path))
             
             logger.info(f"Startup mask loaded successfully: {mask_path}")
-            logger.debug(f"Mask dimensions: {mask_image.width}x{mask_image.height}")
+            if self.current_mask:
+                logger.debug(f"Mask dimensions: {self.current_mask.width}x{self.current_mask.height}")
                 
         except Exception as e:
             logger.error(f"Error loading startup mask from {mask_path}: {e}", exc_info=True)

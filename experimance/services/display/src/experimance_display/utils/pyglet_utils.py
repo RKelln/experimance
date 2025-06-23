@@ -110,7 +110,9 @@ def cleanup_temp_file(temp_file_path: Optional[str]):
 def create_positioned_sprite(
     pyglet_image: pyglet.image.AbstractImage,
     window_size: Tuple[int, int],
-    position: Optional[Tuple[int, int]] = None
+    position: Optional[Tuple[int, int]] = None,
+    batch: Optional[pyglet.graphics.Batch] = None,
+    group: Optional[pyglet.graphics.Group] = None
 ) -> pyglet.sprite.Sprite:
     """Create a sprite from a pyglet image and position it.
     
@@ -122,7 +124,7 @@ def create_positioned_sprite(
     Returns:
         Positioned pyglet sprite
     """
-    sprite = pyglet.sprite.Sprite(pyglet_image)
+    sprite = pyglet.sprite.Sprite(pyglet_image, batch=batch, group=group)
     
     if position:
         sprite.x, sprite.y = position

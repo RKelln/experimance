@@ -26,7 +26,7 @@ max_preload_mb = 500          # Maximum memory to use for preloading in MB
 
 # Title screen
 [title_screen]
-enabled = false                # Whether to show title screen on startup
+enabled = true                # Whether to show title screen on startup
 text = "Experimance"          # Text to display
 duration = 10.0                # Duration in seconds
 fade_out_duration = 10.0      # Fade out duration in seconds

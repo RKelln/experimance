@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from experimance_common.schemas import MessageBase
 from experimance_common.zmq.config import MessageDataType, MessageType
+from experimance_display.config import DisplayServiceConfig
 import pyglet
 from pyglet.gl import GL_BLEND, glEnable, glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 
@@ -30,18 +31,13 @@ logger = logging.getLogger(__name__)
 class ImageRenderer(LayerRenderer):
     """Renders satellite landscape images with crossfade transitions."""
     
-    def __init__(self, window_size: Tuple[int, int], config: Any, transitions_config: Any):
-        """Initialize the image renderer.
-        
-        Args:
-            window_size: (width, height) of the display window
-            config: Rendering configuration
-            transitions_config: Transition configuration
-        """
-        self.window_size = window_size
-        self.config = config
-        self.transitions_config = transitions_config
-        
+    def __init__(self, config: DisplayServiceConfig, 
+                 window: pyglet.window.BaseWindow, 
+                 batch: pyglet.graphics.Batch,
+                 order: int = 0):
+        """Initialize the image renderer."""
+        super().__init__(config=config, window=window, batch=batch, order=order)
+
         # Current state
         self.current_image = None
         self.current_sprite = None
@@ -53,7 +49,7 @@ class ImageRenderer(LayerRenderer):
         # Transition state
         self.transition_active = False
         self.transition_timer = 0.0
-        self.transition_duration = transitions_config.default_crossfade_duration
+        self.transition_duration = config.transitions.default_crossfade_duration
         
         # Resource management
         self.image_cache = {}  # request_id -> (image, sprite)
@@ -63,7 +59,7 @@ class ImageRenderer(LayerRenderer):
         self._visible = True
         self._opacity = 1.0
         
-        logger.info(f"ImageRenderer initialized for {window_size[0]}x{window_size[1]}")
+        logger.info(f"ImageRenderer initialized for {self.window}")
     
     @property
     def current_image_id(self) -> Optional[str]:
@@ -205,7 +201,8 @@ class ImageRenderer(LayerRenderer):
             
             try:
                 # Create positioned sprite
-                sprite = create_positioned_sprite(pyglet_image, self.window_size)
+                sprite = create_positioned_sprite(pyglet_image, self.window.get_size(), 
+                                                  batch=self.batch, group=self)
                 
                 # Cache the image
                 self._cache_image(request_id, pyglet_image, sprite)
@@ -253,16 +250,7 @@ class ImageRenderer(LayerRenderer):
         except Exception as e:
             logger.error(f"Error parsing URI {uri}: {e}")
             return None
-    
-    def _position_sprite(self, sprite):
-        """Position sprite at center of window.
-        
-        Args:
-            sprite: Pyglet sprite to position
-        """
-        # Use the same positioning logic as the utility
-        sprite.x = self.window_size[0] // 2
-        sprite.y = self.window_size[1] // 2
+
     
     def _cache_image(self, image_id: str, image: Any, sprite: Any):
         """Cache an image and sprite.
@@ -313,19 +301,21 @@ class ImageRenderer(LayerRenderer):
         Args:
             new_size: New (width, height) of the window
         """
-        if new_size != self.window_size:
-            logger.debug(f"ImageRenderer resize: {self.window_size} -> {new_size}")
-            self.window_size = new_size
-            
+        if new_size != self.window.get_size():
+            logger.debug(f"ImageRenderer resize: {new_size}")
+        
             # Reposition all sprites
             if self.current_sprite:
-                self._position_sprite(self.current_sprite)
+                self.current_sprite.x = new_size[0] // 2
+                self.current_sprite.y = new_size[1] // 2
             if self.next_sprite:
-                self._position_sprite(self.next_sprite)
+                self.next_sprite.x = new_size[0] // 2
+                self.next_sprite.y = new_size[1] // 2
             
             # Reposition cached sprites
             for image_id, (image, sprite) in self.image_cache.items():
-                self._position_sprite(sprite)
+                sprite.x = new_size[0] // 2
+                sprite.y = new_size[1] // 2
     
     def set_visibility(self, visible: bool):
         """Set layer visibility.

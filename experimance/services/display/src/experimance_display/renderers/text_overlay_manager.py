@@ -16,7 +16,8 @@ import time
 from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING, List
 
 from experimance_common.zmq.config import MessageDataType
-from experimance_display.config import TextStylesConfig, TransitionsConfig, FadeDurationType
+from experimance_display.config import DisplayServiceConfig, TextStylesConfig, TransitionsConfig, FadeDurationType
+import pyglet
 from pyglet.text import Label
 
 from .layer_manager import LayerRenderer
@@ -146,23 +147,16 @@ class TextItem:
 
 class TextOverlayManager(LayerRenderer):
     """Manages multiple text overlays with different styles and positions."""
-    config : TextStylesConfig
-    transitions_config: TransitionsConfig
-    window_size: Tuple[int, int]
     text_items: Dict[str, TextItem]
     position_map: Dict[str, Tuple[int, int]]
 
-    def __init__(self, window_size: Tuple[int, int], config: TextStylesConfig, transitions_config: TransitionsConfig):
-        """Initialize the text overlay manager.
-        
-        Args:
-            window_size: (width, height) of the display window
-            config: Text styles configuration
-            transitions_config: Transition configuration
-        """
-        self.window_size = window_size
-        self.config = config
-        self.transitions_config = transitions_config
+    def __init__(self, config: DisplayServiceConfig, 
+                 window: pyglet.window.BaseWindow, 
+                 batch: pyglet.graphics.Batch,
+                 order: int = 2):
+        """Initialize the text overlay manager."""
+        super().__init__(config=config, window=window, batch=batch, order=order)
+          # Ensure this is drawn after the video layer
         
         # Active text items
         self.text_items = {}
@@ -174,7 +168,7 @@ class TextOverlayManager(LayerRenderer):
         self._visible = True
         self._opacity = 1.0
         
-        logger.info(f"TextOverlayManager initialized for {window_size[0]}x{window_size[1]}")
+        logger.info(f"TextOverlayManager initialized for {self.window}")
     
     @property
     def active_texts(self) -> Dict[str, TextItem]:
@@ -197,7 +191,7 @@ class TextOverlayManager(LayerRenderer):
         Returns:
             Dictionary mapping position names to (x, y)
         """
-        width, height = self.window_size
+        width, height = self.window.get_size()
         margin = 20  # Margin from edges
 
         return {
@@ -221,7 +215,7 @@ class TextOverlayManager(LayerRenderer):
         # Update animation states
         items_to_remove: List[str] = []
         for text_id, item in self.text_items.items():
-            fade_dur = item.fade_duration or self.transitions_config.text_fade_duration
+            fade_dur = item.fade_duration or self.config.transitions.text_fade_duration
             # Check for expiration and start fade-out
             if item.is_expired() and not item.is_fading_out:
                 item.start_fade_out()
@@ -329,8 +323,8 @@ class TextOverlayManager(LayerRenderer):
             Style configuration dictionary
         """
         # Map speaker to config attribute
-        if hasattr(self.config, speaker):
-            style_config = getattr(self.config, speaker)
+        if hasattr(self.config.text_styles, speaker):
+            style_config = getattr(self.config.text_styles, speaker)
             return {
                 "font_size": style_config.font_size,
                 "color": style_config.color,
@@ -345,7 +339,7 @@ class TextOverlayManager(LayerRenderer):
         else:
             # Fallback to system style
             logger.warning(f"Unknown speaker '{speaker}', using system style")
-            style_config = self.config.system
+            style_config = self.config.text_styles.system
             return {
                 "font_size": style_config.font_size,
                 "color": style_config.color,
@@ -368,6 +362,8 @@ class TextOverlayManager(LayerRenderer):
         Returns:
             Configured pyglet Label
         """
+        width = self.window.width
+
         # Get position
         position_name = style.get("position", "bottom_center")
         if position_name in self.position_map:
@@ -401,7 +397,7 @@ class TextOverlayManager(LayerRenderer):
                 use_width = max_width
             else:
                 # No max_width specified, use a reasonable default based on window size
-                default_width = int(self.window_size[0] * 0.8)  # 80% of window width
+                default_width = int(width * 0.8)  # 80% of window width
                 use_width = default_width
             
             label = Label(
@@ -415,7 +411,9 @@ class TextOverlayManager(LayerRenderer):
                 anchor_y=self._get_anchor_y(style.get("anchor", "baseline_center")),
                 align=style.get("align", "center"),
                 multiline=True,
-                width=use_width
+                width=use_width,
+                batch=self.batch, 
+                group=self,
             )
         else:
             # For single line text or when no width constraint is needed
@@ -428,9 +426,13 @@ class TextOverlayManager(LayerRenderer):
                 y=y,
                 anchor_x=self._get_anchor_x(style.get("anchor", "baseline_center")),
                 anchor_y=self._get_anchor_y(style.get("anchor", "baseline_center")),
-                multiline=is_multiline
+                multiline=is_multiline,
+                batch=self.batch,
+                group=self,
             )
-        
+
+        print(f"Creating label: {content} at ({x}, {y}) with style: {style}")
+        print(self.position_map )
         return label
     
     def _wrap_text(self, text: str, max_width: int, font_size: int) -> str:
@@ -555,9 +557,8 @@ class TextOverlayManager(LayerRenderer):
         Args:
             new_size: New (width, height) of the window
         """
-        if new_size != self.window_size:
-            logger.debug(f"TextOverlayManager resize: {self.window_size} -> {new_size}")
-            self.window_size = new_size
+        if new_size != self.window.get_size():
+            logger.debug(f"TextOverlayManager resize: {new_size}")
             
             # Recreate position map
             self.position_map = self._create_position_map()

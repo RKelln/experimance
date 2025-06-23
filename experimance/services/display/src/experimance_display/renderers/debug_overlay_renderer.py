@@ -13,6 +13,7 @@ import logging
 import time
 from typing import Dict, Any, Optional, Tuple
 
+from experimance_display.config import DisplayServiceConfig
 import pyglet
 from pyglet.gl import GL_LINES
 from pyglet.graphics import Batch
@@ -27,16 +28,14 @@ logger = logging.getLogger(__name__)
 class DebugOverlayRenderer(LayerRenderer):
     """Renders debug overlay with crosshair, FPS, and performance info."""
     
-    def __init__(self, window_size: Tuple[int, int], config: Any, layer_manager: Any = None):
-        """Initialize the debug overlay renderer.
+    def __init__(self, config: DisplayServiceConfig, 
+                 window: pyglet.window.BaseWindow, 
+                 batch: pyglet.graphics.Batch,
+                 layer_manager: Any = None,
+                 order: int = 3):
+        """Initialize the debug overlay renderer."""
+        super().__init__(config=config, window=window, batch=batch, order=order)
         
-        Args:
-            window_size: (width, height) of the display window
-            config: Display service configuration
-            layer_manager: Reference to layer manager for getting layer info
-        """
-        self.window_size = window_size
-        self.config = config
         self.layer_manager = layer_manager
         
         # Visibility and opacity
@@ -62,13 +61,13 @@ class DebugOverlayRenderer(LayerRenderer):
         self.fps_label = None
         self._create_fps_label()
         
-        logger.info(f"DebugOverlayRenderer initialized for {window_size[0]}x{window_size[1]}")
+        logger.info(f"DebugOverlayRenderer initialized for {window}")
     
     def _create_fps_label(self):
         """Create the FPS display label."""
         # Position in top-left corner
         x = 10
-        y = self.window_size[1] - 30
+        y = self.window.get_size()[1] - 30
         
         self.fps_label = Label(
             text="FPS: --",
@@ -78,26 +77,33 @@ class DebugOverlayRenderer(LayerRenderer):
             x=x,
             y=y,
             anchor_x="left",
-            anchor_y="top"
+            anchor_y="top",
+            batch=self.batch,
+            group=self,
         )
     
     def _create_crosshair(self):
         """Create the crosshair lines."""
-        center_x = self.window_size[0] // 2
-        center_y = self.window_size[1] // 2
+        window_size = self.window.get_size()
+        center_x = window_size[0] // 2
+        center_y = window_size[1] // 2
         
         # Create horizontal line
         self.crosshair_horizontal = Line(
             center_x - self.crosshair_size, center_y,
             center_x + self.crosshair_size, center_y,
-            color=self.crosshair_color
+            color=self.crosshair_color,
+            batch=self.batch,
+            group=self,
         )
         
         # Create vertical line
         self.crosshair_vertical = Line(
             center_x, center_y - self.crosshair_size,
             center_x, center_y + self.crosshair_size,
-            color=self.crosshair_color
+            color=self.crosshair_color,
+            batch=self.batch,
+            group=self,
         )
     
     @property
@@ -167,9 +173,8 @@ class DebugOverlayRenderer(LayerRenderer):
         Args:
             new_size: New (width, height) of the window
         """
-        if new_size != self.window_size:
-            logger.debug(f"DebugOverlayRenderer resize: {self.window_size} -> {new_size}")
-            self.window_size = new_size
+        if new_size != self.window.get_size():
+            logger.debug(f"DebugOverlayRenderer resize: {new_size} -> {new_size}")
             
             # Recreate FPS label with new position
             self._create_fps_label()

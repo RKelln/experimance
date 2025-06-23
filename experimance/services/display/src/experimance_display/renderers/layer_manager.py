@@ -15,24 +15,48 @@ import logging
 from typing import Dict, Optional, Tuple, Any
 from abc import ABC, abstractmethod
 
-from experimance_common.config import BaseConfig
+from experimance_display.config import DisplayServiceConfig
+import pyglet
 
 logger = logging.getLogger(__name__)
 
 
-class LayerRenderer(ABC):
-    """Abstract base class for layer renderers."""
+class LayerRenderer(pyglet.graphics.Group, ABC):
+    """Abstract base class for layer renderers.
     
+    Each layer renderer is responsible for managing its own rendering logic,
+    state updates, and cleanup. Layers are rendered in the order defined by
+    the LayerManager, which ensures proper z-ordering and compositing.
+
+    Each LayerRender is also a pyglet group, allowing it to be used with
+    pyglet's graphics batch system for efficient rendering.
+
+    Implement set_state and unset_state methods to manage OpenGL state.
+    """
+    config: DisplayServiceConfig
+    window: pyglet.window.BaseWindow
+    batch: pyglet.graphics.Batch
+    
+    def __init__(self, config: DisplayServiceConfig, 
+                 window: pyglet.window.BaseWindow, 
+                 batch: pyglet.graphics.Batch,
+                 order: int = 0):
+        """Initialize the layer renderer.
+        
+        Args:
+            window_size: (width, height) of the display window
+            config: Display service configuration
+        """
+        super().__init__(order=order)
+        self.config = config
+        self.window = window
+        self.batch = batch
+
     @abstractmethod
     def update(self, dt: float):
         """Update the layer state."""
         pass
-    
-    @abstractmethod
-    def render(self):
-        """Render the layer."""
-        pass
-    
+
     @abstractmethod
     async def cleanup(self):
         """Clean up layer resources."""
@@ -52,27 +76,23 @@ class LayerRenderer(ABC):
 
     @abstractmethod
     def resize(self, new_size: Tuple[int, int]):
-        """Handle window resize events.
-        
-        Args:
-            new_size: New (width, height) of the window
-        """
-        # Default implementation does nothing, can be overridden by subclasses
         pass
 
 
 class LayerManager:
     """Manages multiple rendering layers with proper z-order and compositing."""
     
-    def __init__(self, window_size: Tuple[int, int], config: BaseConfig):
+    def __init__(self, config: DisplayServiceConfig, window: pyglet.window.BaseWindow, batch: pyglet.graphics.Batch):
         """Initialize the layer manager.
         
         Args:
             window_size: (width, height) of the display window
             config: Display service configuration
         """
-        self.window_size = window_size
+        self.window = window
+        self.window_size = window.get_size()
         self.config = config
+        self.batch = batch
         
         # Layer registry in render order (bottom to top)
         self.layers: Dict[str, LayerRenderer] = {}
@@ -81,8 +101,8 @@ class LayerManager:
         # Performance tracking
         self.frame_count = 0
         self.total_render_time = 0.0
-        
-        logger.info(f"LayerManager initialized for {window_size[0]}x{window_size[1]}")
+
+        logger.info(f"LayerManager initialized for {self.window_size[0]}x{self.window_size[1]}")
     
     def register_renderer(self, layer_name: str, renderer: LayerRenderer):
         """Register a renderer for a specific layer.
@@ -138,22 +158,30 @@ class LayerManager:
         import time
         start_time = time.time()
         
-        # Render layers from bottom to top
-        layers_rendered = 0
+        self.batch.draw()  # Draw the batch containing all layers
+
+        # debug batch rendering
+        # print(f"Batch rendered with {len(self.batch._draw_list)} drawables"
+        #       )
+        # print(f"Batch group map: {self.batch.group_map}")
+
+        # # Render layers from bottom to top
+        # layers_rendered = 0
         
-        for layer_name in self.layer_order:
-            if layer_name in self.layers:
-                renderer = self.layers[layer_name]
+        # for layer_name in self.layer_order:
+        #     if layer_name in self.layers:
+        #         renderer = self.layers[layer_name]
                 
-                # Skip invisible layers for performance
-                if not renderer.is_visible:
-                    continue
+        #         # Skip invisible layers for performance
+        #         if not renderer.is_visible:
+        #             continue
                 
-                try:
-                    renderer.render()
-                    layers_rendered += 1
-                except Exception as e:
-                    logger.error(f"Error rendering layer {layer_name}: {e}", exc_info=True)
+        #         try:
+        #             #renderer.render()
+                    
+        #             layers_rendered += 1
+        #         except Exception as e:
+        #             logger.error(f"Error rendering layer {layer_name}: {e}", exc_info=True)
         
         # Track performance
         render_time = time.time() - start_time
@@ -161,9 +189,9 @@ class LayerManager:
         self.frame_count += 1
         
         # Log performance every 300 frames (10 seconds at 30fps)
-        if self.frame_count % 300 == 0:
+        if self.frame_count % 30 == 0:
             avg_render_time = self.total_render_time / self.frame_count
-            logger.debug(f"Average render time: {avg_render_time*1000:.2f}ms, Layers rendered: {layers_rendered}")
+            logger.debug(f"Average render time: {avg_render_time*1000:.2f}ms for {len(self.batch._draw_list)} drawables")
     
     def set_layer_visibility(self, layer_name: str, visible: bool):
         """Set the visibility of a specific layer.
@@ -220,7 +248,7 @@ class LayerManager:
                 }
         
         return info
-    
+
     def resize(self, new_size: Tuple[int, int]):
         """Handle window resize events.
         
@@ -239,6 +267,7 @@ class LayerManager:
                     except Exception as e:
                         logger.error(f"Error resizing layer {layer_name}: {e}", exc_info=True)
     
+
     async def cleanup(self):
         """Clean up all layer resources."""
         logger.info("Cleaning up LayerManager...")
