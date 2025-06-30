@@ -661,16 +661,14 @@ class ExperimanceCoreService(BaseService):
     
     async def reset_to_wilderness(self):
         """Reset the system to wilderness state."""
-        old_era = self.current_era
         # Use the advance_era and switch_biome methods for prompt manager consistency
         self.advance_era(Era.WILDERNESS)
-        self.switch_biome(Biome.TEMPERATE_FOREST)
+        self.switch_biome(Biome.TEMPERATE_FOREST) # TODO: pick random biome?
         self.idle_timer = 0.0
         self.user_interaction_score = 0.0
         self.audience_present = False
         
-        # Publish EraChanged event
-        await self._publish_era_changed_event(old_era, Era.WILDERNESS.value)
+        await self._publish_render_request(force=True)
         
         logger.info("System reset to wilderness due to idle timeout")
     
