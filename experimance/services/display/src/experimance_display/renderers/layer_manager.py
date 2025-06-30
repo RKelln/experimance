@@ -94,10 +94,19 @@ class LayerManager:
         self.config = config
         self.batch = batch
         
-        # Layer registry in render order (bottom to top)
+        # Layer registry (no fixed render order; order is set by group/batch system)
         self.layers: Dict[str, LayerRenderer] = {}
-        self.layer_order = ["background", "video_overlay", "text_overlay", "debug_overlay"]
         
+        # Debugging
+        if config.display.background_color:
+            logger.debug(f"Using background color: {config.display.background_color}")
+            self.background_color = [c / 255.0 for c in config.display.background_color]
+        else:
+            self.background_color = [0, 0, 0, 1.0]  # Default to black
+        
+        from pyglet.gl import glClearColor
+        glClearColor(*self.background_color)
+
         # Performance tracking
         self.frame_count = 0
         self.total_render_time = 0.0
@@ -111,9 +120,8 @@ class LayerManager:
             layer_name: Name of the layer (must be in layer_order)
             renderer: LayerRenderer instance
         """
-        if layer_name not in self.layer_order:
-            logger.warning(f"Unknown layer name: {layer_name}")
-            return
+        if layer_name in self.layers:
+            logger.warning(f"Layer {layer_name} already registered, replacing existing renderer")
         
         self.layers[layer_name] = renderer
         logger.info(f"Registered renderer for layer: {layer_name}")
@@ -127,7 +135,9 @@ class LayerManager:
         if layer_name in self.layers:
             del self.layers[layer_name]
             logger.info(f"Unregistered renderer for layer: {layer_name}")
-    
+        else:
+            logger.warning(f"Cannot unregister unknown layer: {layer_name}")
+
     def get_renderer(self, layer_name: str) -> Optional[LayerRenderer]:
         """Get the renderer for a specific layer.
         
@@ -146,53 +156,38 @@ class LayerManager:
             dt: Time elapsed since last update in seconds
         """
         # Update all registered layers
-        for layer_name in self.layer_order:
-            if layer_name in self.layers:
-                try:
-                    self.layers[layer_name].update(dt)
-                except Exception as e:
-                    logger.error(f"Error updating layer {layer_name}: {e}", exc_info=True)
+        for layer_name, renderer in self.layers.items():
+            try:
+                renderer.update(dt)
+            except Exception as e:
+                logger.error(f"Error updating layer {layer_name}: {e}", exc_info=True)
     
     def render(self):
         """Render all visible layers in the correct z-order."""
         import time
         start_time = time.time()
-        
+
+        if not self.window:
+            return
+
+        self.window.clear()
+
         self.batch.draw()  # Draw the batch containing all layers
 
-        # debug batch rendering
-        # print(f"Batch rendered with {len(self.batch._draw_list)} drawables"
-        #       )
-        # print(f"Batch group map: {self.batch.group_map}")
-
-        # # Render layers from bottom to top
-        # layers_rendered = 0
-        
-        # for layer_name in self.layer_order:
-        #     if layer_name in self.layers:
-        #         renderer = self.layers[layer_name]
-                
-        #         # Skip invisible layers for performance
-        #         if not renderer.is_visible:
-        #             continue
-                
-        #         try:
-        #             #renderer.render()
-                    
-        #             layers_rendered += 1
-        #         except Exception as e:
-        #             logger.error(f"Error rendering layer {layer_name}: {e}", exc_info=True)
-        
         # Track performance
         render_time = time.time() - start_time
         self.total_render_time += render_time
         self.frame_count += 1
-        
         # Log performance every 300 frames (10 seconds at 30fps)
-        if self.frame_count % 30 == 0:
+        if self.frame_count % 300 == 0:
             avg_render_time = self.total_render_time / self.frame_count
             logger.debug(f"Average render time: {avg_render_time*1000:.2f}ms for {len(self.batch._draw_list)} drawables")
-    
+
+        # input_key = input("Press Enter to continue rendering...")  # Keep the window open for rendering
+        # if input_key == 'q':
+        #     logger.info("Exiting rendering loop")
+        #     return
+
     def set_layer_visibility(self, layer_name: str, visible: bool):
         """Set the visibility of a specific layer.
         
@@ -229,23 +224,14 @@ class LayerManager:
             Dictionary with layer information
         """
         info = {}
-        
-        for layer_name in self.layer_order:
-            if layer_name in self.layers:
-                renderer = self.layers[layer_name]
-                info[layer_name] = {
-                    "registered": True,
-                    "visible": renderer.is_visible,
-                    "opacity": renderer.opacity,
-                    "type": type(renderer).__name__
-                }
-            else:
-                info[layer_name] = {
-                    "registered": False,
-                    "visible": False,
-                    "opacity": 0.0,
-                    "type": None
-                }
+
+        for layer_name, renderer in self.layers.items():
+            info[layer_name] = {
+                "registered": True,
+                "visible": renderer.is_visible,
+                "opacity": renderer.opacity,
+                "type": type(renderer).__name__
+            }
         
         return info
 

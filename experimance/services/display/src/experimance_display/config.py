@@ -59,6 +59,11 @@ class DisplayConfig(BaseModel):
         description="Whether to show debug text in all positions"
     )
 
+    background_color: tuple[int, int, int, int] = Field(
+        default=(0, 0, 0, 255),
+        description="Background color as RGBA tuple for the display window (for debugging layer compositing)"
+    )
+
     profile: bool = Field(
         default=False,
         description="Whether to enable profiling for performance analysis"

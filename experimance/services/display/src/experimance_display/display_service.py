@@ -122,7 +122,7 @@ class DisplayService(BaseService):
         await self._show_title_screen()
 
         # wait 5 sec then fade out the video
-        if self.video_overlay_renderer and self.config.video_overlay.enabled:
+        if self.video_overlay_renderer is not None and self.config.video_overlay.enabled:
             
             async def fade_out_video_overlay():
                 logger.info("Waiting 5 seconds before fading out video overlay")
@@ -244,13 +244,16 @@ class DisplayService(BaseService):
                 batch=batch,
                 order=0,
             )
+            self.layer_manager.register_renderer("background", self.image_renderer)
             
-            self.video_overlay_renderer = VideoOverlayRenderer(
-                config=self.config,
-                window=self.window,
-                batch=batch,
-                order=1,
-            )
+            if self.config.video_overlay.enabled:
+                self.video_overlay_renderer = VideoOverlayRenderer(
+                    config=self.config,
+                    window=self.window,
+                    batch=batch,
+                    order=1,
+                )
+                self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
             
             self.text_overlay_manager = TextOverlayManager(
                 config=self.config,
@@ -258,6 +261,7 @@ class DisplayService(BaseService):
                 batch=batch,
                 order=2,
             )
+            self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
             
             # Create debug overlay renderer
             self.debug_overlay_renderer = DebugOverlayRenderer(
@@ -267,11 +271,6 @@ class DisplayService(BaseService):
                 layer_manager=self.layer_manager,
                 order=3
             )
-            
-            # Register renderers with layer manager (re-enable all renderers)
-            self.layer_manager.register_renderer("background", self.image_renderer)
-            self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
-            self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
             self.layer_manager.register_renderer("debug_overlay", self.debug_overlay_renderer)
             
             logger.info("Rendering components initialized")
@@ -495,9 +494,6 @@ class DisplayService(BaseService):
         import time
 
         draw_start = time.perf_counter()
-        
-        if self.window:
-            self.window.clear()
         
         render_start = time.perf_counter()
         if self.layer_manager:

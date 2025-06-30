@@ -82,60 +82,32 @@ class ImageRenderer(LayerRenderer):
         return self._opacity
     
     def update(self, dt: float):
-        """Update transition state.
-        
+        """Update transition state and sprite properties for batch rendering.
         Args:
             dt: Time elapsed since last update in seconds
         """
         if self.transition_active:
             self.transition_timer += dt
-            
+            progress = min(self.transition_timer / self.transition_duration, 1.0)
+            # Calculate opacities
+            current_opacity = int((1.0 - progress) * self._opacity * 255)
+            next_opacity = int(progress * self._opacity * 255)
+            if self.current_sprite:
+                self.current_sprite.opacity = 255 # crossfade
+                self.current_sprite.visible = True
+            if self.next_sprite:
+                self.next_sprite.opacity = next_opacity
+                self.next_sprite.visible = True
             # Check if transition is complete
             if self.transition_timer >= self.transition_duration:
                 self._complete_transition()
-    
-    def render(self):
-        """Render the current image(s)."""
-        if not self.is_visible:
-            return
-        
-        # Enable blending for smooth transitions
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        try:
-            if self.transition_active and self.current_sprite and self.next_sprite:
-                self._render_transition()
-            elif self.current_sprite:
-                self._render_current()
-        except Exception as e:
-            logger.error(f"Error rendering image: {e}", exc_info=True)
-    
-    def _render_current(self):
-        """Render the current image only."""
-        if self.current_sprite:
-            self.current_sprite.opacity = int(self._opacity * 255)
-            self.current_sprite.draw()
-    
-    def _render_transition(self):
-        """Render crossfade transition between current and next image."""
-        if not (self.current_sprite and self.next_sprite):
-            return
-        
-        # Calculate transition progress (0.0 to 1.0)
-        progress = min(self.transition_timer / self.transition_duration, 1.0)
-        
-        # Calculate opacities
-        current_opacity = int((1.0 - progress) * self._opacity * 255)
-        next_opacity = int(progress * self._opacity * 255)
-        
-        # Set sprite opacities
-        self.current_sprite.opacity = current_opacity
-        self.next_sprite.opacity = next_opacity
-        
-        # Draw both sprites (next first for proper alpha blending)
-        self.next_sprite.draw()
-        self.current_sprite.draw()
+        else:
+            # Not transitioning: only current_sprite should be visible
+            if self.current_sprite:
+                self.current_sprite.opacity = int(self._opacity * 255)
+                self.current_sprite.visible = True
+            if self.next_sprite:
+                self.next_sprite.visible = False
     
     def _complete_transition(self):
         """Complete the current transition."""
@@ -334,6 +306,16 @@ class ImageRenderer(LayerRenderer):
         """
         self._opacity = max(0.0, min(1.0, opacity))
         logger.debug(f"ImageRenderer opacity: {self._opacity}")
+    
+    def set_state(self):
+        """Set OpenGL state for image renderer (no-op, but required for group consistency)."""
+        # No custom OpenGL state needed for image renderer
+        pass
+
+    def unset_state(self):
+        """Unset OpenGL state for image renderer (no-op, but required for group consistency)."""
+        # No custom OpenGL state needed for image renderer
+        pass
     
     async def cleanup(self):
         """Clean up image renderer resources."""

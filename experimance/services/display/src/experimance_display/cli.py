@@ -29,71 +29,81 @@ from typing import Dict, Any, List, Optional
 import zmq
 import zmq.asyncio
 
+from experimance_common.schemas import ContentType, DisplayMedia, MessageType
+
 # Add parent directories to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "libs" / "common" / "src"))
+
 
 from experimance_common.constants import (
     DEFAULT_PORTS, 
     GENERATED_IMAGES_DIR_ABS, 
     MOCK_IMAGES_DIR_ABS, 
-    VIDEOS_DIR_ABS
+    VIDEOS_DIR_ABS,
+    ZMQ_TCP_BIND_PREFIX
 )
+
+# Import PubSubService and config
+from experimance_common.zmq.services import PubSubService
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-class DisplayCLI:
-    """CLI tool for testing the display service."""
-    display_pub: zmq.asyncio.Socket
-    images_pub: zmq.asyncio.Socket
-    events_pub: zmq.asyncio.Socket
 
+class DisplayCLI:
+    """CLI tool for testing the display service using PubSubService abstraction."""
 
     def __init__(self):
-        self.context = None
-        self.images_pub = None # type: ignore
-        self.events_pub = None # type: ignore
-        self.display_pub = None # type: ignore
-        
+        self.pubsub_service: PubSubService = None  # type: ignore
+        self._running = False
+
     async def setup_publishers(self):
-        """Setup ZMQ publishers for different channels."""
-        self.context = zmq.asyncio.Context()
-        self.publisher = ZmqPublisher(f"tcp://*:{DEFAULT_PORTS['events']}")
-        # Give ZMQ time to establish connections
-        await asyncio.sleep(0.2)
-        logger.info("ZMQ publishers initialized")
-    
+        """Setup PubSubService for publishing events."""
+        config = PubSubServiceConfig(
+            publisher=PublisherConfig(
+                address=ZMQ_TCP_BIND_PREFIX,
+                port=DEFAULT_PORTS['events'],
+            ),
+            subscriber=None  # Not used for CLI
+        )
+        self.pubsub_service = PubSubService(config, name="DisplayCLI")
+        await self.pubsub_service.start()
+        self._running = True
+        await asyncio.sleep(0.5)  # Allow time for service to start
+        logger.info("PubSubService publisher initialized")
+
     async def cleanup(self):
-        """Cleanup ZMQ resources."""
-        if self.publisher:
-            self.publisher.close()
+        """Cleanup PubSubService resources."""
+        if self.pubsub_service and self._running:
+            await self.pubsub_service.stop()
+            self._running = False
 
     
-    async def send_image_ready(self, image_path: str, image_type: str = "satellite_landscape"):
+    async def send_display_media(self, image_path: str, image_type: str = "satellite_landscape"):
         """Send an ImageReady message."""
         if not os.path.exists(image_path):
             logger.error(f"Image file not found: {image_path}")
             return
-        
+
         # Convert to absolute path and URI
         abs_path = os.path.abspath(image_path)
         uri = f"file://{abs_path}"
-        
-        message = {
-            "type": MessageType.IMAGE_READY,
-            "request_id": str(uuid.uuid4()),
-            "image_id": str(uuid.uuid4()),
-            "uri": uri,
-            "metadata": {
-                "image_type": image_type
-            }
-        }
+
+        message = DisplayMedia(
+            request_id=str(uuid.uuid4()),
+            content_type=ContentType.IMAGE,
+            uri=uri,
+        )
+
         logger.debug(f"Sending ImageReady: {message}")
-        
-        await self.publisher.publish_async(message, topic=MessageType.IMAGE_READY)
+
+        await self.pubsub_service.publish(message, topic=MessageType.DISPLAY_MEDIA)
         logger.info(f"Sent ImageReady: {os.path.basename(image_path)}")
+
+        await asyncio.sleep(0.2)  # Allow time for processing before cleanup
     
     async def send_text_overlay(self, text_id: str, content: str, speaker: str = "system", 
                                duration: Optional[float] = None, position: str = "bottom_center"):
@@ -109,8 +119,8 @@ class DisplayCLI:
             }
         }
         print(message)
-        
-        await self.publisher.publish_async(message, topic=MessageType.TEXT_OVERLAY)
+
+        await self.pubsub_service.publish(message, topic=MessageType.TEXT_OVERLAY)
         logger.info(f"Sent TextOverlay: {text_id} - '{content[:50]}...'")
     
     async def send_remove_text(self, text_id: str):
@@ -119,8 +129,8 @@ class DisplayCLI:
             "type": MessageType.REMOVE_TEXT,
             "text_id": text_id
         }
-        
-        await self.publisher.publish_async(message, topic=MessageType.REMOVE_TEXT)
+
+        await self.pubsub_service.publish(message, topic=MessageType.REMOVE_TEXT)
         logger.info(f"Sent RemoveText: {text_id}")
     
     async def send_video_mask(self, mask_path: str, fade_in_duration: float = 0.2, 
@@ -129,20 +139,20 @@ class DisplayCLI:
         if not os.path.exists(mask_path):
             logger.error(f"Mask file not found: {mask_path}")
             return
-        
+
         # Convert to absolute path and URI
         abs_path = os.path.abspath(mask_path)
         uri = f"file://{abs_path}"
-        
+
         message = {
-            "type": MessageType.VIDEO_MASK,
+            "type": MessageType.CHANGE_MAP,
             "mask_id": str(uuid.uuid4()),
             "uri": uri,
             "fade_in_duration": fade_in_duration,
             "fade_out_duration": fade_out_duration
         }
-        
-        await self.publisher.publish_async(message, topic=MessageType.VIDEO_MASK)
+
+        await self.pubsub_service.publish(message, topic=MessageType.CHANGE_MAP)
         logger.info(f"Sent VideoMask: {os.path.basename(mask_path)}")
     
     async def send_era_changed(self, era: str, biome: str):
@@ -152,8 +162,7 @@ class DisplayCLI:
             "era": era,
             "biome": biome
         }
-        
-        await self.publisher.publish_async(message, topic=MessageType.SPACE_TIME_UPDATE)
+        await self.pubsub_service.publish(message, topic=MessageType.SPACE_TIME_UPDATE)
         logger.info(f"Sent EraChanged: {era}/{biome}")
     
     async def send_transition_ready(self, transition_path: str, from_image: str, to_image: str):
@@ -175,7 +184,7 @@ class DisplayCLI:
             "to_image": to_image
         }
         
-        await self.publisher.publish_async(message, topic=MessageType.TRANSITION_READY)
+        await self.pubsub_service.publish(message, topic=MessageType.TRANSITION_READY)
         logger.info(f"Sent TransitionReady: {os.path.basename(transition_path)}")
     
     async def send_loop_ready(self, loop_path: str, still_uri: str, loop_type: str = "idle_animation"):
@@ -199,7 +208,7 @@ class DisplayCLI:
             }
         }
         
-        await self.publisher.publish_async(message, topic=MessageType.LOOP_READY)
+        await self.pubsub_service.publish(message, topic=MessageType.LOOP_READY)
         logger.info(f"Sent LoopReady: {os.path.basename(loop_path)}")
 
 
@@ -291,7 +300,7 @@ async def cycle_images_command(cli: DisplayCLI, directory: Optional[str] = None,
     try:
         for i, image_path in enumerate(images):
             logger.info(f"[{i+1}/{len(images)}] Displaying: {os.path.basename(image_path)}")
-            await cli.send_image_ready(image_path)
+            await cli.send_display_media(image_path)
             await asyncio.sleep(interval)
     except KeyboardInterrupt:
         logger.info("Image cycling stopped")
@@ -323,7 +332,7 @@ async def demo_command(cli: DisplayCLI):
     images = get_available_images()[:5]  # Show first 5 images
     for i, image_path in enumerate(images):
         logger.info(f"Showing image {i+1}/{len(images)}: {os.path.basename(image_path)}")
-        await cli.send_image_ready(image_path)
+        await cli.send_display_media(image_path)
         await asyncio.sleep(3)
     
     # Demo video mask
@@ -438,7 +447,7 @@ def main():
                 if not image_path:
                     logger.error("No image provided and no default images available")
                     return
-                await cli.send_image_ready(image_path, args.type)
+                await cli.send_display_media(image_path, args.type)
             
             elif args.command == "text":
                 content = args.content or random.choice(DEFAULT_TEXTS)
