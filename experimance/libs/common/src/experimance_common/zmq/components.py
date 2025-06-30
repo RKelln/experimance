@@ -615,8 +615,8 @@ async def test_components():
         pub = PublisherComponent(pub_config)
         async with pub:
             # Test with MessageBase
-            from experimance_common.schemas import EraChanged, Era, Biome
-            era_msg = EraChanged(era=Era.CURRENT, biome=Biome.RAINFOREST)
+            from experimance_common.schemas import SpaceTimeUpdate, Era, Biome
+            era_msg = SpaceTimeUpdate(era=Era.CURRENT, biome=Biome.RAINFOREST)
             await pub.publish(era_msg)
             
             # Test with dict

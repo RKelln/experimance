@@ -1,0 +1,23 @@
+# Audio service configuration
+
+# OSC (SuperCollider communication)
+[osc]
+host = "localhost"
+send_port = 5570             # Port for sending OSC messages to SuperCollider
+recv_port = 5571             # Port for receiving OSC messages from SuperCollider
+
+# SuperCollider control
+[supercollider]
+auto_start = true            # Automatically start SuperCollider on service launch
+sclang_path = "sclang"       # Path to SuperCollider language interpreter
+script_path = "experimance_audio.scd"  # Path to SuperCollider script (leave null to auto-discover)
+startup_timeout = 10.0       # Seconds to wait for SuperCollider startup
+log_dir = "services/audio/logs"  # Directory where SuperCollider log files are written
+
+# Audio playback settings
+[audio]
+master_volume = 1.0          # Master volume level (0.0 to 1.0)
+environment_volume = 1.0     # Environment sounds volume level
+music_volume = 1.0           # Music loops volume level
+sfx_volume = 1.0             # Sound effects volume level
+config_dir = "services/audio/config"  # Directory containing JSON audio configs

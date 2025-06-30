@@ -80,7 +80,7 @@ class TestDisplayService:
             MessageType.TEXT_OVERLAY,
             MessageType.REMOVE_TEXT,
             MessageType.CHANGE_MAP,
-            MessageType.ERA_CHANGED
+            MessageType.SPACE_TIME_UPDATE
         ]
         
         # Check that message handlers were registered

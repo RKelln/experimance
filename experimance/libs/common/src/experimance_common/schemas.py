@@ -226,11 +226,17 @@ class MessageBase(MessageSchema):
         return subclasses
 
 
-class EraChanged(MessageBase):
-    """Event published when the era changes."""
+class SpaceTimeUpdate(MessageBase):
+    """Event published when the space-time context changes.
+    May change the biome, era, or both. Optionally include tags
+    associated with the change that provide additional details to
+    the context / setting.
+    """
     type: str = "EraChanged"
     era: Era
     biome: Biome
+    tags: Optional[List[str]] = None  # Optional tags for additional context
+    timestamp: Optional[str] = None  # ISO 8601 formatted timestamp of the update
 
 
 # used as a mix-in for schemas that have generated images

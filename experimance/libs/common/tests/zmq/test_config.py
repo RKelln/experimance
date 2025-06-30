@@ -259,7 +259,7 @@ class TestMessageTypes:
         """Test that MessageType enum has expected values."""
         assert MessageType.HEARTBEAT == "Heartbeat"
         assert MessageType.IMAGE_READY == "ImageReady"
-        assert MessageType.ERA_CHANGED == "EraChanged"
+        assert MessageType.SPACE_TIME_UPDATE == "EraChanged"
         
         # Test string conversion
         assert str(MessageType.HEARTBEAT) == "Heartbeat"

@@ -21,12 +21,12 @@ from experimance_core.depth_visualizer import DepthVisualizer
 import numpy as np
 import cv2
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
-from experimance_common.schemas import Era, Biome, ContentType, ImageReady, RenderRequest
+from experimance_common.schemas import Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
 from experimance_common.zmq.config import MessageType, MessageDataType
@@ -579,7 +579,7 @@ class ExperimanceCoreService(BaseService):
             self.select_biome_for_era(self.current_era)
             
             # Publish EraChanged event
-            await self._publish_era_changed_event(old_era, self.current_era)
+            await self._publish_space_time_update_event()
 
             # Publish render request
             await self._publish_render_request(force=True)
@@ -774,23 +774,30 @@ class ExperimanceCoreService(BaseService):
         self.idle_timer = max(0.0, self.idle_timer)
         self.era_progression_timer = max(0.0, self.era_progression_timer)
     
-    async def _publish_era_changed_event(self, old_era: str, new_era: str):
-        """Publish EraChanged event."""
-        event = {
-            "type": MessageType.ERA_CHANGED.value,
-            "old_era": old_era,
-            "new_era": new_era,
-            "current_biome": self.current_biome,
-            "timestamp": datetime.now().isoformat()
-        }
-        
+    def _extract_tags(self, prompt: str) -> List[str]:
+        """Extract tags from prompt by splitting on commas."""
+        return [tag.strip() for tag in prompt.split(',') if tag.strip()]
+
+    async def _publish_space_time_update_event(self):
+        """Publish SPACE_TIME_UPDATE event with tags extracted from prompt."""
+        message = SpaceTimeUpdate(
+            era=self.current_era,
+            biome=self.current_biome,
+            timestamp=datetime.now().isoformat()
+        )
+        if self.prompt_manager:
+            # Extract tags from current prompt if available
+            current_prompt, _neg_prompt = self.prompt_manager.current_prompt()
+            if current_prompt:
+                message.tags = self._extract_tags(current_prompt)
+
         try:
             # Simply await the publish operation
-            success = await self.zmq_service.publish(event)
-            if success:
-                logger.debug(f"Published era change event: {old_era} -> {new_era}")
+            success = await self.zmq_service.publish(message)
+            if success:    # Extract tags from current prompt
+                logger.debug(f"Published era change event: {message}")
             else:
-                self.record_error(Exception(f"Failed to publish era change event: {old_era} -> {new_era}"), is_fatal=False)
+                self.record_error(Exception(f"Failed to publish era change event: {message}"), is_fatal=False)
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Error publishing era change event")
 
@@ -1113,6 +1120,13 @@ class ExperimanceCoreService(BaseService):
             # Create a default render request using the proper schema
             request_id = str(uuid.uuid4())
             positive_prompt, negative_prompt = self._generate_prompt_for_era_biome(self.current_era, self.current_biome)
+            if positive_prompt == "":
+                self.record_error(
+                    Exception("Failed to generate prompt for render request"),
+                    is_fatal=False,
+                    custom_message="Cannot create render request without valid prompt"
+                )
+                return
             
             # Prepare the depth map image data for transport
             image_source = None
@@ -1170,55 +1184,28 @@ class ExperimanceCoreService(BaseService):
         Returns:
             Tuple of (positive_prompt, negative_prompt)
         """
-        if self.prompt_manager is not None:
-            try:
-                # Update prompt manager state if era/biome changed
-                if era != self.prompt_manager.current_era or biome != self.prompt_manager.current_biome:
-                    self.prompt_manager.set_era_and_biome(era, biome)
-                
-                # Get current prompt (cached, no state advancement)
-                return self.prompt_manager.current_prompt()
-                
-            except Exception as e:
-                logger.warning(f"Error generating prompt with prompt manager: {e}")
-                # Fall back to simple generation
-        
-        # Fallback to simple prompt generation
-        era_descriptions = {
-            Era.WILDERNESS: "pristine wilderness",
-            Era.PRE_INDUSTRIAL: "pre-industrial settlement", 
-            Era.EARLY_INDUSTRIAL: "early industrial development",
-            Era.LATE_INDUSTRIAL: "industrial landscape",
-            Era.MODERN: "modern development",
-            Era.CURRENT: "contemporary landscape",
-            Era.FUTURE: "futuristic landscape",
-            Era.DYSTOPIA: "dystopian wasteland",
-            Era.RUINS: "overgrown ruins"
-        }
-        
-        biome_descriptions = {
-            Biome.RAINFOREST: "dense rainforest",
-            Biome.TEMPERATE_FOREST: "temperate forest",
-            Biome.BOREAL_FOREST: "boreal forest",
-            Biome.DECIDUOUS_FOREST: "deciduous forest",
-            Biome.DESERT: "arid desert",
-            Biome.MOUNTAIN: "mountainous terrain",
-            Biome.TUNDRA: "arctic tundra",
-            Biome.PLAINS: "open plains",
-            Biome.RIVER: "river valley",
-            Biome.COASTAL: "coastal region",
-            Biome.TROPICAL_ISLAND: "tropical island",
-            Biome.ARCTIC: "arctic landscape",
-            Biome.SWAMP: "wetland swamp"
-        }
-        
-        era_desc = era_descriptions.get(era, "landscape")
-        biome_desc = biome_descriptions.get(biome, "natural area")
-        
-        positive = f"Satellite view of {biome_desc} in {era_desc}, aerial perspective, detailed topography"
-        negative = "blurry, low quality, distorted"
-        
-        return positive, negative
+        if self.prompt_manager is None:
+            self.record_error(
+                Exception("Prompt manager is not initialized"),
+                is_fatal=False,
+                custom_message="Cannot generate prompt without prompt manager"
+            )
+            return "", ""
+        try:
+            # Update prompt manager state if era/biome changed
+            if era != self.prompt_manager.current_era or biome != self.prompt_manager.current_biome:
+                self.prompt_manager.set_era_and_biome(era, biome)
+            
+            # Get current prompt (cached, no state advancement)
+            return self.prompt_manager.current_prompt()
+            
+        except Exception as e:
+            self.record_error(
+                e,
+                is_fatal=False,
+                custom_message=f"Error generating prompt for era {era.value}, biome {biome.value}"
+            )
+        return "", ""
 
     def advance_era(self, new_era: Optional[Era] = None) -> bool:
         """Advance to the next era or set a specific era.

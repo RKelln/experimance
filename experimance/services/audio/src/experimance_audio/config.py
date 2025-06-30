@@ -58,6 +58,11 @@ class SuperColliderConfig(BaseModel):
         description="Timeout in seconds for SuperCollider startup"
     )
 
+    log_dir: Optional[str] = Field(
+        default=str(Path(AUDIO_SERVICE_DIR) / "logs"),
+        description="Directory to write SuperCollider logs"
+    )
+
 class AudioConfig(BaseModel):
     """Audio playback configuration."""
     
@@ -107,7 +112,7 @@ class AudioServiceConfig(BaseServiceConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["events"],
-                topics=[MessageType.ERA_CHANGED, MessageType.IDLE_STATUS, MessageType.AGENT_CONTROL_EVENT]
+                topics=[MessageType.SPACE_TIME_UPDATE, MessageType.IDLE_STATUS, MessageType.AGENT_CONTROL_EVENT]
             )
         ),
         description="ZeroMQ pub/sub configuration"

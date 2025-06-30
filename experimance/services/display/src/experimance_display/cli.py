@@ -149,12 +149,12 @@ class DisplayCLI:
     async def send_era_changed(self, era: str, biome: str):
         """Send an EraChanged message."""
         message = {
-            "type": MessageType.ERA_CHANGED,
+            "type": MessageType.SPACE_TIME_UPDATE,
             "era": era,
             "biome": biome
         }
         
-        await self.publisher.publish_async(message, topic=MessageType.ERA_CHANGED)
+        await self.publisher.publish_async(message, topic=MessageType.SPACE_TIME_UPDATE)
         logger.info(f"Sent EraChanged: {era}/{biome}")
     
     async def send_transition_ready(self, transition_path: str, from_image: str, to_image: str):

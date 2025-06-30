@@ -25,7 +25,7 @@ from experimance_common.constants import (
 
 class MessageType(str, Enum):
     """Message types used in the Experimance system."""
-    ERA_CHANGED = "EraChanged"
+    SPACE_TIME_UPDATE = "SpaceTimeUpdate"
     RENDER_REQUEST = "RenderRequest"
     IDLE_STATUS = "IdleStatus"
     IMAGE_READY = "ImageReady"

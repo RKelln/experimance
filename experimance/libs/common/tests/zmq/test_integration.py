@@ -143,7 +143,7 @@ class TestCommunicationPatterns:
             subscriber=SubscriberConfig(
                 address="tcp://localhost",
                 port=5556,
-                topics=[MessageType.HEARTBEAT, MessageType.IMAGE_READY, MessageType.ERA_CHANGED]
+                topics=[MessageType.HEARTBEAT, MessageType.IMAGE_READY, MessageType.SPACE_TIME_UPDATE]
             )
         )
         
@@ -159,7 +159,7 @@ class TestCommunicationPatterns:
                 # Publish using enum values
                 await service.publish({"timestamp": 1234567890}, MessageType.HEARTBEAT)
                 await service.publish({"image_id": "img_001"}, MessageType.IMAGE_READY)
-                await service.publish({"new_era": "digital"}, MessageType.ERA_CHANGED)
+                await service.publish({"new_era": "digital"}, MessageType.SPACE_TIME_UPDATE)
                 
                 await asyncio.sleep(0.1)
                 

@@ -169,7 +169,7 @@ The piece has different states, based of eras of human development:
    * *image\_server* receives the `RenderRequest`, renders the frame (local SDXL or remote fal.ai), and publishes `ImageReady` on the `events` bus.
    * `experimance` receives `ImageReady`, evaluates transition requirements, and publishes `DisplayMedia` to *display* service.
    * *display* receives `DisplayMedia` and updates the projection with appropriate transitions (fade, dissolve, etc.).
-   * *audio* cross‑fades music & ambience to match the new era (triggered by `EraChanged` from `experimance`).
+   * *audio* cross‑fades music & ambience to match the new era (triggered by `SpaceTimeUpdate` from `experimance`).
 4. When idle > *IDLE\_TIMEOUT* (configurable, default = 45 s) the scene drifts back toward Wilderness.
 * Processes `AgentControl` messages (e.g., `SuggestBiome`) from the `agent` to influence `biome` state.
 * **Depth Difference Visualization**: Generates and publishes `VideoMask` messages with depth difference images for sand interaction feedback.
@@ -215,7 +215,7 @@ The piece has different states, based of eras of human development:
    * `experimance` publishes a `RenderRequest` on the `events` bus (see Section 2 & 5).
    * *image\_server* receives the `RenderRequest`, renders the frame (local SDXL or remote fal.ai), and publishes `ImageReady` on the `images` bus.
    * *display* receives `ImageReady` and updates the projection.
-   * *audio* cross‑fades music & ambience to match the new era (triggered by `EraChanged` from `experimance`).
+   * *audio* cross‑fades music & ambience to match the new era (triggered by `SpaceTimeUpdate` from `experimance`).
 4. When idle > *IDLE\_TIMEOUT* (configurable, default = 45 s) the scene drifts back toward Wilderness.
 
 ---
@@ -236,7 +236,7 @@ The piece has different states, based of eras of human development:
 ### Events Channel Message Flow
 
 **Published by Core (`experimance`)**:
-- `EraChanged` → `audio`, `display`, `agent`
+- `SpaceTimeUpdate` → `audio`, `display`, `agent`
 - `RenderRequest` → `image_server`
 - `AudioCommand` → `audio`
 - `VideoMask` → `display`
@@ -304,7 +304,7 @@ The table defines a **star topology**: `experimance` sits at the center (`events
   * Gentle interaction progresses the era slowly.
   * More active, rough interaction progresses more quickly.
     * Enough intensity (i.e., `user_interaction_score` accumulating past a certain threshold) locks in a future progression towards Post-apocalyptic and Ruins eras. Specific mechanics TBD.
-* Publishes `EraChanged` (containing new `era` and `biome`) and `RenderRequest` (containing full prompt and depth map) events on the `events` bus.
+* Publishes `SpaceTimeUpdate` (containing new `era` and `biome`) and `RenderRequest` (containing full prompt and depth map) events on the `events` bus.
 * Processes `AgentControlEvent` messages (e.g., `SuggestBiome`) from the `agent` to influence `biome` state.
 
 *Config example* (`experimance.toml`):
@@ -411,11 +411,12 @@ initial_state_path = "saved_data/default_state.json"  # Path to initial state JS
 // --- Schemas for unified `events` channel (tcp://*:5555) --- 
 // All services publish and subscribe to this channel with message type filtering
 
-// EraChanged (published by experimance → audio, display, agent)
+// SpaceTimeUpdate (published by experimance → audio, display, agent)
 {
-  "type": "EraChanged",
+  "type": "SpaceTimeUpdate",
   "era": "ai_future", // string, e.g., "wilderness", "pre_industrial", etc.
   "biome": "coastal"  // string, e.g., "desert", "forest", "mountains"
+  "tags": ["city", "urban", "boats", "port", "docks", "ocean"] // other related tags (components of the image)
 }
 
 // RenderRequest (published by experimance → image_server)
@@ -670,7 +671,7 @@ Consolidated deployment strategy:
 
 1. Decide control‑net injection point: pre‑baked vs runtime.
 2. Investigate StreamDiffusion or Latent Consistency Models for 30 fps preview option.
-3. Audio service strategy: While the `agent` machine (likely Mini-PC if using local STT/TTS/LLM) needs direct access to mic/speakers for low-latency voice interaction, the `audio` service (controlling overall soundscape, music) can still be a separate entity. It could run on the Pi and receive `EraChanged` events, or even on the Mini-PC if co-located with the agent. The key is that the `agent`'s voice I/O is local to its processing.
+3. Audio service strategy: While the `agent` machine (likely Mini-PC if using local STT/TTS/LLM) needs direct access to mic/speakers for low-latency voice interaction, the `audio` service (controlling overall soundscape, music) can still be a separate entity. It could run on the Pi and receive `SpaceTimeUpdate` events, or even on the Mini-PC if co-located with the agent. The key is that the `agent`'s voice I/O is local to its processing.
 4. Long‑term storage of generated images & metadata for archival.
 5. Configuration Management: Adopt a per-service `config.toml` approach. For secrets (API keys), use environment variables (e.g., sourced from a `.env` file not committed to git, or injected by the deployment system).
 6. System Resilience: Services should auto-restart on crash (e.g., via `systemd` or Docker restart policies). While perfect idempotency isn't strictly required for all messages, critical state changes or resource-intensive requests should be designed to minimize issues if re-processed (e.g., `RenderRequest` could include a UUID; `image_server` could check if an image for that UUID is already being generated or exists). A global "reset all services" script/mechanism could be useful for development or unrecoverable states.
@@ -708,7 +709,7 @@ def mock_zmq_subscriber(mocker):
     mock_sub = mocker.patch("zmq.Context.socket")
     # Configure mock to return test messages when recv is called
     mock_sub.return_value.recv_multipart.return_value = [
-        b'EraChanged', 
+        b'SpaceTimeUpdate', 
         json.dumps({"era": "modern", "biome": "coastal"}).encode('utf-8')
     ]
     return mock_sub

@@ -88,7 +88,7 @@ class TestAudioServiceRefactor:
         
         # Should subscribe to correct topics
         expected_topics = [
-            MessageType.ERA_CHANGED,
+            MessageType.SPACE_TIME_UPDATE,
             MessageType.IDLE_STATUS,
             MessageType.AGENT_CONTROL_EVENT,
         ]
@@ -214,7 +214,7 @@ class TestAudioServiceIntegration:
             }
             
             # Directly call handler to simulate message reception
-            await service._handle_era_changed(era_message)
+            await service._handle_space_time_update(era_message)
             
             # Verify the service processed the message
             assert service.current_era == "MODERN"

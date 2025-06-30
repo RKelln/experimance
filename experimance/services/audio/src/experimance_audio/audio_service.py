@@ -18,13 +18,13 @@ from typing import Dict, List, Any, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.base_service import BaseService, ServiceStatus
-from experimance_common.service_state import ServiceState
-from experimance_common.zmq.config import PubSubServiceConfig, SubscriberConfig
+from experimance_common.zmq.config import MessageType, MessageDataType
 from experimance_common.zmq.services import PubSubService
-from experimance_common.zmq.zmq_utils import MessageType, MessageDataType
-from experimance_common.schemas import Era, Biome, EraChanged, AgentControlEvent, IdleStatus, MessageBase
+from experimance_common.schemas import (
+    Era, Biome, SpaceTimeUpdate, AgentControlEvent, IdleStatus, MessageBase
+)
 
-from .config import AudioServiceConfig
+from .config import AudioServiceConfig, DEFAULT_CONFIG_PATH
 from .config_loader import AudioConfigLoader
 from .osc_bridge import OscBridge, DEFAULT_SCLANG_PATH
 
@@ -93,12 +93,19 @@ class AudioService(BaseService):
         await self.zmq_service.start()
         
         # Set up message handlers
-        self.zmq_service.add_message_handler(MessageType.ERA_CHANGED, self._handle_era_changed)
+        self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
         self.zmq_service.add_message_handler(MessageType.IDLE_STATUS, self._handle_idle_status)
         self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._handle_agent_control_event)
         
         # Resolve SuperCollider script path if auto-start is enabled
         if self.config.supercollider.auto_start:
+            # Check relative to this file's directory
+            module_dir = Path(__file__).parent.resolve()
+            service_dir = module_dir.parent.parent  # Go up from src/experimance_audio
+            
+            # Try to find the script in the expected sc_scripts directory
+            sc_script_dir = service_dir / "sc_scripts"
+            script_path = None
             # If no script path provided, look for it in standard locations
             if not self.config.supercollider.script_path:
                 # Check relative to this file's directory
@@ -111,18 +118,34 @@ class AudioService(BaseService):
                 
                 if default_script.exists():
                     # Update the config with the found path
-                    self.config.supercollider.script_path = str(default_script)
+                    script_path = default_script
                     logger.info(f"Found SuperCollider script at: {self.config.supercollider.script_path}")
-                else:
-                    logger.warning("No SuperCollider script path provided and couldn't find default script")
-                    logger.warning("SuperCollider auto-start disabled")
-                    # Update config to disable auto-start
-                    self.config.supercollider.auto_start = False
-            
+                
+            else: # script path set, try to find the file
+                script_path = Path(self.config.supercollider.script_path)
+                if not script_path.is_absolute():
+                    if not script_path.exists():
+                        # try under sc_script_dir
+                        script_path = sc_script_dir / script_path.name
+                        if not script_path.exists():
+                            # try under service_dir
+                            script_path = service_dir / script_path.name
+
+            if script_path is None:
+                logger.warning("No SuperCollider script path provided and couldn't find default script")
+                logger.warning("SuperCollider auto-start disabled")
+                # Update config to disable auto-start
+                self.config.supercollider.auto_start = False
+            elif not script_path.exists():
+                logger.error(f"SuperCollider script not found at: {script_path}")
+                logger.warning("SuperCollider auto-start disabled")
+                # Update config to disable auto-start
+                self.config.supercollider.auto_start = False
+
             # Start SuperCollider if we have a script path
-            if self.config.supercollider.auto_start and self.config.supercollider.script_path:
+            if self.config.supercollider.auto_start and script_path is not None:
                 if self.osc.start_supercollider(
-                    self.config.supercollider.script_path, 
+                    str(script_path), 
                     self.config.supercollider.sclang_path
                 ):
                     logger.info("SuperCollider started successfully")
@@ -154,11 +177,11 @@ class AudioService(BaseService):
         
         logger.info("Audio service stopped")
     
-    async def _handle_era_changed(self, message_data: MessageDataType):
+    async def _handle_space_time_update(self, message_data: MessageDataType):
         """Handle era changed events from the coordinator.
         
         Args:
-            message_data: ERA_CHANGED event data
+            message_data: SPACE_TIME_UPDATE event data
         """
         try:
             # Handle both dict and MessageBase types
@@ -401,90 +424,26 @@ class AudioService(BaseService):
             logger.error("Failed to reload audio configurations")
     
 
-async def run_audio_service(config_overrides: Optional[Dict[str, Any]] = None):
-    """Run the audio service.
+
+async def run_audio_service(
+    config_path: str = DEFAULT_CONFIG_PATH, 
+    args:Optional[argparse.Namespace] = None
+):
+    """
+    Run the Experimance Core Service.
     
     Args:
-        config_overrides: Optional configuration overrides
+        config_path: Path to configuration file
+        args: CLI arguments from argparse (if using new CLI system)
     """
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
+    # Create config with CLI overrides
+    config = AudioServiceConfig.from_overrides(
+        config_file=config_path,
+        args=args
     )
     
-    # Create config with overrides
-    config = AudioServiceConfig.from_overrides(config_overrides or {})
-    
-    # Create and start the service
     service = AudioService(config=config)
     
     await service.start()
-    logger.info("Audio service is running")
-    
-    # Run the service until interrupted
     await service.run()
 
-
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Experimance Audio Service")
-    parser.add_argument("--config-dir", type=str, help="Directory containing audio configuration files")
-    parser.add_argument("--osc-host", type=str, default="localhost", help="SuperCollider host address")
-    parser.add_argument("--osc-port", type=int, default=57120, help="SuperCollider OSC port")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--no-sc", action="store_true", help="Don't automatically start SuperCollider")
-    parser.add_argument("--sc-script", type=str, help="Path to SuperCollider script (defaults to experimance_audio.scd in sc_scripts dir)")
-    parser.add_argument("--sclang-path", type=str, default=DEFAULT_SCLANG_PATH, help="Path to SuperCollider language interpreter executable")
-    
-    args = parser.parse_args()
-    
-    # Set log level
-    log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
-    # Define a handler for SIGINT (Ctrl+C) that will allow a cleaner shutdown
-    import signal
-    
-    def signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}, initiating shutdown...")
-        # Let asyncio.run handle the cleanup
-        # The KeyboardInterrupt will still be raised
-        
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    try:
-        # Build config overrides from command line arguments
-        config_overrides = {}
-        
-        if args.config_dir:
-            config_overrides["audio"] = {"config_dir": args.config_dir}
-        
-        if args.osc_host != "localhost":
-            config_overrides.setdefault("osc", {})["host"] = args.osc_host
-            
-        if args.osc_port != 57120:
-            config_overrides.setdefault("osc", {})["send_port"] = args.osc_port
-            
-        if args.no_sc:
-            config_overrides.setdefault("supercollider", {})["auto_start"] = False
-            
-        if args.sc_script:
-            config_overrides.setdefault("supercollider", {})["script_path"] = args.sc_script
-            
-        if args.sclang_path != DEFAULT_SCLANG_PATH:
-            config_overrides.setdefault("supercollider", {})["sclang_path"] = args.sclang_path
-        
-        asyncio.run(run_audio_service(config_overrides))
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received, exiting")
-    except Exception as e:
-        logger.exception(f"Unhandled exception: {e}")
-        sys.exit(1)
