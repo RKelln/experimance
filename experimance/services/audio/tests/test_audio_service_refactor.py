@@ -9,7 +9,7 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock
 
 from experimance_common.zmq.mocks import MockPubSubService, mock_message_bus
-from experimance_common.zmq.config import MessageType
+from experimance_common.schemas import MessageType
 from experimance_common.service_state import ServiceState
 
 from experimance_audio.audio_service import AudioService

@@ -12,7 +12,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseConfig, BaseServiceConfig
-from experimance_common.zmq.config import SubscriberConfig, PubSubServiceConfig, MessageType
+from experimance_common.schemas import MessageType
+from experimance_common.zmq.config import SubscriberConfig, PubSubServiceConfig
 from experimance_common.constants import DEFAULT_PORTS, AUDIO_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX
 
 DEFAULT_CONFIG_PATH = f"{AUDIO_SERVICE_DIR}/config.toml"

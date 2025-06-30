@@ -26,10 +26,12 @@ from typing import Dict, Any, Optional, Tuple, List
 from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
-from experimance_common.schemas import Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate
+from experimance_common.schemas import (
+    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType
+)
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
-from experimance_common.zmq.config import MessageType, MessageDataType
+from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.zmq_utils import ( 
     prepare_image_message,
     create_display_media_message,
@@ -789,13 +791,11 @@ class ExperimanceCoreService(BaseService):
             if current_prompt:
                 message.tags = self._extract_tags(current_prompt)
 
+        logger.debug(f"Publishing SPACE_TIME_UPDATE event: {message}")
+
         try:
             # Simply await the publish operation
-            success = await self.zmq_service.publish(message)
-            if success:    # Extract tags from current prompt
-                logger.debug(f"Published era change event: {message}")
-            else:
-                self.record_error(Exception(f"Failed to publish era change event: {message}"), is_fatal=False)
+            await self.zmq_service.publish(message)
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Error publishing era change event")
 
@@ -818,6 +818,12 @@ class ExperimanceCoreService(BaseService):
             
             logger.debug(f"Processing ImageReady for request_id: {image_ready.request_id}")
             
+            # TODO: check the era and biome of ready image versus current state
+            # if they don't match we should discard the image?
+            if image_ready.era != self.current_era or image_ready.biome != self.current_biome:
+                logger.warning(f"ImageReady era/biome mismatch: {image_ready.era}/{image_ready.biome} vs {self.current_era}/{self.current_biome}")
+                return
+
             # Determine if we need a transition
             #needs_transition = False
             needs_transition = self._should_request_transition()
@@ -828,6 +834,9 @@ class ExperimanceCoreService(BaseService):
             else:
                 # Send directly to display service
                 await self._send_display_media(image_ready)
+
+                # update audio
+                await self._publish_space_time_update_event()
                 
         except Exception as e:
             logger.error(f"Error handling ImageReady message: {e}")

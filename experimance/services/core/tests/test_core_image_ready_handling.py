@@ -8,8 +8,7 @@ import numpy as np
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
 
-from experimance_common.schemas import Era, Biome, ContentType, DisplayMedia
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.schemas import Era, Biome, ContentType, DisplayMedia, MessageType
 from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.test_utils import active_service
 from experimance_core.experimance_core import ExperimanceCoreService

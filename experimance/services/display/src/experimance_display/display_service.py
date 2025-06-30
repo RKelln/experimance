@@ -19,7 +19,7 @@ import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
-from experimance_common.schemas import ContentType
+from experimance_common.schemas import ContentType, MessageType
 from experimance_display.pyglet_test import MainWindow
 import pyglet
 from pyglet import clock
@@ -27,7 +27,7 @@ from pyglet.window import key
 
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import PubSubService
-from experimance_common.zmq.config import MessageDataType, MessageType
+from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS, TICK, DISPLAY_SERVICE_DIR
 from experimance_common.service_state import ServiceState
 

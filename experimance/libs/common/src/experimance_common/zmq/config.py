@@ -17,42 +17,11 @@ from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from experimance_common.config import BaseConfig
-from experimance_common.schemas import MessageBase
+from experimance_common.schemas import MessageBase, MessageType
 from experimance_common.constants import (
     DEFAULT_PORTS, HEARTBEAT_TOPIC, DEFAULT_TIMEOUT, HEARTBEAT_INTERVAL,
     ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
 )
-
-class MessageType(str, Enum):
-    """Message types used in the Experimance system."""
-    SPACE_TIME_UPDATE = "SpaceTimeUpdate"
-    RENDER_REQUEST = "RenderRequest"
-    IDLE_STATUS = "IdleStatus"
-    IMAGE_READY = "ImageReady"
-    TRANSITION_READY = "TransitionReady"
-    LOOP_READY = "LoopReady"
-    AGENT_CONTROL_EVENT = "AgentControlEvent"
-    TRANSITION_REQUEST = "TransitionRequest"
-    LOOP_REQUEST = "LoopRequest"
-    HEARTBEAT = "Heartbeat"
-    ALERT = "Alert"
-    # Display service message types
-    DISPLAY_MEDIA = "DisplayMedia"
-    TEXT_OVERLAY = "TextOverlay"
-    REMOVE_TEXT = "RemoveText"
-    CHANGE_MAP = "ChangeMap"
-    # Add more message types as needed
-
-    def __str__(self) -> str:
-        """Return the string representation of the message type."""
-        return self.value
-    
-    # allow for comparison with strings
-    def __eq__(self, other: Any) -> bool:
-        """Allow comparison with string values."""
-        if isinstance(other, str):
-            return self.value == other
-        return super().__eq__(other)
 
 class ZmqException(Exception):
     """Base exception for ZMQ-related errors."""

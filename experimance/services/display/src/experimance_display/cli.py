@@ -38,7 +38,6 @@ from experimance_common.constants import (
     MOCK_IMAGES_DIR_ABS, 
     VIDEOS_DIR_ABS
 )
-from experimance_common.zmq.zmq_utils import MessageType, ZmqPublisher
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

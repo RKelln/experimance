@@ -480,6 +480,7 @@ def load_image_from_message(message: dict|ImageSource,
         - PIL Image if format=ImageLoadFormat.PIL
         - numpy array if format=ImageLoadFormat.NUMPY
         - tuple (file_path, is_temp_file) if format=ImageLoadFormat.FILEPATH
+        - base64 encoded string if format=ImageLoadFormat.ENCODED
         - None if loading failed
         
     Example:

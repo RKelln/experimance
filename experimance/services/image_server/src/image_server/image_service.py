@@ -19,9 +19,9 @@ from typing import Dict, Any, Optional
 from experimance_common.base_service import BaseService, ServiceStatus
 from experimance_common.image_utils import ImageLoadFormat, load_image_from_message, png_to_base64url
 from experimance_common.service_state import ServiceState
-from experimance_common.schemas import RenderRequest
+from experimance_common.schemas import Biome, Era, ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
-from experimance_common.zmq.config import MessageType, MessageDataType
+from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.logger import configure_external_loggers
 from pydantic import ValidationError
@@ -179,38 +179,24 @@ class ImageServerService(BaseService):
         try:
             logger.debug(f"Received RenderRequest message: {message}")
 
-            # Ensure message is a RenderRequest object
+            # Ensure message is a RenderRequest object using schemas.py
             try:
-                request : RenderRequest = RenderRequest.to_message_type(message) # type: ignore
+                request: RenderRequest = RenderRequest.to_message_type(message)  # type: ignore
             except ValidationError as e:
                 self.record_error(
-                    ValueError(f"Invalid RenderRequest message: {message}"), 
+                    ValueError(f"Invalid RenderRequest message: {message}"),
                     is_fatal=False,
                     custom_message=f"Invalid RenderRequest message: {message}"
                 )
                 return
-            
-            depth_map_b64 : str = ""
-            if request.depth_map is not None:
-                depth_map_b64 = load_image_from_message(request.depth_map, ImageLoadFormat.ENCODED)
-            
+
             logger.info(f"Processing RenderRequest {request.request_id} for {request.era}/{request.biome}")
-            logger.debug(f"Depth map loaded: {depth_map_b64 is not None}")
-            
-            # Create image generation task - add_task will handle task creation and scheduling
+
+            # Schedule the image generation task using the full RenderRequest object
             logger.debug(f"Creating and scheduling task for request {request.request_id}")
-            self.add_task(self._process_render_request(
-                request_id=request.request_id, 
-                prompt=request.prompt, 
-                depth_map_b64=depth_map_b64,
-                era=request.era,
-                biome=request.biome,
-                seed=request.seed,
-                negative_prompt=request.negative_prompt,
-                style=request.style
-            ))
+            self.add_task(self._process_render_request(request))
             logger.debug(f"Task created and scheduled for request {request.request_id}")
-            
+
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message=f"Error handling RenderRequest: {e}")
     
@@ -238,14 +224,7 @@ class ImageServerService(BaseService):
     
     async def _process_render_request(
         self,
-        request_id: str,
-        prompt: str,
-        depth_map_b64: Optional[str] = None,
-        era: Optional[str] = None,
-        biome: Optional[str] = None,
-        seed: Optional[int] = None,
-        negative_prompt: Optional[str] = None,
-        style: Optional[str] = None
+        request: RenderRequest,
     ):
         """Process a render request and generate an image.
         
@@ -260,18 +239,34 @@ class ImageServerService(BaseService):
             style: Style hint for generation
         """
         try:
-            logger.debug(f"Starting _process_render_request for {request_id}")
-            
-            if depth_map_b64 == "":
-                depth_map_b64 = None
+            logger.debug(f"Starting _process_render_request for {request.request_id}")
+
+            # Unpack fields from RenderRequest (from schemas.py)
+            request_id = request.request_id
+            prompt = request.prompt
+            era = request.era
+            biome = request.biome
+            negative_prompt = getattr(request, 'negative_prompt', None)
+            style = getattr(request, 'style', None)
+            seed = getattr(request, 'seed', None)
+
+            # Handle depth_map (ImageSource or None)
+            depth_map_b64 = None
+            if hasattr(request, 'depth_map') and request.depth_map is not None:
+                # If depth_map is an ImageSource with image_data, use it
+                if hasattr(request.depth_map, 'image_data') and request.depth_map.image_data:
+                    depth_map_b64 = request.depth_map.image_data
+                # If depth_map is a dict (from deserialization)
+                elif isinstance(request.depth_map, dict) and request.depth_map.get('image_data'):
+                    depth_map_b64 = request.depth_map['image_data']
 
             # Generate the image with full context
             logger.debug(f"Calling _generate_image for {request_id}")
             image_path = await self._generate_image(
                 prompt=prompt,
                 depth_map_b64=depth_map_b64,
-                era=era,
-                biome=biome,
+                era=str(era),
+                biome=str(biome),
                 seed=seed,
                 negative_prompt=negative_prompt,
                 style=style,
@@ -279,24 +274,25 @@ class ImageServerService(BaseService):
             )
             logger.debug(f"Generated image path: {image_path}")
 
-            # Publish ImageReady message with context
+            # Publish ImageReady message with context (from schemas.py)
             logger.debug(f"Publishing ImageReady for {request_id}")
             await self._publish_image_ready(
-                request_id=request_id, 
+                request_id=request_id,
                 image_path=image_path,
-                prompt=prompt,
                 era=era,
-                biome=biome
+                biome=biome,
+                prompt=prompt
             )
-            
+
             logger.info(f"Successfully processed RenderRequest {request_id}")
-            
+
         except Exception as e:
             # Record error but don't stop service (non-fatal)
+            request_id = getattr(request, 'request_id', None)
             self.record_error(e, is_fatal=False, custom_message=f"Error processing RenderRequest {request_id}: {e}")
-            
             # Publish an error message to notify other services
-            await self._publish_image_error(request_id, str(e))
+            if request_id:
+                await self._publish_image_error(request_id, str(e))
     
     async def _generate_image(
         self,
@@ -341,9 +337,9 @@ class ImageServerService(BaseService):
         self, 
         request_id: str, 
         image_path: str,
+        era: Era,
+        biome: Biome,
         prompt: Optional[str] = None,
-        era: Optional[str] = None,
-        biome: Optional[str] = None
     ):
         """Publish an ImageReady message.
         
@@ -364,21 +360,13 @@ class ImageServerService(BaseService):
             # Generate unique image ID
             image_id = str(uuid.uuid4())
             
-            # Create ImageReady message with context
-            message = {
-                "type": MessageType.IMAGE_READY,
-                "request_id": request_id,
-                "image_id": image_id,
-                "uri": image_uri
-            }
-            
-            # Add context fields if provided
-            if prompt:
-                message["prompt"] = prompt
-            if era:
-                message["era"] = era
-            if biome:
-                message["biome"] = biome
+            message = ImageReady(
+                request_id=request_id,
+                uri=image_uri,
+                era=era,
+                biome=biome,
+                prompt=prompt,
+            )
             
             # If configured for remote deployment, include base64 data
             if getattr(self.config, 'include_image_data', False):

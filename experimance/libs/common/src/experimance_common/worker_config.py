@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, validator
 
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.schemas import MessageType
 
 
 class WorkerConnectionConfig(BaseModel):

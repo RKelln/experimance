@@ -6,7 +6,8 @@ import time
 from typing import Optional, Any, Callable, Union, TypeVar, List, Dict, AsyncIterator
 
 from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
-from experimance_common.zmq.config import ZmqTimeoutError, MessageType
+from experimance_common.zmq.config import ZmqTimeoutError
+from experimance_common.schemas import MessageType
 
 logger = logging.getLogger(__name__)
 

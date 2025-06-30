@@ -225,6 +225,40 @@ class MessageBase(MessageSchema):
             subclasses.update(subclass._get_all_subclasses())
         return subclasses
 
+class MessageType(str, Enum):
+    """Message types used in the Experimance system."""
+    SPACE_TIME_UPDATE = "SpaceTimeUpdate"
+    RENDER_REQUEST = "RenderRequest"
+    IDLE_STATUS = "IdleStatus"
+    IMAGE_READY = "ImageReady"
+    TRANSITION_READY = "TransitionReady"
+    LOOP_READY = "LoopReady"
+    AGENT_CONTROL_EVENT = "AgentControlEvent"
+    TRANSITION_REQUEST = "TransitionRequest"
+    LOOP_REQUEST = "LoopRequest"
+    HEARTBEAT = "Heartbeat"
+    ALERT = "Alert"
+    # Display service message types
+    DISPLAY_MEDIA = "DisplayMedia"
+    TEXT_OVERLAY = "TextOverlay"
+    REMOVE_TEXT = "RemoveText"
+    CHANGE_MAP = "ChangeMap"
+    # Add more message types as needed
+
+    def __str__(self) -> str:
+        """Return the string representation of the message type."""
+        return self.value
+    
+    # allow for comparison with strings
+    def __eq__(self, other: Any) -> bool:
+        """Allow comparison with string values."""
+        if isinstance(other, str):
+            return self.value == other
+        return super().__eq__(other)
+    
+    def __hash__(self) -> int:
+        """Allow MessageType to be used as a dictionary key."""
+        return hash(self.value)
 
 class SpaceTimeUpdate(MessageBase):
     """Event published when the space-time context changes.
@@ -232,7 +266,7 @@ class SpaceTimeUpdate(MessageBase):
     associated with the change that provide additional details to
     the context / setting.
     """
-    type: str = "EraChanged"
+    type: MessageType = MessageType.SPACE_TIME_UPDATE
     era: Era
     biome: Biome
     tags: Optional[List[str]] = None  # Optional tags for additional context
@@ -248,7 +282,7 @@ class ImageSource(MessageSchema):
 
 class RenderRequest(MessageBase):
     """Request to generate a new image."""
-    type: str = "RenderRequest"
+    type: MessageType = MessageType.RENDER_REQUEST
     
     request_id: str  # Unique identifier for tracking the request
     era: Era
@@ -268,14 +302,17 @@ class IdleStatus(MessageBase):
 
 class ImageReady(MessageBase):
     """Event published when a new image is ready."""
-    type: str = "ImageReady"
+    type: MessageType = MessageType.IMAGE_READY
     request_id: str
     uri: str  # URI to the image (file://, http://, etc.)
+    era: Era
+    biome: Biome
+    prompt: Optional[str] = None
 
 
 class TransitionReady(MessageBase):
     """Event published when a transition video/sequence is ready."""
-    type: str = "TransitionReady"
+    type: MessageType = MessageType.TRANSITION_READY
     transition_id: str
     uri: str  # URI to video or image sequence manifest
     is_video: bool  # True if URI points to video file, False if image sequence
@@ -285,7 +322,7 @@ class TransitionReady(MessageBase):
 
 class LoopReady(MessageBase):
     """Event published when a loop animation is ready."""
-    type: str = "LoopReady"
+    type: MessageType = MessageType.LOOP_READY
     loop_id: str
     uri: str  # URI to video or image sequence manifest
     is_video: bool  # True if URI points to video file, False if image sequence
@@ -314,14 +351,14 @@ class SpeechDetectedPayload(AgentControlEventPayload):
 
 class AgentControlEvent(MessageBase):
     """Event published by the agent to control other services."""
-    type: str = "AgentControlEvent"
+    type: MessageType = MessageType.AGENT_CONTROL_EVENT
     sub_type: str  # "SuggestBiome", "AudiencePresent", "SpeechDetected"
     payload: Dict  # Structure varies based on sub_type
 
 
 class TransitionRequest(MessageBase):
     """Request to generate a transition between two images."""
-    type: str = "TransitionRequest"
+    type: MessageType = MessageType.TRANSITION_REQUEST
     request_id: str
     from_image_uri: str  # URI to the source image
     to_image_uri: str  # URI to the destination image
@@ -331,7 +368,7 @@ class TransitionRequest(MessageBase):
 
 class LoopRequest(MessageBase):
     """Request to generate a loop animation from a still image."""
-    type: str = "LoopRequest"
+    type: MessageType = MessageType.LOOP_REQUEST
     request_id: str
     still_image_uri: str  # URI to the still image to animate
     style: str  # Hint for the animation style
@@ -354,7 +391,7 @@ class ContentType(str, Enum):
 
 class DisplayMedia(MessageBase, ImageSource):
     """Message for sending media content to display service."""
-    type: str = "DisplayMedia"
+    type: MessageType = MessageType.DISPLAY_MEDIA
     
     # Content specification
     content_type: ContentType

@@ -19,7 +19,7 @@ from typing import Dict, Any
 
 from experimance_common.service_state import ServiceState
 from experimance_common.base_service import ServiceStatus
-from experimance_common.zmq.config import MessageType
+from experimance_common.schemas import MessageType
 from experimance_common.zmq.mocks import MockWorkerService, mock_message_bus
 
 from image_server.image_service import ImageServerService
@@ -120,21 +120,24 @@ class TestImageServerService(MockImageServerTestCase):
     @pytest.mark.asyncio
     async def test_render_request_handling(self, image_service: ImageServerService):
         """Test handling of RenderRequest messages."""
+        from experimance_common.schemas import RenderRequest
         await image_service.start()
-        
-        # Create a copy of our sample render request
-        render_request = SAMPLE_RENDER_REQUEST.copy()
-        
+
+        # Create a RenderRequest instance from the sample dict
+        render_request = RenderRequest.model_validate(SAMPLE_RENDER_REQUEST)
+
         # Mock the image generation process
         with patch.object(image_service, '_process_render_request') as mock_process:
             mock_process.return_value = AsyncMock()
-            
-            # Handle the request
-            await image_service._handle_render_request(render_request)
-            
-            # Verify the process was called
+
+            # Handle the request (pass as dict, as would be received over ZMQ)
+            await image_service._handle_render_request(render_request.model_dump())
+
+            # Verify the process was called with a RenderRequest instance
             mock_process.assert_called_once()
-        
+            called_arg = mock_process.call_args[0][0]
+            assert isinstance(called_arg, RenderRequest)
+
         await image_service.stop()
 
     @pytest.mark.asyncio
@@ -158,29 +161,42 @@ class TestImageServerService(MockImageServerTestCase):
     @pytest.mark.asyncio
     async def test_message_publishing(self, image_service: ImageServerService):
         """Test publishing ImageReady messages."""
+        from experimance_common.schemas import ImageReady
         await image_service.start()
-        
+
         request_id = "test_request_001"
         test_image_path = "/tmp/test_image.png"
-        
+        from experimance_common.schemas import Era, Biome
+        era = Era.CURRENT
+        biome = Biome.PLAINS  # Use a valid Biome enum value
+        prompt = "Test prompt"
+
         # Mock the image path existence
         with patch('pathlib.Path.exists', return_value=True):
-            
-            await image_service._publish_image_ready(
-                request_id=request_id,
-                image_path=test_image_path,
-                prompt="Test prompt"
-            )
-            
-            # Check that send_response was called on the ZMQ service
-            image_service.zmq_service.send_response.assert_called_once()
-            
-            # Get the message that was sent
-            call_args = image_service.zmq_service.send_response.call_args[0]
-            message_content = call_args[0]
-            assert message_content["type"] == str(MessageType.IMAGE_READY)
-            assert message_content["request_id"] == request_id
-        
+            # Patch send_response to an AsyncMock so we can await it
+            with patch.object(image_service.zmq_service, 'send_response', new=AsyncMock()) as mock_send:
+                await image_service._publish_image_ready(
+                    request_id=request_id,
+                    image_path=test_image_path,
+                    era=era,
+                    biome=biome,
+                    prompt=prompt
+                )
+
+                # Check that send_response was called on the ZMQ service
+                mock_send.assert_awaited_once()
+
+                # Get the message that was sent
+                call_args = mock_send.call_args[0]
+                message_content = call_args[0]
+                # Validate the message is an ImageReady dict
+                image_ready = ImageReady.model_validate(message_content)
+                assert image_ready.type == "ImageReady"
+                assert image_ready.request_id == request_id
+                assert image_ready.era == era
+                assert image_ready.biome == biome
+                assert image_ready.prompt == prompt
+
         await image_service.stop()
 
     @pytest.mark.asyncio 

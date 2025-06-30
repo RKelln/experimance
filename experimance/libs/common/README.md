@@ -44,12 +44,12 @@ The library implements two primary ZeroMQ communication patterns:
 Messages are categorized by their purpose using the `MessageType` enum:
 
 ```python
-from experimance_common.zmq_utils import MessageType
+from experimance_common.schemas import MessageType
 
 # Available message types
-# MessageType.ERA_CHANGED
+# MessageType.SPACE_TIME_UPDATE
 # MessageType.RENDER_REQUEST
-# MessageType.IDLE_STATUS
+# MessageType.IDLE_STATUSSPACE_TIME_UPDATE
 # MessageType.IMAGE_READY
 # MessageType.TRANSITION_READY
 # MessageType.LOOP_READY
@@ -71,234 +71,6 @@ events_port = DEFAULT_PORTS["events"]  # 5555
 depth_port = DEFAULT_PORTS["depth_pub"]  # 5556 (high-bandwidth depth data)
 ```
 
-### Publisher-Subscriber Pattern
-
-#### Synchronous Usage
-
-```python
-from experimance_common.zmq_utils import ZmqPublisher, ZmqSubscriber, MessageType, ZmqTimeoutError
-import time
-
-# Publisher (usually in one service)
-publisher = ZmqPublisher("tcp://*:5555", "status-updates", use_asyncio=False)
-try:
-    # Publish a message
-    message = {
-        "type": MessageType.HEARTBEAT,
-        "timestamp": time.time(),
-        "service": "example-service"
-    }
-    success = publisher.publish(message)
-    if success:
-        print("Message published successfully")
-finally:
-    publisher.close()
-
-# Subscriber (usually in another service)
-subscriber = ZmqSubscriber("tcp://localhost:5555", ["status-updates"], use_asyncio=False)
-try:
-    # Receive a message (with built-in timeout)
-    try:
-        topic, message = subscriber.receive()
-        print(f"Received message on topic {topic}: {message}")
-    except ZmqTimeoutError:
-        print("No message received within timeout period")
-finally:
-    subscriber.close()
-```
-
-#### Asynchronous Usage
-
-```python
-import asyncio
-from experimance_common.zmq_utils import ZmqPublisher, ZmqSubscriber, MessageType, ZmqTimeoutError
-import time
-
-async def publish_example():
-    publisher = ZmqPublisher("tcp://*:5555", "status-updates")
-    try:
-        # Publish a message asynchronously
-        message = {
-            "type": MessageType.HEARTBEAT,
-            "timestamp": time.time(),
-            "service": "example-service"
-        }
-        success = await publisher.publish_async(message)
-        if success:
-            print("Message published successfully")
-    finally:
-        publisher.close()
-
-async def subscribe_example():
-    subscriber = ZmqSubscriber("tcp://localhost:5555", ["status-updates"])
-    try:
-        # Receive a message asynchronously (with built-in timeout)
-        try:
-            topic, message = await subscriber.receive_async()
-            print(f"Received message on topic {topic}: {message}")
-        except ZmqTimeoutError:
-            print("No message received within timeout period")
-    finally:
-        subscriber.close()
-
-# Run the examples
-asyncio.run(publish_example())
-asyncio.run(subscribe_example())
-```
-
-### Push-Pull Pattern
-
-#### Synchronous Usage
-
-```python
-from experimance_common.zmq_utils import ZmqPushSocket, ZmqPullSocket, MessageType, ZmqTimeoutError
-
-# Push socket (distributes tasks)
-push_socket = ZmqPushSocket("tcp://*:5556", use_asyncio=False)
-try:
-    # Push a task
-    task = {
-        "type": MessageType.RENDER_REQUEST,
-        "id": "task-123",
-        "parameters": {"resolution": [800, 600]}
-    }
-    success = push_socket.push(task)
-    if success:
-        print("Task pushed successfully")
-finally:
-    push_socket.close()
-
-# Pull socket (receives tasks)
-pull_socket = ZmqPullSocket("tcp://localhost:5556", use_asyncio=False)
-try:
-    # Pull a task (with built-in timeout)
-    try:
-        task = pull_socket.pull()
-        print(f"Received task: {task}")
-    except ZmqTimeoutError:
-        print("No task received within timeout period")
-finally:
-    pull_socket.close()
-```
-
-#### Asynchronous Usage
-
-```python
-import asyncio
-from experimance_common.zmq_utils import ZmqPushSocket, ZmqPullSocket, MessageType, ZmqTimeoutError
-
-async def push_example():
-    push_socket = ZmqPushSocket("tcp://*:5556")
-    try:
-        # Push a task asynchronously
-        task = {
-            "type": MessageType.RENDER_REQUEST,
-            "id": "task-123",
-            "parameters": {"resolution": [800, 600]}
-        }
-        success = await push_socket.push_async(task)
-        if success:
-            print("Task pushed successfully")
-    finally:
-        push_socket.close()
-
-async def pull_example():
-    pull_socket = ZmqPullSocket("tcp://localhost:5556")
-    try:
-        # Pull a task asynchronously (with built-in timeout)
-        try:
-            task = await pull_socket.pull_async()
-            print(f"Received task: {task}")
-        except ZmqTimeoutError:
-            print("No task received within timeout period")
-    finally:
-        pull_socket.close()
-
-# Run the examples
-asyncio.run(push_example())
-asyncio.run(pull_example())
-```
-
-### Controller-Worker Pattern
-
-For the specific case of a controller that receives messages from multiple workers, the library provides specialized socket classes:
-
-1. **ZmqBindingPullSocket**: A PULL socket that binds to address (for controllers)
-2. **ZmqConnectingPushSocket**: A PUSH socket that connects to address (for workers)
-
-This pattern enables fan-in communication where multiple workers can report back to a single controller.
-
-#### Synchronous Usage
-
-```python
-from experimance_common.zmq_utils import ZmqBindingPullSocket, ZmqConnectingPushSocket, MessageType, ZmqTimeoutError
-
-# Controller (central service)
-controller_socket = ZmqBindingPullSocket("tcp://*:5557", use_asyncio=False)
-try:
-    # Receive worker results (with built-in timeout)
-    try:
-        worker_result = controller_socket.pull()
-        print(f"Received worker result: {worker_result}")
-    except ZmqTimeoutError:
-        print("No worker results received within timeout period")
-finally:
-    controller_socket.close()
-
-# Worker (distributed service)
-worker_socket = ZmqConnectingPushSocket("tcp://localhost:5557", use_asyncio=False)
-try:
-    # Send result to controller
-    result = {
-        "type": MessageType.IMAGE_READY,
-        "worker_id": "worker-123",
-        "data": {"status": "completed", "processing_time_ms": 150}
-    }
-    success = worker_socket.push(result)
-    if success:
-        print("Worker result sent successfully")
-finally:
-    worker_socket.close()
-```
-
-#### Asynchronous Usage
-
-```python
-import asyncio
-from experimance_common.zmq_utils import ZmqBindingPullSocket, ZmqConnectingPushSocket, MessageType, ZmqTimeoutError
-
-async def controller_example():
-    controller_socket = ZmqBindingPullSocket("tcp://*:5557")
-    try:
-        # Receive worker results asynchronously (with built-in timeout)
-        try:
-            worker_result = await controller_socket.pull_async()
-            print(f"Received worker result: {worker_result}")
-        except ZmqTimeoutError:
-            print("No worker results received within timeout period")
-    finally:
-        controller_socket.close()
-
-async def worker_example():
-    worker_socket = ZmqConnectingPushSocket("tcp://localhost:5557")
-    try:
-        # Send result to controller asynchronously
-        result = {
-            "type": MessageType.IMAGE_READY,
-            "worker_id": "worker-123",
-            "data": {"status": "completed", "processing_time_ms": 150}
-        }
-        success = await worker_socket.push_async(result)
-        if success:
-            print("Worker result sent successfully")
-    finally:
-        worker_socket.close()
-
-# Run the examples
-asyncio.run(controller_example())
-asyncio.run(worker_example())
-```
-
 ### Best Practices
 
 1. **Always Close Sockets**: Use try/finally blocks to ensure sockets are closed properly
@@ -307,13 +79,10 @@ asyncio.run(worker_example())
 4. **Proper Addressing**:
    - For binding (servers): Use `tcp://*:PORT`
    - For connecting (clients): Use `tcp://localhost:PORT` or the actual host IP
-5. **Choose the Right Socket Pattern**:
-   - Use standard `ZmqPushSocket`/`ZmqPullSocket` for simple one-to-one communication
-   - Use `ZmqBindingPullSocket`/`ZmqConnectingPushSocket` for controller-worker patterns where multiple senders report to a single receiver
-6. **Standard Ports**: Use the constants from `DEFAULT_PORTS` for consistency
-7. **Topic Naming**: Use clear, hierarchical topic names (e.g., "service.event-type")
-8. **Error Handling**: Check return values (`success`) on publish/push operations
-9. **Graceful Shutdown**: Implement signal handlers to close sockets on service shutdown
+5. **Standard Ports**: Use the constants from `DEFAULT_PORTS` for consistency
+6. **Topic Naming**: Use clear, hierarchical topic names (e.g., "service.event-type")
+7. **Error Handling**: Check return values (`success`) on publish/push operations
+8. **Graceful Shutdown**: Implement signal handlers to close sockets on service shutdown
 
 ### Error Handling
 
@@ -354,13 +123,9 @@ The service classes are organized as follows:
 
 1. **BaseService**: Core functionality for all services (with or without ZMQ)
    - **BaseZmqService**: Adds ZeroMQ-specific functionality
-     - **ZmqPublisherService**: For services that broadcast messages
-     - **ZmqSubscriberService**: For services that listen to broadcasts
-     - **ZmqPushService**: For services that distribute tasks
-     - **ZmqPullService**: For services that consume tasks
-     - **ZmqPublisherSubscriberService**: For services that both publish and subscribe
-     - **ZmqControllerService**: For controller services (publish + listen + push + pull)
-     - **ZmqWorkerService**: For worker services (subscribe + pull + push responses)
+     - **PubSubService**: For services that both publish and subscribe
+     - **ControllerService**: For controller services (publish + listen + push + pull)
+     - **WorkerService**: For worker services (subscribe + pull + push responses)
 
 See [README_SERVICE.md](README_SERVICE.md) for detailed documentation on using these service classes.
 

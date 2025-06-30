@@ -30,8 +30,9 @@ This document describes the base service classes and ZMQ composition patterns pr
 
 ```python
 # src/my_service/config.py
+from experimance_common.schemas import MessageType
 from experimance_common.config import BaseServiceConfig
-from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig, MessageType
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.constants import DEFAULT_PUBLISHER_PORT, ZMQ_BIND_ADDRESS
 from pydantic import Field
 
@@ -154,8 +155,9 @@ class MyService(BaseService):
 
 ```python
 # src/my_service/config.py
+from experimance_common.schemas import MessageType
 from experimance_common.config import BaseServiceConfig
-from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig, MessageType
+from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.constants import DEFAULT_PUBLISHER_PORT, ZMQ_BIND_ADDRESS
 from pydantic import Field
 
@@ -339,8 +341,9 @@ All service configs should extend `BaseServiceConfig` to inherit common service 
 
 ```python
 # src/my_service/config.py
+from experimance_common.schemas import MessageType
 from experimance_common.config import BaseServiceConfig
-from experimance_common.zmq.config import PubSubServiceConfig, MessageType
+from experimance_common.zmq.config import PubSubServiceConfig
 from experimance_common.constants import DEFAULT_PUBLISHER_PORT, ZMQ_BIND_ADDRESS
 from pydantic import Field
 
@@ -378,7 +381,7 @@ Always use shared constants and enums instead of hardcoded strings:
 ```python
 # ✅ Good - Uses shared constants and enums
 from experimance_common.constants import ZMQ_BIND_ADDRESS, DEFAULT_PUBLISHER_PORT
-from experimance_common.zmq.config import MessageType
+from experimance_common.schemas import MessageType
 
 zmq_config = PubSubServiceConfig(
     publisher=PublisherConfig(
@@ -493,7 +496,7 @@ class TestMyServiceConfig:
         config = MyServiceConfig()
         
         # Check that topics use MessageType enum, not strings
-        from experimance_common.zmq.config import MessageType
+        from experimance_common.schemas import MessageType
         assert MessageType.STATUS in config.zmq.publisher.topics
         assert MessageType.HEARTBEAT in config.zmq.publisher.topics
         assert MessageType.COMMAND in config.zmq.subscriber.topics

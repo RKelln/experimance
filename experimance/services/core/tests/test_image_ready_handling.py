@@ -15,8 +15,7 @@ from datetime import datetime
 
 from experimance_core.experimance_core import ExperimanceCoreService
 from experimance_core.config import CoreServiceConfig
-from experimance_common.schemas import Era, Biome, ContentType
-from experimance_common.zmq.zmq_utils import MessageType
+from experimance_common.schemas import Era, Biome, ContentType, MessageType
 from experimance_common.zmq.config import ControllerServiceConfig, PublisherConfig, SubscriberConfig
 
 

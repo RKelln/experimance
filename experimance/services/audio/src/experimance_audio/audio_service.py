@@ -18,10 +18,10 @@ from typing import Dict, List, Any, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.base_service import BaseService, ServiceStatus
-from experimance_common.zmq.config import MessageType, MessageDataType
+from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
-    Era, Biome, SpaceTimeUpdate, AgentControlEvent, IdleStatus, MessageBase
+    Era, Biome, SpaceTimeUpdate, AgentControlEvent, IdleStatus, MessageBase, MessageType
 )
 
 from .config import AudioServiceConfig, DEFAULT_CONFIG_PATH
