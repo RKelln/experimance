@@ -776,7 +776,7 @@ class ExperimanceCoreService(BaseService):
     
     def _extract_tags(self, prompt: str) -> List[str]:
         """Extract tags from prompt by splitting on commas."""
-        return [tag.strip() for tag in prompt.split(',') if tag.strip()]
+        return [tag.strip(" ():1234567890.") for tag in prompt.split(',') if tag.strip()]
 
     async def _publish_space_time_update_event(self):
         """Publish SPACE_TIME_UPDATE event with tags extracted from prompt."""

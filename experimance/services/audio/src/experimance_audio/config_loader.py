@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+from experimance_common.constants import AUDIO_SERVICE_DIR
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_DIR = "config"
@@ -22,7 +24,7 @@ DEFAULT_CONFIG_DIR = "config"
 class AudioConfigLoader:
     """Loads and manages audio configuration files."""
     
-    def __init__(self, config_dir: Optional[str] = None):
+    def __init__(self, config_dir: Optional[str|Path] = None):
         """Initialize the audio configuration loader.
         
         Args:
@@ -30,9 +32,9 @@ class AudioConfigLoader:
         """
         if config_dir is None:
             # get the default config directory relative to the audio service
-            config_dir = str(Path(__file__).parent.parent / DEFAULT_CONFIG_DIR)
+            config_dir = AUDIO_SERVICE_DIR / DEFAULT_CONFIG_DIR
         
-        self.config_dir = config_dir
+        self.config_dir = Path(config_dir)
         self.layers = []  # Environmental audio layers
         self.triggers = []  # Sound effect triggers
         self.music_loops = {}  # Era-based music loops
@@ -41,48 +43,47 @@ class AudioConfigLoader:
         self.is_loaded = False
     
     def load_configs(self) -> bool:
-        """Load all audio configuration files.
+        """Load all audio configuration files using pathlib for paths.
         
         Returns:
             bool: True if loading was successful, False otherwise
         """
         success = True
-        
         try:
             # Load environmental layers
-            layers_path = os.path.join(self.config_dir, "layers.json")
-            if os.path.exists(layers_path):
-                with open(layers_path, 'r') as f:
+            layers_path = self.config_dir / "layers.json"
+            if layers_path.exists():
+                with layers_path.open('r') as f:
                     self.layers = json.load(f)
                 logger.info(f"Loaded {len(self.layers)} audio layers")
             else:
                 logger.warning(f"Layers config file not found: {layers_path}")
                 success = False
-                
+
             # Load sound effect triggers
-            triggers_path = os.path.join(self.config_dir, "triggers.json")
-            if os.path.exists(triggers_path):
-                with open(triggers_path, 'r') as f:
+            triggers_path = self.config_dir / "triggers.json"
+            if triggers_path.exists():
+                with triggers_path.open('r') as f:
                     self.triggers = json.load(f)
                 logger.info(f"Loaded {len(self.triggers)} audio triggers")
             else:
                 logger.warning(f"Triggers config file not found: {triggers_path}")
                 success = False
-                
+
             # Load music loops
-            music_loops_path = os.path.join(self.config_dir, "music_loops.json")
-            if os.path.exists(music_loops_path):
-                with open(music_loops_path, 'r') as f:
+            music_loops_path = self.config_dir / "music_loops.json"
+            if music_loops_path.exists():
+                with music_loops_path.open('r') as f:
                     music_loops_data = json.load(f)
                     self.music_loops = music_loops_data.get("era_loops", {})
                 logger.info(f"Loaded music loops for {len(self.music_loops)} eras")
             else:
                 logger.warning(f"Music loops config file not found: {music_loops_path}")
                 success = False
-                
+
             self.is_loaded = success
             return success
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing audio config file: {e}")
             return False

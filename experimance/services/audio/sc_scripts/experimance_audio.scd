@@ -10,11 +10,15 @@ s.options.numBuffers = 1024;
 s.options.memSize = 8192 * 16;
 s.options.numWireBufs = 64;
 s.options.maxNodes = 1024 * 8;
-s.options.numOutputBusChannels = 2;
-s.options.numInputBusChannels = 2;
-
-// debugging OSC:
-//OSCFunc.trace(true);
+// all of the following options are set by audio_service.py
+s.options.numOutputBusChannels = 6; 
+s.options.numInputBusChannels = 2;  
+s.options.device = nil;             
+~oscRecvPort = 5570;                
+~initMasterVolume = 1.0;
+~initEnvironmentVolume = 1.0;
+~initMusicVolume = 1.0;                
+~initSfxVolume = 1.0;                  
 
 s.waitForBoot {
     // -----------------------------------------------------
@@ -23,7 +27,7 @@ s.waitForBoot {
     var scriptDir = thisProcess.nowExecutingPath.dirname;  // Get the directory of this script
     var configDir, audioDir;
 
-    var oscRecvPort = 5568;
+    var oscRecvPort = ~oscRecvPort;  // Default port for OSC messages
 
     // Context tracking
     var currentBiome = \temperate_forest;  // Default biome as symbol
@@ -31,10 +35,10 @@ s.waitForBoot {
     var activeTags = Set[\temperate_forest];  // Default active tags as symbols
 
     // Volume control variables
-    var masterVolume = 1.0;        // Master volume (0.0 to 1.0)
-    var environmentVolume = 1.0;   // Environmental sounds volume
-    var musicVolume = 1.0;         // Music loops volume
-    var sfxVolume = 1.0;           // Sound effects volume
+    var masterVolume = ~initMasterVolume;        // Master volume (0.0 to 1.0)
+    var environmentVolume = ~initEnvironmentVolume;   // Environmental sounds volume
+    var musicVolume = ~initMusicVolume;         // Music loops volume
+    var sfxVolume = ~initSfxVolume;           // Sound effects volume
 
     // Audio buffers and synths
     var environmentLayers;     // Dictionary of active environmental layers
@@ -282,7 +286,7 @@ s.waitForBoot {
     // -----------------------------------------------------
     // Volume helper functions for live parameter access
     // -----------------------------------------------------
-    
+
     // Helper functions to access current volume values from within routines
     // These are needed because SuperCollider captures variables by value in closures
     // When a Routine is created, it captures the current values of variables like
@@ -292,15 +296,15 @@ s.waitForBoot {
     ~getCurrentMasterVolume = {
         masterVolume;
     };
-    
+
     ~getCurrentEnvironmentVolume = {
         environmentVolume;
     };
-    
+
     ~getCurrentMusicVolume = {
         musicVolume;
     };
-    
+
     ~getCurrentSfxVolume = {
         sfxVolume;
     };
@@ -334,18 +338,18 @@ s.waitForBoot {
                     \masterVolume, masterVolume,  // Apply current master volume
                     \envVolume, environmentVolume  // Apply current environment volume
                 ], envGroup);
-                
+
                 routine = nil;  // No routine needed for continuous loops
             } {
                 // For non-loop intervals, create a routine that plays the sound periodically
                 var minInterval, maxInterval, nextPlayTime;
-                
+
                 // Define timing ranges for each interval type
                 case { interval == "frequent" } {
                     minInterval = 3;   // 3-8 seconds between plays
                     maxInterval = 8;
                 } { interval == "occasional" } {
-                    minInterval = 15;  // 15-45 seconds between plays  
+                    minInterval = 15;  // 15-45 seconds between plays
                     maxInterval = 45;
                 } { interval == "rare" } {
                     minInterval = 60;  // 1-3 minutes between plays
@@ -355,14 +359,14 @@ s.waitForBoot {
                     minInterval = 15;
                     maxInterval = 45;
                 };
-                
+
                 // Create routine for periodic playback
                 routine = Routine({
                     loop {
                         // Random wait time within the interval range
                         nextPlayTime = rrand(minInterval, maxInterval);
                         nextPlayTime.wait;
-                        
+
                         // Play the sound once (non-looping)
                         // Access current live volume values from global scope
                         Synth(\oneShot, [
@@ -373,10 +377,10 @@ s.waitForBoot {
                         ], envGroup);
                     };
                 });
-                
+
                 // Start the routine
                 routine.play;
-                
+
                 synth = nil;  // No persistent synth for periodic sounds
             };
 
@@ -396,18 +400,18 @@ s.waitForBoot {
         var synth, path, volume;
         var bufferInfo, buffer;
         var result;
-        
+
         // Check for nil parameters
         if(loopData.isNil) {
             "ERROR: loopData is nil in playMusicLoop".error;
             ^nil;
         };
-        
+
         if(era.isNil) {
             "ERROR: current era is nil in playMusicLoop, using 'wilderness' as fallback".error;
             era = \wilderness; // Default fallback
         };
-        
+
         // Get volume from loop data
         volume = (loopData[\volume] ? 1.0).asFloat;
         path = loopData[\path];
@@ -444,20 +448,20 @@ s.waitForBoot {
                     };
                 };
             };
-            
+
             // Fallback if no buffer found
             if(bufferInfo.isNil) {
                 "No preloaded buffer found for era % slot %".format(era, slotIndex).warn;
             };
         };
-        
+
         if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
             // We have a preloaded buffer - use it
             buffer = bufferInfo[\buffer];
-            
+
             // Log that we're using a preloaded buffer
             "Using preloaded buffer for era % slot %: %".format(era, slotIndex, path).postln;
-            
+
             // Ensure startPos is within valid bounds
             // Use more defensive validation - checks that numFrames exists and is a number
             if(bufferInfo[\numFrames].notNil and: { bufferInfo[\numFrames].isNumber }) {
@@ -466,13 +470,13 @@ s.waitForBoot {
                 startPos = 0;
                 "Invalid buffer numFrames, using startPos = 0".warn;
             };
-            
+
             "Starting music loop at position: % frames".format(startPos).postln;
             // Don't validate buffer frames here - it may not be fully loaded yet
             // Instead, rely on the preloading process which already syncs with the server
             // The "Buffer UGen: no buffer data" warning is harmless and should resolve itself
             // when the buffer data is fully available
-            
+
             // Create synth with the preloaded buffer
             synth = Synth(\musicPlayer, [
                 \buf, buffer,
@@ -484,20 +488,20 @@ s.waitForBoot {
                 \startPos, startPos,
                 \isPlaceholder: false
             ], musicGroup);
-            
+
             result = (
                 \synth: synth,
-                \buffer: buffer, 
+                \buffer: buffer,
                 \volume: volume,
             );
-            
+
             //"Started music player with duration: % seconds".format(bufferInfo[\duration]).postln;
         } {
             // No preloaded buffer - use placeholder
             var placeholderSynth = ~createPlaceholderMusic.(era, slotIndex, volume);
-            
+
             "Using placeholder sound for era % slot %".format(era, slotIndex).warn;
-            
+
             result = (
                 \synth: placeholderSynth,
                 \buffer: nil,
@@ -505,7 +509,7 @@ s.waitForBoot {
                 \isPlaceholder: true,
             );
         };
-        
+
         // Return result
         result;
     };
@@ -539,7 +543,7 @@ s.waitForBoot {
             nil;
         };
     };
-    
+
     // Determine if a layer should be played based on active tags
     // Implements tag filtering logic:
     // 1. At least one tag in layer's "tags" must be in active tags
@@ -550,16 +554,16 @@ s.waitForBoot {
         var tags, requiresAll, requiresAny, requiresNone;
         var debugStatus, allTagsPresent;
         var result = true; // Start assuming eligible
-        
+
         // Get the layer's tag arrays
         tags = layer[\tags];
         requiresAll = layer[\requires];
         requiresAny = layer[\requires_any];
         requiresNone = layer[\requires_none];
-        
+
         // Start debug status with layer info
         debugStatus = "Layer %".format(layer[\path]);
-        
+
         // TEST 1: Basic tag match - at least one tag must be active
         if(tags.isNil or: { tags.any { |tag| validTags.includes(tag) }.not }) {
             result = false; // Not eligible
@@ -588,7 +592,7 @@ s.waitForBoot {
                     debugStatus = "% | at least one required tag present: %".format(debugStatus, requiresAny);
                 };
             };
-            
+
             // TEST 4: If requires_none is specified, NONE of those tags can be present
             if(requiresNone.notNil and: { result }) {
                 if(requiresNone.every { |tag| validTags.includes(tag).not }.not) {
@@ -600,10 +604,10 @@ s.waitForBoot {
                 };
             };
         };
-        
+
         // Only print debug status for passing layers to reduce console clutter
         if(result and: {debug}) { debugStatus.postln; };
-        
+
         // Return the result value - no caret operator
         result;
     };
@@ -659,7 +663,7 @@ s.waitForBoot {
         // Get layers that match current context using new eligibility logic
         matchingTags = activeTags.asArray;
         "Active tags: %".format(matchingTags).postln;
-        
+
         matching = if(configurations[\layers].notNil) {
             //"Evaluating % layers for eligibility".format(configurations[\layers].size).postln;
             configurations[\layers].select { |layer|
@@ -669,7 +673,7 @@ s.waitForBoot {
             "No layers configuration found".warn;
             [];
         };
-        
+
         // debugging, if matching layers are found
         if (matching.size > 0) {
             "Found % matching environmental layers:".format(matching.size).postln;
@@ -718,7 +722,7 @@ s.waitForBoot {
 
             if(eraLoops.notNil) {
                 //"Era loops for %: %".format(currentEra, eraLoops).postln;
-                
+
                 // First, ALWAYS stop and clean up the previous era's loops
                 if(musicLoops.includesKey(prevEra)) {
                     //"Fading out previous era music loops from %".format(prevEra).postln;
@@ -755,7 +759,7 @@ s.waitForBoot {
                         var syncSuccess = false;
                         var bufferDuration = nil;
                         var bufferInfo, numFrames;
-                        
+
                         // Don't sync placeholders
                         if(loopInfo[\exists] ? false) {
 
@@ -772,20 +776,20 @@ s.waitForBoot {
                                     bufferDuration = bufferInfo[\duration];
                                 };
                             };
-                            
+
                             // Calculate global position using reference time
                             if(bufferDuration.notNil and: { bufferDuration > 0 }) {
                                 var globalElapsedTime = curTime - musicGlobalStartTime;
                                 var playbackPosition = globalElapsedTime % bufferDuration;
-                                
+
                                 // "Global elapsed: %, start: %, bufferDuration: %, position: %"
-                                //     .format(globalElapsedTime.round(0.01), 
-                                //             musicGlobalStartTime.round(0.01), 
+                                //     .format(globalElapsedTime.round(0.01),
+                                //             musicGlobalStartTime.round(0.01),
                                 //             bufferDuration.round(0.01),
                                 //             playbackPosition.round(0.01)).postln;
-                                
+
                                 // Get current era's buffer info for this slot to get numFrames
-                                if(bufferInfo.notNil and: { 
+                                if(bufferInfo.notNil and: {
                                     bufferInfo[\numFrames].notNil and: {
                                     bufferInfo[\numFrames].isNumber and: {
                                     bufferInfo[\numFrames] > 0 }
@@ -793,17 +797,17 @@ s.waitForBoot {
                                     // Calculate ratio and frames
                                     var ratio = playbackPosition / bufferDuration;
                                     numFrames = bufferInfo[\numFrames];
-                                    if(ratio.isNaN) { 
-                                        ratio = 0; 
+                                    if(ratio.isNaN) {
+                                        ratio = 0;
                                         "NaN ratio in sync calculation".warn;
                                     };
-                                    
+
                                     startPos = (ratio * numFrames).asInteger;
-                                    
+
                                     // "Syncing era % slot % using global reference time. Position: % sec (% of % frames)"
-                                    //     .format(currentEra, i, playbackPosition.round(0.01), 
+                                    //     .format(currentEra, i, playbackPosition.round(0.01),
                                     //             startPos, numFrames).postln;
-                                    
+
                                     syncSuccess = true;
                                 } {
                                     "No valid buffer frame count for era % slot %"
@@ -814,7 +818,7 @@ s.waitForBoot {
 
                         // New loop for this slot with synced position if available
                         musicLoops[currentEra][i] = ~playMusicLoop.(loopInfo, i, startPos);
-                        
+
                         if(syncSuccess) {
                             "Playing %) %"
                                 .format(i, loopInfo[\path]).postln;
@@ -846,17 +850,32 @@ s.waitForBoot {
 
     // Set up OSC responders
     ~setupOSC = {
-        // Main context: /spacetime <biome> <era>
+        // Main context: /spacetime <biome> <era> [optional tags...]
         OSCdef(\spacetime, { |msg, time, addr, recvPort|
-            var biome = msg[1].asSymbol;
-            var era = msg[2].asSymbol;
-
+            var biome, era, tags;
+            if(msg.size < 3) {
+                "ERROR: /spacetime requires at least biome and era".error;
+                ^nil; // Exit if not enough arguments
+            };
+            biome = msg[1].asSymbol;
+            era = msg[2].asSymbol;
+            if(msg.size > 3) {
+                tags = msg[3..].collect { |t| t.asSymbol }; // Collect optional tags
+            };
             "========================================================".postln;
             "Spacetime: biome=%, era=%".format(biome, era).postln;
 
             // Clear and rebuild active tags
             activeTags = Set[biome, era];
-            "Reset active tags to: %".format(activeTags.asArray).postln;
+
+            // Add any additional tags if provided
+            if(tags.notNil) {
+                tags.do { |tag|
+                    activeTags.add(tag);
+                };
+            };
+
+            "Set active tags to: %".format(activeTags.asArray).postln;
 
             // Update audio context
             ~updateAudioContext.(biome, era);
@@ -886,6 +905,35 @@ s.waitForBoot {
 
             // Remove tag from active set (convert to both string and symbol to be safe)
             activeTags.remove(tag);
+            "Active tags now: %".format(activeTags.asArray).postln;
+
+            // Update audio context
+            ~updateAudioContext.();
+
+        }, '/exclude', nil, oscRecvPort);
+
+        OSCdef(\tags, { |msg, time, addr, recvPort|
+            // Handle multiple tags in a single message
+            var tags = msg[1..].collect { |t| t.asSymbol };
+
+            "Received tags: %".format(tags).postln;
+
+            // remove all active tags
+            activeTags.clear;
+
+            // Add each tag to the active set
+            tags.do { |tag|
+                activeTags.add(tag);
+            };
+
+            // add biome and era if they are not already included
+            if(currentBiome.notNil) {
+                activeTags.add(currentBiome.asSymbol);
+            };
+            if(currentEra.notNil) {
+                activeTags.add(currentEra.asSymbol);
+            };
+
             "Active tags now: %".format(activeTags.asArray).postln;
 
             // Update audio context
@@ -962,7 +1010,7 @@ s.waitForBoot {
         // Volume control: /volume/master <value>
         OSCdef(\volume_master, { |msg, time, addr, recvPort|
             var value = msg[1].asFloat.clip(0.0, 1.0);
-            
+
             if(masterVolume != value) {
                 // Ensure volume is between 0.0 and 1.0
                 masterVolume = value;
@@ -971,35 +1019,35 @@ s.waitForBoot {
                 mainGroup.set(\masterVolume, masterVolume);
             };
         }, '/volume/master', nil, oscRecvPort);
-        
+
         // Volume control: /volume/environment <value>
         OSCdef(\volume_environment, { |msg, time, addr, recvPort|
             var value = msg[1].asFloat.clip(0.0, 1.0);
-            
+
             if(environmentVolume != value) {
                 environmentVolume = value;
                 "Environment volume set to: %".format(environmentVolume).postln;
                 envGroup.set(\envVolume, environmentVolume);
             };
-            
+
         }, '/volume/environment', nil, oscRecvPort);
-        
+
         // Volume control: /volume/music <value>
         OSCdef(\volume_music, { |msg, time, addr, recvPort|
             var value = msg[1].asFloat.clip(0.0, 1.0);
-            
+
             if(musicVolume != value) {
                 musicVolume = value;
                 "Music volume set to: %".format(musicVolume).postln;
                 musicGroup.set(\musicVolume, musicVolume);
             };
-            
+
         }, '/volume/music', nil, oscRecvPort);
-        
+
         // Volume control: /volume/sfx <value>
         OSCdef(\volume_sfx, { |msg, time, addr, recvPort|
             var value = msg[1].asFloat.clip(0.0, 1.0);
-            
+
             if(sfxVolume != value) {
                 sfxVolume = value;
                 "SFX volume set to: %".format(sfxVolume).postln;
@@ -1020,14 +1068,14 @@ s.waitForBoot {
             "==== MUSIC SYNTHS INFORMATION ====".postln;
             "Current era: %".format(currentEra).postln;
             "Current time: %".format(Main.elapsedTime).postln;
-            
+
             // Show active nodes on the server for comparison
             s.queryAllNodes;
             "Server node status requested (will print separately)".postln;
-            
+
             if(musicLoops.notNil) {
                 var currentTime = Main.elapsedTime;
-                
+
                 "Active music loops by era:".postln;
                 musicLoops.keysValuesDo { |era, loops|
                     "Era: % (%):".format(era, loops.size).postln;
@@ -1035,9 +1083,9 @@ s.waitForBoot {
                         if(loopInfo.notNil) {
                             var elapsedTime, position, bufferDuration;
                             var isPlaceholder = loopInfo[\isPlaceholder] ? false;
-                            
+
                             "  Slot %:".format(slotIndex).postln;
-                            
+
                             if(isPlaceholder) {
                                 "    Type: PLACEHOLDER".postln;
                             } {
@@ -1047,18 +1095,18 @@ s.waitForBoot {
                                 } {
                                     "    Type: INVALID (no buffer)".postln;
                                 };
-                                
+
                                 // Print timing information
                                 if(loopInfo[\startTime].notNil) {
                                     elapsedTime = currentTime - loopInfo[\startTime];
                                     "    Started: % seconds ago".format(elapsedTime.round(0.01)).postln;
-                                    
+
                                     // Calculate current position in loop
                                     bufferDuration = loopInfo[\bufferDuration];
                                     if(bufferDuration.notNil and: { bufferDuration > 0 }) {
                                         position = elapsedTime % bufferDuration;
                                         "    Duration: % seconds, Current Position: % seconds (% %)".format(
-                                            bufferDuration.round(0.01), 
+                                            bufferDuration.round(0.01),
                                             position.round(0.01),
                                             (position / bufferDuration * 100).round(0.1),
                                             "%"
@@ -1075,14 +1123,14 @@ s.waitForBoot {
             } {
                 "No active music loops".postln;
             };
-            
+
             // Add info about preloaded buffers
             if(preloadedBuffers.notNil) {
                 "".postln;
                 "Preloaded buffer status:".postln;
                 preloadedBuffers.keysValuesDo { |era, buffers|
                     "  Era %: % buffers".format(era, buffers.size).postln;
-                    
+
                     buffers.do { |bufferInfo, i|
                         if(bufferInfo.notNil) {
                             var buffer = bufferInfo[\buffer];
@@ -1100,11 +1148,11 @@ s.waitForBoot {
                     };
                 };
             };
-            
+
             "====================================".postln;
-            
+
         }, '/synth_info', nil, oscRecvPort);
-        
+
         // Quit: /quit
         OSCdef(\quit, { |msg, time, addr, recvPort|
             "Quit command received - shutting down".postln;
@@ -1137,7 +1185,7 @@ s.waitForBoot {
             // Stop after the specified duration
             {
                 duration.wait;
-                
+
                 if(placeholder.isPlaying) {
                     "Releasing test placeholder...".postln;
                     placeholder.set(\gate, 0);  // Trigger release phase
@@ -1146,7 +1194,7 @@ s.waitForBoot {
                 } {
                     "Placeholder already stopped.".postln;
                 };
-                
+
                 "Finished playing test placeholder.".postln;
             }.fork;
 
@@ -1218,7 +1266,7 @@ s.waitForBoot {
 
     // Define all synths
     ~defineSynths = {
-        
+
         // We'll use a client-side approach instead of this SynthDef
         // by tracking loop start times and calculating positions
 
@@ -1276,22 +1324,22 @@ s.waitForBoot {
         // Music loop player (looping with crossfade, ducking by slot)
         SynthDef(\musicPlayer, { |buf, amp=1.0, fadeTime=5.0, slotIndex=0, gate=1, masterVolume=1.0, musicVolume=1.0, startPos=0|
             var sig, env, rate, bufFrames;
-            
+
             // Make sure we have a valid buffer - but be more lenient about buffer readiness
             // We know the buffer is correctly allocated from the preloaded system
             bufFrames = BufFrames.kr(buf);
-            
+
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             rate = BufRateScale.kr(buf);
-            
+
             // Use safer PlayBuf implementation without conditional that could cause boolean errors
             // This avoids the "Non Boolean in test" error
             sig = PlayBuf.ar(2, buf, rate, startPos: startPos, loop: 1);
-            
+
             // Add silent detection to mute output during initial buffer loading
             // This helps avoid clicks and pops when buffer isn't ready
             //sig = sig * (CheckBadValues.kr(sig) <= 0).lag(0.1);
-            
+
             // Apply envelope and volume controls
             sig = sig * env * amp * musicVolume * masterVolume; // Apply both music and master volume
             Out.ar(0, sig);
@@ -1345,20 +1393,20 @@ s.waitForBoot {
 
         // Define synthesizers
         ~defineSynths.();
-        
+
         // Preload all music buffers first, and then continue with initialization
         "Starting music buffer preloading... System will wait until complete.".postln;
-        
+
         // Use fork instead of Routine for better exception handling
         fork {
             // Preload all buffers
             ~preloadMusicBuffers.();
             "Buffer preloading complete. Continuing initialization...".postln;
-            
+
             // Notify the condition that we're done
             condition.unhang;
         };
-        
+
         // Wait for preloading to finish before proceeding
         condition.hang;
 
@@ -1374,7 +1422,7 @@ s.waitForBoot {
                 };
             };
         };
-        
+
         // Set up OSC responders (only after buffers are loaded)
         ~setupOSC.();
 
@@ -1417,25 +1465,25 @@ s.waitForBoot {
         testRoutine = Routine({
             eras.do { |era|
                 var placeholders;
-                
+
                 "=== Testing era: % with all slots simultaneously ===".format(era).postln;
-                
+
                 // Create three placeholders (bass, mid, high) for this era at once
                 placeholders = Array.fill(3, { |slot|
                     "Creating placeholder for era % - slot %".format(era, slot).postln;
                     ~createPlaceholderMusic.(era.asString, slot, 0.7);
                 });
-                
+
                 // Let them play together for a moment (5 seconds)
                 "Playing all slots for era % simultaneously...".format(era).postln;
                 5.0.wait;
-                
+
                 // Release all placeholders at once
                 "Releasing all placeholders for era %".format(era).postln;
                 placeholders.do { |synth, i|
                     synth.set(\gate, 0);
                 };
-                
+
                 // Wait for release to complete (based on fadeTime parameter)
                 1.5.wait;
             };
@@ -1482,7 +1530,7 @@ s.waitForBoot {
                 if(layerInfo[\synth].notNil) { layerInfo[\synth].free };
             };
         };
-        
+
         // Free all active synths and groups
         if(mainGroup.notNil) { mainGroup.free };
         if(envGroup.notNil) { envGroup.free };
@@ -1529,19 +1577,19 @@ s.waitForBoot {
     // Preload all music buffers on initialization to improve reliability
     ~preloadMusicBuffers = {
         var bufferCount = 0;
-        
+
         "Preloading all music buffers...".postln;
         preloadedBuffers = Dictionary.new;
-        
+
         if(configurations[\music_loops].notNil) {
             //"DEBUG: Music loops config keys: %".format(configurations[\music_loops].keys.asArray).postln;
-            
+
             configurations[\music_loops].keysValuesDo { |era, loops|
                 var eraBuffers;
                 var eraKey = era.asSymbol; // Always use symbol for consistent lookup
-                
+
                 //"DEBUG: Processing era % (type: %, converted to %)".format(era, era.class, eraKey).postln;
-                
+
                 // Ensure loops is valid array or collection
                 if(loops.isNil) {
                     "No loops defined for era %".format(eraKey).warn;
@@ -1549,27 +1597,27 @@ s.waitForBoot {
                     // Create buffer array
                     eraBuffers = Array.newClear(loops.size);
                     preloadedBuffers[eraKey] = eraBuffers; // Store using symbol
-                    
+
                     loops.do { |loopData, slotIndex|
                         var path, buffer, duration, fileExists, bufferInfo;
-                        
+
                         // Skip if loopData is nil
                         if(loopData.isNil) {
                             "Nil loop data for era % slot %".format(era, slotIndex).warn;
                         } {
                             path = loopData[\path];
                             fileExists = loopData[\exists] ? false;
-                            
+
                             // Fix the boolean comparison by checking explicitly if fileExists is true
                             // Convert fileExists to a proper Boolean to avoid comparison issues
                             if(path.notNil && (fileExists == true)) {
                                 // Load audio file into buffer
                                 "Preloading buffer for era % slot %: %".format(era, slotIndex, path).postln;
                                 buffer = Buffer.read(s, audioDir +/+ path);
-                                
+
                                 // Wait for buffer info to be available
                                 s.sync;
-                                
+
                                 // Store buffer info
                                 duration = buffer.duration;
                                 bufferInfo = (
@@ -1579,12 +1627,12 @@ s.waitForBoot {
                                     \duration: duration,
                                     \volume: (loopData[\volume] ? 1.0).asFloat
                                 );
-                                
+
                                 // Store in preloaded buffers array for this era using the symbol key
                                 //eraBuffers[slotIndex] = bufferInfo;
                                 preloadedBuffers[eraKey][slotIndex] = bufferInfo; // Fixed: Use consistent eraKey (symbol)
                                 bufferCount = bufferCount + 1;
-                                
+
                                 "Loaded buffer for % slot %: % frames, % seconds".format(
                                     era, slotIndex, buffer.numFrames, duration.round(0.01)).postln;
                             } {
@@ -1598,7 +1646,7 @@ s.waitForBoot {
                 };
             };
         };
-        
+
         "Preloaded % music buffers successfully.".format(bufferCount).postln;
     };
 

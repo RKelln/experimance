@@ -64,6 +64,25 @@ class SuperColliderConfig(BaseModel):
         description="Directory to write SuperCollider logs"
     )
 
+    output_channels: Optional[int] = Field(
+        default=2,
+        ge=1,
+        le=64,
+        description="Number of output channels for SuperCollider"
+    )
+
+    input_channels: Optional[int] = Field(
+        default=2,
+        ge=1,
+        le=64,
+        description="Number of input channels for SuperCollider"
+    )
+
+    device: Optional[str] = Field(
+        default=None,
+        description="Audio device to use for SuperCollider. If None, uses default device."
+    )
+
 class AudioConfig(BaseModel):
     """Audio playback configuration."""
     

@@ -294,7 +294,7 @@ generalConfigDir = projectRoot +/+ "data";
 
 // Initialize OSC connection
 ~initOSC = {
-    oscAddr = NetAddr("127.0.0.1", 5568); // Default experimance_audio.scd port
+    oscAddr = NetAddr("127.0.0.1", 5570); // Default experimance_audio.scd port
     isConnected = true;
     "OSC connection initialized to localhost:5568".postln;
 };

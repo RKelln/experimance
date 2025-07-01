@@ -60,19 +60,24 @@ class OscBridge:
             logger.error(f"Error initializing OSC client: {e}")
             return False
     
-    def send_spacetime(self, biome: str, era: str) -> bool:
+    def send_spacetime(self, biome: str, era: str, tags: Optional[List[str]] = None) -> bool:
         """Send spacetime context to SuperCollider.
-        
+        This sets the current biome and era, and optionally includes tags.
+
         Args:
             biome: Current biome name
             era: Current era name
+            tags: Optional list of tags to include in the context
             
         Returns:
             bool: True if message was sent successfully
         """
         try:
             assert self.client is not None, "OSC client is not initialized"
-            self.client.send_message("/spacetime", [biome, era])
+            message = [biome, era]
+            if tags is not None:
+                message.extend(tags)
+            self.client.send_message("/spacetime", message)
             logger.debug(f"Sent spacetime: biome={biome}, era={era}")
             return True
         except Exception as e:

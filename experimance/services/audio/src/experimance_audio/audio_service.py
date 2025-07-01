@@ -23,6 +23,7 @@ from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
     Era, Biome, SpaceTimeUpdate, AgentControlEvent, IdleStatus, MessageBase, MessageType
 )
+from pydantic import ValidationError
 
 from .config import AudioServiceConfig, DEFAULT_CONFIG_PATH
 from .config_loader import AudioConfigLoader
@@ -39,17 +40,13 @@ class AudioService(BaseService):
     audio engine via OSC based on the current state of the installation.
     """
     
-    def __init__(self, config: Optional[AudioServiceConfig] = None):
+    def __init__(self, config: AudioServiceConfig):
         """Initialize the audio service.
         
         Args:
-            config: Service configuration object. If None, will load from default config file.
+            config: Service configuration object.
         """
-        # Load config if not provided
-        if config is None:
-            self.config = AudioServiceConfig.from_overrides({})
-        else:
-            self.config = config
+        self.config = config
             
         # Initialize base service
         super().__init__(service_name=self.config.service_name, service_type="audio")
@@ -71,6 +68,9 @@ class AudioService(BaseService):
         self.audio_config = AudioConfigLoader(config_dir=self.config.audio.config_dir)
         self.audio_config.load_configs()
         
+        # file tracking
+        self.tmp_script_path = None  # Temporary script path for SuperCollider
+
         # State tracking
         self.current_biome = None
         self.current_era = None
@@ -96,7 +96,7 @@ class AudioService(BaseService):
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
         self.zmq_service.add_message_handler(MessageType.IDLE_STATUS, self._handle_idle_status)
         self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._handle_agent_control_event)
-        
+
         # Resolve SuperCollider script path if auto-start is enabled
         if self.config.supercollider.auto_start:
             # Check relative to this file's directory
@@ -144,8 +144,9 @@ class AudioService(BaseService):
 
             # Start SuperCollider if we have a script path
             if self.config.supercollider.auto_start and script_path is not None:
+                self.tmp_script_path = self._modify_sclang_script(script_path, temp_path=script_path.with_suffix('.tmp.scd'))
                 if self.osc.start_supercollider(
-                    str(script_path), 
+                    str(self.tmp_script_path), 
                     self.config.supercollider.sclang_path
                 ):
                     logger.info("SuperCollider started successfully")
@@ -172,6 +173,14 @@ class AudioService(BaseService):
         if self.auto_start_sc and hasattr(self, 'osc'):
             self.osc.stop_supercollider()
         
+        # Clean up temporary script file if it exists
+        if self.tmp_script_path and self.tmp_script_path.exists():
+            try:
+                self.tmp_script_path.unlink()
+                logger.debug(f"Removed temporary SuperCollider script: {self.tmp_script_path}")
+            except Exception as e:
+                logger.error(f"Failed to remove temporary script file: {e}")
+        
         # Call parent stop method (this will automatically clean up all tasks via _clear_tasks)
         await super().stop()
         
@@ -185,36 +194,31 @@ class AudioService(BaseService):
         """
         try:
             # Handle both dict and MessageBase types
-            if isinstance(message_data, dict):
-                data = message_data
-            elif isinstance(message_data, MessageBase):
-                data = message_data.model_dump()
-            else:
-                logger.warning(f"Received unexpected message type: {type(message_data)}")
+            try:
+                update : SpaceTimeUpdate = SpaceTimeUpdate.to_message_type(message_data)  # type: ignore
+            except ValidationError as e:
+                self.record_error(
+                    ValueError(f"Invalid RenderRequest message: {message_data}"),
+                    is_fatal=False,
+                    custom_message=f"Invalid RenderRequest message: {message_data}"
+                )
                 return
-                
-            era = data.get("era")
-            biome = data.get("biome")
-            
-            if not era or not biome:
-                logger.warning(f"Received incomplete EraChanged event: {data}")
-                return
-                
-            logger.info(f"Era changed: {era}, biome: {biome}")
+        
+            logger.info(f"Era changed: {update.era}, biome: {update.biome}, tags: {update.tags}")
             
             # Update state
-            self.current_era = era
-            self.current_biome = biome
+            self.current_era = update.era
+            self.current_biome = update.biome
             
             # Send context to SuperCollider
-            self.osc.send_spacetime(biome, era)
+            self.osc.send_spacetime(update.biome, update.era, update.tags)
             
             # Clear previous tags and send new ones based on context
             self.active_tags.clear()
             
             # Add biome and era as default tags
-            self.active_tags.add(biome)
-            self.active_tags.add(era)
+            self.active_tags.add(update.biome)
+            self.active_tags.add(update.era)
             
             # Include the default tags
             for tag in self.active_tags:
@@ -423,8 +427,50 @@ class AudioService(BaseService):
         else:
             logger.error("Failed to reload audio configurations")
     
+    def _modify_sclang_script(self, script_path: Path, temp_path: Optional[Path] = None) -> Optional[Path]:
+        """
+        Modify the SuperCollider script to set specific settings.
+        Replaces lines in options and oscRecvPort
+        Args:
+            script_path: Path to the SuperCollider script file
+        """
+        if not script_path.exists():
+            logger.error(f"SuperCollider script not found at: {script_path}")
+            return
 
+        with open(script_path, 'r') as f:
+            lines = f.readlines()
 
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('s.options.device') and self.config.supercollider.device:
+                new_lines.append(f's.options.device = "{self.config.supercollider.device}";\n')
+            elif stripped.startswith('s.options.numOutputBusChannels'):
+                new_lines.append(f's.options.numOutputBusChannels = {self.config.supercollider.output_channels};\n')
+            elif stripped.startswith('s.options.numInputBusChannels'):
+                new_lines.append(f's.options.numInputBusChannels = {self.config.supercollider.input_channels};\n')
+            elif stripped.startswith('~oscRecvPort'):
+                new_lines.append(f'~oscRecvPort = {self.config.osc.recv_port};\n')
+            elif stripped.startswith('~initMasterVolume'):
+                new_lines.append(f'~initMasterVolume = {self.config.audio.master_volume};\n')
+            elif stripped.startswith('~initEnvironmentVolume'):
+                new_lines.append(f'~initEnvironmentVolume = {self.config.audio.environment_volume};\n')
+            elif stripped.startswith('~initMusicVolume'):
+                new_lines.append(f'~initMusicVolume = {self.config.audio.music_volume};\n')
+            elif stripped.startswith('~initSfxVolume'):
+                new_lines.append(f'~initSfxVolume = {self.config.audio.sfx_volume};\n')
+            else:
+                new_lines.append(line)
+
+        if temp_path is None:
+            temp_path = script_path
+        
+        with open(temp_path, 'w') as f:
+            f.writelines(new_lines)
+        
+        return temp_path
+        
 async def run_audio_service(
     config_path: str = DEFAULT_CONFIG_PATH, 
     args:Optional[argparse.Namespace] = None
