@@ -431,8 +431,6 @@ class TextOverlayManager(LayerRenderer):
                 group=self,
             )
 
-        print(f"Creating label: {content} at ({x}, {y}) with style: {style}")
-        print(self.position_map )
         return label
     
     def _wrap_text(self, text: str, max_width: int, font_size: int) -> str:

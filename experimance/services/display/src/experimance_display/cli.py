@@ -236,10 +236,26 @@ def get_random_image() -> Optional[str]:
     return random.choice(images) if images else None
 
 
+
+def get_available_masks() -> List[str]:
+    """Get list of available mask images for testing (from mock/mask/ directory)."""
+    mask_dir = MOCK_IMAGES_DIR_ABS / "mask"
+    masks = []
+    if mask_dir.exists():
+        masks.extend([str(p) for p in mask_dir.glob("*.png")])
+        masks.extend([str(p) for p in mask_dir.glob("*.jpg")])
+        masks.extend([str(p) for p in mask_dir.glob("*.webp")])
+    return sorted(masks)
+
+def get_random_mask() -> Optional[str]:
+    """Get a random mask image from available masks."""
+    masks = get_available_masks()
+    return random.choice(masks) if masks else None
+
 def get_default_video_mask() -> Optional[str]:
-    """Get the default video mask file."""
-    mock_mask = MOCK_IMAGES_DIR_ABS / "mock_video_mask.png"
-    return str(mock_mask) if mock_mask.exists() else None
+    """Get the default video mask file (first available mask, or None)."""
+    masks = get_available_masks()
+    return masks[0] if masks else None
 
 
 def get_default_video() -> Optional[str]:
@@ -413,14 +429,18 @@ def main():
     
     # Demo command
     subparsers.add_parser("demo", help="Run interactive demo")
-    
+
     # List command
     subparsers.add_parser("list", help="List available test resources")
-    
+
+    # Stress test command
+    stress_parser = subparsers.add_parser("stress", help="Run stress test (randomly send text, image, or change map)")
+    stress_parser.add_argument("interval", type=float, help="Interval in seconds between sends (float)")
+
     parser.add_argument("-vv", "--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--quiet", action="store_true", help="Suppress all output except errors")
-    
+
     args = parser.parse_args()
     
     if args.command is None:
@@ -441,29 +461,29 @@ def main():
         cli = DisplayCLI()
         try:
             await cli.setup_publishers()
-            
+
             if args.command == "image":
                 image_path = args.path or get_random_image()
                 if not image_path:
                     logger.error("No image provided and no default images available")
                     return
                 await cli.send_display_media(image_path, args.type)
-            
+
             elif args.command == "text":
                 content = args.content or random.choice(DEFAULT_TEXTS)
                 text_id = args.id or str(uuid.uuid4())[:8]
                 await cli.send_text_overlay(text_id, content, args.speaker, args.duration, args.position)
-            
+
             elif args.command == "remove-text":
                 await cli.send_remove_text(args.text_id)
-            
+
             elif args.command == "video-mask":
-                mask_path = args.path or get_default_video_mask()
+                mask_path = args.path or get_random_mask()
                 if not mask_path:
-                    logger.error("No mask provided and no default mask available")
+                    logger.error("No mask provided and no available mask found in mock/mask/")
                     return
                 await cli.send_video_mask(mask_path, args.fade_in, args.fade_out)
-            
+
             elif args.command == "era-change":
                 if args.era and args.biome:
                     era, biome = args.era, args.biome
@@ -476,14 +496,14 @@ def main():
                     # Pick random era/biome combination
                     era, biome = random.choice(DEFAULT_ERAS_BIOMES)
                 await cli.send_era_changed(era, biome)
-            
+
             elif args.command == "transition":
                 transition_path = args.path or get_default_video()
                 if not transition_path:
                     logger.error("No transition provided and no default video available")
                     return
                 await cli.send_transition_ready(transition_path, args.from_image, args.to_image)
-            
+
             elif args.command == "loop":
                 loop_path = args.path or get_default_video()
                 still_uri = args.still_uri or f"file://{get_random_image()}" if get_random_image() else "file:///tmp/placeholder.png"
@@ -491,13 +511,13 @@ def main():
                     logger.error("No loop provided and no default video available")
                     return
                 await cli.send_loop_ready(loop_path, still_uri, args.type)
-            
+
             elif args.command == "cycle-images":
                 await cycle_images_command(cli, args.directory, args.interval)
-            
+
             elif args.command == "demo":
                 await demo_command(cli)
-            
+
             elif args.command == "list":
                 print("Available test resources:")
                 print("\nGenerated Images:")
@@ -506,26 +526,70 @@ def main():
                     print(f"  {img}")
                 if len(images) > 10:
                     print(f"  ... and {len(images) - 10} more")
-                
+
                 print("\nMock Files:")
                 for mock_file in [MOCK_IMAGES_DIR_ABS / "mock_depth_map.png", 
                                 MOCK_IMAGES_DIR_ABS / "mock_video_mask.png"]:
                     if mock_file.exists():
                         print(f"  {mock_file}")
-                
+
                 print("\nVideo Files:")
                 video_file = VIDEOS_DIR_ABS / "video_overlay.mp4"
                 if video_file.exists():
                     print(f"  {video_file}")
-                
+
                 return  # Don't wait for cleanup
-            
+
+            elif args.command == "stress":
+                import itertools
+                logger.info(f"Starting stress test with interval {args.interval}s")
+                actions = ["text", "image", "change_map"]
+                active_text_ids = set()  # Track active text IDs to avoid duplicates
+                while True:
+                    action = random.choice(actions)
+                    if action == "text":
+                        if len(active_text_ids) >= 10:
+                            # Remove a random text overlay if we have too many active
+                            text_id = random.choice(list(active_text_ids))
+                            active_text_ids.remove(text_id)
+                            await cli.send_remove_text(text_id)
+                            logger.debug(f"Stress: Removed text overlay {text_id}, remaining: {len(active_text_ids)}")
+                        content = random.choice(DEFAULT_TEXTS)
+                        text_id = str(uuid.uuid4())[:8]
+                        active_text_ids.add(text_id)  # Track this text ID
+                        speaker = random.choice(["agent", "system", "debug"])
+                        position = random.choice([
+                            "top_left", "top_center", "top_right",
+                            "center_left", "center", "center_right",
+                            "bottom_left", "bottom_center", "bottom_right"
+                        ])
+                        duration = random.choice([None, 2.0, 5.0, 10.0])
+                        await cli.send_text_overlay(text_id, content, speaker, duration, position)
+                        logger.debug(f"Stress: Sent text overlay {text_id}")
+                    elif action == "image":
+                        image_path = get_random_image()
+                        if image_path:
+                            await cli.send_display_media(image_path)
+                            logger.debug(f"Stress: Sent image {image_path}")
+                        else:
+                            logger.warning("Stress: No image available to send")
+                    elif action == "change_map":
+                        mask_path = get_random_mask()
+                        if mask_path:
+                            fade_in = random.choice([0.1, 0.2, 0.5])
+                            fade_out = random.choice([0.5, 1.0, 2.0])
+                            await cli.send_video_mask(mask_path, fade_in, fade_out)
+                            logger.debug(f"Stress: Sent change map {mask_path}")
+                        else:
+                            logger.warning("Stress: No mask available to send")
+                    await asyncio.sleep(args.interval)
+
             # Give time for message to be sent
             await asyncio.sleep(0.1)
-            
+
         finally:
             await cli.cleanup()
-    
+
     # Run the async command
     asyncio.run(run_command())
 

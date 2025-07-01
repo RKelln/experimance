@@ -117,55 +117,45 @@ class DebugOverlayRenderer(LayerRenderer):
         return self._opacity
     
     def update(self, dt: float):
-        """Update debug overlay state.
-        
+        """Update debug overlay state and ensure all elements are in the batch and group.
         Args:
             dt: Time elapsed since last update in seconds
         """
         if not self.is_visible:
+            # Hide all debug overlay elements
+            if self.fps_label:
+                self.fps_label.visible = False
+            if self.crosshair_horizontal:
+                self.crosshair_horizontal.visible = False
+            if self.crosshair_vertical:
+                self.crosshair_vertical.visible = False
             return
-        
+
+        # Show all debug overlay elements
+        if self.fps_label:
+            self.fps_label.visible = True
+        if self.crosshair_horizontal:
+            self.crosshair_horizontal.visible = self.crosshair_enabled
+        if self.crosshair_vertical:
+            self.crosshair_vertical.visible = self.crosshair_enabled
+
         # Update FPS calculation
         self.fps_counter += 1
         self.fps_timer += dt
-        
+
         # Update FPS display every second
         if self.fps_timer >= 1.0:
             self.current_fps = self.fps_counter / self.fps_timer
             self.fps_counter = 0
             self.fps_timer = 0.0
-            
+
             # Update FPS label text
             if self.fps_label:
                 layer_count = 0
                 if self.layer_manager:
                     layer_info = self.layer_manager.get_layer_info()
                     layer_count = sum(1 for info in layer_info.values() if info.get("visible", False))
-                
                 self.fps_label.text = f"FPS: {self.current_fps:.1f} | Layers: {layer_count}"
-    
-    def render(self):
-        """Render the debug overlay."""
-        if not self.is_visible:
-            return
-        
-        try:
-            # Render crosshair
-            if self.crosshair_enabled:
-                self._render_crosshair()
-            
-            # Render FPS label
-            if self.fps_label:
-                self.fps_label.draw()
-                
-        except Exception as e:
-            logger.error(f"Error rendering debug overlay: {e}", exc_info=True)
-    
-    def _render_crosshair(self):
-        """Render crosshair at the center of the window."""
-        if self.crosshair_horizontal and self.crosshair_vertical:
-            self.crosshair_horizontal.draw()
-            self.crosshair_vertical.draw()
     
     def resize(self, new_size: Tuple[int, int]):
         """Handle window resize.
@@ -229,7 +219,7 @@ class DebugOverlayRenderer(LayerRenderer):
         
         # Recreate crosshair with new color
         self._create_crosshair()
-    
+
     async def cleanup(self):
         """Clean up debug overlay renderer resources."""
         logger.info("Cleaning up DebugOverlayRenderer...")
