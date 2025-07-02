@@ -118,7 +118,7 @@ class DisplayCLI:
                 "position": position
             }
         }
-        print(message)
+        #print(message)
 
         await self.pubsub_service.publish(message, topic=MessageType.TEXT_OVERLAY)
         logger.info(f"Sent TextOverlay: {text_id} - '{content[:50]}...'")
@@ -541,31 +541,66 @@ def main():
                 return  # Don't wait for cleanup
 
             elif args.command == "stress":
-                import itertools
                 logger.info(f"Starting stress test with interval {args.interval}s")
                 actions = ["text", "image", "change_map"]
                 active_text_ids = set()  # Track active text IDs to avoid duplicates
+                progressive_texts = {}  # Track progressive texts
                 while True:
                     action = random.choice(actions)
                     if action == "text":
-                        if len(active_text_ids) >= 10:
-                            # Remove a random text overlay if we have too many active
-                            text_id = random.choice(list(active_text_ids))
-                            active_text_ids.remove(text_id)
-                            await cli.send_remove_text(text_id)
-                            logger.debug(f"Stress: Removed text overlay {text_id}, remaining: {len(active_text_ids)}")
-                        content = random.choice(DEFAULT_TEXTS)
-                        text_id = str(uuid.uuid4())[:8]
-                        active_text_ids.add(text_id)  # Track this text ID
-                        speaker = random.choice(["agent", "system", "debug"])
-                        position = random.choice([
-                            "top_left", "top_center", "top_right",
-                            "center_left", "center", "center_right",
-                            "bottom_left", "bottom_center", "bottom_right"
-                        ])
-                        duration = random.choice([None, 2.0, 5.0, 10.0])
-                        await cli.send_text_overlay(text_id, content, speaker, duration, position)
-                        logger.debug(f"Stress: Sent text overlay {text_id}")
+                        # chance to do progressive text, else normal
+                        if random.random() < 0.8:
+                            # Pick an active text_id to update, or create a new one if none
+                            if len(progressive_texts) == 0:
+                                # Start a new progressive text
+                                content = random.choice(DEFAULT_TEXTS)
+                                text_id = str(uuid.uuid4())[:8]
+                                active_text_ids.add(text_id)  # Track this text ID
+                                words = content.split()
+                                progressive_texts[text_id] = {"words": words, "idx": 1, 
+                                    "speaker": random.choice(["agent", "system", "debug"]), 
+                                    "position": random.choice([
+                                        "top_left", "top_center", "top_right",
+                                        "center_left", "center", "center_right",
+                                        "bottom_left", "bottom_center", "bottom_right"]), 
+                                    "duration": random.choice([None, 2.0, 5.0, 10.0])}
+                            else:
+                                # Pick a random progressive text to update
+                                text_id = random.choice(list(progressive_texts.keys()))
+                            prog = progressive_texts[text_id]
+                            idx = prog["idx"]
+                            words = prog["words"]
+                            if idx < len(words):
+                                prog["idx"] += 1
+                            content = " ".join(words[:prog["idx"]])
+                            await cli.send_text_overlay(text_id, content, prog["speaker"], prog["duration"], prog["position"])
+                            logger.debug(f"Stress: Progressive text overlay {text_id}: '{content}'")
+                            # If finished, remove from progressive_texts
+                            if prog["idx"] >= len(words):
+                                del progressive_texts[text_id]
+                        else:
+                            if len(active_text_ids) >= 10:
+                                # Remove a random text overlay if we have too many active
+                                text_id = random.choice(list(active_text_ids))
+                                active_text_ids.remove(text_id)
+                                await cli.send_remove_text(text_id)
+                                logger.debug(f"Stress: Removed text overlay {text_id}, remaining: {len(active_text_ids)}")
+                            content = random.choice(DEFAULT_TEXTS)
+                            text_id = str(uuid.uuid4())[:8]
+                            active_text_ids.add(text_id)  # Track this text ID
+                            speaker = random.choice(["agent", "system", "debug"])
+                            position = random.choice([
+                                "top_left", "top_center", "top_right",
+                                "center_left", "center", "center_right",
+                                "bottom_left", "bottom_center", "bottom_right"
+                            ])
+                            duration = random.choice([None, 2.0, 5.0, 10.0])
+                            await cli.send_text_overlay(text_id, content, speaker, duration, position)
+                            logger.debug(f"Stress: Sent text overlay {text_id}")
+                            # For progressive text, also add to progressive_texts dict
+                            if not hasattr(run_command, "progressive_texts"):
+                                run_command.progressive_texts = {}
+                            run_command.progressive_texts[text_id] = {"words": content.split(), "idx": 1, "speaker": speaker, "position": position, "duration": duration}
                     elif action == "image":
                         image_path = get_random_image()
                         if image_path:
