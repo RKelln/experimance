@@ -93,7 +93,7 @@ class IntroAgent(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions=f"{common_instructions} Your goal is to introduce yourself and "
-            "let the audience know they can interact with the art work - talk to you and play with the sand."
+            "let the audience know they can interact with the art work by talking to you and playing with the sand."
             "Ask the person their name and where they are from, then immediately call `information_gathered`. " \
             "Do not ask any other questions."
         )
@@ -237,9 +237,9 @@ def write_transcription_on_shutdown(ctx: JobContext, session: AgentSession[UserD
 
 async def entrypoint(ctx: JobContext):
     logger.info("Starting Experimance agent...")
-    logger.debug(f"Livekit url: {os.getenv("LIVEKIT_URL", "")}")
-    logger.debug(f"Livekit token: {os.getenv("LIVEKIT_TOKEN", "None")}")
-    logger.debug(f"Livekit room: {os.getenv("LIVEKIT_ROOM", ctx.room.name)}")
+    logger.debug(f"Livekit url: {os.getenv('LIVEKIT_URL', '')}")
+    logger.debug(f"Livekit token: {os.getenv('LIVEKIT_TOKEN', 'None')}")
+    logger.debug(f"Livekit room: {os.getenv('LIVEKIT_ROOM', ctx.room.name)}")
 
     session = AgentSession[UserData](
         vad=ctx.proc.userdata["vad"],

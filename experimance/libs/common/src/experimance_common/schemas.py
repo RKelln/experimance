@@ -240,7 +240,7 @@ class MessageType(str, Enum):
     ALERT = "Alert"
     # Display service message types
     DISPLAY_MEDIA = "DisplayMedia"
-    TEXT_OVERLAY = "TextOverlay"
+    DISPLAY_TEXT = "DisplayText"
     REMOVE_TEXT = "RemoveText"
     CHANGE_MAP = "ChangeMap"
     # Add more message types as needed
@@ -355,6 +355,24 @@ class AgentControlEvent(MessageBase):
     sub_type: str  # "SuggestBiome", "AudiencePresent", "SpeechDetected"
     payload: Dict  # Structure varies based on sub_type
 
+
+class DisplayText(MessageBase):
+    """Message for displaying text overlays."""
+    type: MessageType = MessageType.DISPLAY_TEXT
+    text_id: str  # Unique identifier for the text to remove
+
+    content: str  # Text to display
+    speaker: Optional[str] = None  # Name of the speaker (if applicable)
+    duration: Optional[float] = None  # Duration in seconds to display the text
+    style: Optional[Dict[str, Any]] = None  # Optional style overrides for the text (otherwise set by speaker)
+    fade_duration: Optional[float|tuple[float,float]] = None  # Fade in duration in seconds (single symmetric fade) or tuple (fade_in, fade_out)
+
+class RemoveText(MessageBase):
+    """Message for removing text overlays."""
+    type: MessageType = MessageType.REMOVE_TEXT
+    text_id: str  # Unique identifier for the text to remove
+    
+    fade_out: Optional[float] = None  # Fade out duration in seconds, if applicable
 
 class TransitionRequest(MessageBase):
     """Request to generate a transition between two images."""

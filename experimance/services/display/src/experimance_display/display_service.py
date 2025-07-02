@@ -19,8 +19,9 @@ import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
-from experimance_common.schemas import ContentType, MessageType
+from experimance_common.schemas import ContentType, MessageType, DisplayText, RemoveText
 from experimance_display.pyglet_test import MainWindow
+from pydantic import ValidationError
 import pyglet
 from pyglet import clock
 from pyglet.window import key
@@ -285,7 +286,7 @@ class DisplayService(BaseService):
 
         self.zmq_service.add_message_handler(MessageType.DISPLAY_MEDIA, self._handle_display_media)
         self.zmq_service.add_message_handler(MessageType.CHANGE_MAP, self._handle_video_mask)
-        self.zmq_service.add_message_handler(MessageType.TEXT_OVERLAY, self._handle_text_overlay)
+        self.zmq_service.add_message_handler(MessageType.DISPLAY_TEXT, self._handle_text_overlay)
         self.zmq_service.add_message_handler(MessageType.REMOVE_TEXT, self._handle_remove_text)
         
         logger.info("ZMQ message handlers registered using composition pattern")
@@ -343,23 +344,23 @@ class DisplayService(BaseService):
         try:
             logger.info(f"Processing TextOverlay message: {message}")
             
-            # Validate message
-            if not self._validate_text_overlay(message):
-                logger.error("TextOverlay validation failed")
+            try:
+                display_text: DisplayText = DisplayText.to_message_type(message)  # type: ignore
+            except ValidationError as e:
+                self.record_error(
+                    ValueError(f"Invalid DisplayText message: {message}"),
+                    is_fatal=False,
+                    custom_message=f"Invalid DisplayText message: {message}"
+                )
                 return
-            
-            logger.info("TextOverlay validation passed")
-            
+
             # Pass to text overlay manager
             if self.text_overlay_manager:
-                logger.info("Passing to text overlay manager")
-                await self.text_overlay_manager.handle_text_overlay(message)
-                logger.info("Text overlay manager processed message")
+                await self.text_overlay_manager.handle_text_overlay(display_text)
             else:
-                logger.error("Text overlay manager not initialized")
+                self.record_error(Exception("Text overlay manager not initialized"), is_fatal=False)
             
         except Exception as e:
-            logger.error(f"Error handling TextOverlay: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
     
     async def _handle_remove_text(self, message: MessageDataType):
@@ -688,14 +689,14 @@ class DisplayService(BaseService):
             logger.info(f"Showing title screen: '{self.config.title_screen.text}'")
             
             # Create title screen text message (positioning is handled by the "title" text style)
-            title_message = {
-                "text_id": "_title_screen",
-                "content": self.config.title_screen.text,
-                "speaker": "title",
-                "duration": self.config.title_screen.duration,
+            title_message = DisplayText(
+                text_id = "_title_screen",
+                content = self.config.title_screen.text,
+                speaker = "title",
+                duration = self.config.title_screen.duration,
                 # Use title screen specific fade out duration
-                "fade_duration": self.config.title_screen.fade_duration
-            }
+                fade_duration = self.config.title_screen.fade_duration
+            )
             
             logger.debug(f"Title message: {title_message}")
             

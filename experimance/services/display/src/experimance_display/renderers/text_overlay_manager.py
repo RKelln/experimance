@@ -15,6 +15,7 @@ import logging
 import time
 from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING, List
 
+from experimance_common.schemas import DisplayText
 from experimance_common.zmq.config import MessageDataType
 from experimance_display.config import DisplayServiceConfig, TextStylesConfig, TransitionsConfig, FadeDurationType
 import pyglet
@@ -244,7 +245,7 @@ class TextOverlayManager(LayerRenderer):
         except Exception as e:
             logger.error(f"Error rendering text overlays: {e}", exc_info=True)
     
-    async def handle_text_overlay(self, message: MessageDataType):
+    async def handle_text_overlay(self, message: DisplayText):
         """Handle TextOverlay message.
         
         Args:
@@ -259,6 +260,8 @@ class TextOverlayManager(LayerRenderer):
             speaker = message.get("speaker", "system")
             duration = message.get("duration", None)
             style_overrides = message.get("style", {})
+            if not isinstance(style_overrides, dict):
+                style_overrides = {}
             
             logger.info(f"Adding text overlay: {text_id} ({speaker}): {content}")
             

@@ -12,6 +12,7 @@ DEFAULT_PORTS = {
     "events": 5555,               # Pubsub from core to services, includes display media 
     # Updates from services (e.g. agent state, image generation status)
     "updates": 5556,              # Currently not functional
+    "agent": 5557,                # Agent service updates (agent binding publisher, others subscribe)
     
     # Specialized high-bandwidth channels
     "depth": 5566,                # Depth camera data (high frequency) [currenly unused]

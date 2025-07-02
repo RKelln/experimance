@@ -109,7 +109,7 @@ class DisplayCLI:
                                duration: Optional[float] = None, position: str = "bottom_center"):
         """Send a TextOverlay message."""
         message = {
-            "type": MessageType.TEXT_OVERLAY,
+            "type": MessageType.DISPLAY_TEXT,
             "text_id": text_id,
             "content": content,
             "speaker": speaker,
@@ -120,7 +120,7 @@ class DisplayCLI:
         }
         #print(message)
 
-        await self.pubsub_service.publish(message, topic=MessageType.TEXT_OVERLAY)
+        await self.pubsub_service.publish(message, topic=MessageType.DISPLAY_TEXT)
         logger.info(f"Sent TextOverlay: {text_id} - '{content[:50]}...'")
     
     async def send_remove_text(self, text_id: str):

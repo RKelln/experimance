@@ -310,7 +310,7 @@ class DisplayServiceConfig(BaseServiceConfig):
                 port=DEFAULT_PORTS['events'],
                 topics=[
                     str(MessageType.DISPLAY_MEDIA),
-                    str(MessageType.TEXT_OVERLAY),
+                    str(MessageType.DISPLAY_TEXT),
                     str(MessageType.REMOVE_TEXT),
                     str(MessageType.CHANGE_MAP)
                 ]
