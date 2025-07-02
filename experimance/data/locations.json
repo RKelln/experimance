@@ -2,66 +2,200 @@
     "types": {
         "rainforest": {
             "prompt": "rainforest, river",
-            "locations": ["Amazon Rainforest", "Congo Rainforest", "Southeast Asian Rainforest", "Daintree Rainforest", "Madagascar Rainforest"],
-            "negative": ["vine", "leaf"]
+            "locations": [
+                "Amazon Rainforest",
+                "Congo Rainforest",
+                "Southeast Asian Rainforest",
+                "Daintree Rainforest",
+                "Madagascar Rainforest"
+            ],
+            "negative": [
+                "vine",
+                "leaf"
+            ]
+        },
+        "jungle": {
+            "prompt": "jungle, river",
+            "locations": [
+                "Borneo Jungle",
+                "Choco Jungle",
+                "Western Ghats Jungle",
+                "New Guinea Jungle"
+            ],
+            "negative": [
+                "vine",
+                "leaf"
+            ]
         },
         "temperate_forest": {
             "prompt": "temperate forest",
-            "style": ["summer", "winter", "autumn", "hills"],
-            "locations": ["Black Forest", "Great Smoky Mountains", "Hoh Rainforest", "Sherwood Forest", "Valdivian Rainforest"]
+            "style": [
+                "summer",
+                "winter",
+                "autumn",
+                "hills"
+            ],
+            "locations": [
+                "Black Forest",
+                "Great Smoky Mountains",
+                "Hoh Rainforest",
+                "Sherwood Forest",
+                "Valdivian Rainforest"
+            ]
         },
         "boreal_forest": {
             "prompt": "boreal forest",
-            "style": ["summer", "winter", "autumn", "hills"],
-            "locations": ["Taiga", "Canadian Boreal Forest", "Siberian Taiga", "Scandinavian Boreal Forest", "Alaskan Boreal Forest"]
+            "style": [
+                "summer",
+                "winter",
+                "autumn",
+                "hills"
+            ],
+            "locations": [
+                "Taiga",
+                "Canadian Boreal Forest",
+                "Siberian Taiga",
+                "Scandinavian Boreal Forest",
+                "Alaskan Boreal Forest"
+            ]
         },
         "deciduous_forest": {
             "prompt": "deciduous forest",
-            "style": ["summer", "winter", "autumn", "hills"],
-            "locations": ["Eastern Deciduous Forest", "Appalachian Forest", "European Deciduous Forest", "Japanese Deciduous Forest", "Korean Deciduous Forest"]
+            "style": [
+                "summer",
+                "winter",
+                "autumn",
+                "hills"
+            ],
+            "locations": [
+                "Eastern Deciduous Forest",
+                "Appalachian Forest",
+                "European Deciduous Forest",
+                "Japanese Deciduous Forest",
+                "Korean Deciduous Forest"
+            ]
         },
         "desert": {
             "prompt": "desert",
-            "locations": ["Sahara Desert", "Gobi Desert", "Mojave Desert", "Kalahari Desert", "Great Victoria Desert"]
+            "locations": [
+                "Sahara Desert",
+                "Gobi Desert",
+                "Mojave Desert",
+                "Kalahari Desert",
+                "Great Victoria Desert"
+            ]
         },
         "mountain": {
             "prompt": "mountain",
-            "style": ["summer", "winter"],
-            "locations": ["Himalayan Mountains", "Rocky Mountains", "Andes Mountains", "Alps", "Ural Mountains"]
+            "style": [
+                "summer",
+                "winter"
+            ],
+            "locations": [
+                "Himalayan Mountains",
+                "Rocky Mountains",
+                "Andes Mountains",
+                "Alps",
+                "Ural Mountains"
+            ]
         },
         "tropical_island": {
             "prompt": "tropical island, ocean",
-            "locations": ["Borneo", "Hawaiian Islands", "Galapagos Islands", "Maldives", "Seychelles"]
+            "locations": [
+                "Borneo",
+                "Hawaiian Islands",
+                "Galapagos Islands",
+                "Maldives",
+                "Seychelles",
+                "Fiji Islands",
+                "Bali",
+                "Mauritius"
+            ]
         },
         "river": {
             "prompt": "river",
-            "locations": ["Nile River", "Amazon River", "Yangtze River", "Mississippi River", "Danube River"]
+            "locations": [
+                "Nile River",
+                "Amazon River",
+                "Yangtze River",
+                "Mississippi River",
+                "Danube River",
+                "Ganges River",
+                "Mekong River",
+                "Volga River",
+                "Tigris River",
+                "Indus River"
+            ]
         },
         "tundra": {
             "prompt": "tundra",
-            "style": ["summer", "winter"],
-            "locations": ["Arctic Tundra", "Alaskan Tundra", "Greenland Tundra", "Siberian Tundra", "Scandinavian Tundra"]
+            "style": [
+                "summer",
+                "winter"
+            ],
+            "locations": [
+                "Arctic Tundra",
+                "Alaskan Tundra",
+                "Greenland Tundra",
+                "Siberian Tundra",
+                "Scandinavian Tundra"
+            ]
         },
         "steppe": {
             "prompt": "steppe",
-            "style": ["summer", "winter"],
-            "locations": ["Mongolian Steppe", "Kazakh Steppe", "Patagonian Steppe", "Pannonian Steppe", "Great Plains"]
+            "style": [
+                "summer",
+                "winter"
+            ],
+            "locations": [
+                "Mongolian Steppe",
+                "Kazakh Steppe",
+                "Patagonian Steppe",
+                "Pannonian Steppe",
+                "Great Plains"
+            ]
         },
         "coastal": {
             "prompt": "coastal",
-            "locations": ["New Zealand Fjords", "Norwegian Fjords", "Californian Coast", "Mediterranean Coast", "Caribbean Coast"]
+            "locations": [
+                "New Zealand Fjords",
+                "Norwegian Fjords",
+                "Californian Coast",
+                "Mediterranean Coast",
+                "Caribbean Coast",
+                "Pacific Northwest Coast",
+                "Great Barrier Reef Coast",
+                "Atlantic Coast"
+            ]
         },
         "swamp": {
             "prompt": "swamp",
-            "locations": ["Everglades", "Okefenokee Swamp", "Dismal Swamp", "Pantanal", "Okavango Delta"]
+            "locations": [
+                "Everglades",
+                "Okefenokee Swamp",
+                "Dismal Swamp",
+                "Pantanal",
+                "Okavango Delta"
+            ]
         },
         "plains": {
             "prompt": "plains",
-            "locations": ["Serengeti Plains", "Great Plains", "Pampas", "Eurasian Steppe", "Australian Outback"]
+            "locations": [
+                "Serengeti Plains",
+                "Great Plains",
+                "Pampas",
+                "Eurasian Steppe",
+                "Australian Outback"
+            ]
         },
         "arctic": {
             "prompt": "arctic",
-            "locations": ["Antarctic", "Greenland Ice Sheet", "North Pole", "Franz Josef Land", "Svalbard"]
+            "locations": [
+                "Antarctic",
+                "Greenland Ice Sheet",
+                "Franz Josef Land",
+                "Svalbard"
+            ]
         }
     }
 }
