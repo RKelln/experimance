@@ -31,6 +31,7 @@ class TextItem:
     """Represents a single text overlay item."""
     text_id: str
     content: str
+    style: Dict[str, Any]  # Style configuration for this text
     label: Label
     duration: Optional[float] = None # Duration in seconds (None for infinite)
     creation_time: float  # Time when this text was created
@@ -48,6 +49,7 @@ class TextItem:
         text_id: str,
         content: str,
         label: Label,
+        style: Dict[str, Any],
         duration: Optional[float] = None,
         creation_time: Optional[float] = None,
         fade_duration: Optional[FadeDurationType] = None
@@ -65,6 +67,7 @@ class TextItem:
         self.text_id = text_id
         self.content = content
         self.label = label
+        self.style = style
         self.duration = duration
         self.creation_time = creation_time or time.time()
         self._fade_duration = fade_duration
@@ -272,25 +275,29 @@ class TextOverlayManager(LayerRenderer):
                 if "align" not in style_overrides:
                     style["align"] = self._get_align_for_position(style["position"])
             
-            # Create label
-            label = self._create_label(content, style)
-            
-            # Create text item
-            # Determine per-item fade duration override
-            fade_override = message.get("fade_duration")
-            text_item = TextItem(
-                text_id=text_id,
-                content=content,
-                label=label,
-                duration=duration,
-                fade_duration=fade_override
-            )
-            
-            # If text with same ID exists, replace it (for streaming text)
+            # If text with same ID exists, replace the text and redo label
+            # (for streaming text)
             if text_id in self.text_items:
                 logger.debug(f"Replacing existing text: {text_id}")
-            
-            self.text_items[text_id] = text_item
+                text_item = self.text_items[text_id]
+                text_item.content = content
+                text_item.label = self._create_label(content, text_item.style)
+            else:
+                # Create label
+                label = self._create_label(content, style)
+
+                # Create text item
+                # Determine per-item fade duration override
+                fade_override = message.get("fade_duration")
+                text_item = TextItem(
+                    text_id=text_id,
+                    content=content,
+                    label=label,
+                    style=style,
+                    duration=duration,
+                    fade_duration=fade_override
+                )
+                self.text_items[text_id] = text_item
             
         except Exception as e:
             logger.error(f"Error handling TextOverlay: {e}", exc_info=True)
