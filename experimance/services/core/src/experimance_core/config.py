@@ -75,6 +75,11 @@ class StateMachineConfig(BaseModel):
         description="Minimum time in seconds before era can change: 0 = disable"
     )
 
+    era_max_duration: float = Field(
+        default=120.0,
+        description="Maximum time in seconds before era can change: 0 = disable"
+    )
+
 
 class ColorizerScheme(Enum):
     """Colorizer schemes for depth visualization."""

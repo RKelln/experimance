@@ -219,17 +219,22 @@ class AudioService(BaseService):
             # Add biome and era as default tags
             self.active_tags.add(update.biome)
             self.active_tags.add(update.era)
+
+            # Include all tags in SuperCollider
+            if update.tags:
+                for tag in update.tags:
+                    self.active_tags.add(tag)
             
             # Include the default tags
-            for tag in self.active_tags:
-                self.osc.include_tag(tag)
+            # for tag in self.active_tags:
+            #     self.osc.include_tag(tag)
                 
             # Signal a transition is happening
-            self.osc.transition(True)
+            # self.osc.transition(True)
             
             # Schedule transition end after a delay using BaseService task management
-            transition_task = self._end_transition_after_delay(5.0)  # 5 second transition
-            self.add_task(transition_task)
+            #transition_task = self._end_transition_after_delay(5.0)  # 5 second transition
+            #self.add_task(transition_task)
                 
         except Exception as e:
             logger.error(f"Error handling era changed event: {e}")
@@ -451,7 +456,7 @@ class AudioService(BaseService):
             elif stripped.startswith('s.options.numInputBusChannels'):
                 new_lines.append(f's.options.numInputBusChannels = {self.config.supercollider.input_channels};\n')
             elif stripped.startswith('~oscRecvPort'):
-                new_lines.append(f'~oscRecvPort = {self.config.osc.recv_port};\n')
+                new_lines.append(f'~oscRecvPort = {self.config.osc.send_port};\n')
             elif stripped.startswith('~initMasterVolume'):
                 new_lines.append(f'~initMasterVolume = {self.config.audio.master_volume};\n')
             elif stripped.startswith('~initEnvironmentVolume'):
@@ -469,6 +474,18 @@ class AudioService(BaseService):
         with open(temp_path, 'w') as f:
             f.writelines(new_lines)
         
+        logger.debug(f"Modified SuperCollider script saved to: {temp_path}")
+        logger.debug(f"Set values:"
+                     f" device={self.config.supercollider.device}, "
+                     f"output_channels={self.config.supercollider.output_channels}, "
+                     f"input_channels={self.config.supercollider.input_channels}, "
+                     f"osc_port={self.config.osc.send_port}, "
+                     f"master_volume={self.config.audio.master_volume}, "
+                     f"environment_volume={self.config.audio.environment_volume}, "
+                     f"music_volume={self.config.audio.music_volume}, "
+                     f"sfx_volume={self.config.audio.sfx_volume}"
+        )           
+
         return temp_path
         
 async def run_audio_service(

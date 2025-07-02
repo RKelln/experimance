@@ -27,7 +27,7 @@ from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
 from experimance_common.schemas import (
-    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType
+    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, ImageReady
 )
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
@@ -804,9 +804,7 @@ class ExperimanceCoreService(BaseService):
         """Handle ImageReady messages from image server."""
         logger.debug(f"Received ImageReady message: {message}")
         try:
-            # Convert MessageDataType to ImageReady object for type safety
-            from experimance_common.schemas import MessageBase, ImageReady
-            image_ready = MessageBase.to_message_type(message, ImageReady)
+            image_ready : ImageReady = ImageReady.to_message_type(message) # type: ignore[assignment]
             
             if not image_ready or not isinstance(image_ready, ImageReady):
                 logger.warning("Failed to convert message to ImageReady type")
@@ -824,50 +822,17 @@ class ExperimanceCoreService(BaseService):
                 logger.warning(f"ImageReady era/biome mismatch: {image_ready.era}/{image_ready.biome} vs {self.current_era}/{self.current_biome}")
                 return
 
-            # Determine if we need a transition
-            #needs_transition = False
-            needs_transition = self._should_request_transition()
-            
-            if needs_transition:
-                # Request transition from transition service
-                await self._request_transition(image_ready)
-            else:
-                # Send directly to display service
-                await self._send_display_media(image_ready)
+            # TODO: generate transition then send that to display service
 
-                # update audio
-                await self._publish_space_time_update_event()
+            # Send directly to display service
+            await self._send_display_media(image_ready)
+
+            # update audio
+            await self._publish_space_time_update_event()
                 
         except Exception as e:
             logger.error(f"Error handling ImageReady message: {e}")
             logger.debug(f"Failed message: {message}", exc_info=True)
-
-    async def _handle_image_ready_task(self, task: MessageDataType):
-        """Handle IMAGE_READY tasks received from the image server via PULL socket.
-        
-        Args:
-            task: The IMAGE_READY message from the image server
-        """
-        logger.debug(f"Received IMAGE_READY task: {task}")
-        try:
-            # Convert to dict if it's a Pydantic model
-            if hasattr(task, 'model_dump') and callable(getattr(task, 'model_dump')):
-                task_dict = task.model_dump()  # type: ignore
-            elif isinstance(task, dict):
-                task_dict = task
-            else:
-                logger.warning(f"Unexpected task type: {type(task)}")
-                return
-                
-            if task_dict.get("type") == MessageType.IMAGE_READY.value:
-                logger.debug(f"Received IMAGE_READY task: {task_dict.get('request_id')}")
-                # Delegate to existing message handler
-                await self._handle_image_ready(task_dict)
-            else:
-                logger.warning(f"Received unexpected task type from image server: {task_dict.get('type')}")
-        except Exception as e:
-            logger.error(f"Error handling image ready task: {e}")
-            self.record_error(e, is_fatal=False, custom_message=f"Error handling IMAGE_READY task: {e}")
 
     def _should_request_transition(self) -> bool:
         """
@@ -926,25 +891,6 @@ class ExperimanceCoreService(BaseService):
         Returns:
             Transition type string
         """
-        # Era changes get more dramatic transitions
-        if hasattr(self, '_last_era') and self._last_era != self.current_era:
-            era_transitions = {
-                "wilderness": "fade",
-                "pre_industrial": "slide", 
-                "early_industrial": "fade",
-                "late_industrial": "morph",
-                "modern": "slide",
-                "current": "fade",
-                "future": "morph",
-                "dystopia": "fade",
-                "ruins": "fade"
-            }
-            return era_transitions.get(self.current_era.value, "fade")
-        
-        # High interaction gets subtle transitions
-        if self.user_interaction_score > self.config.state_machine.interaction_threshold:
-            return "fade"
-        
         return "fade"  # Default
 
     async def _send_display_media(self, image_message: ImageReady, transition_type: Optional[str] = None):
@@ -1097,7 +1043,8 @@ class ExperimanceCoreService(BaseService):
                     period = 0
                     logger.info(f"State: era={self.current_era}, biome={self.current_biome}, "
                                f"interaction={self.user_interaction_score:.3f}, "
-                               f"idle={self.idle_timer:.1f}s, hand_detected={self.hand_detected}")
+                               f"idle={self.idle_timer:.1f}s, "
+                               f"era progression={self.era_progression_timer:.1f}/{self.config.state_machine.era_max_duration}s, ")
                 
                 # Use _sleep_if_running() to respect shutdown requests
                 if not await self._sleep_if_running(sleep):  # Check twice per second
@@ -1393,32 +1340,37 @@ class ExperimanceCoreService(BaseService):
         """Handle era progression and state machine logic."""
         logger.info("State machine task started")
         
-        last_update = time.time()
+        last_update = time.monotonic()
         
         while self.running:
             try:
-                current_time = time.time()
+                current_time = time.monotonic()
                 delta_time = current_time - last_update
                 last_update = current_time
                 
                 # Update timers
                 self.update_idle_timer(delta_time)
-                if self.config.state_machine.era_min_duration > 0:
-                    self.era_progression_timer += delta_time
+                self.era_progression_timer += delta_time
                 
+                logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
+
                 # Check for idle reset to wilderness
                 if self.should_reset_to_wilderness():
                     await self.reset_to_wilderness()
                 
                 # Check for era progression based on interaction
-                elif (self.user_interaction_score > self.config.state_machine.interaction_threshold and
+                # advance if: user interaction score is high enough and we are beyond the minimum era duration
+                #             or era progression timer has exceeded the maximum duration
+                elif ((self.user_interaction_score > self.config.state_machine.interaction_threshold and
                       (self.config.state_machine.era_min_duration <= 0 or 
-                       self.era_progression_timer > self.config.state_machine.era_min_duration)):
+                       self.era_progression_timer > self.config.state_machine.era_min_duration)) or 
+                       (self.config.state_machine.era_max_duration > 0 and
+                        self.era_progression_timer > self.config.state_machine.era_max_duration)):
                     
                     # Check if we can progress to next era
                     next_era = self.get_next_era()
                     if next_era and next_era != self.current_era:
-                        logger.info(f"Era progression triggered by interaction: {self.user_interaction_score:.3f}")
+                        logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
                         await self.progress_era()
                 
                 # Publish idle state changes if needed
@@ -1606,7 +1558,7 @@ class ExperimanceCoreService(BaseService):
             
             # Route to appropriate handler based on worker name
             if worker_name == "image_server":
-                await self._handle_image_ready_task(response_data)
+                await self._handle_image_ready(response_data)
             elif worker_name == "audio":
                 # TODO: Add audio worker response handler when available
                 logger.debug(f"Received audio worker response: {response_data}")
