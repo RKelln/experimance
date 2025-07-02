@@ -508,6 +508,7 @@ class PromptManager:
 def _demo_cli():
     """Simple CLI for testing the prompt generator."""
     import argparse
+    import random
     
     parser = argparse.ArgumentParser(description="Test prompt generation")
     parser.add_argument("--data-path", default="data/", help="Path to data files")
@@ -516,12 +517,14 @@ def _demo_cli():
     parser.add_argument("--era", help="Specific era to test")
     parser.add_argument("--biome", help="Specific biome to test")
     parser.add_argument("--count", type=int, default=5, help="Number of prompts to generate")
+    parser.add_argument("--output-file", type=str, default=None, help="Output file to write prompts (one per line)")
     parser.add_argument("--strategy", choices=["deterministic", "shuffle", "choice"], 
                        default="shuffle", help="Selection strategy")
     parser.add_argument("--test-manager", action="store_true", 
                        help="Test PromptManager state management")
     args = parser.parse_args()
-    
+
+
     try:
         generator = PromptGenerator(
             args.data_path, 
@@ -529,26 +532,35 @@ def _demo_cli():
             args.developments,
             RandomStrategy(args.strategy)
         )
-        
+
         available_eras = generator.get_available_eras()
         available_biomes = generator.get_available_biomes()
-        
+
         print(f"Available eras: {[e.value for e in available_eras]}")
         print(f"Available biomes: {[b.value for b in available_biomes]}")
         print()
-        
+
+        output_lines = []
+
+        def add_prompt_to_output(pos: str, neg: str):
+            """Helper to add a prompt to output lines."""
+            output_lines.append(f"positive: {pos}")
+            if neg and neg != "":
+                output_lines.append(f"negative: {neg}")
+            output_lines.append("---")
+
         if args.test_manager:
             # Test PromptManager functionality
             if not available_eras or not available_biomes:
                 print("No eras or biomes available for testing")
                 return 1
-                
+
             initial_era = available_eras[0]
             initial_biome = available_biomes[0]
-            
+
             print(f"Testing PromptManager with initial state: {initial_era.value} + {initial_biome.value}")
             manager = PromptManager(generator, initial_era, initial_biome)
-            
+
             # Test current_prompt() (should be same each call)
             print("\n1. Testing current_prompt() - should be identical:")
             pos1, neg1 = manager.current_prompt()
@@ -556,14 +568,14 @@ def _demo_cli():
             print(f"   Call 1: {pos1}")
             print(f"   Call 2: {pos2}")
             print(f"   Identical: {pos1 == pos2}")
-            
+
             # Test next_variation() - should be different
             print("\n2. Testing next_variation() - should be different:")
             print(f"   Original: {pos1}")
             pos3, neg3 = manager.next_variation()
             print(f"   Variation: {pos3}")
             print(f"   Different: {pos1 != pos3}")
-            
+
             # Test era change
             if len(available_eras) > 1:
                 print(f"\n3. Testing advance_era() to {available_eras[1].value}:")
@@ -571,32 +583,58 @@ def _demo_cli():
                     print(f"   Era: {era.value}")
                     pos4, neg4 = manager.advance_era(era)
                     print(f"   - {pos4}")
-            
+
             # Test biome change
             if len(available_biomes) > 1:
                 print(f"\n4. Testing switch_biome() to {available_biomes[1].value}:")
                 pos5, neg5 = manager.switch_biome(available_biomes[1])
                 print(f"   New biome prompt: {pos5[:50]}...")
                 print(f"   State: {manager.get_state()}")
-        
-        elif args.era and args.biome:
-            # Test specific combination
-            try:
+
+        elif args.era:
+            if args.biome:
+                # Test specific combination
+                try:
+                    era = Era(args.era)
+                    biome = Biome(args.biome)
+                    print(f"Testing {era.value} + {biome.value}:")
+
+                    for i in range(args.count):
+                        pos, neg = generator.generate_prompt(era, biome)
+                        print(f"{i+1}. Positive: {pos}")
+                        print(f"   Negative: {neg}")
+                        print()
+                        add_prompt_to_output(pos, neg)
+                except ValueError as e:
+                    print(f"Error: {e}")
+            else: # randomize biome
                 era = Era(args.era)
-                biome = Biome(args.biome)
-                print(f"Testing {era.value} + {biome.value}:")
-                
+                print(f"Testing {era.value} with random biomes:")
                 for i in range(args.count):
+                    biome = random.choice(available_biomes)
                     pos, neg = generator.generate_prompt(era, biome)
-                    print(f"{i+1}. Positive: {pos}")
+                    print(f"{i+1}. {era.value} + {biome.value}")
+                    print(f"   Positive: {pos}")
                     print(f"   Negative: {neg}")
                     print()
+                    add_prompt_to_output(pos, neg)
+        elif args.biome:
+            # Test specific biome with all eras
+            try:
+                biome = Biome(args.biome)
+                print(f"Testing {biome.value} with all eras:")
+                for era in available_eras:
+                    pos, neg = generator.generate_prompt(era, biome)
+                    print(f"{era.value}: Positive: {pos}")
+                    print(f"   Negative: {neg}")
+                    print()
+                    add_prompt_to_output(pos, neg)
             except ValueError as e:
                 print(f"Error: {e}")
-        
         else:
             # Test random combinations
             print(f"Generating {args.count} random prompts:")
+            import random
             for i in range(args.count):
                 era = random.choice(available_eras)
                 biome = random.choice(available_biomes)
@@ -605,11 +643,25 @@ def _demo_cli():
                 print(f"   Positive: {pos}")
                 print(f"   Negative: {neg}")
                 print()
-                
+                add_prompt_to_output(pos, neg)
+
+        # Write prompts to file if requested
+        if args.output_file:
+            # remove the last "---" separator if it exists
+            if output_lines and output_lines[-1] == "---":
+                output_lines.pop()
+            try:
+                with open(args.output_file, "w", encoding="utf-8") as f:
+                    for line in output_lines:
+                        f.write(line + "\n")
+                print(f"Wrote {len(output_lines)} prompts to {args.output_file}")
+            except Exception as e:
+                print(f"Error writing to output file: {e}")
+
     except Exception as e:
         print(f"Error: {e}")
         return 1
-    
+
     return 0
 
 
