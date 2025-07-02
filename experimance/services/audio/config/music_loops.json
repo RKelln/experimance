@@ -2,48 +2,47 @@
     "era_loops": {
         "wilderness": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/wilderness.wav"
             }
         ],
         "pre_industrial": [
             {
-                "path": "music/pre_industrial/flutes.wav"
+                "path": "music/pre_industrial.wav"
             }
         ],
         "early_industrial": [
             {
-                "path": "music/early_industrial/violins.wav"
+                "path": "music/early_industrial.wav"
             }
-
         ],
         "late_industrial": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/late_industrial.wav"
             }
         ],
         "modern": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/modern.wav"
             }
         ],
         "current": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/current.wav"
             }
         ],
         "future": [
             {
-                "path": "music/future/enna_vector_test.wav"
+                "path": "music/future.wav"
             }
         ],
         "dystopia": [
             {
-                "path": "music/future/enna_vector_test.wav"
+                "path": "music/dystopia.wav"
             }
         ],
         "ruins": [
             {
-                "path": "music/wilderness/piano_pads.mp3"
+                "path": "music/ruins.wav"
             }
         ]
     }
