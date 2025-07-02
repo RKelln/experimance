@@ -69,6 +69,9 @@ BASE64_PNG_PREFIX = "data:image/png;base64,"
 ZMQ_TCP_BIND_PREFIX = "tcp://*"
 ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost"
 
+# data dir
+DATA_DIR = PROJECT_ROOT / "data"
+
 # media directories (relative paths)
 MEDIA_DIR = "media"
 IMAGES_DIR = f"{MEDIA_DIR}/images"

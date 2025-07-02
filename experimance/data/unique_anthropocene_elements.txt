@@ -1,0 +1,772 @@
+(colorful)
+(overgrown)
+(paved)
+(paved) roads
+(wilderness)
+1600s
+1700s
+1800s
+1970s suburban development
+2020s
+3D printing centers
+NGO field camp
+NGO headquarters
+abandoned
+abandoned buildings
+abandoned camp
+abandoned crumbling highways
+abandoned damaged farmhouse
+abandoned highways
+abandoned mining pit
+abandoned refinery
+abandoned sawmill
+adobe trading post
+adventure park
+agribusiness headquarters
+agribusiness soy plantation
+airboat tour
+airport
+airstrip
+airstrip on permafrost
+algae biofilter plant
+algae biofuel platform
+algae farm
+alpine chalet
+alpine park
+alpine visitor center
+amphitheater
+amusement park
+apartment block
+arctic eco-tour
+arctic festival tent
+arctic logistics hub
+art gallery
+aurora amphitheater
+autonomous cable car
+autonomous delivery hub
+autonomous drone ferry
+autonomous electric vehicles
+autonomous farm vehicles
+autonomous forest tram
+autonomous hydrofoil
+autonomous marsh shuttle
+autonomous snow crawler
+autonomous solar rover
+autonomous water taxi
+autonomous wind-powered rover
+bank
+bazaar
+beach
+beach bonfire gathering
+beach bungalow resort
+beach festival
+beach motel
+beach shanty
+beachside tiki bar
+big box garden center
+big box outdoor retailer
+big box store
+bike lanes
+biodiversity research center
+biotech labs
+biotech research center
+birdwatching outfitter
+blacksmith shop
+blurry
+boarding houses
+boardwalk arcade
+boat rental kiosk
+bombed
+bombed out airports
+bowling alley
+box stores
+brick and wood buildings
+bridge
+buildings
+burned down chalet
+burned down sawmill
+burned research station
+burnt and damaged buildings
+burnt plantation
+bus stop
+bus stop at grain silo
+bus terminal
+business
+busy roads and highways
+cable car
+cafe
+camel caravan
+campground store
+canal dredging
+canals
+canning factory
+car dealership
+caravanserai
+carbon capture farm
+carbon capture outpost
+cartoon
+cattle herding camp
+cattle ranch
+ceremonial gathering site
+chaotic
+chapel
+charcoal kiln
+church
+cinema
+cinema tent
+circular economy recycling hub
+city park
+clearcut
+cliffside fishing village
+climate monitoring station
+climbing center
+clock tower
+co-housing towers
+coal barge terminal
+coal depot
+coal mine
+coal mines
+coastal amphitheater
+coastal highway
+coastal music hall
+coastal packet steamer
+coastal rewilding zone
+cobblestone streets
+coconut oil press
+collapsed beach hut
+collapsed bridge
+collapsed bridges
+collapsed grain silo
+collapsed ice road
+collapsed log cabin
+collapsed mountain tunnel
+collapsed pier
+collapsed skyscrapers
+collapsed wind turbine
+collpased stilt house
+colonial guesthouse
+colonial supply boat
+colonial trading post
+commercial agriculture fields
+commercial crawfish farm
+communal house
+community garden
+community hall
+community learning center
+community living pods
+community market
+community pool
+community river cleanup
+community rooftop farm
+community sand sculpture event
+community treehouse complex
+commuter highway through woods
+commuter rail along river
+commuter rail through woods
+company barracks
+company bunkhouse
+company row house by river
+company stilt barracks
+company store
+company store for boatmen
+company store for dockworkers
+company store for farmhands
+company store for herders
+company store for loggers
+company store for trappers
+company store on stilts
+company town
+company town row house
+company towns
+concrete causeway
+concrete highway bridge
+container barge
+container port
+copper mine
+copra drying shed
+copra gathering
+corporate farm housing
+corporate grain elevator
+corporate hunting lease
+corporate logistics hub
+corporate marina
+corporate ski resort
+corporate-controlled arctic shipping hub
+corporate-sponsored arctic science festival
+cottage in woods
+county fairground
+covered bridge over creek
+covered wooden bridge
+craters
+crowded
+cruise ship dock
+cruise ship terminal
+crumbling apartments
+crumbling skyscrapers
+cul-de-sac streets
+culture
+dairy processing plant
+damaged yurt
+data center
+date plantation
+debris
+decay
+decaying amusement park
+deforestation front
+dense
+dense urban metropolis
+department store
+derelict airports
+derelict factories
+derelict mill
+derelict oil well
+derelict pipeline
+desalination facility
+destroyed
+destroyed oasis camp
+destroyed vehicles
+dirt roads
+dirty
+displaced indigenous community center
+dive center
+dog park
+dog sled trail
+dome habitat
+downtown business area
+driftwood hut
+drive-in movie field
+drive-in theater
+dugout canoe
+dystopia
+early industrial landscape
+eco-friendly
+eco-lodge
+eco-research pod
+eco-tourism center
+eco-tourism lodge
+elevated bike highways
+empty stadium
+entangled
+exclusive arctic luxury lodge for corporate clients
+exclusive beach club
+exhibition hall
+expanded beach hamlet
+expanded snow camp
+expanded sod settlement
+expanded stilt settlement
+expanded stilt village
+expanded tent village
+expanded yurt camp
+factories
+farm
+farm equipment dealership
+farmers' market
+fast food restaurant
+felt yurt
+festival
+festival grounds
+festival tent
+field rotation
+fish smokehouse
+fish trapping
+fish-eye lens
+fishing cabin
+fishing camp
+fishing hamlet
+flat-bottomed barge
+floating eco-habitat
+floating market
+floating sea habitat
+floating solar habitat
+floating village
+flooded
+flooded mine
+footpath
+forest adventure park
+forest experience center
+forest footpath
+forest general store
+forest town hall
+fortified mansion
+freight rail line
+fur trading post
+fur trapper's hut
+future solarpunk urban landscape
+garbage dump
+gardens
+gas station
+gasworks
+gated community
+gated community clubhouse
+gated expat compound
+gathering medicinal plants
+general store at crossroads
+glacier monitoring
+golf resort
+grain elevator
+grain elevator residence
+grain storage facility
+grain threshing circle
+grand hotel
+grass huts
+gravel logging road
+green roofs
+grist mill by river
+grist mill by stream
+guild hall
+high density city
+high-speed maglev train
+highly detailed
+highway
+highway through prairie
+highway through steppe
+highway to oil field
+highways
+hills
+horse breeding
+horse market
+horse-drawn carriages
+horse-drawn carts
+horseback caravan
+horseback path
+housing
+humans
+hunting camp
+hunting club
+hunting trail
+hydroelectric dam
+ice fishing hole
+ice road
+ice road for oil/gas trucks
+ice road to mine
+illegal gold mining
+illustration
+immersive art park
+in the style of (Burtynsky) and (Richter)
+in the style of (Burtynsky:1.1) and (Richter:0.5)
+in the style of (Burtynsky:1.1) and (Richter:1.1)
+indigenous cultural center
+indigenous cultural center (underfunded)
+industrial agribusiness
+industrial agriculture
+industrial crawfish farm
+industrial farm
+industrial feedlot
+industrial logging camp
+industrial park
+industrial peat works
+industrial port facility
+industrial sawmill
+industry
+inn
+innovation hub
+international hotel chain
+iron bridges
+kayak route
+labor festival
+lake
+large-scale plantation
+late industrial landscape
+light rail
+lighthouse construction
+lockkeeper's house
+log cabin
+logging camp
+logging railway
+logging road
+logging skid trail
+logging truck road
+logging truck route
+logistics hub
+longhouse
+looted shopping mall
+luxury cabin development
+luxury chalet development
+luxury condo by river
+luxury condo tower
+luxury golf resort
+luxury lodge
+luxury resort compound
+luxury treehouse Airbnb
+maglev train
+maker space
+makeshift shelter
+manor house
+mansion
+marina
+market hall
+market square
+marshland festival
+marshland park
+marshland trading post
+mass transit
+mechanized sawmill
+micro-apartments
+migrant worker camp
+migrant worker dormitory
+military base
+mill worker cottage
+mineral exploration site
+mining hamlet
+mining operation
+mission church
+mission church on beach
+mobile field shelter
+mobile habitat dome
+mobile home park
+mobile home park on stilts
+mobile homes
+mobile research caravan
+modern
+modern boathouse
+modern vehicles
+modern yurt
+modernist cliff house
+modular green buildings
+modular oil camp
+modular prefab homes
+monestary
+motorboat dock
+motorcar track
+motorized fishing skiff
+mountain highway
+mountain pass trail
+mountain railway
+mountain toll road
+mudbrick kasbah
+mule caravan
+multinational timber office
+museum
+music festival
+music hall
+narrow-gauge arctic rail
+narrow-gauge tundra rail
+nature center
+nature interpretation center
+newspaper office
+nomadic tent camp
+nomadic tents
+northern lights tourism
+northern lights viewing dome
+oasis camp
+oasis farming
+ocean farming dome
+offshore oil platform
+offshore wind farm
+oil and gas exploration
+oil exploration camp
+oil pipeline access road
+oil refinery
+oil spill
+oil well
+oil/gas extraction platform
+opera house
+outfitter franchise
+outpost market
+outrigger canoe
+overgrown
+overgrown boardwalk shack
+overgrown collapsed amusement park
+overgrown park
+oversaturated
+ox cart trail
+palm oil plantation
+palm-thatched hut
+paper mill by river
+parking lots
+paved highway
+paved rural highway
+pavement
+pearl diving camp
+people
+permafrost habitat dome
+permafrost restoration lab
+petrochemical plant
+phosphate mine
+pier amusement park
+pipeline corridor
+pipeline pumping station
+plains music hall
+plantation
+plantation manager's villa
+plantation store
+plastic
+pollution
+pop-up food market
+pop-up seafood market
+post office
+post-apocalyptic city
+power plant
+pre-industrial landscape
+prefab house
+prefab research station
+private airstrip
+private forest school
+private resort shuttle
+private ski lift
+public library
+public park
+public pool
+public school
+public sculpture
+public well
+pulp and paper mill
+quarry
+radio tower
+raft
+rail bridge over river
+rail line to pier
+rail tram
+railroad depots
+railway
+railway siding
+railway station
+railway workshops
+raised boardwalk
+ranch
+ranch-style house
+ranch-style houses
+real estate development
+real estate office
+reed harvesting
+reed raft
+reef restoration festival
+reindeer herding
+reindeer sled
+remote drone pad
+remote research station
+remote work hub
+renewable microgrid
+rental apartments
+research center
+research station
+resort hotel
+resource extraction logistics office
+resource worker camp
+rewilding research station
+rewilding zone
+ritual clearing
+river
+river amphitheater
+river barge for export
+river ferry
+river log raft
+river market
+river trading post
+riverbank rewilding zone
+riverwalk park
+roads
+roadside diner
+roadside market
+robotic manufacturing
+roller rink
+rope bridge
+row houses
+rubber trading post
+rubble
+ruin
+ruined bazaar
+ruined power plant
+ruined sacred grove
+ruined summer camp
+ruined visitor center
+ruins for modern city
+rust
+sacred grove
+sailing outrigger
+salt caravan route
+salt mining
+salt mining camp
+salt pans
+sand-choked highway
+sawmill
+schooner landing
+seafood processing plant
+seal hunting camp
+seaside boarding house
+seaside festival tent
+shack
+sheep herding
+sheep shearing shed
+shellfish gathering
+shellfish harvesting
+shopping mall
+sketch
+ski lift construction
+ski resort
+sky gardens
+skyscraper
+small foundry
+small sawpit
+small silver mine
+small-scale peat extraction
+smog
+smokestacks
+snorkel rental hut
+snow
+snow house
+snowmobile trail
+sod house
+solar
+solar amphitheater
+solar amphitheater in dunes
+solar farm
+solar maglev line
+solar mesh rooftops
+solar power plant
+solar-powered boardwalk shuttle
+solar-powered canopy walk
+solar-powered mountain tram
+solar-powered river ferry
+solar-powered river tram
+solar-powered sled
+solar-powered timber mill
+solar-powered tram
+solar-powered trams
+solar-powered water taxi
+soy plantation
+split-level home
+sports arena
+stadium
+stagecoach routes
+stagecoach stop
+steam ferry terminal
+steam icebreaker dock
+steam locomotives
+steam riverboat
+steam riverboat dock
+steam tractor route
+steam-powered sawmill
+steamship pier
+steelworks
+stilt house
+stilt house over lagoon
+stone cottages
+stone village
+streetcars
+strip mall
+subsistence agriculture
+subsistence farming
+subsistence fishing
+suburban housing
+suburban school
+suburban sprawl into forest
+suburban subdivision at forest edge
+suburban train station
+sugar mill
+summer beach concert
+summer regatta
+sunken boardwalk
+superhighways
+supply depot
+supply sled convoy
+surf shop
+sustainable agroforestry
+sustainable architecture
+sustainable wetland farm
+swamp experience center
+swamp music festival
+swamp tour operator
+swidden agriculture
+switchback road
+tavern
+tech campus
+telegraph relay
+telegraph stations
+temporary worker camp for oil/gas crews
+tenements
+tentacle
+tents
+terraced farming
+textile mills
+textile workshop
+theatre
+thriving market
+tide market
+timber cutting camp
+timber export yard
+timber farmhouse
+timber frame houses
+timber longhouse
+timber raft
+timber raft assembly
+timber yard
+top down satellite aerial photography
+tourism megaproject
+tourist scuba center
+town
+town square
+trader's yurt
+trading camp
+trading fair
+trading outpost
+trading post
+traditional dance circle
+traditional dwellings
+traffic
+traffic roundabout
+trailer park
+train station
+transportation
+traveling circus camp
+traveling medicine show
+tree nursery
+treehouse dwelling
+tribal camp
+tribal meeting ground
+tribal trade post
+unpaved forest access road
+urban apartments
+urban bus rapid transit
+urban food co-op
+urban park
+urban solar farms
+urbanizing river town
+vacation home
+valleys
+vehicles
+vein
+vertical alpine habitat
+vertical beach tower
+vertical eco-aprtments
+vertical eco-village
+vertical farms
+vertical forest village
+vertical grassland pod
+vibrant (colorful)
+villa
+village
+village barter market
+village green at forest edge
+village market
+wagon relay station
+wagon road
+wagon road through forest
+warehouse district
+wartorn
+water bottling plant
+water harvesting plant
+water-powered sawmill
+watermill
+wave energy generator
+weather monitoring outpost
+wetland restoration project
+whale oil rendering hut
+wild rubber extraction
+wild rubber tapping
+wind farm
+wind farms
+wind turbine
+wind turbine array
+windmill
+winter
+wood canoe
+wooden bridges
+wooden causeway
+wooden pier
+wooden snow bridge
+wool processing hut
+worker barracks
+worker dormitory
+wrecked pier
+yurt

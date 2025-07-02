@@ -789,7 +789,7 @@
         ],
         "interval": "frequent",
         "requires": [
-            "pre_i,ndustrial"
+            "pre_industrial"
         ],
         "requires_any": [
             "tribal_meeting_ground",

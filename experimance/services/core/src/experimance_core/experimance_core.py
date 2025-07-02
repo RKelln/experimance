@@ -46,6 +46,8 @@ from experimance_core.config import (
 )
 from experimance_core.depth_factory import create_depth_processor
 from experimance_core.prompt_generator import PromptGenerator, PromptManager, RandomStrategy
+from experimance_common.sector_sound_lookup import SECTOR_SOUND_LOOKUP
+
 
 
 logger = logging.getLogger(__name__)
@@ -776,7 +778,14 @@ class ExperimanceCoreService(BaseService):
     
     def _extract_tags(self, prompt: str) -> List[str]:
         """Extract tags from prompt by splitting on commas."""
-        return [tag.strip(" ():1234567890.") for tag in prompt.split(',') if tag.strip()]
+        cleaned_tags = [tag.strip(" ():1234567890.") for tag in prompt.split(',') if tag.strip()]
+        # convert tags to audio
+        audio_tags = []
+        for tag in cleaned_tags:
+            audio_tag = SECTOR_SOUND_LOOKUP.get(tag.lower(), None)
+            if audio_tag:
+                audio_tags.append(audio_tag)
+        return audio_tags
 
     async def _publish_space_time_update_event(self):
         """Publish SPACE_TIME_UPDATE event with tags extracted from prompt."""
@@ -1352,7 +1361,7 @@ class ExperimanceCoreService(BaseService):
                 self.update_idle_timer(delta_time)
                 self.era_progression_timer += delta_time
                 
-                logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
+                #logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
 
                 # Check for idle reset to wilderness
                 if self.should_reset_to_wilderness():
