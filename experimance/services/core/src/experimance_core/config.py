@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 import numpy as np
 
 from experimance_common.config import BaseConfig
-from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR
+from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
 from experimance_common.zmq.config import (
     ControllerServiceConfig, WorkerConfig, PublisherConfig, 
     SubscriberConfig, ControllerPushConfig, ControllerPullConfig, MessageType
@@ -455,14 +455,14 @@ class CoreServiceConfig(BaseConfig):
         default_factory=lambda: ControllerServiceConfig(
             name="experimance-core",
             publisher=PublisherConfig(
-                address="tcp://*",
+                address=ZMQ_TCP_BIND_PREFIX,
                 port=DEFAULT_PORTS["events"],
                 default_topic="core.events"
             ),
             subscriber=SubscriberConfig(
-                address="tcp://localhost",
-                port=DEFAULT_PORTS["events"],
-                topics=["heartbeat", "status", "AudioStatus", MessageType.AGENT_CONTROL_EVENT.value]
+                address=ZMQ_TCP_CONNECT_PREFIX,
+                port=DEFAULT_PORTS["agent"],
+                topics=[MessageType.AGENT_CONTROL_EVENT]
             ),
             workers={
                 "image_server": WorkerConfig(

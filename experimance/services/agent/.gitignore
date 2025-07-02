@@ -47,3 +47,5 @@ coverage.xml
 # Project-specific
 logs/
 *.log
+
+transcripts/

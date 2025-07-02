@@ -7,6 +7,8 @@ with the installation visitors.
 
 __version__ = '0.1.0'
 
-from .agent import entrypoint, prewarm
+from .agent import AgentService
+from .config import AgentServiceConfig
+from .backends import AgentBackend, AgentBackendEvent, ConversationTurn
 
-__all__ = ['entrypoint', 'prewarm']
+__all__ = ["AgentService", "AgentServiceConfig", "AgentBackend", "AgentBackendEvent", "ConversationTurn"]
