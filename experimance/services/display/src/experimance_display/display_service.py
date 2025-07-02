@@ -329,6 +329,11 @@ class DisplayService(BaseService):
                         logger.debug("Handling video sequence")
                         #await self.image_renderer.handle_image_sequence(message)
             
+            # now that we've recieved a display media message, we can remove the change map
+            if self.video_overlay_renderer is not None:
+                logger.debug("Removing video mask after display media")
+                self.video_overlay_renderer.hide_overlay()
+
         except Exception as e:
             logger.error(f"Error handling DisplayMedia: {e}", exc_info=True)
             self.record_error(e, is_fatal=False)
