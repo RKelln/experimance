@@ -11,6 +11,7 @@ s.options.memSize = 8192 * 16;
 s.options.numWireBufs = 64;
 s.options.maxNodes = 1024 * 8;
 // all of the following options are set by audio_service.py
+// TODO: read from toml file
 s.options.numOutputBusChannels = 6; 
 s.options.numInputBusChannels = 2;  
 s.options.device = nil;             
@@ -19,6 +20,7 @@ s.options.device = nil;
 ~initEnvironmentVolume = 1.0;
 ~initMusicVolume = 1.0;                
 ~initSfxVolume = 1.0;                  
+~musicFadeTime = 10.0;  // Default fade time for music transitions
 
 s.waitForBoot {
     // -----------------------------------------------------
@@ -481,7 +483,7 @@ s.waitForBoot {
             synth = Synth(\musicPlayer, [
                 \buf, buffer,
                 \amp, volume,
-                \fadeTime, 5.0,
+                \fadeTime, ~musicFadeTime,  // Use global music fade time
                 \slotIndex, slotIndex,
                 \masterVolume, masterVolume,
                 \musicVolume, musicVolume,
@@ -689,7 +691,7 @@ s.waitForBoot {
             environmentLayers.pairsDo { |path, layerInfo|
                 // If path is not in the matching layers, fade it out
                 if(matching.notNil and: { matching.any { |m| m[\path] == path.asString }.not }) {
-                    //"Fading out non-matching layer: %".format(path).postln;
+                    "Fading out non-matching layer: %".format(path).postln;
                     // Fade out and remove this layer
                     if(layerInfo[\synth].notNil) {
                         layerInfo[\synth].set(\gate, 0);  // Trigger release
@@ -1429,10 +1431,13 @@ s.waitForBoot {
         // Apply initial volume settings to all groups
         //"Setting up initial volume controls...".postln;
         mainGroup.set(\masterVolume, masterVolume);
+        "Master volume set to: %".format(masterVolume).postln;
         envGroup.set(\envVolume, environmentVolume);
+        "Environment volume set to: %".format(environmentVolume).postln;
         musicGroup.set(\musicVolume, musicVolume);
+        "Music volume set to: %".format(musicVolume).postln;
         fxGroup.set(\sfxVolume, sfxVolume);
-        //"Volume controls initialized.".postln;
+        "SFX volume set to: %".format(sfxVolume).postln;
 
         // Update audio with default context
         // Force update with current default biome and era values
