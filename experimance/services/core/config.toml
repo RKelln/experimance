@@ -100,6 +100,10 @@ hole_filling_mode = 1               # hole filling mode (0=disabled, 1=fill_from
 threshold_filter_min = 0.15         # minimum distance in meters
 threshold_filter_max = 4.0          # maximum distance in meters
 
+# Depth map settings
+flip_horizontal = true
+flip_vertical = true
+
 [audio]
 tag_config_path = "config/audio_tags.json"  # path to audio tag configuration
 interaction_sound_duration = 2.0            # duration for interaction sounds

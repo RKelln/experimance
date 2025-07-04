@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 from urllib.parse import urlparse
 
-from experimance_common.schemas import MessageBase, MessageType
+from experimance_common.schemas import ContentType, MessageBase, MessageType
 from experimance_common.zmq.config import MessageDataType
 from experimance_display.config import DisplayServiceConfig
 import pyglet
@@ -113,22 +113,35 @@ class ImageRenderer(LayerRenderer):
         """Complete the current transition."""
         logger.debug("Completing image transition")
         
-        # Make next image the current image
-        self.current_image = self.next_image
-        self.current_sprite = self.next_sprite
-        self.current_image_id_value = self.next_image_id_value
-        
+        assert self.next_image_id_value, "Next image ID must be set before completing transition"
+        self._update_current_image(self.next_image, self.next_sprite, self.next_image_id_value)
+
         # Clear next image
         self.next_image = None
         self.next_sprite = None
         self.next_image_id_value = None
         
+        logger.debug(f"Image transition completed to: {self.current_image_id_value}")
+    
+    def _update_current_image(self, image: Any, sprite: Any, image_id: str):
+        """Update the current image and sprite.
+        
+        Args:
+            image: Pyglet image object
+            sprite: Pyglet sprite object
+            image_id: Unique identifier for the image
+        """
+        self.current_image = image
+        self.current_sprite = sprite
+        self.current_image_id_value = image_id
+        
         # Reset transition state
         self.transition_active = False
         self.transition_timer = 0.0
         
-        logger.debug(f"Image transition completed to: {self.current_image_id_value}")
-    
+        logger.debug(f"Updated current image to: {image_id}")
+
+
     async def handle_display_media(self, message: MessageDataType):
         """Handle DisplayMedia message.
         
@@ -153,12 +166,15 @@ class ImageRenderer(LayerRenderer):
             
             logger.info(f"Loading image: {request_id}")
             
-            # Check cache first
-            if request_id in self.image_cache:
-                logger.debug(f"Using cached image: {request_id}")
-                image, sprite = self.image_cache[request_id]
-                self._start_transition_to_image(image, sprite, request_id)
-                return
+            cachable = message.get("content_type") == ContentType.IMAGE
+            
+            if cachable:
+                # Check cache first
+                if request_id in self.image_cache:
+                    logger.debug(f"Using cached image: {request_id}")
+                    image, sprite = self.image_cache[request_id]
+                    self._start_transition_to_image(image, sprite, request_id)
+                    return
             
             # Use the robust image loading utility - it will handle fallbacks automatically
             pyglet_image, temp_file_path = load_pyglet_image_from_message(
@@ -177,12 +193,17 @@ class ImageRenderer(LayerRenderer):
                                                   batch=self.batch, group=self)
                 
                 # Cache the image
-                self._cache_image(request_id, pyglet_image, sprite)
+                if cachable:
+                    self._cache_image(request_id, pyglet_image, sprite)
                 
                 logger.info(f"Successfully loaded image: {request_id}")
                 
-                # Start transition to new image
-                self._start_transition_to_image(pyglet_image, sprite, request_id)
+                # Start transition to new image if not a debug depth message
+                if message.get("content_type") == ContentType.DEBUG_DEPTH:
+                    # immediate display without transition
+                    self._update_current_image(pyglet_image, sprite, request_id)
+                else:
+                    self._start_transition_to_image(pyglet_image, sprite, request_id)
                 
             finally:
                 # Clean up temporary file if one was created
@@ -252,9 +273,7 @@ class ImageRenderer(LayerRenderer):
         """
         # If no current image, just set it directly
         if not self.current_image:
-            self.current_image = image
-            self.current_sprite = sprite
-            self.current_image_id_value = image_id
+            self._update_current_image(image, sprite, image_id)
             logger.info(f"Set initial image: {image_id}")
             return
         

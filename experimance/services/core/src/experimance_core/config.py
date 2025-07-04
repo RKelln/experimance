@@ -168,6 +168,22 @@ class CameraConfig(BaseModel):
         description="Include intermediate images for visualization"
     )
     
+    # Debug depth visualization for alignment
+    debug_depth: bool = Field(
+        default=False,
+        description="Send depth map each frame to display service for alignment debugging"
+    )
+    
+    flip_horizontal: bool = Field(
+        default=False,
+        description="Flip depth map horizontally for camera/projector alignment"
+    )
+    
+    flip_vertical: bool = Field(
+        default=False,
+        description="Flip depth map vertically for camera/projector alignment"
+    )
+    
     # Mask stability parameters
     mask_stability_frames: int = Field(
         default=20,
@@ -482,7 +498,7 @@ class CoreServiceConfig(BaseConfig):
                 #     pull_config=ControllerPullConfig(
                 #         port=DEFAULT_PORTS["audio_results"]
                 #     )
-                # ),
+                #                ),
                 # "display": WorkerConfig(
                 #     name="display",
                 #     push_config=ControllerPushConfig(

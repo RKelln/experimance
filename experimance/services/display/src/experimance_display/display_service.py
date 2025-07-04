@@ -123,14 +123,14 @@ class DisplayService(BaseService):
         await self._show_title_screen()
 
         # wait 5 sec then fade out the video
-        if self.video_overlay_renderer is not None and self.config.video_overlay.enabled:
+        # if self.video_overlay_renderer is not None and self.config.video_overlay.enabled:
             
-            async def fade_out_video_overlay():
-                logger.info("Waiting 5 seconds before fading out video overlay")
-                await asyncio.sleep(5)
-                if self.video_overlay_renderer:
-                    self.video_overlay_renderer.hide_overlay()
-            self.add_task(asyncio.create_task(fade_out_video_overlay()))
+        #     async def fade_out_video_overlay():
+        #         logger.info("Waiting 5 seconds before fading out video overlay")
+        #         await asyncio.sleep(5)
+        #         if self.video_overlay_renderer:
+        #             self.video_overlay_renderer.hide_overlay()
+        #     self.add_task(asyncio.create_task(fade_out_video_overlay()))
 
         # Show debug text if enabled
         if self.config.display.debug_text:
@@ -149,7 +149,12 @@ class DisplayService(BaseService):
             if self.config.display.fullscreen:
                 # Get primary monitor for fullscreen
                 display = pyglet.display.get_display()
-                screen = display.get_default_screen()
+                screens = display.get_screens()
+                if not screens:
+                    raise RuntimeError("No screens available for fullscreen mode")
+                if self.config.display.monitor >= len(screens):
+                    raise ValueError(f"Invalid monitor index {self.config.display.monitor} for available screens: {len(screens)}")
+                screen = screens[self.config.display.monitor]
                 self.window = pyglet.window.Window(
                     fullscreen=True,
                     screen=screen,
@@ -305,7 +310,6 @@ class DisplayService(BaseService):
     async def _handle_display_media(self, message: MessageDataType):
         """Handle DisplayMedia messages."""
         try:
-            logger.debug(f"Received DisplayMedia: {message}")
             
             if message is None:
                 logger.error("Received None message in handle_display_media")
@@ -313,6 +317,8 @@ class DisplayService(BaseService):
             if message.get("type") != MessageType.DISPLAY_MEDIA:
                 logger.error(f"Invalid display media message type: {message.get('type')}")
                 return
+            
+            logger.debug(f"Received DisplayMedia: {message.get('content_type')}")
             
             # could differnet types of media
             match message.get("content_type"):
@@ -329,7 +335,11 @@ class DisplayService(BaseService):
                     if self.image_renderer:
                         logger.debug("Handling video sequence")
                         #await self.image_renderer.handle_image_sequence(message)
-            
+
+                case ContentType.DEBUG_DEPTH:
+                    if self.image_renderer:
+                        await self.image_renderer.handle_display_media(message)
+
             # now that we've recieved a display media message, we can remove the change map
             if self.video_overlay_renderer is not None:
                 logger.debug("Removing video mask after display media")
@@ -731,18 +741,18 @@ class DisplayService(BaseService):
             # Create debug text for each position
             for i, position in enumerate(positions):
                 speaker = speakers[i % len(speakers)]  # Cycle through speakers
-                
-                debug_message = {
-                    "text_id": f"debug_{position}",
-                    "content": f"{speaker.upper()}\n{position}",
-                    "speaker": speaker,
-                    "duration": None,  # Infinite duration
-                    "style": {
+
+                debug_message = DisplayText(
+                    text_id=f"debug_{position}",
+                    content=f"{speaker.upper()}\n{position}",
+                    speaker=speaker,
+                    duration=None,  # Infinite duration
+                    style={
                         "position": position,
                         "max_width": None  # Clear max_width to prevent layout issues
                     }
-                }
-                
+                )
+
                 logger.debug(f"Adding debug text: {position} ({speaker})")
                 await self.text_overlay_manager.handle_text_overlay(debug_message)
             

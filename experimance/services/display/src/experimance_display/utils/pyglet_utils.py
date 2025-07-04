@@ -190,7 +190,7 @@ def load_pyglet_image_from_message(
             pyglet_image.anchor_y = pyglet_image.height // 2
         
         if pyglet_image:
-            logger.debug(f"Successfully loaded pyglet image: {image_id or 'unknown'}")
+            logger.debug(f"Successfully loaded pyglet image: {image_id or 'unknown'} size={pyglet_image.width}x{pyglet_image.height}")
         
         # Return temp file path only if it's actually a temp file that needs cleanup
         temp_file_path = file_path if is_temp else None

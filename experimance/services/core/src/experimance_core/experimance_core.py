@@ -343,6 +343,12 @@ class ExperimanceCoreService(BaseService):
             
             # Always update the previous frame for interaction scoring
             if depth_image is not None:
+                if self.config.camera.flip_horizontal:
+                    depth_image = cv2.flip(depth_image, 1)  # Horizontal flip
+                
+                if self.config.camera.flip_vertical:
+                    depth_image = cv2.flip(depth_image, 0)  # Vertical flip
+
                 self.previous_depth_image = depth_image.copy()
                 if self.last_significant_depth_map is None:
                     # first depth map recieved use it
@@ -360,6 +366,7 @@ class ExperimanceCoreService(BaseService):
             
             # Calculate change compared to last PROCESSED frame (not just previous frame)
             if self.last_significant_depth_map is not None and depth_image is not None:
+
                 # Create eroded mask to reduce edge noise
                 mask = self._create_comparison_mask(depth_image)
                 
@@ -417,6 +424,10 @@ class ExperimanceCoreService(BaseService):
             display_score = smoothed_change_score if 'smoothed_change_score' in locals() else raw_change_score
             self._visualize_depth_processing(depth_frame, display_score, self.depth_difference_score)
             
+            # Debug depth visualization - send depth map to display service for alignment
+            if self.config.camera.debug_depth:
+                await self._send_debug_depth_to_display(depth_image)
+
         except Exception as e:
             logger.error(f"Error processing depth frame: {e}")
 
@@ -504,6 +515,38 @@ class ExperimanceCoreService(BaseService):
 
         except Exception as e:
             logger.error(f"Error publishing change map: {e}")
+
+    async def _send_debug_depth_to_display(self, depth_image: np.ndarray):
+        """Send depth map to display service for alignment debugging."""
+        try:
+            # Apply flip transformations if configured
+            debug_depth_image = depth_image.copy()
+            
+            # Convert depth map to colorized visualization for better visibility
+            depth_colorized = cv2.applyColorMap(debug_depth_image, cv2.COLORMAP_JET)
+            
+            # Create display media message for the depth map
+            message = create_display_media_message(
+                request_id=str(time.monotonic()),
+                image_data=depth_colorized,
+                content_type=ContentType.DEBUG_DEPTH,
+                transport_mode=IMAGE_TRANSPORT_MODES["BASE64"],
+                metadata={
+                    "debug_mode": "depth_alignment",
+                    "horizontal_flip": self.config.camera.flip_horizontal,
+                    "vertical_flip": self.config.camera.flip_vertical,
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            
+            # Publish to display service using the ZMQ service
+            await self.zmq_service.publish(
+                data=message,
+                topic=MessageType.DISPLAY_MEDIA
+            )
+                
+        except Exception as e:
+            logger.error(f"Error sending debug depth to display: {e}")
 
     async def _publish_interaction_sound(self, hand_detected: bool):
         """Publish interaction sound command based on hand detection."""
