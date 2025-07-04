@@ -1,17 +1,17 @@
 {
     "base_prompt": {
-        "prompt": "top down satellite aerial photography",
-        "style": "hills, valleys, highly detailed",
+        "prompt": "colorful satellite image in the style of experimance",
+        "style": "rivers, water, hills, valleys, vibrant hyper detailed photorealistic maximum detail",
         "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens, vein, tentacle"
     },
     "eras": {
         "wilderness": {
             "prompt": "pre-industrial landscape, (wilderness)",
-            "negative": "modern, plastic, roads, buildings, humans"
+            "negative": "modern, plastic, path, road, roads, buildings, humans"
         },
         "pre_industrial": {
             "prompt": "pre-industrial landscape, 1600s, subsistence agriculture",
-            "negative": "(paved) roads, modern, plastic"
+            "negative": "roads, road, modern, plastic"
         },
         "early_industrial": {
             "prompt": "early industrial landscape, 1700s",
