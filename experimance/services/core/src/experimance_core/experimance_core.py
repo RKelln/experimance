@@ -10,6 +10,7 @@ This service manages:
 import argparse
 import asyncio
 import logging
+from pathlib import Path
 import random
 import time
 import traceback
@@ -607,6 +608,10 @@ class ExperimanceCoreService(BaseService):
         if not possible_next_eras:
             logger.warning(f"No progression defined for era: {self.current_era}")
             return False
+        
+        # reset interaction score and idle timer on era change
+        self.user_interaction_score = 0.0
+        self.idle_timer = 0.0
             
         # For Future era, use probability to decide between looping and progressing
         if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
@@ -1096,7 +1101,7 @@ class ExperimanceCoreService(BaseService):
             if self.last_significant_depth_map is not None:
                 image_source = prepare_image_source(
                     image_data=self.last_significant_depth_map,
-                    transport_mode=IMAGE_TRANSPORT_MODES['FILE_URI'],
+                    transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
                     request_id=request_id,
                 )
 
@@ -1583,7 +1588,7 @@ class ExperimanceCoreService(BaseService):
 
 
 async def run_experimance_core_service(
-    config_path: str = DEFAULT_CONFIG_PATH, 
+    config_path: str | Path = DEFAULT_CONFIG_PATH, 
     args:Optional[argparse.Namespace] = None
 ):
     """

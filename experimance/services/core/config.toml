@@ -12,9 +12,9 @@ render_request_cooldown = 2.0     # minimum interval between render requests in 
 [state_machine]
 idle_timeout = 300.0         # seconds
 wilderness_reset = 600.0     # seconds to full reset
-interaction_threshold = 100  # threshold for user interaction detection
+interaction_threshold = 0.1  # threshold for user interaction detection
 era_min_duration = 0         # minimum time in seconds before era can change
-era_max_duration = 10        # maximum time in seconds before era can change
+era_max_duration = 120       # maximum time in seconds before era can change
 
 [camera]
 # Core camera settings
