@@ -14,6 +14,7 @@ load_dotenv(dotenv_path="../../.env", override=True)
 # Configure logging
 logger = logging.getLogger(__name__)
 
+from experimance_common.schemas import Era
 from image_server.generators.generator import ImageGenerator, configure_external_loggers
 from image_server.generators.config import BaseGeneratorConfig, DEFAULT_GENERATOR_TIMEOUT
 from .fal_comfy_config import FalGeneratorConfig, FalComfyGeneratorConfig
@@ -69,6 +70,16 @@ class FalComfyGenerator(ImageGenerator):
         # Handle config overrides for this specific request
         current_config = self.config
         if config_overrides:
+            # modify lora strength based on era
+            if era := config_overrides.get('era'):
+                if era == Era.WILDERNESS:
+                    config_overrides['lora_strength'] = self.config.lora_strength * 0.5
+                elif era == Era.PRE_INDUSTRIAL:
+                    config_overrides['lora_strength'] = self.config.lora_strength * 0.8
+                elif era == 'future':
+                    config_overrides['lora_strength'] = self.config.lora_strength * 1.2
+
+
             if isinstance(config_overrides, dict):
                 # Create a new config with overrides applied
                 current_config = FalComfyGeneratorConfig(**{

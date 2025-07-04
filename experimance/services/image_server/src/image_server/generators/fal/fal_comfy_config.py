@@ -27,7 +27,7 @@ class FalComfyGeneratorConfig(SDXLConfig):
     endpoint: str = FALCOMFY_ENDPOINT
     model_url: Optional[str] = MODEL_URL
     lora_url: Optional[str] = LORA_URL
-    lora_strength: float = 0.8
+    lora_strength: float = 1.0
     depth_map: Optional[str] = None
     
     def to_args(self) -> dict:
@@ -59,6 +59,8 @@ class FalComfyGeneratorConfig(SDXLConfig):
             f"negative_prompt={self.negative_prompt[:50]!r}, seed={self.seed})"
         )
 
+
+
 class FalGeneratorConfig(SDXLConfig):
     """Configuration schema for FAL.AI image generator.
     Useful for testing with various FAL.AI endpoints.
@@ -70,7 +72,7 @@ class FalGeneratorConfig(SDXLConfig):
     endpoint: str = FALCOMFY_ENDPOINT
     model_url: Optional[str] = MODEL_URL
     lora_url: Optional[str] = LORA_URL
-    lora_strength: float = 0.8
+    lora_strength: float = 1.0
     depth_map: Optional[str] = None
     format: Literal["png", "jpeg"] = "png"
     
