@@ -77,7 +77,7 @@ class TestImageServerService(MockImageServerTestCase):
         """Test that the service initializes correctly."""
         assert image_service.service_name == "test-image-server"
         assert image_service.config.service_name == "test-image-server"
-        assert image_service._default_strategy == "mock"
+        assert image_service._generator_strategy == "mock"
         assert hasattr(image_service, 'zmq_service')
         assert hasattr(image_service, 'generator')
 
@@ -251,7 +251,7 @@ class TestImageServerService(MockImageServerTestCase):
         """Test that the correct generator strategy is selected."""
         # Verify the mock generator was created
         assert image_service.generator is not None
-        assert image_service._default_strategy == "mock"
+        assert image_service._generator_strategy == "mock"
 
     @pytest.mark.asyncio
     async def test_error_handling_invalid_message(self, image_service: ImageServerService):

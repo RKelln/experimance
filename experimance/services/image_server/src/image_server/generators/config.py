@@ -1,4 +1,5 @@
 from typing import Literal, Union ,TYPE_CHECKING
+from experimance_common.schemas import MessageSchema
 from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseConfig
@@ -6,7 +7,7 @@ from experimance_common.config import BaseConfig
 DEFAULT_GENERATOR_TIMEOUT = 30  # Default timeout for image generation in seconds
 
 
-class BaseGeneratorConfig(BaseConfig):
+class BaseGeneratorConfig(BaseConfig, MessageSchema):
     """Base configuration for all image generators.
     
     This class defines common fields and provides a base for all generator configs.

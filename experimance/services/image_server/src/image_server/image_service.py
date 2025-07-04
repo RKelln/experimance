@@ -73,10 +73,10 @@ class ImageServerService(BaseService):
             self.zmq_service = WorkerService(self.config.zmq)
             
             # For compatibility with tests
-            self._default_strategy = self.config.generator.default_strategy
+            self._generator_strategy = self.config.generator.strategy
             
             # Create generator directly from the configuration
-            strategy = config.generator.default_strategy
+            strategy = config.generator.strategy
             strategy_config = {}
             
             # Get strategy-specific config if available
@@ -93,17 +93,10 @@ class ImageServerService(BaseService):
                 strategy=strategy,
                 config_data=strategy_config,
                 cache_dir=config.cache_dir,
-                timeout=getattr(config.generator, "timeout", 60)
-            )
-            # Create the generator
-            self.generator = create_generator_from_config(
-                strategy=strategy,
-                config_data=strategy_config,
-                cache_dir=config.cache_dir,
-                timeout=getattr(config.generator, "timeout", 60)
+                timeout=getattr(config.generator, "timeout", 120)
             )
             
-            logger.info(f"ImageServerService initialized with strategy: {self.config.generator.default_strategy}")
+            logger.info(f"ImageServerService initialized with strategy: {self.config.generator.strategy}")
         except Exception as e:
             error_msg = f"Failed to initialize ImageServerService: {e}"
             logger.error(error_msg, exc_info=True)
@@ -316,7 +309,7 @@ class ImageServerService(BaseService):
             RuntimeError: If image generation fails or times out
         """
         if strategy is None:
-            strategy = self.config.generator.default_strategy
+            strategy = self.config.generator.strategy
         
         # Generate the image with timeout
         try:

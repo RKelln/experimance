@@ -32,7 +32,7 @@ DEFAULT_CONFIG_PATH = f"{IMAGE_SERVER_SERVICE_DIR}/config.toml"
 
 class GeneratorConfig(BaseModel):
     """Configuration for image generator selection and common settings."""
-    default_strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
+    strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
     timeout: int = Field(
         default=60,
         description="Default timeout for image generation in seconds"
@@ -119,7 +119,7 @@ class ImageServerConfig(BaseServiceConfig):
             Configuration dictionary for the generator
         """
         if strategy is None:
-            strategy = self.generator.default_strategy
+            strategy = self.generator.strategy
             
         # Base configuration
         config = {
@@ -170,5 +170,5 @@ def create_image_server_config(
     return ImageServerConfig(
         service_name=service_name,
         cache_dir=Path(cache_dir),
-        generator=GeneratorConfig(default_strategy=default_strategy)
+        generator=GeneratorConfig(strategy=default_strategy)
     )
