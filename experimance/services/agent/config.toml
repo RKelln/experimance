@@ -48,14 +48,6 @@ turn_detection_silence_ms = 800
 # TTS (Text-to-Speech) settings (ensemble mode only)
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 
-# System prompt for the agent
-system_prompt = """You are a helpful AI assistant for an interactive art installation called Experimance. 
-You can engage in natural conversation and help users explore and understand the art. 
-The installation represents the intersection of human experience and environmental change.
-Keep your responses conversational and engaging, but concise. 
-Your responses will be converted to speech, so avoid special characters.
-You can suggest different biomes and locations for the installation when appropriate."""
-
 [vision]
 # Vision processing configuration
 webcam_enabled = true
