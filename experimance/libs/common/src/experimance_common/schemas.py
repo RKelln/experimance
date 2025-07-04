@@ -397,6 +397,7 @@ class ContentType(str, Enum):
     IMAGE = "image"                    # Single static image
     IMAGE_SEQUENCE = "image_sequence"  # Sequence of images (for transitions)
     VIDEO = "video"                    # Video file
+    DEBUG_DEPTH = "debug_depth"        # Debug depth map for alignment
 
     def __str__(self):
         """Return the string representation of the content type."""
