@@ -77,7 +77,7 @@ class TestDisplayService:
             MessageType.IMAGE_READY,
             MessageType.TRANSITION_READY,
             MessageType.LOOP_READY,
-            MessageType.TEXT_OVERLAY,
+            MessageType.DISPLAY_TEXT,
             MessageType.REMOVE_TEXT,
             MessageType.CHANGE_MAP,
             MessageType.SPACE_TIME_UPDATE
