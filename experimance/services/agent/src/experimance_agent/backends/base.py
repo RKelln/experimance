@@ -6,11 +6,15 @@ providing a consistent API for different conversation AI providers like LiveKit,
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, AsyncGenerator
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Callable, AsyncGenerator, Union
 import asyncio
 import logging
+
+from experimance_agent.config import AgentServiceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,8 @@ class AgentBackendEvent(str, Enum):
     CONVERSATION_ENDED = "conversation_ended"
     SPEECH_DETECTED = "speech_detected"
     SPEECH_ENDED = "speech_ended"
+    BOT_STARTED_SPEAKING = "bot_started_speaking"
+    BOT_STOPPED_SPEAKING = "bot_stopped_speaking"
     TRANSCRIPTION_RECEIVED = "transcription_received"
     RESPONSE_GENERATED = "response_generated"
     TOOL_CALLED = "tool_called"
@@ -46,6 +52,48 @@ class ToolCall:
     call_id: Optional[str] = None  # Backend-specific call identifier
 
 
+@dataclass
+class UserContext:
+    """User context during a agent session."""
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    location: Optional[str] = None
+    session_start: datetime = field(default_factory=datetime.now)
+    custom_data: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def full_name(self) -> Optional[str]:
+        """Get the full name if available."""
+        if self.first_name:
+            if self.last_name:
+                return f"{self.first_name} {self.last_name}"
+            return self.first_name
+        return None
+
+    @property
+    def is_identified(self) -> bool:
+        """Check if the user is identified."""
+        return self.first_name is not None
+
+    def summarize(self) -> str:
+        """Return a summary of the user context."""
+        if self.is_identified:
+            userinfo = f"The user's name is {self.first_name}"
+            if self.last_name:
+                userinfo += f" {self.last_name}"
+            if self.location:
+                userinfo += f" from {self.location}"
+            return userinfo
+        return "User not yet identified."
+
+    def reset(self) -> None:
+        """Reset user information."""
+        self.first_name = None
+        self.last_name = None
+        self.location = None
+        self.custom_data.clear()
+
+
 class AgentBackend(ABC):
     """
     Abstract base class for agent conversation backends.
@@ -55,7 +103,7 @@ class AgentBackend(ABC):
     consistent functionality.
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: AgentServiceConfig):
         """
         Initialize the agent backend.
         
@@ -68,6 +116,8 @@ class AgentBackend(ABC):
         self._event_callbacks: Dict[AgentBackendEvent, List[Callable]] = {}
         self._conversation_history: List[ConversationTurn] = []
         self._available_tools: Dict[str, Callable] = {}
+        self.conversation_started = False  # Track if conversation has started
+        self.user_context = UserContext()  # User context for the session
         
     # =========================================================================
     # Lifecycle Management
@@ -89,6 +139,28 @@ class AgentBackend(ABC):
         Stop the agent backend and clean up resources.
         """
         pass
+
+    async def graceful_shutdown(self, goodbye_message: Optional[str] = None) -> None:
+        """
+        Gracefully shutdown the conversation pipeline, allowing any final messages to be processed before terminating.
+        This should be called when vision detects the user has left or the session should end naturally.
+        By default, this is a no-op; override in backends that support graceful shutdown (e.g., Pipecat).
+        Args:
+            goodbye_message: Optional goodbye message to say before shutting down
+        """
+        logger.info(f"Graceful shutdown not implemented for {self.backend_name}")
+        await self.disconnect()
+
+    async def say_goodbye_and_shutdown(self, goodbye_message: str = "Thank you for visiting Experimance. Have a wonderful day!") -> None:
+        """
+        Say a goodbye message and then gracefully shutdown the conversation.
+        Recommended for when users leave (detected by vision system).
+        By default, this is a no-op; override in backends that support this feature.
+        Args:
+            goodbye_message: The goodbye message to speak before shutting down
+        """
+        logger.info(f"Polite farewell not implemented for {self.backend_name}")
+        await self.graceful_shutdown(goodbye_message=goodbye_message)
     
     @abstractmethod
     async def connect(self) -> None:
@@ -106,7 +178,7 @@ class AgentBackend(ABC):
         Disconnect from the agent service while keeping backend active.
         """
         pass
-    
+
     # =========================================================================
     # Conversation Management
     # =========================================================================
@@ -259,6 +331,21 @@ class AgentBackend(ABC):
             "available_tools": list(self._available_tools.keys()),
         }
     
+    def get_debug_status(self) -> Dict[str, Any]:
+        """
+        Get detailed debug status information.
+        
+        Returns:
+            Dictionary with comprehensive debug information
+        """
+        return {
+            "backend_name": self.backend_name,
+            "is_connected": self.is_connected,
+            "is_active": self.is_active,
+            "conversation_turns": len(self._conversation_history),
+            "available_tools": list(self._available_tools.keys()),
+        }
+
     # =========================================================================
     # Advanced Features (Optional Implementation)
     # =========================================================================
@@ -296,3 +383,16 @@ class AgentBackend(ABC):
         # Default implementation - backends can override for real-time streaming
         for turn in self._conversation_history:
             yield turn
+
+# =========================================================================
+# Utilities
+# =========================================================================
+
+def load_prompt(prompt_path: str | Path) -> str:
+    """Load prompt instructions from prompt text file."""
+    try:
+        with open(str(prompt_path), "r") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Error loading prompt instructions: {e}")
+        return "You are Experimance, an AI art installation assistant."

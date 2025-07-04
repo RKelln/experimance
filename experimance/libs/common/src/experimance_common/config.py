@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, TypeVar
 
 import toml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Note: Logging is configured by the CLI or service entry point
 logger = logging.getLogger(__name__)
@@ -201,7 +201,12 @@ class BaseConfig(BaseModel):
         )
         
         # Then validate with Pydantic and return instance
-        return cls(**merged_config)
+        try: 
+            config_instance = cls(**merged_config)
+        except ValidationError as e:
+            logger.error(f"Configuration validation error: {e.errors()}")
+            raise ConfigError(f"Invalid configuration: {e}") from e
+        return config_instance
 
     def __str__(self) -> str:
         """String representation of the configuration."""

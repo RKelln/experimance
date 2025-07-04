@@ -2,13 +2,105 @@
 Configuration for the Experimance Agent Service.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseServiceConfig
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.schemas import MessageType
 from experimance_common.constants import DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX, AGENT_SERVICE_DIR
+
+DEFAULT_CONFIG_PATH = AGENT_SERVICE_DIR / "config.toml"
+
+class PipecatBackendConfig(BaseModel):
+    """Configuration for the Pipecat backend."""
+    
+    # Pipeline mode selection
+    mode: Literal["realtime", "ensemble"] = Field(
+        default="realtime",
+        description="Pipeline mode: 'realtime' for OpenAI Realtime Beta or 'ensemble' for separate STT/LLM/TTS"
+    )
+    
+    # Audio settings
+    audio_in_enabled: bool = Field(default=True, description="Enable audio input")
+    audio_out_enabled: bool = Field(default=True, description="Enable audio output")
+    audio_in_sample_rate: int = Field(default=16000, description="Audio input sample rate")
+    audio_out_sample_rate: int = Field(default=16000, description="Audio output sample rate")
+    
+    # Audio device selection (None means use default device)
+    audio_input_device_index: Optional[int] = Field(default=None, description="PyAudio device index for input (microphone). Use None for default device.")
+    audio_output_device_index: Optional[int] = Field(default=None, description="PyAudio device index for output (speaker). Use None for default device.")
+    
+    # Audio device selection by name (alternative to index, takes precedence if both are set)
+    audio_input_device_name: Optional[str] = Field(default=None, description="Partial name match for input device (e.g., 'Yealink', 'USB'). Takes precedence over index.")
+    audio_output_device_name: Optional[str] = Field(default=None, description="Partial name match for output device (e.g., 'Yealink', 'USB'). Takes precedence over index.")
+    
+    # Voice Activity Detection settings
+    vad_enabled: bool = Field(default=True, description="Enable voice activity detection using Silero VAD")
+    
+    # STT settings (for ensemble mode)
+    whisper_model: str = Field(default="tiny", description="Whisper model size (tiny, base, small, medium, large)")
+    
+    # LLM settings
+    openai_model: str = Field(default="gpt-4o-mini", description="OpenAI model to use (ensemble mode) or realtime model")
+    
+    # OpenAI Realtime settings (for realtime mode)
+    openai_realtime_model: str = Field(default="gpt-4o-realtime-preview-2025-06-03", description="OpenAI Realtime model")
+    openai_voice: str = Field(default="alloy", description="OpenAI Realtime voice (alloy, echo, fable, onyx, nova, shimmer)")
+    turn_detection_threshold: float = Field(default=0.5, description="Voice activity detection threshold for realtime mode")
+    turn_detection_silence_ms: int = Field(default=800, description="Silence duration in ms before turn ends")
+    
+    # TTS settings (for ensemble mode)
+    elevenlabs_api_key: Optional[str] = Field(default=None, description="ElevenLabs API key (or use ELEVENLABS_API_KEY env var)")
+    elevenlabs_voice_id: str = Field(default="EXAVITQu4vr4xnSDxMaL", description="ElevenLabs voice ID")
+    
+    # System prompt
+    system_prompt: str = Field(
+        default=(
+            "You are a helpful AI assistant for an interactive art installation called Experimance. "
+            "You can engage in natural conversation and help users explore and understand the art. "
+            "The installation represents the intersection of human experience and environmental change. "
+            "Keep your responses conversational and engaging, but concise. "
+            "Your responses will be converted to speech, so avoid special characters. "
+            "You can suggest different biomes and locations for the installation when appropriate."
+        ),
+        description="System prompt for the agent"
+    )
+
+
+class LivekitBackendConfig(BaseModel):
+    """Configuration for the LiveKit backend."""
+    
+    # LiveKit connection settings
+    room_url: Optional[str] = Field(default=None, description="LiveKit room URL")
+    api_key: Optional[str] = Field(default=None, description="LiveKit API key")
+    api_secret: Optional[str] = Field(default=None, description="LiveKit API secret")
+    
+    # Agent settings
+    agent_name: str = Field(default="Experimance Agent", description="Agent display name")
+    
+    # Voice settings
+    voice_id: str = Field(default="alloy", description="Voice ID to use for TTS")
+
+
+class BackendConfig(BaseModel):
+    """Container for all backend configurations."""
+    
+    prompt_path: Optional[Path] = Field(
+        default=None,
+        description="Path to custom prompt file for the agent (if any)"
+    )
+
+    pipecat: PipecatBackendConfig = Field(
+        default_factory=PipecatBackendConfig,
+        description="Pipecat backend configuration"
+    )
+    
+    livekit: LivekitBackendConfig = Field(
+        default_factory=LivekitBackendConfig,
+        description="LiveKit backend configuration"
+    )
 
 
 class VisionConfig(BaseModel):
@@ -59,11 +151,11 @@ class AgentServiceConfig(BaseServiceConfig):
     service_name: str = Field(default="agent", description="Name of this agent service instance")
     
     # Agent backend selection
-    agent_backend: str = Field(default="livekit", description="Agent backend to use (livekit, hume, ultravox)")
+    agent_backend: str = Field(default="pipecat", description="Agent backend to use (livekit, hume, ultravox, pipecat)")
     
     # Backend-specific configuration
-    backend_config: Dict[str, Any] = Field(
-        default_factory=dict, 
+    backend_config: BackendConfig = Field(
+        default_factory=BackendConfig, 
         description="Backend-specific configuration parameters"
     )
     

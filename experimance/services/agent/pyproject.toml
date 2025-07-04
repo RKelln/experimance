@@ -20,6 +20,8 @@ dependencies = [
     "experimance-common>=0.1.0",
     "livekit-agents[openai,silero]",
     "livekit-plugins-noise-cancellation",
+    "pipecat-ai",
+    "pyaudio",
     "python-dotenv",
 ]
 

@@ -7,6 +7,7 @@ controlling other services.
 """
 
 import asyncio
+import json
 import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -90,6 +91,9 @@ class AgentService(BaseService):
         self.add_task(self._audience_detection_loop())
         self.add_task(self._vision_analysis_loop())
         
+        # Connect the backend to start processing audio
+        await self.current_backend.connect()  # type: ignore
+
         # ALWAYS call super().start() LAST
         await super().start()
         self.status = ServiceStatus.HEALTHY
@@ -131,17 +135,17 @@ class AgentService(BaseService):
         
         try:
             if backend_name == "livekit":
-                # TODO: Import LiveKit backend when implemented
-                # from .backends.livekit_backend import LiveKitBackend
-                # self.current_backend = LiveKitBackend(self.config.backend_config)
-                logger.warning("LiveKit backend not yet implemented, agent will run in placeholder mode")
-                self.current_backend = None
+                from .backends.livekit_backend import LiveKitBackend
+                self.current_backend = LiveKitBackend(self.config)
             elif backend_name == "hume":
                 # TODO: Implement Hume.ai backend
                 raise NotImplementedError("Hume.ai backend not yet implemented")
             elif backend_name == "ultravox":
                 # TODO: Implement Ultravox backend
                 raise NotImplementedError("Ultravox backend not yet implemented")
+            elif backend_name == "pipecat":
+                from .backends.pipecat_backend import PipecatBackend
+                self.current_backend = PipecatBackend(self.config)
             else:
                 raise ValueError(f"Unknown agent backend: {backend_name}")
             
@@ -173,7 +177,9 @@ class AgentService(BaseService):
                 
                 # Start the backend
                 await backend.start()  # type: ignore
-                
+                                
+                print(json.dumps(backend.get_debug_status(), indent=2))
+
                 logger.info(f"Successfully initialized {backend_name} backend")
             else:
                 logger.info(f"Agent service started in placeholder mode (no {backend_name} backend)")
@@ -305,11 +311,11 @@ class AgentService(BaseService):
         logger.info("Conversation started with audience")
         
         # Optionally send welcome message
-        if self.current_backend:
-            await self.current_backend.send_message(
-                "Hello! I'm the spirit of this installation. Feel free to interact with the sand while we talk.",
-                speaker="system"
-            )
+        # if self.current_backend:
+        #     await self.current_backend.send_message(
+        #         "Hello! I'm the spirit of this installation. Feel free to interact with the sand while we talk.",
+        #         speaker="system"
+        #     )
     
     async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle conversation ended event."""
@@ -508,4 +514,34 @@ class AgentService(BaseService):
                 {"status": present}
             )
             logger.info(f"Audience presence changed: {present}")
+    
+    async def get_debug_status(self) -> Dict[str, Any]:
+        """Get comprehensive debug status from the agent service."""
+        status = {
+            "service": {
+                "name": self.service_name,
+                "status": self.status.value if self.status else "unknown",
+                "is_conversation_active": self.is_conversation_active,
+                "audience_present": self.audience_present,
+                "agent_speaking": self.agent_speaking,
+                "conversation_history_length": len(self.conversation_history),
+                "displayed_text_count": len(self.displayed_text_ids),
+            },
+            "backend": None,
+            "config": {
+                "agent_backend": self.config.agent_backend,
+                "vision_enabled": self.config.vision.webcam_enabled,
+                "transcript_enabled": self.config.transcript.display_transcripts,
+                "tool_calling_enabled": self.config.tool_calling_enabled,
+                "biome_suggestions_enabled": self.config.biome_suggestions_enabled,
+            }
+        }
+        
+        # Get backend debug info if available
+        if self.current_backend and hasattr(self.current_backend, 'get_debug_status'):
+            status["backend"] = self.current_backend.get_debug_status()
+        elif self.current_backend:
+            status["backend"] = self.current_backend.get_status()
+        
+        return status
 

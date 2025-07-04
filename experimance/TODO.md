@@ -28,10 +28,12 @@
   - [x] integrate ZMQ
 - [] write tests
 - [] all layers functional
+- [x] convert cli to new ZMQ
 
 ### Audio
 - [x] create supercollider prototype 
   - [] integrate ZMQ
+  - add surround sound (agent, environment and music)
 
 ### Image server
 - [x] convert prototype to production code

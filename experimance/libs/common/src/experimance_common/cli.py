@@ -160,7 +160,7 @@ def setup_logging(log_level: str, service_name: str) -> None:
 def create_service_parser(
     service_name: str,
     description: str,
-    default_config_path: Optional[str] = None,
+    default_config_path: Optional[str|Path] = None,
     extra_args: Optional[Dict[str, Dict[str, Any]]] = None,
     config_class: Optional[Type[BaseModel]] = None
 ) -> argparse.ArgumentParser:
@@ -192,7 +192,7 @@ def create_service_parser(
     if default_config_path:
         parser.add_argument(
             '--config', '-c',
-            default=default_config_path,
+            default=str(default_config_path),
             action=TrackedAction,
             help=f'Path to configuration file (default: {default_config_path})'
         )
@@ -219,7 +219,7 @@ async def run_service_cli(
     service_name: str,
     description: str,
     service_runner: Callable[..., Awaitable[None]],
-    default_config_path: Optional[str] = None,
+    default_config_path: Optional[str|Path] = None,
     extra_args: Optional[Dict[str, Dict[str, Any]]] = None,
     config_class: Optional[Type[BaseModel]] = None
 ) -> None:
@@ -286,7 +286,7 @@ def create_simple_main(
     service_name: str,
     description: str,
     service_runner: Callable[..., Awaitable[None]],
-    default_config_path: Optional[str] = None,
+    default_config_path: Optional[str|Path] = None,
     extra_args: Optional[Dict[str, Dict[str, Any]]] = None,
     config_class: Optional[Type[BaseModel]] = None
 ) -> Callable[[], None]:

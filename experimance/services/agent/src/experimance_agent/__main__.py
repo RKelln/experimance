@@ -11,7 +11,7 @@ from typing import Optional
 
 from experimance_common.cli import create_simple_main
 from .agent import AgentService
-from .config import AgentServiceConfig
+from .config import AgentServiceConfig, DEFAULT_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +39,13 @@ async def run_agent_service(
     await service.run()
 
 
-def main():
-    """Main entry point for the agent service."""
-    
-    # Create the main function using the common CLI pattern
-    main_func = create_simple_main(
-        service_name="Agent",
-        description="Experimance Agent Service - AI conversation and audience interaction",
-        service_runner=run_agent_service,
-        config_class=AgentServiceConfig
-    )
-    
-    # Run the main function
-    return main_func()
-
+main = create_simple_main(
+    service_name="Agent",
+    description="Experimance Agent Service - AI conversation and audience interaction",
+    service_runner=run_agent_service,
+    default_config_path=DEFAULT_CONFIG_PATH,
+    config_class=AgentServiceConfig
+)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

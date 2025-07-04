@@ -22,9 +22,9 @@ from experimance_common.zmq.config import (
 )
 
 # Define the default configuration path relative to the project root
-DEFAULT_CONFIG_PATH = f"{CORE_SERVICE_DIR}/config.toml"
+DEFAULT_CONFIG_PATH = CORE_SERVICE_DIR / "config.toml"
 DEFAULT_CAMERA_CONFIG_DIR = CORE_SERVICE_DIR
-DEFAULT_CAMERA_CONFIG_PATH = f"{DEFAULT_CAMERA_CONFIG_DIR}/depth_camera_config.json"
+DEFAULT_CAMERA_CONFIG_PATH = DEFAULT_CAMERA_CONFIG_DIR / "depth_camera_config.json"
 
 CAMERA_RESET_TIMEOUT = 45.0 # seconds
 

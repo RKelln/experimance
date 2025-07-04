@@ -30,6 +30,7 @@ dependencies = [
     "fal-client>=0.6.0",
     "pyglet>=2.1.6",
     "pyrealsense2>=2.55.1.6486",
+    "pipecat-ai[openai]>=0.0.73",
 ]
 
 [tool.uv.workspace]

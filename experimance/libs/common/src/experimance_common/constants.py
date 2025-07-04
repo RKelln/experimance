@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Project structure constants
 # Find the project root by going up from libs/common/src/experimance_common
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
+PROJECT_ROOT = (Path(__file__).parent.parent.parent.parent.parent).absolute()
 
 DEFAULT_PORTS = {
     # Unified events channel - all services publish and subscribe here

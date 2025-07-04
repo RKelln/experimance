@@ -32,12 +32,36 @@ Create a modular agent service that handles speech-to-speech conversation with t
 - [x] Event callbacks for agent actions
 
 #### LiveKit Backend (`backends/livekit_backend.py`)
-- [ ] Implement AgentBackend interface
-- [ ] Integrate existing livekit_prototype.py code
-- [ ] Handle LiveKit room management
-- [ ] Implement tool calling for biome control
-- [ ] Transcript extraction and management
-- [ ] Agent conversation state management
+- [x] Implement AgentBackend interface
+- [x] Integrate existing livekit_prototype.py code (production-ready version)
+- [x] Handle LiveKit room management
+- [x] Implement tool calling for biome control
+- [x] Transcript extraction and management
+- [x] Agent conversation state management
+- [x] Production-ready error handling and lifecycle management
+- [x] User context management with name/location tracking
+- [x] Introduction agent for user identification
+- [x] Main conversation agent with tool integration
+- [x] Vision frame integration for image analysis
+- [x] Metrics collection and usage tracking
+- [x] Transcript saving to files
+
+#### Pipecat Backend (`backend/pipecat_backend.py`)
+- [x] Implement Pipecat backend with support for both "ensemble" and "realtime" modes
+- [x] Add device selection by index and by name (partial match, e.g., "Yealink")
+- [x] Use modern VAD setup (SileroVADAnalyzer, no deprecated vad_enabled)
+- [x] Implement proper pipeline startup and shutdown (immediate, graceful, goodbye)
+- [x] Add robust error handling for device selection and pipeline startup
+- [x] Update config structure and config.toml for backend-specific and device options
+- [x] Add debug status reporting for backend and device info
+- [x] Provide audio device lister utility script
+- [x] Suppress shutdown errors when pipeline hasn't started
+- [ ] Integrate pipecat flows: 
+  - https://docs.pipecat.ai/guides/features/pipecat-flows
+  - https://github.com/pipecat-ai/pipecat-flows
+- [ ] Function calling: https://docs.pipecat.ai/guides/fundamentals/function-calling
+- [ ] Smart user muting: https://docs.pipecat.ai/guides/fundamentals/user-input-muting
+- [ ] Recording transcripts: https://docs.pipecat.ai/guides/fundamentals/recording-transcripts
 
 #### Future Backends
 - [ ] Hume.ai backend (`backends/hume_backend.py`)
@@ -104,25 +128,25 @@ Create a modular agent service that handles speech-to-speech conversation with t
 - [x] Set up ZMQ pub/sub on correct ports
 - [x] Create modular backend interface
 
-### Phase 2: LiveKit Integration 🔄
-- [ ] Migrate livekit_prototype.py to backends/livekit_backend.py
-- [ ] Implement AgentBackend interface for LiveKit
-- [ ] Add tool calling for biome control
-- [ ] Integrate transcript handling
+### Phase 2: LiveKit Integration ✅ COMPLETE
+- [x] Migrate livekit_prototype.py to backends/livekit_backend.py
+- [x] Implement AgentBackend interface for LiveKit
+- [x] Add tool calling for biome control
+- [x] Integrate transcript handling
 
-### Phase 3: Vision Integration 🔄
+### Phase 3: Vision Integration (NEXT)
 - [ ] Implement webcam capture and processing
 - [ ] Add audience detection capabilities
 - [ ] Integrate local vision language model
 - [ ] Connect vision insights to agent conversations
 
-### Phase 4: Transcript Display 🔄
+### Phase 4: Transcript Display (FUTURE)
 - [ ] Real-time transcript processing
 - [ ] DisplayText message generation
 - [ ] Text styling and timing management
 - [ ] Speaker attribution
 
-### Phase 5: Tool Integration 🔄
+### Phase 5: Tool Integration (FUTURE)
 - [ ] Biome suggestion tool implementation
 - [ ] Audience detection event publishing
 - [ ] Speech state tracking and publishing
