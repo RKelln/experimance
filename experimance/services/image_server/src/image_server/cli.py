@@ -24,6 +24,8 @@ from typing import Dict, Any, Optional, List
 from experimance_common.schemas import MessageType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.schemas import Era, Biome
+from experimance_common.zmq.components import PushComponent, PullComponent
+from experimance_common.zmq.config import PushConfig, PullConfig
 
 # Configure logging
 logging.basicConfig(
@@ -38,7 +40,7 @@ logger = logging.getLogger("image_server_cli")
 
 # Define some sample prompts
 SAMPLE_PROMPTS = {
-    "default": "colorful satellite image in the style of experimance, (dense urban:1.2) dramatic landscape, buildings, farmland, (industrial:1.1), (rivers, lakes:1.1), busy highways, hills, vibrant hyper detailed photorealistic maximum detail, 32k, high resolution ultra HD",
+    "default": "top down satellite aerial photography, mountain, pre-industrial landscape, (wilderness), hills, valleys, highly detailed, Rocky Mountains",
     "forest_scene": "Dense forest with ancient trees, sunlight filtering through the canopy",
     "mountain_view": "Majestic snow-capped mountains with a crystal clear lake in the foreground",
     "desert_landscape": "Vast desert landscape with striking sand dunes and a small oasis",
@@ -67,202 +69,125 @@ def load_image_as_base64(image_path: Path) -> str:
         return ""
 
 
+
 class ImageServerClient:
-    """Client for interacting with the Image Server Service."""
-    
+    """Client for interacting with the Image Server Service using Push/Pull."""
+
     def __init__(
         self,
-        events_pub_address: str,
-        images_sub_address: str,
+        push_address: str,
+        pull_address: str,
         timeout: int = 300,
         debug: bool = False
     ):
-        """Initialize the Image Server Client.
-        
-        Args:
-            events_pub_address: ZMQ address for publishing events
-            images_sub_address: ZMQ address for subscribing to images
-            timeout: Timeout in seconds for waiting for responses
-            debug: Enable debug logging
-        """
-        self.events_pub_address = events_pub_address
-        self.images_sub_address = images_sub_address
+        self.push_address = push_address
+        self.pull_address = pull_address
         self.timeout = timeout
-        self.publisher = None
-        self.subscriber = None
-        
-        # Set debug logging if requested
-        if debug:
-            logging.getLogger().setLevel(logging.DEBUG)
-            logging.getLogger("image_server_cli").setLevel(logging.DEBUG)
-        
+        self.debug = debug
+        self.push_component: Optional[PushComponent] = None
+        self.pull_component: Optional[PullComponent] = None
+        self._response_queue: asyncio.Queue = asyncio.Queue()
+
     async def start(self):
-        """Start the ZMQ connections."""
-        # Create publisher for sending RenderRequest messages
-        self.publisher = ZmqPublisher(self.events_pub_address, MessageType.RENDER_REQUEST)
-        
-        # Create subscriber for receiving ImageReady messages
-        # Subscribe to an empty string to receive all messages
-        self.subscriber = ZmqSubscriber(
-            self.images_sub_address, 
-            [MessageType.IMAGE_READY] # An empty string means subscribe to all topics
-        )
-        
-        logger.info(f"Connected to events channel: {self.events_pub_address}")
-        logger.info(f"Listening for images on: {self.images_sub_address}")
-        
-        # Add a small delay to ensure connections are established
-        # This helps with the ZMQ slow joiner syndrome
-        logger.info("Waiting for ZMQ connections to establish...")
+        """Start the Push/Pull components for ZMQ communication."""
+        # Extract port from address string (format: tcp://host:port)
+        def extract_port(addr: str) -> int:
+            try:
+                return int(addr.split(":")[-1])
+            except Exception:
+                raise ValueError(f"Could not extract port from address: {addr}")
+
+        push_port = extract_port(self.push_address)
+        pull_port = extract_port(self.pull_address)
+        push_config = PushConfig(address=self.push_address.rsplit(":", 1)[0], port=push_port)
+        pull_config = PullConfig(address=self.pull_address.rsplit(":", 1)[0], port=pull_port)
+        self.push_component = PushComponent(push_config)
+        self.pull_component = PullComponent(pull_config)
+        self.pull_component.set_work_handler(self._on_image_ready)
+        await self.push_component.start()
+        await self.pull_component.start()
+        logger.info(f"Connected to image_server push address: {self.push_address}")
+        logger.info(f"Listening for image ready on: {self.pull_address}")
         await asyncio.sleep(1.0)
-        
+
     async def stop(self):
-        """Stop ZMQ connections and clean up resources."""
-        if self.publisher:
-            self.publisher.close()
-        if self.subscriber:
-            self.subscriber.close()
+        if self.push_component:
+            await self.push_component.stop()
+        if self.pull_component:
+            await self.pull_component.stop()
         logger.info("Client stopped")
-    
+
     async def send_render_request(
         self,
         prompt: str,
-        # era: str,
-        # biome: str,
         depth_map_path: Optional[Path] = None
     ) -> str:
-        """Send a RenderRequest message to the Image Server Service.
-        
-        Args:
-            prompt: Text prompt for image generation
-            era: Era context for the image
-            biome: Biome context for the image
-            depth_map_path: Path to optional depth map image file
-            
-        Returns:
-            The request ID for tracking the request
-        """
-        # Generate a unique request ID
         request_id = str(uuid.uuid4())
-        
-        # Create the message
         message = {
             "type": MessageType.RENDER_REQUEST,
             "request_id": request_id,
-            # "era": era,
-            # "biome": biome,
             "prompt": prompt
         }
-        
-        # Add depth map if provided
         if depth_map_path and depth_map_path.exists():
             logger.info(f"Including depth map from {depth_map_path}")
             message["depth_map_png"] = load_image_as_base64(depth_map_path)
-        
-        # Log the full message for debugging
         logger.debug(f"Sending message: {json.dumps(message)[:200]}...")
-        
-        # Send the message
-        assert self.publisher is not None, "Publisher not initialized"
-        success = await self.publisher.publish_async(message)
-        
-        if success:
-            logger.info(f"Sent RenderRequest with ID: {request_id}")
-        else:
-            logger.error("Failed to send RenderRequest")
-        
+        assert self.push_component is not None, "PushComponent not initialized"
+        await self.push_component.push(message)
+        logger.info(f"Sent RenderRequest with ID: {request_id}")
         return request_id
-    
+
     async def wait_for_response(self, request_id: str) -> Dict[str, Any]:
-        """Wait for a response to a specific request.
-        
-        Args:
-            request_id: The request ID to wait for
-            
-        Returns:
-            The response message or None if timed out or error occurred
-        """
         start_time = time.time()
         logger.info(f"Waiting for response to request {request_id}, timeout in {self.timeout} seconds")
-        
         while time.time() - start_time < self.timeout:
             try:
-                # Try to receive a message with timeout
-                assert self.subscriber is not None, "Subscriber not initialized"    
-                topic, message = await self.subscriber.receive_async()
-                
-                if not message:
-                    logger.debug("Received empty message, continuing...")
-                    continue
-                
-                # Log all received messages for debugging
-                logger.info(f"Received message: {json.dumps(message, indent=2)[:200]}...")
-                
-                # Check if this is our response - noting that the request_id might be missing in some messages
-                if message.get("type") == MessageType.IMAGE_READY:
-                    if message.get("request_id") == request_id:
-                        logger.info(f"Received ImageReady for request {request_id}")
-                        return message
-                    else:
-                        logger.info(f"Received ImageReady for a different request: {message.get('request_id')}")
-                
-                # Check for error messages related to our request
-                if message.get("type") == MessageType.ALERT:
-                    if message.get("request_id") == request_id:
-                        logger.error(f"Received error for request {request_id}: {message.get('message')}")
-                        return message
-                    else:
-                        logger.info(f"Received Alert for a different request: {message.get('request_id')}")
-                
-                # For any other message type
-                logger.info(f"Received message of type: {message.get('type')}")
-                
-            except Exception as e:
-                logger.error(f"Error receiving message: {e}")
-                if "timed out" in str(e).lower():
-                    logger.info("Still waiting for response... (timeout on receive is normal)")
-                
-            # Brief pause to avoid tight polling
-            await asyncio.sleep(0.1)
-        
+                message = await asyncio.wait_for(self._response_queue.get(), timeout=1.0)
+                if message.get("request_id") == request_id:
+                    logger.info(f"Received response for request {request_id}")
+                    return message
+            except asyncio.TimeoutError:
+                continue
         logger.error(f"Timed out waiting for response to request {request_id}")
         return {}
+
+    async def _on_image_ready(self, message):
+        logger.info(f"Received IMAGE_READY: {json.dumps(message)[:200]}...")
+        await self._response_queue.put(message)
 
 
 async def interactive_mode(debug: bool = False):
     """Run the client in interactive mode with a menu-based interface."""
-    # Default settings - connecting to server's binding addresses
-    # For events, we connect to the unified events channel
-    events_pub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
-    # For images, we connect to the unified events channel
-    images_sub_address = f"tcp://localhost:{DEFAULT_PORTS['events']}"
-    
+    # Default settings - use DEFAULT_PORTS for unified events channel
+    push_address = f"tcp://localhost:{DEFAULT_PORTS['image_requests']}"
+    pull_address = f"tcp://*:{DEFAULT_PORTS['image_results']}"
+
     print("\n=== Image Server Test Client ===\n")
     print("ZMQ Configuration:")
-    print(f"  Events publish address: {events_pub_address}")
-    print(f"  Images subscribe address: {images_sub_address}")
-    
+    print(f"  Push address (to send requests): {push_address}")
+    print(f"  Pull address (to receive images): {pull_address}")
+
     # Allow custom ZMQ addresses
     custom_addresses = input("\nUse custom ZMQ addresses? (y/N): ").lower() == 'y'
     if custom_addresses:
-        events_pub_address = input(f"Events publish address [{events_pub_address}]: ") or events_pub_address
-        images_sub_address = input(f"Images subscribe address [{images_sub_address}]: ") or images_sub_address
-    
+        push_address = input(f"Push address [{push_address}]: ") or push_address
+        pull_address = input(f"Pull address [{pull_address}]: ") or pull_address
+
     # Create and start client
-    client = ImageServerClient(events_pub_address, images_sub_address)
+    client = ImageServerClient(push_address, pull_address)
     await client.start()
-    
+
     try:
         while True:
             print("\n=== Image Generation Menu ===")
-            
+
             # Prompt selection
             print("\nSelect a prompt:")
             print("  0. Enter custom prompt")
             prompt_options = list(SAMPLE_PROMPTS.keys())
             for i, name in enumerate(prompt_options):
                 print(f"  {i+1}. {name}: {SAMPLE_PROMPTS[name][:50]}...")
-            
+
             prompt_choice = int(input(f"Choose prompt (0-{len(prompt_options)}, default=0): ") or "0")
             if prompt_choice == 0:
                 selected_prompt = input("Enter your custom prompt: ")
@@ -271,47 +196,43 @@ async def interactive_mode(debug: bool = False):
                     selected_prompt = SAMPLE_PROMPTS[prompt_options[prompt_choice - 1]]
                 else:
                     selected_prompt = "A beautiful landscape"
-            
+
             # Depth map selection
             use_depth_map = input("\nUse a depth map? (y/N): ").lower() == 'y'
             depth_map_path = None
             if use_depth_map:
-                default_depth_map = "services/imagge_server/images/mocks/depth_map.png"
-                depth_map_path_str = input(f"Enter path to depth map PNG file: ({default_depth_map})")
+                default_depth_map = "services/image_server/images/mocks/depth_map.png"
+                depth_map_path_str = input(f"Enter path to depth map PNG file: ({default_depth_map})") or default_depth_map
                 depth_map_path = Path(depth_map_path_str).expanduser().absolute()
                 if not depth_map_path.exists() or not depth_map_path.is_file():
                     print(f"Warning: Depth map file not found at {depth_map_path}")
                     depth_map_path = None
-            
+
             # Show summary and confirm
             print("\n=== Request Summary ===")
-            # print(f"Era: {selected_era}")
-            # print(f"Biome: {selected_biome}")
             print(f"Prompt: {selected_prompt}")
             print(f"Depth Map: {'Yes - ' + str(depth_map_path) if depth_map_path else 'No'}")
-            
+
             confirm = input("\nSend this request? (Y/n): ").lower() != 'n'
             if not confirm:
                 print("Request canceled")
                 continue
-            
+
             # Send request and wait for response
             request_id = await client.send_render_request(
                 prompt=selected_prompt,
-                # era=selected_era,
-                # biome=selected_biome,
                 depth_map_path=depth_map_path
             )
-            
+
             print(f"\nRequest {request_id} sent. Waiting for response...")
             response = await client.wait_for_response(request_id)
-            
+
             if response:
                 if response.get("type") == MessageType.IMAGE_READY:
                     print("\n=== Image Ready ===")
                     print(f"Image ID: {response.get('image_id')}")
                     print(f"Image URI: {response.get('uri')}")
-                    
+
                     # If it's a file URI, check if the file exists
                     uri = response.get('uri', '')
                     if uri.startswith('file://'):
@@ -325,54 +246,51 @@ async def interactive_mode(debug: bool = False):
                     print(json.dumps(response, indent=2))
             else:
                 print("\nNo response received within the timeout period")
-            
+
             # Ask to continue
             if input("\nGenerate another image? (Y/n): ").lower() == 'n':
                 break
-    
+
     finally:
         await client.stop()
 
 
 async def command_line_mode(args):
-    """Run the client in command line mode with arguments.
-    
-    Args:
-        args: Command line arguments
-    """
+    """Run the client in command line mode with arguments using Push/Pull."""
+    # Use push/pull addresses for image server
+    push_address = args.events_address if hasattr(args, 'events_address') else f"tcp://localhost:{DEFAULT_PORTS['image_server_push']}"
+    pull_address = args.images_address if hasattr(args, 'images_address') else f"tcp://localhost:{DEFAULT_PORTS['image_server_pull']}"
     client = ImageServerClient(
-        args.events_address,
-        args.images_address,
+        push_address,
+        pull_address,
         timeout=args.timeout,
         debug=args.debug
     )
-    
+
     await client.start()
-    
+
     try:
         # Send the render request
         depth_map_path = Path(args.depth_map) if args.depth_map else None
-        
+
         request_id = await client.send_render_request(
             prompt=args.prompt,
-            # era=args.era,
-            # biome=args.biome,
             depth_map_path=depth_map_path
         )
-        
+
         if args.no_wait:
             print(f"Request {request_id} sent. Not waiting for response.")
             return
-        
+
         # Wait for the response
         print(f"Request {request_id} sent. Waiting for response...")
         response = await client.wait_for_response(request_id)
-        
+
         if response:
             # Pretty print the response
             print("\nResponse received:")
             print(json.dumps(response, indent=2))
-            
+
             # If it's an image response, show file info
             if response.get("type") == MessageType.IMAGE_READY:
                 uri = response.get('uri', '')
@@ -383,7 +301,7 @@ async def command_line_mode(args):
                         print(f"File size: {file_path.stat().st_size} bytes")
         else:
             print("No response received within the timeout period")
-    
+
     finally:
         await client.stop()
 
@@ -421,16 +339,16 @@ def main():
         help="Path to depth map PNG file"
     )
     parser.add_argument(
-        "--events-address", "--events_address",
+        "--request-address", "--requests_address",
         type=str,
-        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-        help=f"ZMQ address for publishing events (default: tcp://localhost:{DEFAULT_PORTS['events']})"
+        default=f"tcp://localhost:{DEFAULT_PORTS['image_requests']}",
+        help=f"ZMQ address for publishing events (default: tcp://localhost:{DEFAULT_PORTS['image_requests']})"
     )
     parser.add_argument(
-        "--images-address", "--images_address",
+        "--result-address", "--results_address",
         type=str,
-        default=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-        help=f"ZMQ address for subscribing to images (default: tcp://localhost:{DEFAULT_PORTS['events']})"
+        default=f"tcp://*:{DEFAULT_PORTS['image_results']}",
+        help=f"ZMQ address for subscribing to images (default: tcp://localhost:{DEFAULT_PORTS['image_results']})"
     )
     parser.add_argument(
         "--debug", "-D",
