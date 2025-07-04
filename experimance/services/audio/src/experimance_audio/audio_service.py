@@ -465,6 +465,8 @@ class AudioService(BaseService):
                 new_lines.append(f'~initMusicVolume = {self.config.audio.music_volume};\n')
             elif stripped.startswith('~initSfxVolume'):
                 new_lines.append(f'~initSfxVolume = {self.config.audio.sfx_volume};\n')
+            elif stripped.startswith('~musicFadeTime'):
+                new_lines.append(f'~musicFadeTime = {self.config.audio.music_fade_time};\n')
             else:
                 new_lines.append(line)
 
@@ -475,7 +477,7 @@ class AudioService(BaseService):
             f.writelines(new_lines)
         
         logger.debug(f"Modified SuperCollider script saved to: {temp_path}")
-        logger.debug(f"Set values:"
+        logger.info(f"Set values:"
                      f" device={self.config.supercollider.device}, "
                      f"output_channels={self.config.supercollider.output_channels}, "
                      f"input_channels={self.config.supercollider.input_channels}, "

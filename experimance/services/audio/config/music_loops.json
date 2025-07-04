@@ -7,42 +7,42 @@
         ],
         "pre_industrial": [
             {
-                "path": "music/pre_industrial.wav"
+                "path": "music/pre_industrial_m.wav"
             }
         ],
         "early_industrial": [
             {
-                "path": "music/early_industrial.wav"
+                "path": "music/early_industrial_m.wav"
             }
         ],
         "late_industrial": [
             {
-                "path": "music/late_industrial.wav"
+                "path": "music/late_industrial_m.wav"
             }
         ],
         "modern": [
             {
-                "path": "music/modern.wav"
+                "path": "music/modern_m.wav"
             }
         ],
         "current": [
             {
-                "path": "music/current.wav"
+                "path": "music/current_m.wav"
             }
         ],
         "future": [
             {
-                "path": "music/future.wav"
+                "path": "music/future_m.wav"
             }
         ],
         "dystopia": [
             {
-                "path": "music/dystopia.wav"
+                "path": "music/dystopia_m.wav"
             }
         ],
         "ruins": [
             {
-                "path": "music/ruins.wav"
+                "path": "music/ruins_m.wav"
             }
         ]
     }

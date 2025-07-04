@@ -119,6 +119,12 @@ class AudioConfig(BaseModel):
         description="Directory containing audio configuration JSON files"
     )
 
+    music_fade_time: float = Field(
+        default=10.0,
+        ge=0.0,
+        description="Default fade time for music transitions in seconds"
+    )
+
 class AudioServiceConfig(BaseServiceConfig):
     """Configuration for the Audio Service."""
     

@@ -32,7 +32,7 @@ class AudioCli(cmd.Cmd):
     prompt = "audio> "
     
     def __init__(self, osc_host: str = "localhost", 
-                 osc_port: int = DEFAULT_PORTS['audio_osc_recv_port'], 
+                 osc_port: int = DEFAULT_PORTS['audio_osc_send_port'], 
                  config_dir: Optional[str] = None, 
                  sc_script_path: Optional[str] = None, 
                  sclang_path: str = "sclang"):
@@ -244,8 +244,7 @@ class AudioCli(cmd.Cmd):
         """
         args = arg.split()
         if len(args) != 2:
-            print("Error: Please provide both volume type and level")
-            print("Usage: volume <type> <level>")
+            self.help_volume()
             return
         
         volume_type, level_str = args
@@ -265,16 +264,16 @@ class AudioCli(cmd.Cmd):
         
         # Use the appropriate method based on volume type
         success = False
-        if volume_type == "master":
+        if volume_type == "master" or volume_type == "a" or volume_type == "all":
             success = self.osc.set_master_volume(level)
             self.master_volume = level  # Track the volume level
-        elif volume_type == "environment":
+        elif volume_type == "environment" or volume_type == "env" or volume_type == "e":
             success = self.osc.set_environment_volume(level)
             self.environment_volume = level  # Track the volume level
-        elif volume_type == "music":
+        elif volume_type == "music" or volume_type == "mus" or volume_type == "m":
             success = self.osc.set_music_volume(level)
             self.music_volume = level  # Track the volume level
-        elif volume_type == "sfx":
+        elif volume_type == "sfx" or volume_type == "s" or volume_type == "fx":
             success = self.osc.set_sfx_volume(level)
             self.sfx_volume = level  # Track the volume level
         
@@ -489,7 +488,7 @@ class AudioCli(cmd.Cmd):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Experimance Audio CLI")
     parser.add_argument("--osc-host", type=str, default="localhost", help="SuperCollider host address")
-    parser.add_argument("--osc-port", type=int, default=DEFAULT_PORTS['audio_osc_recv_port'], help="SuperCollider OSC port")
+    parser.add_argument("--osc-port", type=int, default=DEFAULT_PORTS['audio_osc_send_port'], help="SuperCollider OSC port")
     parser.add_argument("--config-dir", type=str, help="Directory containing audio configuration files")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--sc-script", type=str, help="Path to SuperCollider script to execute")
