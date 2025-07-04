@@ -13,8 +13,6 @@ import logging
 from pathlib import Path
 import random
 import time
-import traceback
-import sys
 import uuid
 from collections import deque
 from experimance_core.depth_processor import DepthProcessor
@@ -828,12 +826,12 @@ class ExperimanceCoreService(BaseService):
         """Extract tags from prompt by splitting on commas."""
         cleaned_tags = [tag.strip(" ():1234567890.") for tag in prompt.split(',') if tag.strip()]
         # convert tags to audio
-        audio_tags = []
+        audio_tags = set()
         for tag in cleaned_tags:
             audio_tag = SECTOR_SOUND_LOOKUP.get(tag.lower(), None)
             if audio_tag:
-                audio_tags.append(audio_tag)
-        return audio_tags
+                audio_tags.add(audio_tag)
+        return list(audio_tags)
 
     async def _publish_space_time_update_event(self):
         """Publish SPACE_TIME_UPDATE event with tags extracted from prompt."""
