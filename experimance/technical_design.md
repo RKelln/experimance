@@ -371,7 +371,7 @@ initial_state_path = "saved_data/default_state.json"  # Path to initial state JS
 
 ### 4.5 `agent`
 
-* Using LiveKit or pipecat libraries for voice-to-voice LLM interaction.
+* Using pipecat libraries for voice-to-voice LLM interaction.
   * RAG system for recalling details about how and why the work was made, artist's thoughts on AI, and LLMs own take on the piece (its thoughts of itself).
 * Welcomes user to the art and explains they can interact with sand or talk with the piece.
 * Uses tool use/function calling to send `AgentControlEvent` messages (e.g., `{ "event_type": "SuggestBiome", "payload": { "biome_suggestion": "desert" } }`) to `core` via the `agent` channel when the user indicates a location preference.

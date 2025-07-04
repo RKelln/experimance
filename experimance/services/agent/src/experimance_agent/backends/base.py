@@ -2,7 +2,7 @@
 Abstract base interface for agent backends.
 
 This module defines the standardized interface that all agent backends must implement,
-providing a consistent API for different conversation AI providers like LiveKit, Hume.ai, Ultravox, etc.
+providing a consistent API for different conversation AI providers like Pipecat, etc.
 """
 
 from abc import ABC, abstractmethod

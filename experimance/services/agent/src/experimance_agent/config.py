@@ -68,22 +68,6 @@ class PipecatBackendConfig(BaseModel):
         description="System prompt for the agent"
     )
 
-
-class LivekitBackendConfig(BaseModel):
-    """Configuration for the LiveKit backend."""
-    
-    # LiveKit connection settings
-    room_url: Optional[str] = Field(default=None, description="LiveKit room URL")
-    api_key: Optional[str] = Field(default=None, description="LiveKit API key")
-    api_secret: Optional[str] = Field(default=None, description="LiveKit API secret")
-    
-    # Agent settings
-    agent_name: str = Field(default="Experimance Agent", description="Agent display name")
-    
-    # Voice settings
-    voice_id: str = Field(default="alloy", description="Voice ID to use for TTS")
-
-
 class BackendConfig(BaseModel):
     """Container for all backend configurations."""
     
@@ -95,11 +79,6 @@ class BackendConfig(BaseModel):
     pipecat: PipecatBackendConfig = Field(
         default_factory=PipecatBackendConfig,
         description="Pipecat backend configuration"
-    )
-    
-    livekit: LivekitBackendConfig = Field(
-        default_factory=LivekitBackendConfig,
-        description="LiveKit backend configuration"
     )
 
 
@@ -151,7 +130,7 @@ class AgentServiceConfig(BaseServiceConfig):
     service_name: str = Field(default="agent", description="Name of this agent service instance")
     
     # Agent backend selection
-    agent_backend: str = Field(default="pipecat", description="Agent backend to use (livekit, hume, ultravox, pipecat)")
+    agent_backend: str = Field(default="pipecat", description="Agent backend to use (pipecat only currently supported)")
     
     # Backend-specific configuration
     backend_config: BackendConfig = Field(

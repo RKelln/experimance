@@ -15,7 +15,7 @@ Create a modular agent service that handles speech-to-speech conversation with t
 
 ### 2. Configuration (`config.py`)
 - [x] Extend BaseServiceConfig
-- [x] Agent backend selection (livekit, hume, ultravox)
+- [x] Agent backend selection (pipecat)
 - [x] Webcam configuration
 - [x] Vision model configuration
 - [x] ZMQ pub/sub configuration
@@ -30,21 +30,6 @@ Create a modular agent service that handles speech-to-speech conversation with t
 - [x] Tool calling interface
 - [x] Transcript access interface
 - [x] Event callbacks for agent actions
-
-#### LiveKit Backend (`backends/livekit_backend.py`)
-- [x] Implement AgentBackend interface
-- [x] Integrate existing livekit_prototype.py code (production-ready version)
-- [x] Handle LiveKit room management
-- [x] Implement tool calling for biome control
-- [x] Transcript extraction and management
-- [x] Agent conversation state management
-- [x] Production-ready error handling and lifecycle management
-- [x] User context management with name/location tracking
-- [x] Introduction agent for user identification
-- [x] Main conversation agent with tool integration
-- [x] Vision frame integration for image analysis
-- [x] Metrics collection and usage tracking
-- [x] Transcript saving to files
 
 #### Pipecat Backend (`backend/pipecat_backend.py`)
 - [x] Implement Pipecat backend with support for both "ensemble" and "realtime" modes
@@ -128,11 +113,11 @@ Create a modular agent service that handles speech-to-speech conversation with t
 - [x] Set up ZMQ pub/sub on correct ports
 - [x] Create modular backend interface
 
-### Phase 2: LiveKit Integration ✅ COMPLETE
-- [x] Migrate livekit_prototype.py to backends/livekit_backend.py
-- [x] Implement AgentBackend interface for LiveKit
-- [x] Add tool calling for biome control
-- [x] Integrate transcript handling
+### Phase 2: Pipecat Integration 
+- [x] Implement pipecat backend
+- [x] Implement AgentBackend interface for Pipecat
+- [ ] Add tool calling for biome control
+- [ ] Integrate transcript handling
 
 ### Phase 3: Vision Integration (NEXT)
 - [ ] Implement webcam capture and processing
@@ -198,7 +183,7 @@ services/agent/src/experimance_agent/
 ├── backends/
 │   ├── __init__.py
 │   ├── base.py                 # Abstract backend interface
-│   └── livekit_backend.py      # LiveKit implementation
+│   └── pipecat_backend.py      # Pipecat implementation
 ├── vision/
 │   ├── __init__.py
 │   ├── webcam.py              # Camera capture and processing

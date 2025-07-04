@@ -32,7 +32,7 @@ class AgentService(BaseService):
     Main agent service that orchestrates conversation AI, vision processing, and tool integration.
     
     This service acts as a coordinator between various components:
-    - Agent backends (LiveKit, Hume.ai, Ultravox, etc.)
+    - Agent backends (Pipecat, etc.)
     - Vision processing (webcam, audience detection, VLM)
     - Transcript management and display
     - Tool calling for system control
@@ -134,16 +134,7 @@ class AgentService(BaseService):
         backend_name = self.config.agent_backend.lower()
         
         try:
-            if backend_name == "livekit":
-                from .backends.livekit_backend import LiveKitBackend
-                self.current_backend = LiveKitBackend(self.config)
-            elif backend_name == "hume":
-                # TODO: Implement Hume.ai backend
-                raise NotImplementedError("Hume.ai backend not yet implemented")
-            elif backend_name == "ultravox":
-                # TODO: Implement Ultravox backend
-                raise NotImplementedError("Ultravox backend not yet implemented")
-            elif backend_name == "pipecat":
+            if backend_name == "pipecat":
                 from .backends.pipecat_backend import PipecatBackend
                 self.current_backend = PipecatBackend(self.config)
             else:

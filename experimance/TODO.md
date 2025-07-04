@@ -46,7 +46,7 @@
 ### Voice Agent
 
 - [] convert prototype to production code
-- [] research mem0 memory integration: https://docs.mem0.ai/integrations/livekit
+- [] research mem0 memory integration
 
 
 
