@@ -249,10 +249,6 @@ class AudioCli(cmd.Cmd):
         
         volume_type, level_str = args
         
-        if volume_type not in ["master", "environment", "music", "sfx"]:
-            print("Error: Volume type must be one of: master, environment, music, sfx")
-            return
-        
         try:
             level = float(level_str)
             if not (0.0 <= level <= 1.0):
@@ -276,6 +272,9 @@ class AudioCli(cmd.Cmd):
         elif volume_type == "sfx" or volume_type == "s" or volume_type == "fx":
             success = self.osc.set_sfx_volume(level)
             self.sfx_volume = level  # Track the volume level
+        else:
+            print(f"Error: Unknown volume type '{volume_type}'. Valid types are: master, environment, music, sfx")
+            return
         
         print(f"Set {volume_type} volume to {level}" + (" (success)" if success else " (failed)"))
     

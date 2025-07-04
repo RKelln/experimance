@@ -19,8 +19,8 @@ device="plughw:1,0"          # USB audio interface
 
 # Audio playback settings
 [audio]
-master_volume = 1.0          # Master volume level (0.0 to 1.0)
+master_volume = 0.5          # Master volume level (0.0 to 1.0)
 environment_volume = 1.0     # Environment sounds volume level
-music_volume = 0.2           # Music loops volume level
+music_volume = 0.5           # Music loops volume level
 sfx_volume = 1.0             # Sound effects volume level
 config_dir = "services/audio/config"  # Directory containing JSON audio configs
