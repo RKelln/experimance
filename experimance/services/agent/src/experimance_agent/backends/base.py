@@ -15,6 +15,7 @@ import asyncio
 import logging
 
 from experimance_agent.config import AgentServiceConfig
+from experimance_common.constants import AGENT_SERVICE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +391,16 @@ class AgentBackend(ABC):
 
 def load_prompt(prompt_path: str | Path) -> str:
     """Load prompt instructions from prompt text file."""
+    if isinstance(prompt_path, str):
+        # if it doesn't end in an extension its probably just a string prompt
+        if not any(prompt_path.endswith(ext) for ext in [".txt", ".md", ".json"]):
+            return prompt_path
+
+    prompt_path = Path(prompt_path)
+    if not prompt_path.exists():
+        # try in the prompt directory
+        prompt_path = AGENT_SERVICE_DIR / "prompts" / prompt_path
+
     try:
         with open(str(prompt_path), "r") as f:
             return f.read()

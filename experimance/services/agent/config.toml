@@ -13,6 +13,7 @@ speech_detection_enabled = true
 
 [backend_config.pipecat]
 # Pipecat-specific configuration
+system_prompt = "prompt.md"
 
 # Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
 mode = "realtime"  # Change to "realtime" to use OpenAI Realtime Beta
