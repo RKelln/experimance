@@ -8,8 +8,28 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+class StringComparableEnum(str, Enum):
+    """Base class for string comparable enums.
+    
+    This allows for direct comparison with strings and provides a consistent
+    string representation.
+    """
+    
+    def __str__(self) -> str:
+        """Return the string representation of the enum value."""
+        return self.value
+    
+    def __eq__(self, other: Any) -> bool:
+        """Allow comparison with string values."""
+        if isinstance(other, str):
+            return self.value == other
+        return super().__eq__(other)
+    
+    def __hash__(self) -> int:
+        """Allow StringComparableEnum to be used as a dictionary key."""
+        return hash(self.value)
 
-class Era(str, Enum):
+class Era(StringComparableEnum):
     """Era definitions for the Experimance installation.
     
     These values must match the 'eras' array in data/experimance_config.json
@@ -25,7 +45,7 @@ class Era(str, Enum):
     RUINS = "ruins"
 
 
-class Biome(str, Enum):
+class Biome(StringComparableEnum):
     """Biome definitions for the Experimance installation.
     
     These values must match the 'biomes' array in data/experimance_config.json
@@ -47,7 +67,7 @@ class Biome(str, Enum):
     JUNGLE = "jungle"
 
 
-class TransitionStyle(str, Enum):
+class TransitionStyle(StringComparableEnum):
     """Transition style definitions."""
     DISSOLVE = "dissolve"
     MORPH = "morph"
@@ -55,14 +75,14 @@ class TransitionStyle(str, Enum):
     SIMPLE = "simple"
 
 
-class DisplayContentType(str, Enum):
+class DisplayContentType(StringComparableEnum):
     """Content types for display media."""
     IMAGE = "image"
     IMAGE_SEQUENCE = "image_sequence"
     VIDEO = "video"
 
 
-class DisplayTransitionType(str, Enum):
+class DisplayTransitionType(StringComparableEnum):
     """Transition types for display media."""
     NONE = "none"                    # No transition, direct display
     FADE = "fade"                    # Simple fade transition
@@ -225,7 +245,7 @@ class MessageBase(MessageSchema):
             subclasses.update(subclass._get_all_subclasses())
         return subclasses
 
-class MessageType(str, Enum):
+class MessageType(StringComparableEnum):
     """Message types used in the Experimance system."""
     SPACE_TIME_UPDATE = "SpaceTimeUpdate"
     RENDER_REQUEST = "RenderRequest"
@@ -245,20 +265,6 @@ class MessageType(str, Enum):
     CHANGE_MAP = "ChangeMap"
     # Add more message types as needed
 
-    def __str__(self) -> str:
-        """Return the string representation of the message type."""
-        return self.value
-    
-    # allow for comparison with strings
-    def __eq__(self, other: Any) -> bool:
-        """Allow comparison with string values."""
-        if isinstance(other, str):
-            return self.value == other
-        return super().__eq__(other)
-    
-    def __hash__(self) -> int:
-        """Allow MessageType to be used as a dictionary key."""
-        return hash(self.value)
 
 class SpaceTimeUpdate(MessageBase):
     """Event published when the space-time context changes.

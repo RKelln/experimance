@@ -1,6 +1,6 @@
 {
     "base_prompt": {
-        "prompt": "colorful satellite image in the style of experimance",
+        "prompt": "colorful satellite image",
         "style": "rivers, water, hills, valleys, vibrant hyper detailed photorealistic maximum detail",
         "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens, vein, tentacle"
     },
@@ -24,17 +24,17 @@
             "negative": "(paved), pavement, modern vehicles"
         },
         "modern": {
-            "prompt": "1970s suburban development",
+            "prompt": "1970s suburban development in the style of experimance",
             "style": "busy roads and highways, superhighways, in the style of (Burtynsky) and (Richter), (colorful), chaotic, traffic, parking lots",
             "negative": ""
         },
         "current": {
-            "prompt": "dense urban metropolis, 2020s",
+            "prompt": "dense urban metropolis, 2020s, in the style of experimance",
             "style": "busy roads and highways, in the style of (Burtynsky:1.1) and (Richter:1.1), vibrant (colorful), entangled, chaotic, dense, crowded, traffic, parking lots",
             "negative": ""
         },
         "future": {
-            "prompt": "future solarpunk urban landscape, eco-friendly, sustainable architecture, high density city",
+            "prompt": "future solarpunk urban landscape in the style of experimance, eco-friendly, sustainable architecture, high density city",
             "style": "in the style of (Burtynsky) and (Richter), vibrant (colorful), solar, green roofs, gardens",
             "negative": "pollution, smog, traffic"
         },

@@ -183,6 +183,16 @@ class CameraConfig(BaseModel):
         default=False,
         description="Flip depth map vertically for camera/projector alignment"
     )
+
+    circular_crop: bool = Field(
+        default=False,
+        description="Apply circular crop to depth map"
+    )
+
+    blur_depth: bool = Field(
+        default=False,
+        description="Apply Gaussian blur to depth map to reduce noise"
+    )
     
     # Mask stability parameters
     mask_stability_frames: int = Field(

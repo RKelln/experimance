@@ -221,7 +221,8 @@ class DepthProcessor:
         frame = DepthFrame(
             depth_image=cropped_image,
             color_image=color_image,
-            hand_detected=hand_detected,
+            # if the mask isn't locked yet then we send hand detected to prevent use
+            hand_detected=hand_detected or not self.mask_locked,
             change_score=change_score,
             frame_number=self.frame_number,
             timestamp=time.time()

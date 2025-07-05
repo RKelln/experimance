@@ -339,26 +339,23 @@ class ExperimanceCoreService(BaseService):
                 self.change_score_queue.clear()
                 logger.debug("Cleared change score queue due to hand state change")
             
-            # Always update the previous frame for interaction scoring
-            if depth_image is not None:
-                if self.config.camera.flip_horizontal:
-                    depth_image = cv2.flip(depth_image, 1)  # Horizontal flip
-                
-                if self.config.camera.flip_vertical:
-                    depth_image = cv2.flip(depth_image, 0)  # Vertical flip
-
-                self.previous_depth_image = depth_image.copy()
-                if self.last_significant_depth_map is None:
-                    # first depth map recieved use it
-                    self.last_significant_depth_map = depth_image.copy()
-            
             # Early exit if hands are detected - we don't process frames with hands
             if hand_detected:
                 #logger.debug("Skipping frame processing - hands detected")
                 # Still show visualization even when hands detected
-                self._visualize_depth_processing(depth_frame, 0.0)
+                if self.config.visualize:
+                    self._visualize_depth_processing(depth_frame, 0.0)
                 return
             
+            # Always update the previous frame for interaction scoring
+            if depth_image is not None:
+                self.previous_depth_image = depth_image.copy()
+                if self.last_significant_depth_map is None:
+                    # first depth map recieved use it
+                    self.last_significant_depth_map = depth_image.copy()
+                    # use for first generation
+                    await self._publish_render_request()
+
             # Initialize change score for this frame
             raw_change_score = 0.0
             
@@ -496,9 +493,11 @@ class ExperimanceCoreService(BaseService):
     async def _publish_change_map(self, change_map: np.ndarray, change_score: float):
         """Publish change map to display service."""
         try:
+            processed_change_map = self._process_image(change_map)
+
             # Use the new enum-based image utilities
             message = prepare_image_message(
-                image_data=change_map,
+                image_data=processed_change_map,
                 target_address=f"tcp://localhost:{DEFAULT_PORTS['events']}",
                 transport_mode=IMAGE_TRANSPORT_MODES["FILE_URI"],
                 type=MessageType.CHANGE_MAP.value,
@@ -1137,11 +1136,15 @@ class ExperimanceCoreService(BaseService):
                 )
                 return
             
-            # Prepare the depth map image data for transport
+            # process the depth map
+            # apply circular cropping and blur if configured
             image_source = None
             if self.last_significant_depth_map is not None:
+                processed_depth_map = self._process_image(self.last_significant_depth_map.copy())
+
+                # Prepare the depth map image data for transport
                 image_source = prepare_image_source(
-                    image_data=self.last_significant_depth_map,
+                    image_data=processed_depth_map,
                     transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
                     request_id=request_id,
                 )
@@ -1177,6 +1180,27 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error sending render request {request.request_id}: {e}")
     
+    def _process_image(self, image: np.ndarray, flip=True, crop=True, blur=True) -> np.ndarray:
+        """Process the image for display, applying any necessary transformations."""
+        if flip and self.config.camera.flip_horizontal:
+            image = cv2.flip(image, 1)  # Horizontal flip
+        
+        if flip and self.config.camera.flip_vertical:
+            image = cv2.flip(image, 0)  # Vertical flip
+
+        if crop and self.config.camera.circular_crop:
+            h, w = image.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.circle(mask, (w // 2, h // 2), min(h, w) // 2, (255,), -1)  # Create circular mask
+            image = cv2.bitwise_and(image, image, mask=mask)
+
+        if blur and self.config.camera.blur_depth:
+            # Apply Gaussian blur to reduce noise
+            image = cv2.GaussianBlur(image, (5, 5), 0)
+        
+        return image
+
+
     def _should_send_render_request(self) -> bool:
         """Check if we should send a render request based on throttling."""
         current_time = time.time()
@@ -1328,12 +1352,12 @@ class ExperimanceCoreService(BaseService):
                             break
                         
                         if depth_frame is not None:
-                            # start_time = time.perf_counter()
+                            start_time = time.perf_counter()
                             await self._process_depth_frame(depth_frame)
-                            # end_time = time.perf_counter()
-                            # duration_ms = (end_time - start_time) * 1000
-                            # if self.config.camera.verbose_performance:
-                            #     logger.info(f"Processed depth frame in {duration_ms:.1f} ms")
+                            end_time = time.perf_counter()
+                            duration_ms = (end_time - start_time) * 1000
+                            if self.config.camera.verbose_performance:
+                                logger.info(f"Processed depth frame in {duration_ms:.1f} ms")
                             
                             # Display frame in visualizer if debug mode is enabled
                             if self._depth_visualizer is not None:

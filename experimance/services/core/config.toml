@@ -27,6 +27,12 @@ align_frames = true         # use color frames to help align the depth frames
 colorizer_scheme = 2        # white to black
 #json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config
 
+# Depth map settings
+flip_horizontal = true
+flip_vertical = true
+circular_crop = true
+blur_depth = true
+
 # Processing parameters
 output_resolution = [1024, 1024]     # processed output size (width, height)
 change_threshold = 10                # threshold for depth differences per pixel
@@ -99,10 +105,6 @@ hole_filling_mode = 1               # hole filling mode (0=disabled, 1=fill_from
 # Threshold filter settings
 threshold_filter_min = 0.15         # minimum distance in meters
 threshold_filter_max = 4.0          # maximum distance in meters
-
-# Depth map settings
-flip_horizontal = true
-flip_vertical = true
 
 [audio]
 tag_config_path = "config/audio_tags.json"  # path to audio tag configuration
