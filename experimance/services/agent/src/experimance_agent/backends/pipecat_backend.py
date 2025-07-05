@@ -51,7 +51,10 @@ from .base import (
 )
 
 from experimance_common.audio_utils import resolve_audio_device_index
-from openai.types.chat import ChatCompletionMessageParam  # Add this import
+from openai.types.chat import ChatCompletionMessageParam
+
+# Import flow management
+from experimance_agent.flows import create_flow_manager, BaseFlowManager
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +176,17 @@ class PipecatBackend(AgentBackend):
         # User context
         self.user_context = UserContext()
 
+        # Flow management
+        self.flow_manager: Optional[BaseFlowManager] = None
+        self.current_persona: str = self.pipecat_config.initial_persona
+
         # Audio device indices
         self.input_device_index: Optional[int] = None
         self.output_device_index: Optional[int] = None
+
+        # Persona and state management
+        self.current_persona: str = "default"
+        self._available_tools: Dict[str, Any] = {}  # Registered tools for the agent
         
     async def start(self) -> None:
         """Start the Pipecat backend and initialize the pipeline."""
@@ -225,6 +236,13 @@ class PipecatBackend(AgentBackend):
             self.pipeline_task = PipelineTask(self.pipeline)
             self.runner = PipelineRunner()
             
+            # Initialize flow manager after pipeline task is created
+            if self.pipecat_config.use_flows:
+                logger.info(f"Flows are enabled! Initializing flow manager post-pipeline...")
+                await self._initialize_flow_manager_post_pipeline()
+            else:
+                logger.info("Flows are disabled - using standard pipeline")
+
             self.is_active = True
             logger.info(f"Pipecat backend started successfully in {self.pipecat_config.mode} mode")
             
@@ -260,17 +278,38 @@ class PipecatBackend(AgentBackend):
         self.llm_context = OpenAILLMContext()
         context_aggregator = realtime_service.create_context_aggregator(self.llm_context)
 
+        # Prepare flow integration (actual initialization happens post-pipeline)
+        # With our custom adapter system, any flow manager can work with OpenAI Realtime Beta
+        if self.pipecat_config.use_flows:
+            if self.pipecat_config.mode == "realtime":
+                logger.info(f"🎭 Using {self.pipecat_config.flow_type} flow manager with OpenAI Realtime Beta - initial persona: {self.pipecat_config.initial_persona}")
+                # The custom adapter will handle OpenAI Realtime Beta compatibility automatically
+                llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(realtime_service, context_aggregator)
+                
+                # If flow manager was created successfully, use flow pipeline
+                if self.flow_manager and self.flow_manager.flow_manager:
+                    logger.info("Using flow manager in realtime pipeline with custom adapter")
+                    llm_service = self.flow_manager.flow_manager
+                else:
+                    logger.info("Flow manager not available, using standard realtime service")
+                    llm_service = realtime_service
+            else:
+                llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(realtime_service, context_aggregator)
+        else:
+            llm_service = realtime_service
+            pipeline_context_aggregator = context_aggregator
+
         # Build simplified pipeline for realtime mode
         self.pipeline = Pipeline([
-            self.transport.input(),      # Audio input (microphone)
-            context_aggregator.user(),   # Add user message to context
-            realtime_service,            # OpenAI Realtime Beta (STT + LLM + TTS in one)
-            transcript.user(),           # Placed after the LLM, as LLM pushes TranscriptionFrames downstream
-            event_processor,             # Capture events
-            tool_processor,              # Handle tool calls (if supported)
-            self.transport.output(),     # Audio output (speakers)
-            transcript.assistant(),      # After the transcript output, to time with the audio output
-            context_aggregator.assistant()  # Add assistant response to context
+            self.transport.input(),                    # Audio input (microphone)
+            pipeline_context_aggregator.user(),       # Add user message to context
+            llm_service,                              # OpenAI Realtime Beta or Flow Manager
+            transcript.user(),                        # Placed after the LLM, as LLM pushes TranscriptionFrames downstream
+            event_processor,                          # Capture events
+            tool_processor,                           # Handle tool calls (if supported)
+            self.transport.output(),                  # Audio output (speakers)
+            transcript.assistant(),                   # After the transcript output, to time with the audio output
+            pipeline_context_aggregator.assistant()  # Add assistant response to context
         ])
 
         @transcript.event_handler("on_transcript_update")
@@ -306,6 +345,9 @@ class PipecatBackend(AgentBackend):
         )
         context_aggregator = llm.create_context_aggregator(self.llm_context)
         
+        # Prepare flow integration (actual initialization happens post-pipeline)
+        llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(llm, context_aggregator)
+        
         # Create TTS service  
         tts = ElevenLabsTTSService(
             api_key=os.getenv("ELEVENLABS_API_KEY", "failed to load"),
@@ -317,16 +359,16 @@ class PipecatBackend(AgentBackend):
         
         # Build full ensemble pipeline
         self.pipeline = Pipeline([
-            self.transport.input(),       # Audio input (microphone)
-            stt,                         # Speech-to-text
-            context_aggregator.user(),   # Add user message to context
-            llm,                         # Language model
-            tool_processor,              # Handle tool calls
-            sentence_aggregator,         # Aggregate into sentences
-            event_processor,             # Capture events
-            tts,                         # Text-to-speech
-            self.transport.output(),     # Audio output (speakers)
-            context_aggregator.assistant(), # Add assistant response to context
+            self.transport.input(),                           # Audio input (microphone)
+            stt,                                             # Speech-to-text
+            pipeline_context_aggregator.user(),             # Add user message to context
+            llm_service,                                     # Language model or Flow Manager
+            tool_processor,                                  # Handle tool calls
+            sentence_aggregator,                             # Aggregate into sentences
+            event_processor,                                 # Capture events
+            tts,                                             # Text-to-speech
+            self.transport.output(),                         # Audio output (speakers)
+            pipeline_context_aggregator.assistant(),        # Add assistant response to context
         ])
     
     async def stop(self) -> None:
@@ -362,6 +404,7 @@ class PipecatBackend(AgentBackend):
         self.pipeline_task = None
         self.runner = None
         self.llm_context = None
+        self.flow_manager = None
         self._pipeline_running = False
         
         logger.info("Pipecat backend stopped")
@@ -455,7 +498,10 @@ class PipecatBackend(AgentBackend):
                 # Start pipeline as background task
                 async def run_pipeline():
                     try:
-                        await self.runner.run(self.pipeline_task) # type: ignore
+                        # Type assertion since we already checked these are not None
+                        assert self.runner is not None
+                        assert self.pipeline_task is not None
+                        await self.runner.run(self.pipeline_task)
                     except Exception as e:
                         logger.error(f"Pipeline error: {e}")
                         await self.emit_event(AgentBackendEvent.ERROR, {"error": str(e)})
@@ -604,11 +650,20 @@ class PipecatBackend(AgentBackend):
                 "full_name": self.user_context.full_name,
                 "location": self.user_context.location,
             },
+            "flow_manager": {
+                "enabled": self.flow_manager is not None,
+                "current_persona": self.get_current_persona(),
+                "conversation_state": self.get_conversation_state() if self.flow_manager else {},
+                "flow_type": self.pipecat_config.flow_type if self.flow_manager else None,
+            },
             "config": {
                 "mode": self.pipecat_config.mode,
                 "whisper_model": self.pipecat_config.whisper_model,
                 "openai_model": self.pipecat_config.openai_model,
                 "vad_enabled": self.pipecat_config.vad_enabled,
+                "use_flows": self.pipecat_config.use_flows,
+                "flow_type": self.pipecat_config.flow_type,
+                "initial_persona": self.pipecat_config.initial_persona,
                 "audio_in_sample_rate": self.pipecat_config.audio_in_sample_rate,
                 "audio_out_sample_rate": self.pipecat_config.audio_out_sample_rate,
                 "audio_input_device_index": self.input_device_index,
@@ -618,3 +673,104 @@ class PipecatBackend(AgentBackend):
             }
         })
         return base_status
+
+    async def _initialize_flow_manager_post_pipeline(self) -> None:
+        """Complete flow manager initialization after pipeline task is created."""
+        if not self.pipecat_config.use_flows or not self.flow_manager:
+            logger.warning("⚠️ Cannot initialize flow manager: flows disabled or flow manager not created")
+            return
+            
+        logger.info("🔧 Completing flow manager initialization with pipeline task...")
+        
+        try:
+            # Set the task on the existing flow manager
+            self.flow_manager.task = self.pipeline_task
+            logger.info("✅ Pipeline task set on flow manager")
+            
+            # Complete the initialization now that we have a task
+            self.flow_manager.complete_initialization()
+            logger.info(f"🎉 Flow manager initialization completed successfully!")
+            logger.info(f"🎭 Active persona: {self.flow_manager.current_persona}")
+            logger.info(f"🎭 Flow manager ready with {len(self.flow_manager.get_available_personas())} personas")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to complete flow manager initialization: {e}")
+            # Don't fail completely, just log the error and continue with standard mode
+            self.flow_manager = None
+
+    async def _prepare_flow_integration(self, llm_service, context_aggregator):
+        """Prepare flow integration components for pipeline construction."""
+        if not self.pipecat_config.use_flows:
+            logger.info("Flows disabled - returning standard LLM service")
+            return llm_service, context_aggregator
+            
+        # Create flow manager with actual LLM service
+        logger.info(f"🎭 Creating {self.pipecat_config.flow_type} flow manager with initial persona '{self.pipecat_config.initial_persona}'...")
+        
+        try:
+            self.flow_manager = create_flow_manager(
+                flow_type=self.pipecat_config.flow_type,
+                task=None,  # Will be set after pipeline task creation
+                llm=llm_service,  # Pass the actual LLM service
+                context_aggregator=context_aggregator,
+                initial_persona=self.pipecat_config.initial_persona,
+                user_context=self.user_context
+            )
+            logger.info(f"✅ Flow manager created successfully: {type(self.flow_manager).__name__}")
+            logger.info(f"🎭 Current persona: {self.flow_manager.current_persona}")
+            logger.info(f"🎭 Available personas: {list(self.flow_manager.get_available_personas().keys())}")
+            
+            # Return the flow manager's internal FlowManager as the LLM service
+            # and keep the same context aggregator
+            if self.flow_manager.flow_manager is not None:
+                logger.info("🔄 Using flow manager's internal FlowManager as LLM service")
+                return self.flow_manager.flow_manager, context_aggregator
+            else:
+                # Flow manager not fully initialized yet, use original LLM service
+                logger.info("⏳ Flow manager not fully initialized yet, will complete after pipeline task creation")
+                return llm_service, context_aggregator
+            
+        except Exception as e:
+            logger.error(f"Failed to create flow manager: {e}")
+            # Fall back to standard mode
+            self.flow_manager = None
+            return llm_service, context_aggregator
+
+    async def switch_persona(self, persona: str) -> None:
+        """Switch to a different persona in the flow manager."""
+        if not self.flow_manager:
+            logger.warning("Cannot switch persona: flow manager not initialized")
+            return
+            
+        logger.info(f"Switching persona from {self.current_persona} to {persona}")
+        try:
+            await self.flow_manager.switch_persona(persona)
+            self.current_persona = persona
+            await self.emit_event(
+                AgentBackendEvent.PERSONA_SWITCHED,
+                {"from_persona": self.current_persona, "to_persona": persona}
+            )
+        except Exception as e:
+            logger.error(f"Failed to switch persona to {persona}: {e}")
+            await self.emit_event(AgentBackendEvent.ERROR, {"error": str(e)})
+
+    def get_current_persona(self) -> str:
+        """Get the current persona."""
+        if self.flow_manager:
+            return self.flow_manager.current_persona
+        return "default"
+
+    def get_conversation_state(self) -> Dict[str, Any]:
+        """Get the current conversation state from the flow manager."""
+        if self.flow_manager:
+            return self.flow_manager.conversation_state.copy()
+        return {}
+
+    async def update_user_context_from_flows(self) -> None:
+        """Update user context based on flow manager information."""
+        if not self.flow_manager:
+            return
+            
+        # The flow manager's user context should already be synchronized
+        # since we passed the same UserContext instance during initialization
+        logger.debug("User context synchronized with flow manager")

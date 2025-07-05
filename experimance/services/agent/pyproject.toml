@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "experimance-common>=0.1.0",
     "pipecat-ai",
+    "pipecat-ai-flows>=0.0.18",
     "pyaudio",
     "python-dotenv",
 ]

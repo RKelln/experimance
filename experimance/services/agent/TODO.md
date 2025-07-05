@@ -41,9 +41,12 @@ Create a modular agent service that handles speech-to-speech conversation with t
 - [x] Add debug status reporting for backend and device info
 - [x] Provide audio device lister utility script
 - [x] Suppress shutdown errors when pipeline hasn't started
-- [ ] Integrate pipecat flows: 
-  - https://docs.pipecat.ai/guides/features/pipecat-flows
-  - https://github.com/pipecat-ai/pipecat-flows
+- [ ] **NEXT: Integrate pipecat flows for multi-persona conversations** ⭐
+  - **Plan**: See FLOWS_IMPLEMENTATION_PLAN.md for detailed implementation strategy
+  - **Goal**: Create welcome → explorer → technical → artist persona flows
+  - **Features**: Voice switching, dynamic transitions, RAG integration, context management
+  - Docs: https://docs.pipecat.ai/guides/features/pipecat-flows
+  - Repo: https://github.com/pipecat-ai/pipecat-flows
 - [ ] Function calling: https://docs.pipecat.ai/guides/fundamentals/function-calling
 - [ ] Smart user muting: https://docs.pipecat.ai/guides/fundamentals/user-input-muting
 - [ ] Recording transcripts: https://docs.pipecat.ai/guides/fundamentals/recording-transcripts

@@ -68,6 +68,11 @@ class PipecatBackendConfig(BaseModel):
         description="System prompt for the agent"
     )
 
+    # Flow configuration
+    use_flows: bool = Field(default=True, description="Enable Pipecat Flows for multi-persona conversations")
+    flow_type: str = Field(default="experimance", description="Type of flow manager ('experimance', 'simple', 'configurable')")
+    initial_persona: str = Field(default="welcome", description="Initial persona to start with")
+
 class BackendConfig(BaseModel):
     """Container for all backend configurations."""
     

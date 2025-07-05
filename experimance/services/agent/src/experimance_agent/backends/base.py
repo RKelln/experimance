@@ -33,6 +33,7 @@ class AgentBackendEvent(str, Enum):
     TRANSCRIPTION_RECEIVED = "transcription_received"
     RESPONSE_GENERATED = "response_generated"
     TOOL_CALLED = "tool_called"
+    PERSONA_SWITCHED = "persona_switched"
     ERROR = "error"
 
 
