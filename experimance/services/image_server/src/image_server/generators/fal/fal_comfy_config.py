@@ -24,6 +24,7 @@ class FalComfyGeneratorConfig(SDXLConfig):
     # Override the strategy field with a literal value for this specific generator
     strategy: Literal["falai"] = "falai"
     
+    request_id: Optional[str] = None
     endpoint: str = FALCOMFY_ENDPOINT
     model_url: Optional[str] = MODEL_URL
     lora_url: Optional[str] = LORA_URL

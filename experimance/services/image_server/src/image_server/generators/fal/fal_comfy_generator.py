@@ -48,13 +48,12 @@ class FalComfyGenerator(ImageGenerator):
         logger.info(f"FalComfyGenerator initialized with endpoint: {self.config.endpoint}")
 
     async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, 
-                             config_overrides: Optional[FalComfyGeneratorConfig|dict] = None, **kwargs) -> str:
+                             **kwargs) -> str:
         """Generate an image using FAL.AI API.
         
         Args:
             prompt: Text description of the image to generate
             depth_map_b64: Optional base64-encoded depth map PNG
-            config_overrides: Configuration overrides for this generation
             **kwargs: Additional parameters including request_id for filename tracking
             config_overrides: Optional configuration overrides for this specific generation
             
@@ -69,26 +68,31 @@ class FalComfyGenerator(ImageGenerator):
         
         # Handle config overrides for this specific request
         current_config = self.config
-        if config_overrides:
+        if isinstance(kwargs, dict):
             # modify lora strength based on era
-            if era := config_overrides.get('era'):
+            era = kwargs.get('era', None)
+            if era:
                 if era == Era.WILDERNESS:
-                    config_overrides['lora_strength'] = self.config.lora_strength * 0.5
+                    kwargs['lora_url'] = "https://civitai.com/api/download/models/179152?type=Model&format=SafeTensor"
+                    kwargs['lora_strength'] = self.config.lora_strength * 0.8
                 elif era == Era.PRE_INDUSTRIAL:
-                    config_overrides['lora_strength'] = self.config.lora_strength * 0.8
+                    kwargs['lora_url'] = "https://civitai.com/api/download/models/179152?type=Model&format=SafeTensor"
+                    kwargs['lora_strength'] = self.config.lora_strength * 0.8
                 elif era == 'future':
-                    config_overrides['lora_strength'] = self.config.lora_strength * 1.2
+                    kwargs['lora_strength'] = self.config.lora_strength * 1.2
 
+            # Create a new config with overrides applied
+            # remove kwargs that are not in the config schema
+            kwargs = {k: v for k, v in kwargs.items() if k in self.config.model_fields}
 
-            if isinstance(config_overrides, dict):
-                # Create a new config with overrides applied
-                current_config = FalComfyGeneratorConfig(**{
-                    **self.config.model_dump(),
-                    **config_overrides
-                })
-            else:
-                # Use the provided config object directly
-                current_config = config_overrides
+            # Create a new config instance with the current config and overrides
+            current_config = FalComfyGeneratorConfig(**{
+                **self.config.model_dump(),
+                **kwargs
+            })
+            print(f"FalComfyGenerator: Using config overrides: {current_config}")
+        else:
+            current_config = self.config
         
         try:
             import fal_client
@@ -268,7 +272,7 @@ if __name__ == "__main__":
         try:
             logger.info("Running Example 2: ComfyUI workflow with depth map...")
             image_path = await experimance_generator.generate_image(
-            test_prompt,
+                test_prompt,
                 depth_map_b64=png_to_base64url(mock_depth_map())
             )
             logger.info(f"Example 2 complete - Generated image saved to: {image_path}")
