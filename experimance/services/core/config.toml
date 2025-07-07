@@ -21,8 +21,8 @@ era_max_duration = 120       # maximum time in seconds before era can change
 resolution = [1280, 720]     # depth camera resolution (width, height)
 fps = 30                    # camera frames per second 
 # for sand a range of about 7 cm works well
-min_depth = 0.55            # minimum depth value in meters
-max_depth = 0.63            # maximum depth value in meters
+min_depth = 0.52            # minimum depth value in meters
+max_depth = 0.58            # maximum depth value in meters
 align_frames = true         # use color frames to help align the depth frames
 colorizer_scheme = 2        # white to black
 #json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config
