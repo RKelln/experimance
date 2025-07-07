@@ -10,6 +10,7 @@ vsync = true                  # Whether to use vertical sync
 debug_overlay = true          # Whether to show debug overlay
 #background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
 mask="circle"
+#debug_image = "media/images/projector_alignment.png"
 
 # ZeroMQ configuration
 #[zmq]

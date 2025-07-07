@@ -59,6 +59,11 @@ class DisplayConfig(BaseModel):
         description="Whether to show debug text in all positions"
     )
 
+    debug_image: Optional[Path] = Field(
+        default=None, # "media/images/projector_alignment.png"
+        description="Path to debug image to display in debug overlay"
+    )
+
     background_color: tuple[int, int, int, int] = Field(
         default=(0, 0, 0, 255),
         description="Background color as RGBA tuple for the display window (for debugging layer compositing)"

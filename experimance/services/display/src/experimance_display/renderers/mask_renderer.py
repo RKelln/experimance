@@ -83,7 +83,7 @@ class MaskRenderer(LayerRenderer):
         # Calculate circle parameters - center circle that covers most of the screen
         center_x = width // 2
         center_y = height // 2
-        radius = min(width, height) // 3  # Use 1/3 of smallest dimension
+        radius = min(width, height) // 2
         
         # Draw transparent circle (this will be the "visible" area where content shows through)
         draw.ellipse([

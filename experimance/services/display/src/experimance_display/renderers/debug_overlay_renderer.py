@@ -14,6 +14,7 @@ import time
 from typing import Dict, Any, Optional, Tuple
 
 from experimance_display.config import DisplayServiceConfig
+from experimance_display.utils.pyglet_utils import create_positioned_sprite
 import pyglet
 from pyglet.gl import GL_LINES
 from pyglet.graphics import Batch
@@ -60,6 +61,26 @@ class DebugOverlayRenderer(LayerRenderer):
         # FPS label
         self.fps_label = None
         self._create_fps_label()
+
+        # Optional (trasparent) image
+        if self.config.display.debug_image:
+            file_path = self.config.display.debug_image
+
+            # Load the image and create a sprite
+            try:
+                self.image = pyglet.image.load(str(file_path))
+            except pyglet.image.ImageException as e:
+                logger.error(f"Failed to load debug image from {file_path}: {e}")
+                self.image = None
+            if self.image:
+                self.image.anchor_x = self.image.width // 2
+                self.image.anchor_y = self.image.height // 2
+                self.image_sprite = create_positioned_sprite(
+                    self.image, 
+                    (self.window.width, self.window.height),
+                    batch=self.batch, 
+                    group=self
+                )
         
         logger.info(f"DebugOverlayRenderer initialized for {window}")
     
@@ -171,7 +192,12 @@ class DebugOverlayRenderer(LayerRenderer):
             
             # Recreate crosshair with new center position
             self._create_crosshair()
-    
+
+            # Update image sprite if it exists
+            if hasattr(self, 'image_sprite') and self.image_sprite:
+                self.image_sprite.x = new_size[0] // 2
+                self.image_sprite.y = new_size[1] // 2
+            
     def set_visibility(self, visible: bool):
         """Set layer visibility.
         
