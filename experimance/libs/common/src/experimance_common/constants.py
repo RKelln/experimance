@@ -1,148 +1,23 @@
-"""
-Default configuration values for Experimance services.
-"""
-from pathlib import Path
+import logging
+# 1. shared defaults
+from experimance_common.constants_base import *     
+import importlib.util, os, sys
 
-# Project structure constants
-# Find the project root by going up from libs/common/src/experimance_common
-PROJECT_ROOT = (Path(__file__).parent.parent.parent.parent.parent).absolute()
+from experimance_common.constants_base import PROJECT_SPECIFIC_DIR
 
-DEFAULT_PORTS = {
-    # Unified events channel - all services publish and subscribe here
-    "events": 5555,               # Pubsub from core to services, includes display media 
-    # Updates from services (e.g. agent state, image generation status)
-    "updates": 5556,              # Currently not functional
-    "agent": 5557,                # Agent service updates (agent binding publisher, others subscribe)
-    
-    # Specialized high-bandwidth channels
-    "depth": 5566,                # Depth camera data (high frequency) [currenly unused]
-    "transition_requests": 5560,  # Work distribution for transition rendering
-    "transition_results": 5561,   # Results from transition rendering
-    "video_requests": 5562,       # Work distribution for video generation
-    "video_results": 5563,        # Resulting generated videos
-    "image_requests": 5564,       # Work distribution for image generation 
-    "image_results": 5565,        # Results from image generation
-    
-    # Audio OSC bridge ports
-    "audio_osc_send_port": 5570,  # Audio service → SuperCollider
-    "audio_osc_recv_port": 5571,  # SuperCollider → Audio service
-}
+PROJECT = os.getenv("PROJECT_ENV", "experimance")
+override_file = PROJECT_SPECIFIC_DIR / PROJECT / "constants.py"
 
-# Timeout settings
-DEFAULT_TIMEOUT = 1000  # ms
-HEARTBEAT_INTERVAL = 5.0  # seconds
-DEFAULT_RETRY_ATTEMPTS = 3
-DEFAULT_RETRY_DELAY = 0.5  # seconds
-DEFAULT_RECV_TIMEOUT = 1.0  # seconds
-
-HEARTBEAT_TOPIC = "heartbeat"
-
-TICK = 0.001 # seconds, used sleeping in the main loop
-
-# Image transport configuration
-IMAGE_TRANSPORT_MODES = {
-    "FILE_URI": "file_uri",      # Send file path/URI (same machine)
-    "BASE64": "base64",          # Send base64 encoded image (remote machines)
-    "AUTO": "auto",              # Auto-detect based on target
-    "HYBRID": "hybrid"           # Send both URI and base64 (receiver chooses)
-}
-
-# Default image transport mode
-DEFAULT_IMAGE_TRANSPORT_MODE = IMAGE_TRANSPORT_MODES["AUTO"]
-
-# File size threshold for auto mode (bytes)
-# Images larger than this will prefer URI over base64 to reduce network load
-IMAGE_TRANSPORT_SIZE_THRESHOLD = 1024 * 1024  # 1MB
-
-# Temporary file settings
-TEMP_FILE_PREFIX = "experimance_img_"
-TEMP_FILE_SUFFIX = ".png"
-TEMP_FILE_CLEANUP_AGE = 300  # seconds (5 minutes)
-TEMP_FILE_CLEANUP_INTERVAL = 60  # seconds (1 minute)
-DEFAULT_TEMP_DIR = "/tmp"  # Default directory for temporary files
-
-# URI and URL constants
-FILE_URI_PREFIX = "file://"
-DATA_URL_PREFIX = "data:image/"
-BASE64_PNG_PREFIX = "data:image/png;base64,"
-
-# ZMQ address patterns
-ZMQ_TCP_BIND_PREFIX = "tcp://*"
-ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost"
-
-# data dir
-DATA_DIR = PROJECT_ROOT / "data"
-
-# media directories (relative paths)
-MEDIA_DIR = "media"
-IMAGES_DIR = f"{MEDIA_DIR}/images"
-GENERATED_IMAGES_DIR = f"{IMAGES_DIR}/generated"
-MOCK_IMAGES_DIR = f"{IMAGES_DIR}/mocks"
-AUDIO_DIR = f"services/audio/audio"
-VIDEOS_DIR = f"{MEDIA_DIR}/video"
-
-# media directories (absolute paths)
-MEDIA_DIR_ABS = PROJECT_ROOT / MEDIA_DIR
-IMAGES_DIR_ABS = PROJECT_ROOT / IMAGES_DIR
-GENERATED_IMAGES_DIR_ABS = PROJECT_ROOT / GENERATED_IMAGES_DIR
-MOCK_IMAGES_DIR_ABS = PROJECT_ROOT / MOCK_IMAGES_DIR
-AUDIO_DIR_ABS = PROJECT_ROOT / AUDIO_DIR
-VIDEOS_DIR_ABS = PROJECT_ROOT / VIDEOS_DIR
-
-# services directories
-SERVICES_DIR = PROJECT_ROOT / "services"
-CORE_SERVICE_DIR = SERVICES_DIR / "core"
-AUDIO_SERVICE_DIR = SERVICES_DIR / "audio"
-IMAGE_SERVER_SERVICE_DIR = SERVICES_DIR / "image_server"
-AGENT_SERVICE_DIR = SERVICES_DIR / "agent"
-DISPLAY_SERVICE_DIR = SERVICES_DIR / "display"
-
-__all__ = [
-    "PROJECT_ROOT", 
-    "DEFAULT_PORTS", 
-    "DEFAULT_TIMEOUT", 
-    "HEARTBEAT_INTERVAL", 
-    "DEFAULT_RETRY_ATTEMPTS", 
-    "DEFAULT_RETRY_DELAY", 
-    "DEFAULT_RECV_TIMEOUT", 
-    "HEARTBEAT_TOPIC", 
-    "TICK",
-    # Image transport settings
-    "IMAGE_TRANSPORT_MODES",
-    "DEFAULT_IMAGE_TRANSPORT_MODE", 
-    "IMAGE_TRANSPORT_SIZE_THRESHOLD",
-    # Temp file settings
-    "TEMP_FILE_PREFIX",
-    "TEMP_FILE_SUFFIX", 
-    "TEMP_FILE_CLEANUP_AGE",
-    "TEMP_FILE_CLEANUP_INTERVAL",
-    "DEFAULT_TEMP_DIR",
-    # URI and URL constants
-    "FILE_URI_PREFIX",
-    "DATA_URL_PREFIX", 
-    "BASE64_PNG_PREFIX",
-    # ZMQ address patterns
-    "ZMQ_TCP_BIND_PREFIX",
-    "ZMQ_TCP_CONNECT_PREFIX",
-    # Media directories (relative)
-    "MEDIA_DIR",
-    "IMAGES_DIR", 
-    "GENERATED_IMAGES_DIR",
-    "MOCK_IMAGES_DIR",
-    "AUDIO_DIR",
-    "VIDEOS_DIR",
-    # Media directories (absolute)
-    "MEDIA_DIR_ABS",
-    "IMAGES_DIR_ABS",
-    "GENERATED_IMAGES_DIR_ABS", 
-    "MOCK_IMAGES_DIR_ABS",
-    "AUDIO_DIR_ABS",
-    "VIDEOS_DIR_ABS",
-    # Services directories
-    "SERVICES_DIR",
-    "CORE_SERVICE_DIR",
-    "AUDIO_SERVICE_DIR",
-    "IMAGE_SERVER_SERVICE_DIR",
-    "AGENT_SERVICE_DIR",
-    "DISPLAY_SERVICE_DIR"
-]
+if override_file.exists():     
+    try: # 2. project deltas
+        spec = importlib.util.spec_from_file_location(f"{PROJECT}_constants", override_file)
+        if spec is not None and spec.loader is not None:
+            mod  = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            # Only inject uppercase variables (constants)
+            globals().update({k: v for k, v in mod.__dict__.items() if k.isupper()})
+        else:
+            logging.warning(f"Could not create module spec or loader for {override_file}")
+    except Exception as e:
+        logging.warning(f"Failed to load constants from {override_file}: {e}")

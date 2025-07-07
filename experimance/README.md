@@ -22,45 +22,59 @@ The project uses a modern Python package structure with src layout:
 ```
 experimance/
 ├── libs/
-│   └── common/                # Common utilities shared by all services
-│       ├── pyproject.toml
+│   └── common/          # Shared common libraries
 │       └── src/
 │           └── experimance_common/
-│
-├── services/                  # Independent service packages
-│   ├── core/                  # Core service
-│   │   ├── pyproject.toml
+│               ├── zmq/
+│               │   ├── config.py           # ZMQ configuration pydantic models
+│               │   ├── components.py       # ZMQ communication components
+│               │   ├── services.py         # ZMQ services composed of components
+│               │   └── mocks.py            # Mock ZMQ components for testing
+│               ├── config.py               # Service configuration management using pydantic
+│               ├── constants.py            # Constants used across the project
+│               ├── logger.py               # Logging utilities
+│               ├── schemas.py              # Pydantic schemas for data validation across services
+│               ├── schemas.pyi             # Type stubs for schemas, supporting multiple projects
+│               └── image_utils.py          # Image processing utilities
+├── services/
+│   ├── core/            # Core service managing state machine
 │   │   └── src/
 │   │       └── experimance_core/
 │   │
-│   ├── display/
-│   │   ├── pyproject.toml
+│   ├── display/         # Display service for sand table visualization
 │   │   └── src/
 │   │       └── experimance_display/
 │   │
-│   ├── audio/
-│   │   ├── pyproject.toml
+│   ├── audio/           # Audio service for sound generation
 │   │   └── src/
 │   │       └── experimance_audio/
 │   │
-│   ├── agent/
-│   │   ├── pyproject.toml
+│   ├── agent/           # Agent service for AI interaction
 │   │   └── src/
 │   │       └── experimance_agent/
 │   │
-│   ├── image_server/
-│   │   ├── pyproject.toml
-│   │   └── src/
-│   │       └── image_server/
-│   │
-│   └── transition/            # Image transition service
-│       ├── pyproject.toml
+│   ├── image_server/    # Image generation service
 │       └── src/
-│           └── experimance_transition/
+│           └── image_server/
 │
-├── infra/                     # Infrastructure code for deployment
-├── scripts/                   # Utility scripts
-└── utils/                     # Testing and utility modules
+├── utils/               # Utility modules for testing and other purposes
+│   ├── examples/        # Examples of usage
+│   └── tests/           # Testing utilities for cross service testing
+├── scripts/             # Utility scripts for setup and management
+├─ infra/
+│
+├── pyproject.toml       # Main project configuration file
+│
+└── projects/                 # **ONLY project-specific artifacts live here**
+│   ├─ experimance/
+│   │   ├─ .env             # Experimance project environment variables
+│   │   ├─ config.toml      # Experimance project configuration
+│   │   ├─ constants.py     # constants specific to Experimance project
+│   │   ├─ schemas.py       # schemas specific to Experimance project
+│   │   └─ schemas.pyi      # type stubs for schemas
+│   └─ sohkepayin/          # overrides for Sohkepayin project
+│       └─ ...              # configuration files for Sohkepayin project  
+│
 └── media/
     ├── images/                # images used by the software
     │   └── mocks/             # mock images used for testing
@@ -100,8 +114,6 @@ sudo apt-get install libssl-dev libusb-1.0-0-dev libsdl2-dev ffmpeg libasound2-d
 uv sync
 ```
 
-**Note about SDL2**: The system package `libsdl2-dev` is required for PySDL2 to work properly. The Python packages `pysdl2` and `pysdl2-dll` provide Python bindings to SDL2.
-
 ## Running Services
 
 Each service can be run independently:
@@ -127,6 +139,59 @@ This structure makes development cleaner by:
 - Avoiding complex import hacks
 - Supporting proper editable installs
 - Making packages independently testable
+
+
+## Multi-Project Architecture
+
+This codebase supports multiple art installation projects through a **dynamic loading system**:
+
+### How It Works
+- **Base schemas/constants** in `libs/common/src/experimance_common/*_base.py` define shared functionality
+- **Project-specific extensions** in `projects/{project_name}/` override or extend base definitions
+- **Dynamic loading** at runtime merges base + project-specific definitions based on `PROJECT_ENV`
+
+### Project Selection
+- Set `PROJECT_ENV=experimance` or `PROJECT_ENV=projectname` to switch projects
+- Each project can have different enums and message extensions
+
+### Adding New Projects
+1. Create `projects/{new_project}/` directory
+2. Add project-specific `.env`, `schemas.py`, `constants.py` files
+3. In `schemas.py`, extend base classes: e.g. `class RenderRequest(_BaseRenderRequest):`
+4. Define project-specific enums
+5. Update mypy_path in `pyproject.toml` to include the new project directory
+
+### Schema Extension Pattern
+```python
+# In projects/{project}/schemas.py
+from experimance_common.schemas_base import RenderRequest as _BaseRenderRequest
+
+class RenderRequest(_BaseRenderRequest):
+    era: Era              # Project-specific Era enum
+    biome: Biome          # Project-specific Biome enum  
+    # Add project-specific fields here
+```
+
+### Benefits
+- **Shared Infrastructure**: All projects use the same ZMQ communication, base services, and utilities
+- **Type Safety**: Each project gets proper type checking for its specific Era/Biome values
+- **Clean Separation**: Project-specific logic is isolated in `projects/` directory
+- **Easy Switching**: Change `PROJECT_ENV` to work on different projects
+- **Extensible**: New projects can add custom message types or extend existing ones
+
+### Usage Examples
+```bash
+# Work on Experimance project
+PROJECT_ENV=experimance uv run -m experimance_core
+
+# Work on Sohkepayin project  
+PROJECT_ENV=sohkepayin uv run -m experimance_core
+
+# Import project-specific schemas
+from experimance_common.schemas import Era, Biome  # Loaded based on PROJECT_ENV
+```
+
+
 
 ### Install tools
 

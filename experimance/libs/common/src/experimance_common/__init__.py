@@ -2,6 +2,24 @@
 Experimance common package initialization.
 """
 
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
+import os
+
+# 1. load whichever .env was pointed to by UV_ENV_FILE or docker 'ENV' line
+load_dotenv(find_dotenv(), override=False)
+
+# 2. if EXP_ENV is STILL unset, default to experimance
+os.environ.setdefault("PROJECT_ENV", "experimance")
+
+# 3. finally, if a second .env exists inside projects/<project>/, cascade it
+# Use PROJECT_ROOT for robust path resolution
+from experimance_common.constants_base import PROJECT_ROOT
+proj_env = PROJECT_ROOT / f"projects/{os.environ['PROJECT_ENV']}/.env"
+if proj_env.exists():
+    load_dotenv(proj_env, override=True)          # project values win
+
+
 # Core constants
 from experimance_common.constants import (
     DEFAULT_PORTS,
@@ -11,7 +29,6 @@ from experimance_common.constants import (
 
 # ZMQ configuration and utilities
 from experimance_common.zmq.config import (
-    MessageType,
     MessageDataType,
     TopicType,
     ZmqSocketConfig,
@@ -41,24 +58,13 @@ from experimance_common.zmq.services import (
     ControllerService,
 )
 
-from experimance_common.zmq.zmq_utils import (
-    MessageType,  # Re-export for backward compatibility
-    image_ready_to_display_media,
-    create_display_media_message,
-    choose_image_transport_mode,
-    is_local_address,
-    prepare_image_message,
-    cleanup_temp_image_file,
-)
-
 # Schema definitions
 from experimance_common.schemas import (
-    Era,
-    Biome,
     TransitionStyle,
     DisplayContentType,
     DisplayTransitionType,
     ContentType,
+    MessageType,
     MessageBase,
     SpaceTimeUpdate,
     RenderRequest,
@@ -122,17 +128,7 @@ __all__ = [
     "WorkerService",
     "ControllerService",
     
-    # ZMQ utilities
-    "image_ready_to_display_media",
-    "create_display_media_message",
-    "choose_image_transport_mode",
-    "is_local_address",
-    "prepare_image_message",
-    "cleanup_temp_image_file",
-    
-    # Schema definitions
-    "Era",
-    "Biome",
+    # Schema definitions (project-specific Era/Biome available via direct import)
     "TransitionStyle", 
     "DisplayContentType",
     "DisplayTransitionType",

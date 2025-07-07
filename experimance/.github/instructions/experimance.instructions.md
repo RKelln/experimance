@@ -3,8 +3,9 @@ applyTo: '**'
 ---
 # Experimance Project Instructions
 
-This project is a Python-based distributed system for an interactive art installation called Experimance. 
+This project is a Python-based distributed system for interactive art installations, the first project implemented is Experimance. 
 The system uses ZeroMQ for inter-service communication and handles real-time sensor data, image processing, and audio-visual outputs.
+The code supports additional projects and services, allowing for modular development and deployment.
 
 ## Project Architecture
 
@@ -14,6 +15,7 @@ The system uses ZeroMQ for inter-service communication and handles real-time sen
   - Each service is a standalone Python package with its own dependencies and src directory
 - **Infrastructure**: Configuration for deployment, monitoring, and management
 - **Utilities**: Scripts and tools for testing, examples, and development support
+- **Multi-Project Support**: Dynamic loading system allows multiple art projects to share the same codebase while having project-specific schemas, constants, and configurations
 
 ## Package Structure
 
@@ -31,7 +33,8 @@ experimance/
 │               ├── config.py               # Service configuration management using pydantic
 │               ├── constants.py            # Constants used across the project
 │               ├── logger.py               # Logging utilities
-                ├── schemas.py              # Pydantic schemas for data validation across services
+│               ├── schemas.py              # Pydantic schemas for data validation across services
+│               ├── schemas.pyi             # Type stubs for schemas, supporting multiple projects
 │               └── image_utils.py          # Image processing utilities
 ├── services/
 │   ├── core/            # Core service managing state machine
@@ -51,21 +54,26 @@ experimance/
 │   │       └── experimance_agent/
 │   │
 │   ├── image_server/    # Image generation service
-│   │   └── src/
-│   │       └── image_server/
-│   │
-│   └── transition/      # Image transition service
-│       ├── pyproject.toml
 │       └── src/
-│           └── experimance_transition/
+│           └── image_server/
+│
 ├── utils/               # Utility modules for testing and other purposes
 │   ├── examples/        # Examples of usage
 │   └── tests/           # Testing utilities for cross service testing
 ├── scripts/             # Utility scripts for setup and management
-└── infra/
-    ├── ansible/
-    ├── docker/
-    └── grafana/
+├─ infra/
+│
+├── pyproject.toml       # Main project configuration file
+│
+└── projects/                 # **ONLY project-specific artifacts live here**
+│   ├─ experimance/
+│   │   ├─ .env             # Experimance project environment variables
+│   │   ├─ config.toml      # Experimance project configuration
+│   │   ├─ constants.py     # constants specific to Experimance project
+│   │   ├─ schemas.py       # schemas specific to Experimance project
+│   │   └─ schemas.pyi      # type stubs for schemas
+│   └─ sohkepayin/          # overrides for Sohkepayin project
+│       └─ ...              # configuration files for Sohkepayin project  
 ```
 
 ## Coding Standards
