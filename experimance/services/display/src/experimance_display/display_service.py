@@ -36,6 +36,7 @@ from .config import DisplayServiceConfig
 from .renderers.layer_manager import LayerManager
 from .renderers.image_renderer import ImageRenderer
 from .renderers.video_overlay_renderer import VideoOverlayRenderer
+from .renderers.mask_renderer import MaskRenderer
 from .renderers.text_overlay_manager import TextOverlayManager
 from .renderers.debug_overlay_renderer import DebugOverlayRenderer
 
@@ -76,6 +77,7 @@ class DisplayService(BaseService):
         self.layer_manager = None
         self.image_renderer = None
         self.video_overlay_renderer = None
+        self.mask_renderer = None
         self.text_overlay_manager = None
         
         # Frame timing
@@ -235,6 +237,7 @@ class DisplayService(BaseService):
             #window_size = (self.window.width, self.window.height)
             
             batch = pyglet.graphics.Batch()
+            layer_count = 0
 
             # Create layer manager to coordinate rendering order
             self.layer_manager = LayerManager(
@@ -248,7 +251,7 @@ class DisplayService(BaseService):
                 config=self.config,
                 window=self.window,
                 batch=batch,
-                order=0,
+                order=(layer_count := layer_count + 1),  # Increment layer count for each renderer,
             )
             self.layer_manager.register_renderer("background", self.image_renderer)
             
@@ -257,15 +260,25 @@ class DisplayService(BaseService):
                     config=self.config,
                     window=self.window,
                     batch=batch,
-                    order=1,
+                    order=(layer_count := layer_count + 1),
                 )
                 self.layer_manager.register_renderer("video_overlay", self.video_overlay_renderer)
+            
+            # Add circular mask renderer (between video and text)
+            if self.config.display.mask:
+                self.mask_renderer = MaskRenderer(
+                    config=self.config,
+                    window=self.window,
+                    batch=batch,
+                    order=(layer_count := layer_count + 1),
+                )
+                self.layer_manager.register_renderer("mask", self.mask_renderer)
             
             self.text_overlay_manager = TextOverlayManager(
                 config=self.config,
                 window=self.window,
                 batch=batch,
-                order=2,
+                order=(layer_count := layer_count + 1),
             )
             self.layer_manager.register_renderer("text_overlay", self.text_overlay_manager)
             
@@ -275,7 +288,7 @@ class DisplayService(BaseService):
                 window=self.window,
                 batch=batch,
                 layer_manager=self.layer_manager,
-                order=3
+                order=(layer_count := layer_count + 1),
             )
             self.layer_manager.register_renderer("debug_overlay", self.debug_overlay_renderer)
             
@@ -303,6 +316,7 @@ class DisplayService(BaseService):
             "remove_text": self._handle_remove_text,
             "change_map": self._handle_video_mask,
             "display_media": self._handle_display_media,
+            "set_mask_visibility": self._handle_set_mask_visibility,
         }
         logger.info("Direct interface handlers registered")
     
@@ -760,7 +774,42 @@ class DisplayService(BaseService):
             
         except Exception as e:
             logger.error(f"Error showing debug text: {e}", exc_info=True)
-
+    
+    # Mask Control Methods
+    
+    def set_mask_visibility(self, visible: bool):
+        """Set the mask visibility.
+        
+        Args:
+            visible: Whether the mask should be visible
+        """
+        if self.mask_renderer:
+            self.mask_renderer.set_visible(visible)
+            logger.info(f"Mask visibility updated: {visible}")
+        else:
+            logger.warning("Cannot set mask visibility: mask renderer not initialized")
+    
+    def set_mask_opacity(self, opacity: float):
+        """Set the mask opacity.
+        
+        Args:
+            opacity: Opacity value (0.0 to 1.0)
+        """
+        if self.mask_renderer:
+            self.mask_renderer.set_opacity(opacity)
+            logger.info(f"Mask opacity updated: {opacity}")
+        else:
+            logger.warning("Cannot set mask opacity: mask renderer not initialized")
+    
+    async def _handle_set_mask_visibility(self, message: MessageDataType):
+        """Handle direct mask visibility updates."""
+        try:
+            visible = message.get("visible", True)
+            self.set_mask_visibility(visible)
+            
+        except Exception as e:
+            logger.error(f"Error handling mask visibility update: {e}", exc_info=True)
+        
 
 async def run_display_service(
     config_path: str = "config.toml", 

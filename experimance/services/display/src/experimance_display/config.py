@@ -74,6 +74,11 @@ class DisplayConfig(BaseModel):
         description="Whether to run in headless mode (no window creation)"
     )
 
+    mask: Optional[str] = Field(
+        default=None,
+        description="Mask overlay configuration. Can be 'circle', 'file_path' (path to mask image), or None to disable mask."
+    )
+
 
 class RenderingConfig(BaseModel):
     """Rendering system configuration."""
@@ -292,6 +297,11 @@ class VideoOverlayConfig(BaseModel):
     start_mask_path: Optional[str] = Field(
         default=None,
         description="Path to mask file to load on startup"
+    )
+
+    size: Tuple[int, int] = Field(
+        default=(1024, 1024),
+        description="Size of the video overlay in pixels"
     )
 
 
