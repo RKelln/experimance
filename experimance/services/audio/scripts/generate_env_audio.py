@@ -35,7 +35,7 @@ dotenv.load_dotenv()
 DEFAULT_DURATION = 0  # Default duration in seconds for generated audio
 AUDIO_BASE_DIR = Path("services/audio/audio")
 CONFIG_DIR = Path("services/audio/config")
-LAYERS_CONFIG = CONFIG_DIR / "layers.json"
+LAYERS_CONFIG = CONFIG_DIR / "layers_v2.json"
 CONCURRENCY_LIMIT = 3  # Limit concurrent API calls
 
 
@@ -52,7 +52,7 @@ async def generate_audio(prompt: str, duration: int = DEFAULT_DURATION) -> Optio
     """
     try:
         args = {
-            "text": prompt,
+            "text": prompt
         }
         if duration > 0:
             args["duration"] = str(duration)
@@ -82,7 +82,7 @@ async def generate_audio(prompt: str, duration: int = DEFAULT_DURATION) -> Optio
         return None
 
 
-async def download_file(url: str, destination_path: str) -> bool:
+async def download_file(url: str, destination: str) -> bool:
     """
     Download a file from a URL and save it to the specified path.
     
@@ -93,6 +93,9 @@ async def download_file(url: str, destination_path: str) -> bool:
     Returns:
         True if the download was successful, False otherwise
     """
+    # set the destination_path extension to match the URL
+    url_extension = Path(url).suffix
+    destination_path = Path(destination).with_suffix(url_extension)
     try:
         # Ensure the directory exists
         os.makedirs(os.path.dirname(destination_path), exist_ok=True)
@@ -134,6 +137,8 @@ async def process_audio_entry(entry: Dict[str, Any], dry_run: bool = False, dura
     
     path = entry["path"]
     prompt = entry["prompt"]
+    prompt = prompt.strip()
+    prompt = f"high-quality, professionally recorded {prompt}. Seamless loop, no silence at start or end."
     
     # Construct the full path to the audio file
     full_path = AUDIO_BASE_DIR / path
@@ -280,6 +285,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--duration",
+        "-d",
         type=int,
         default=DEFAULT_DURATION,
         help=f"Duration in seconds for generated audio (default: {DEFAULT_DURATION})"
