@@ -60,11 +60,37 @@ class VideoOverlayRenderer(LayerRenderer):
         uniform sampler2D video_tex;
         uniform sampler2D mask_tex;
         uniform float global_alpha;
+        uniform vec2 video_size;        // Original video dimensions
+        uniform vec2 target_size;       // Target size from config
 
         void main()
         {
-            vec4 vid  = texture(video_tex, v_uv);
-            float m   = texture(mask_tex, v_uv).r;   // assume grayscale mask
+            // Calculate scaling to fit the smallest side of video to smallest side of target
+            float video_min_side = min(video_size.x, video_size.y);
+            float target_min_side = min(target_size.x, target_size.y);
+            float scale = target_min_side / video_min_side;
+            
+            // Calculate scaled video dimensions
+            vec2 scaled_video = video_size * scale;
+            
+            // Calculate the UV scaling and offset to center the scaled video within target
+            vec2 uv_scale = target_size / scaled_video;
+            vec2 uv_offset = (1.0 - uv_scale) * 0.5;
+            
+            // Transform UV coordinates
+            vec2 adjusted_uv = v_uv * uv_scale + uv_offset;
+            
+            // Sample video texture with adjusted UVs (clamped to avoid artifacts)
+            vec4 vid = texture(video_tex, clamp(adjusted_uv, 0.0, 1.0));
+            
+            // If UVs are outside [0,1] range, make video transparent (crop effect)
+            float in_bounds = step(0.0, adjusted_uv.x) * step(adjusted_uv.x, 1.0) * 
+                             step(0.0, adjusted_uv.y) * step(adjusted_uv.y, 1.0);
+            vid.a *= in_bounds;
+            
+            // Sample mask at original UV coordinates (mask covers the target area)
+            float m = texture(mask_tex, v_uv).r;   // assume grayscale mask
+            
             frag = vec4(vid.rgb, vid.a * m * global_alpha);
         }
     """
@@ -172,6 +198,8 @@ class VideoOverlayRenderer(LayerRenderer):
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(tex.target, tex.id)
             self.shader_program["video_tex"] = 0
+            self.shader_program["video_size"] = (float(tex.width), float(tex.height))
+            
         else:
             return  # no frame yet – skip binding
 
@@ -183,6 +211,10 @@ class VideoOverlayRenderer(LayerRenderer):
 
         # global alpha
         self.shader_program["global_alpha"] = self._current_alpha
+        
+        # rescaling
+        target_width, target_height = self.video_config.size
+        self.shader_program["target_size"] = (float(target_width), float(target_height))
 
     def unset_state(self):
         """Unset OpenGL state after rendering the video overlay."""
@@ -276,18 +308,25 @@ class VideoOverlayRenderer(LayerRenderer):
             self.shader_program['video_tex'] = 0  # Will use texture unit 0
             self.shader_program['mask_tex'] = 1   # Will use texture unit 1
             
-            w, h = self.window.get_size()
+            # Get target size from config and calculate centered positions
+            target_width, target_height = self.video_config.size
+            window_width, window_height = self.window.get_size()
+            
+            # Center the target-sized quad in the window
+            x_offset = (window_width - target_width) / 2
+            y_offset = (window_height - target_height) / 2
+            
             # FIXME:
-            # Accordingto docs: 
+            # According to docs: 
             # When using GL_LINE_STRIP and GL_TRIANGLE_STRIP, care must be taken to insert degenerate vertices at the beginning and end of each vertex list
             # This doesn't actually seem to be the case!
             positions = (
-                0, 0, # bottom-left
-                w, 0, # bottom-right
-                0, h, # top left
-                w, h  # top right
+                x_offset, y_offset,  # bottom-left
+                x_offset + target_width, y_offset,  # bottom-right
+                x_offset, y_offset + target_height,  # top-left
+                x_offset + target_width, y_offset + target_height  # top-right
             )
-            uvs        = ( 0,  0,   1,  0,    0, 1,   1, 1)
+            uvs = (0, 0,   1, 0,    0, 1,   1, 1)
 
             self.quad = self.shader_program.vertex_list(4,
                     pyglet.gl.GL_TRIANGLE_STRIP,
@@ -299,10 +338,10 @@ class VideoOverlayRenderer(LayerRenderer):
             # Track dimensions for optimization
             self.last_texture_width = None
             self.last_texture_height = None
-            self.last_window_width = None
-            self.last_window_height = None
+            self.last_window_width = window_width
+            self.last_window_height = window_height
             
-            logger.info("Video overlay shader program and vertex data created successfully")
+            logger.info(f"Video overlay shader program created successfully for target size: {target_width}x{target_height}")
             
         except Exception as e:
             logger.error(f"Error setting up shader program: {e}", exc_info=True)
@@ -311,92 +350,78 @@ class VideoOverlayRenderer(LayerRenderer):
 
 
     def _update_quad_vertices(self):
-        """Update the quad vertices based on the video's aspect ratio."""
+        """Update the quad vertices when window size changes."""
         # Only update vertex positions if we have the shader setup
-        if not self.shader_program or not self.quad or not self.video_texture:
+        if not self.shader_program or not self.quad:
             return
         
         # Get current window dimensions
         current_window_width, current_window_height = self.window.get_size()
         
-        # Check if update is needed based on texture or window dimensions
+        # Check if update is needed based on window dimensions
         needs_update = (
-            self.last_texture_width != self.video_texture.width or
-            self.last_texture_height != self.video_texture.height or
             self.last_window_width != current_window_width or
             self.last_window_height != current_window_height
         )
         
         if needs_update:
             try:
-                # Calculate new vertex positions based on video texture aspect ratio
+                # Calculate new vertex positions for target size, centered in window
                 new_positions = self._calculate_quad_vertices(self.video_texture)
                 
                 # Update the existing vertex list
-                self.quad.position[:] = new_positions # type: ignore
+                self.quad.position = new_positions  # type: ignore
                 
                 # Store current dimensions
-                self.last_texture_width = self.video_texture.width
-                self.last_texture_height = self.video_texture.height
                 self.last_window_width = current_window_width
                 self.last_window_height = current_window_height
                 
-                logger.debug(f"Updated quad vertices for texture: {self.video_texture.width}x{self.video_texture.height} in window: {current_window_width}x{current_window_height}")
+                # Update texture dimensions for shader uniform (even if they don't affect quad positioning)
+                if self.video_texture:
+                    self.last_texture_width = self.video_texture.width
+                    self.last_texture_height = self.video_texture.height
+                
+                logger.debug(f"Updated quad vertices for window: {current_window_width}x{current_window_height}")
             except Exception as e:
                 logger.error(f"Error updating quad vertices: {e}", exc_info=True)
 
 
     def _calculate_quad_vertices(self, texture=None) -> tuple:
-        """Calculate quad vertices that preserve the aspect ratio of the video.
+        """Calculate quad vertices for the target size, centered in window.
         
         Args:
-            texture: The video texture (optional). If provided, uses its dimensions for aspect ratio.
+            texture: The video texture (optional, used for logging only)
         
         Returns:
-            tuple: Quad vertex positions adjusted for aspect ratio
+            tuple: Quad vertex positions for target size, centered in window
         """
         logger.debug("_calculate_quad_vertices")
 
-        # Default to filling the screen while preserving aspect ratio
-        # If no texture is provided yet, use a 1:1 aspect ratio
-        # FIXME: get aspect from video player?
-        video_aspect = 1.0
+        # Get target size from config
+        target_width, target_height = self.video_config.size
+        
+        # Get window dimensions
+        window_width, window_height = self.window.get_size()
         
         if texture:
-            # Calculate video aspect ratio from texture dimensions
-            video_aspect = texture.width / texture.height
-            logger.debug(f"Video dimensions: {texture.width}x{texture.height}, aspect ratio: {video_aspect:.2f}")
+            logger.debug(f"Video dimensions: {texture.width}x{texture.height}")
+        logger.debug(f"Target size: {target_width}x{target_height}")
+        logger.debug(f"Window dimensions: {window_width}x{window_height}")
         
-        # Get window dimensions and calculate aspect ratio
-        window_width, window_height = self.window.get_size()
-        window_aspect = window_width / window_height
-        logger.debug(f"Window dimensions: {window_width}x{window_height}, aspect ratio: {window_aspect:.2f}")
+        # Calculate position to center the target-sized quad in the window
+        x_offset = (window_width - target_width) / 2
+        y_offset = (window_height - target_height) / 2
         
-        # Standard aspect ratio calculation
-        if video_aspect > window_aspect:
-            # Video is wider than window, fit to width
-            scale_x = 1.0
-            scale_y = (window_aspect / video_aspect)
-            logger.debug(f"Video is wider than window, scaling height by: {scale_y:.2f}")
-        else:
-            # Video is taller than window, fit to height
-            scale_x = (video_aspect / window_aspect)
-            scale_y = 1.0
-            logger.debug(f"Video is taller than window, scaling width by: {scale_x:.2f}")
-        
-        scaled_width = window_width * scale_x
-        scaled_height = window_height * scale_y
-        # Calculate offsets to center the quad
-        x_offset = (window_width - scaled_width) / 2
-        y_offset = (window_height - scaled_height) / 2
-
-        # Define quad vertices (bottom-left, bottom-right, top-left, top-right)
+        # Define quad vertices for the target size, centered in window
+        # (bottom-left, bottom-right, top-left, top-right)
         positions = (
             x_offset, y_offset,  # bottom-left
-            x_offset + scaled_width, y_offset,  # bottom-right
-            x_offset, y_offset + scaled_height,  # top-left
-            x_offset + scaled_width, y_offset + scaled_height,  # top-right
+            x_offset + target_width, y_offset,  # bottom-right
+            x_offset, y_offset + target_height,  # top-left
+            x_offset + target_width, y_offset + target_height,  # top-right
         )
+        
+        logger.debug(f"Video quad positioned at: offset=({x_offset}, {y_offset}), size=({target_width}, {target_height})")
 
         return positions
 
