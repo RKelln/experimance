@@ -481,7 +481,7 @@ class VideoOverlayRenderer(LayerRenderer):
 
 
     def _load_mask(self, mask_image:Optional[AbstractImage] = None):
-        """Load a mask texture from an image.
+        """Load a mask texture from an image, rescaling to target size if needed.
 
         Args:
             mask_image: Pyglet image to use as mask
@@ -489,9 +489,38 @@ class VideoOverlayRenderer(LayerRenderer):
         logger.debug(f"Loading mask texture from image: {mask_image}")
         if mask_image:
             try:
+                # Get target size from config
+                target_width, target_height = self.video_config.size
+                
+                # Check if mask needs rescaling
+                if (mask_image.width != target_width or mask_image.height != target_height):
+                    logger.info(f"Rescaling mask from {mask_image.width}x{mask_image.height} to {target_width}x{target_height}")
+                    
+                    # Convert to PIL Image for rescaling
+                    # Get image data as RGBA
+                    image_data = mask_image.get_image_data()
+                    raw_data = image_data.get_data('RGBA', image_data.width * 4)
+                    
+                    # Create PIL Image
+                    from PIL import Image
+                    pil_image = Image.frombytes('RGBA', (image_data.width, image_data.height), raw_data)
+                    
+                    # Resize using high-quality resampling
+                    resized_pil = pil_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                    
+                    # Convert back to pyglet image
+                    resized_data = resized_pil.tobytes()
+                    mask_image = pyglet.image.ImageData(target_width, target_height, 'RGBA', resized_data)
+                    
+                    logger.debug(f"Mask rescaled successfully to {target_width}x{target_height}")
+                else:
+                    logger.debug(f"Mask already correct size: {mask_image.width}x{mask_image.height}")
+                
                 self.mask_texture = mask_image.get_texture()
             except Exception as e:
                 logger.error(f"Error loading mask texture: {e}", exc_info=True)
+                # Fall back to white mask on error
+                self.mask_texture = self._create_fallback_mask()
         else:
             # create an all white mask (i.e. no mask)
             self.mask_texture = self._create_fallback_mask()
