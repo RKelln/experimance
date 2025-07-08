@@ -7,7 +7,7 @@ monitor = 0                   # Monitor to display on (0 = primary)
 resolution = [1920, 1080]     # Resolution to use if not fullscreen
 fps_limit = 30                # Frame rate limit
 vsync = true                  # Whether to use vertical sync
-debug_overlay = true          # Whether to show debug overlay
+debug_overlay = false          # Whether to show debug overlay
 #background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
 mask="circle"
 #debug_image = "media/images/projector_alignment.png"

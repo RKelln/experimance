@@ -518,6 +518,8 @@ class ExperimanceCoreService(BaseService):
         try:
             # Apply flip transformations if configured
             debug_depth_image = depth_image.copy()
+
+            debug_depth_image = self._process_image(debug_depth_image, blur=False)
             
             # Convert depth map to colorized visualization for better visibility
             depth_colorized = cv2.applyColorMap(debug_depth_image, cv2.COLORMAP_JET)
@@ -683,7 +685,7 @@ class ExperimanceCoreService(BaseService):
         elif isinstance(era, Era):
             era_enum = era
         else:
-            self.record_error(f"Invalid era type: {type(era)}")
+            self.record_error(Exception(f"Invalid era type: {type(era)}"))
 
         available_biomes = ERA_BIOMES.get(era_enum, [Biome.TEMPERATE_FOREST])
         
