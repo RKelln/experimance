@@ -21,7 +21,7 @@ if proj_env.exists():
 
 
 # Core constants
-from experimance_common.constants import (
+from experimance_common.constants_base import (
     DEFAULT_PORTS,
     HEARTBEAT_INTERVAL,
     DEFAULT_IMAGE_TRANSPORT_MODE,
@@ -59,7 +59,7 @@ from experimance_common.zmq.services import (
 )
 
 # Schema definitions
-from experimance_common.schemas import (
+from experimance_common.schemas_base import (
     TransitionStyle,
     DisplayContentType,
     DisplayTransitionType,

@@ -26,7 +26,7 @@ from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
 from experimance_common.schemas import (
-    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, ImageReady
+    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType
 )
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService

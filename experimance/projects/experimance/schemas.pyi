@@ -19,33 +19,33 @@ from experimance_common.schemas_base import (
 
 class Era(StringComparableEnum):
     """Era definitions for the Experimance installation."""
-    WILDERNESS: str
-    PRE_INDUSTRIAL: str
-    EARLY_INDUSTRIAL: str
-    LATE_INDUSTRIAL: str
-    MODERN: str
-    CURRENT: str
-    FUTURE: str
-    DYSTOPIA: str
-    RUINS: str
+    WILDERNESS = "wilderness"
+    PRE_INDUSTRIAL = "pre_industrial"
+    EARLY_INDUSTRIAL = "early_industrial"
+    LATE_INDUSTRIAL = "late_industrial"
+    MODERN = "modern"
+    CURRENT = "current"
+    FUTURE = "future"
+    DYSTOPIA = "dystopia"
+    RUINS = "ruins"
 
 class Biome(StringComparableEnum):
     """Biome definitions for the Experimance installation."""
-    RAINFOREST: str
-    TEMPERATE_FOREST: str
-    BOREAL_FOREST: str
-    DECIDUOUS_FOREST: str
-    DESERT: str
-    MOUNTAIN: str
-    TROPICAL_ISLAND: str
-    RIVER: str
-    TUNDRA: str
-    STEPPE: str
-    COASTAL: str
-    SWAMP: str
-    PLAINS: str
-    ARCTIC: str
-    JUNGLE: str
+    RAINFOREST = "rainforest"
+    TEMPERATE_FOREST = "temperate_forest"
+    BOREAL_FOREST = "boreal_forest"
+    DECIDUOUS_FOREST = "deciduous_forest"
+    DESERT = "desert"
+    MOUNTAIN = "mountain"
+    TROPICAL_ISLAND = "tropical_island"
+    RIVER = "river"
+    TUNDRA = "tundra"
+    STEPPE = "steppe"
+    COASTAL = "coastal"
+    SWAMP = "swamp"
+    PLAINS = "plains"
+    ARCTIC = "arctic"
+    JUNGLE = "jungle"
 
 # Extended message types with Experimance-specific fields
 
