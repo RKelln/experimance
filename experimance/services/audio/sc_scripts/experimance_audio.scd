@@ -12,15 +12,22 @@ s.options.numWireBufs = 64;
 s.options.maxNodes = 1024 * 8;
 // all of the following options are set by audio_service.py
 // TODO: read from toml file
-s.options.numOutputBusChannels = 6; 
-s.options.numInputBusChannels = 2;  
-s.options.device = nil;             
-~oscRecvPort = 5570;                
+s.options.numOutputBusChannels = 2;
+s.options.numInputBusChannels = 2;
+s.options.device = nil;  // "plughw:1,0" // USB audio interface
+~oscRecvPort = 5570;
 ~initMasterVolume = 1.0;
 ~initEnvironmentVolume = 1.0;
-~initMusicVolume = 1.0;                
-~initSfxVolume = 1.0;                  
+~initMusicVolume = 1.0;
+~initSfxVolume = 1.0;
 ~musicFadeTime = 10.0;  // Default fade time for music transitions
+
+// Surround sound configuration (set by audio_service.py)
+~enableSurround = false;
+~surroundMode = "5.1";
+~environmentChannels = [0, 1];  // Front L/R
+~musicChannels = [4, 5];        // Rear L/R (in 5.1)
+~sfxChannels = [0, 1];          // Front L/R
 
 s.waitForBoot {
     // -----------------------------------------------------
@@ -79,6 +86,49 @@ s.waitForBoot {
 
     "Config directory: %".format(configDir).postln;
     "Audio directory: %".format(audioDir).postln;
+
+    // -----------------------------------------------------
+    // Surround Sound Helper Functions
+    // -----------------------------------------------------
+    
+    // Helper function to output stereo signal to specific channels
+    ~outputToChannels = { |signal, channels|
+        var leftChan, rightChan;
+        
+        if(~enableSurround and: { channels.size >= 2 }) {
+            leftChan = channels[0];
+            rightChan = channels[1];
+            
+            // Route left and right channels to specified outputs
+            Out.ar(leftChan, signal[0]);
+            Out.ar(rightChan, signal[1]);
+        } {
+            // Default stereo output (channels 0 and 1)
+            Out.ar(0, signal);
+        };
+    };
+    
+    // Print surround configuration info
+    ~logSurroundConfig = {
+        if(~enableSurround) {
+            "=== Surround Sound Configuration ===".postln;
+            ("Mode: " ++ ~surroundMode).postln;
+            ("Total output channels: " ++ s.options.numOutputBusChannels).postln;
+            ("Environment channels: " ++ ~environmentChannels).postln;
+            ("Music channels: " ++ ~musicChannels).postln;
+            ("SFX channels: " ++ ~sfxChannels).postln;
+            "Channel mapping (5.1):".postln;
+            "  0: Front Left".postln;
+            "  1: Front Right".postln;
+            "  2: Center".postln;
+            "  3: LFE (Subwoofer)".postln;
+            "  4: Rear Left".postln;
+            "  5: Rear Right".postln;
+            "".postln;
+        } {
+            "Surround sound disabled - using stereo output".postln;
+        };
+    };
 
     // -----------------------------------------------------
     // Configuration loading
@@ -1142,7 +1192,7 @@ s.waitForBoot {
                                     i, buffer.numFrames, bufferInfo[\duration].round(0.01)
                                 ).postln;
                             } {
-                                "    Slot %: NOT LOADED (%)".format(i, path ? "no path").postln;
+                                "    Slot %: NOT LOADED (%)".format(i, path ? "no path" ).postln;
                             };
                         } {
                             "    Slot %: NIL".format(i).postln;
@@ -1311,7 +1361,8 @@ s.waitForBoot {
             // Apply envelope, amplitude and volume controls
             sig = sig * env * amp * 0.5 * musicVolume * masterVolume; // Apply both music and master volume
 
-            Out.ar(0, sig);
+            // Route to music channels (rear speakers in surround setup)
+            ~outputToChannels.(sig, ~musicChannels);
         }).add;
 
         // Environmental sound player (looping with crossfade)
@@ -1320,7 +1371,9 @@ s.waitForBoot {
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
             sig = sig * env * amp * duck * envVolume * masterVolume; // Apply both environment and master volume
-            Out.ar(0, sig);
+            
+            // Route to environment channels (front speakers in surround setup)
+            ~outputToChannels.(sig, ~environmentChannels);
         }).add;
 
         // Music loop player (looping with crossfade, ducking by slot)
@@ -1344,7 +1397,9 @@ s.waitForBoot {
 
             // Apply envelope and volume controls
             sig = sig * env * amp * musicVolume * masterVolume; // Apply both music and master volume
-            Out.ar(0, sig);
+            
+            // Route to music channels (rear speakers in surround setup)
+            ~outputToChannels.(sig, ~musicChannels);
         }).add;
 
         // One-shot environmental sound player (for periodic intervals)
@@ -1353,7 +1408,9 @@ s.waitForBoot {
             env = EnvGen.kr(Env.linen(0.01, BufDur.kr(buf), 0.1), doneAction: 2);
             sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), doneAction: 2);
             sig = sig * env * amp * envVolume * masterVolume; // Apply both environment and master volume
-            Out.ar(0, sig);
+            
+            // Route to environment channels (front speakers in surround setup)
+            ~outputToChannels.(sig, ~environmentChannels);
         }).add;
 
         // One-shot trigger player
@@ -1362,7 +1419,9 @@ s.waitForBoot {
             env = EnvGen.kr(Env.linen(0.01, BufDur.kr(buf), 0.1), doneAction: 2);
             sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), doneAction: 2);
             sig = sig * env * amp * sfxVolume * masterVolume; // Apply both SFX and master volume
-            Out.ar(0, sig);
+            
+            // Route to SFX channels (front speakers in surround setup)
+            ~outputToChannels.(sig, ~sfxChannels);
         }).add;
     };
 
@@ -1377,6 +1436,9 @@ s.waitForBoot {
         var readyFlag = false;
 
         "Initializing Experimance Audio System...".postln;
+        
+        // Log surround sound configuration
+        ~logSurroundConfig.();
 
         // Create groups for hierarchical audio organization
         mainGroup = Group.new;

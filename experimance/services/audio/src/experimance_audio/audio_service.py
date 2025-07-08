@@ -447,6 +447,10 @@ class AudioService(BaseService):
             lines = f.readlines()
 
         new_lines = []
+        # Determine if surround is enabled
+        output_channels = self.config.supercollider.output_channels or 2
+        enable_surround = self.config.supercollider.enable_surround or output_channels > 2
+        
         for line in lines:
             stripped = line.strip()
             if stripped.startswith('s.options.device') and self.config.supercollider.device:
@@ -467,6 +471,19 @@ class AudioService(BaseService):
                 new_lines.append(f'~initSfxVolume = {self.config.audio.sfx_volume};\n')
             elif stripped.startswith('~musicFadeTime'):
                 new_lines.append(f'~musicFadeTime = {self.config.audio.music_fade_time};\n')
+            elif stripped.startswith('~enableSurround'):
+                new_lines.append(f'~enableSurround = {str(enable_surround).lower()};\n')
+            elif stripped.startswith('~surroundMode'):
+                new_lines.append(f'~surroundMode = "{self.config.supercollider.surround_mode}";\n')
+            elif stripped.startswith('~environmentChannels'):
+                channels_str = str(self.config.supercollider.environment_channels).replace("'", "")
+                new_lines.append(f'~environmentChannels = {channels_str};\n')
+            elif stripped.startswith('~musicChannels'):
+                channels_str = str(self.config.supercollider.music_channels).replace("'", "")
+                new_lines.append(f'~musicChannels = {channels_str};\n')
+            elif stripped.startswith('~sfxChannels'):
+                channels_str = str(self.config.supercollider.sfx_channels).replace("'", "")
+                new_lines.append(f'~sfxChannels = {channels_str};\n')
             else:
                 new_lines.append(line)
 
@@ -479,9 +496,14 @@ class AudioService(BaseService):
         logger.debug(f"Modified SuperCollider script saved to: {temp_path}")
         logger.info(f"Set values:"
                      f" device={self.config.supercollider.device}, "
-                     f"output_channels={self.config.supercollider.output_channels}, "
+                     f"output_channels={output_channels}, "
                      f"input_channels={self.config.supercollider.input_channels}, "
                      f"osc_port={self.config.osc.send_port}, "
+                     f"surround_enabled={enable_surround}, "
+                     f"surround_mode={self.config.supercollider.surround_mode}, "
+                     f"env_channels={self.config.supercollider.environment_channels}, "
+                     f"music_channels={self.config.supercollider.music_channels}, "
+                     f"sfx_channels={self.config.supercollider.sfx_channels}, "
                      f"master_volume={self.config.audio.master_volume}, "
                      f"environment_volume={self.config.audio.environment_volume}, "
                      f"music_volume={self.config.audio.music_volume}, "

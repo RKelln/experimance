@@ -6,10 +6,10 @@ This module defines Pydantic models for validating and accessing
 audio service configuration in a type-safe way.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.schemas import MessageType
@@ -82,6 +82,56 @@ class SuperColliderConfig(BaseModel):
         default=None,
         description="Audio device to use for SuperCollider. If None, uses default device."
     )
+
+    # Surround sound configuration
+    enable_surround: bool = Field(
+        default=False,
+        description="Enable surround sound routing. Automatically enabled if output_channels > 2"
+    )
+    
+    surround_mode: Literal["5.1", "quad"] = Field(
+        default="5.1",
+        description="Surround sound mode: '5.1' or 'quad'"
+    )
+    
+    environment_channels: List[int] = Field(
+        default_factory=lambda: [0, 1],  # Front L/R
+        description="Output channels for environmental sounds (0-indexed)"
+    )
+    
+    music_channels: List[int] = Field(
+        default_factory=lambda: [4, 5],  # Rear L/R in 5.1
+        description="Output channels for music (0-indexed)"
+    )
+    
+    sfx_channels: List[int] = Field(
+        default_factory=lambda: [0, 1],  # Front L/R
+        description="Output channels for sound effects (0-indexed)"
+    )
+    
+    @model_validator(mode='after')
+    def configure_default_channels(self):
+        """Configure channel defaults based on surround mode automatically."""
+        # Determine if surround is enabled
+        enable_surround = self.enable_surround or (self.output_channels and self.output_channels > 2)
+        
+        # Auto-configure channels for quad mode if using 5.1 defaults
+        if enable_surround and self.surround_mode == "quad":
+            # Check if music_channels are still at the 5.1 default and update for quad
+            if self.music_channels == [4, 5]:  # Default 5.1 rear channels
+                self.music_channels = [2, 3]  # Quad rear channels
+        
+        return self
+    
+    def configure_surround_channels(self) -> None:
+        """Configure channel routing based on surround mode and settings - for manual calls."""
+        enable_surround = self.enable_surround or (self.output_channels and self.output_channels > 2)
+        
+        if enable_surround and self.surround_mode == "quad":
+            # Quad setup: 0=FL, 1=FR, 2=RL, 3=RR
+            # Update music channels for quad if they're still at 5.1 defaults
+            if self.music_channels == [4, 5]:  # Default 5.1 rear channels
+                object.__setattr__(self, 'music_channels', [2, 3])  # Quad rear channels
 
 class AudioConfig(BaseModel):
     """Audio playback configuration."""

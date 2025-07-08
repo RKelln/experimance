@@ -1,1467 +1,899 @@
 [
     {
-        "path": "environment/wilderness/rainforest_ambience.wav",
-        "prompt": "Dense rainforest ambience: rainfall, insects, distant animal calls, river sounds",
+        "path": "environment/rainforest_ambience.mp3",
         "tags": [
             "rainforest",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "rainforest"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "dense rainforest ambience: insects, distant animal calls"
     },
     {
-        "path": "environment/wilderness/temperate_forest_ambience.wav",
-        "prompt": "Temperate forest ambience: songbirds, wind in trees, distant animal sounds",
+        "path": "environment/jungle_ambience.mp3",
+        "tags": [
+            "jungle",
+            "wilderness"
+        ],
+        "prompt": "jungle ambience: dense foliage, insects buzzing, distant animal calls"
+    },
+    {
+        "path": "environment/temperate_forest_ambience.mp3",
         "tags": [
             "temperate_forest",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "temperate_forest"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "temperate forest ambience: rustling leaves, songbirds, wind in trees, distant animal sounds"
     },
     {
-        "path": "environment/wilderness/boreal_forest_ambience.wav",
-        "prompt": "Boreal forest ambience: pine trees creaking, wind, ravens",
+        "path": "environment/boreal_forest_ambience.mp3",
         "tags": [
             "boreal_forest",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "boreal_forest"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "boreal forest ambience: pine trees creaking, wind, ravens, light snow in winter"
     },
     {
-        "path": "environment/wilderness/deciduous_forest_ambience.wav",
-        "prompt": "Deciduous forest ambience: birds, wind, insects",
+        "path": "environment/deciduous_forest_ambience.mp3",
         "tags": [
             "deciduous_forest",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "deciduous_forest"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "deciduous forest ambience: birds, wind, seasonal leaf fall, insects"
     },
     {
-        "path": "environment/wilderness/desert_ambience.wav",
-        "prompt": "Desert ambience: wind over sand, sparse animal calls, distant shifting dunes",
+        "path": "environment/desert_ambience.mp3",
         "tags": [
             "desert",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "desert"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "desert ambience: wind over sand, sparse animal calls, distant shifting dunes"
     },
     {
-        "path": "environment/wilderness/mountain_ambience.wav",
-        "prompt": "Mountain ambience: wind, distant avalanches, eagles, occasional rocks tumbling",
+        "path": "environment/mountain_ambience.mp3",
         "tags": [
             "mountain",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "mountain"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "mountain ambience: wind, distant avalanches, eagles, occasional rocks tumbling"
     },
     {
-        "path": "environment/wilderness/tropical_island_ambience.wav",
-        "prompt": "Tropical island ambience: waves on shore, tropical birds",
+        "path": "environment/tropical_island_ambience.mp3",
         "tags": [
             "tropical_island",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "tropical_island"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "tropical island ambience: waves on shore, palm leaves, tropical birds, distant thunder"
     },
     {
-        "path": "environment/wilderness/tropical_island_ambience_thunder.wav",
-        "prompt": "Tropical island ambience: distant thunder",
-        "tags": [
-            "tropical_island",
-            "wilderness",
-            "ambience"
-        ],
-        "requires": [
-            "tropical_island"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "rare",
-        "weight": 0.1
-    },
-    {
-        "path": "environment/wilderness/river_ambience.wav",
-        "prompt": "River ambience: flowing water, splashes, reeds in wind, riverbank animals",
+        "path": "environment/river_ambience.mp3",
         "tags": [
             "river",
-            "wilderness",
-            "ambience",
-            "water"
+            "wilderness"
         ],
-        "requires": [
-            "river"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "river ambience: flowing water, splashes, reeds in wind, riverbank animals"
     },
     {
-        "path": "environment/modern/river_ambience.wav",
-        "prompt": "River ambience: flowing water, water lapping against rocks",
-        "tags": [
-            "river",
-            "ambience",
-            "water"
-        ],
-        "requires": [
-            "river"
-        ],
-        "requires_none": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
-    },
-    {
-        "path": "environment/wilderness/tundra_ambience.wav",
-        "prompt": "Tundra ambience: wind, distant birds, light snow, silence",
+        "path": "environment/tundra_ambience.mp3",
         "tags": [
             "tundra",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "tundra"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "tundra ambience: wind, distant birds, light snow, silence"
     },
     {
-        "path": "environment/wilderness/steppe_ambience.wav",
-        "prompt": "Steppe ambience: tall grasses rustling, insects, distant herds",
+        "path": "environment/steppe_ambience.mp3",
         "tags": [
             "steppe",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "steppe"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "steppe ambience: tall grasses rustling, insects, distant herds"
     },
     {
-        "path": "environment/wilderness/coastal_ambience.wav",
-        "prompt": "Coastal ambience: breaking waves, seabirds, wind",
+        "path": "environment/coastal_ambience.mp3",
         "tags": [
             "coastal",
-            "ambience",
-            "water"
+            "wilderness"
         ],
-        "requires": [
-            "coastal"
-        ],
-        "interval": "loop"
+        "prompt": "coastal ambience: breaking waves, seabirds, wind, tidal sounds"
     },
     {
-        "path": "environment/wilderness/swamp_ambience.wav",
-        "prompt": "Swamp ambience: frogs, insects, water movement, distant birds",
+        "path": "environment/swamp_ambience.mp3",
         "tags": [
             "swamp",
-            "wilderness",
-            "ambience",
-            "water"
+            "wilderness"
         ],
-        "requires": [
-            "swamp"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "swamp ambience: frogs, insects, water movement, distant birds"
     },
     {
-        "path": "environment/wilderness/plains_ambience.wav",
-        "prompt": "Plains ambience: wind in grasses, crickets, distant animal herds",
+        "path": "environment/plains_ambience.mp3",
         "tags": [
             "plains",
-            "wilderness",
-            "ambience"
+            "wilderness"
         ],
-        "requires": [
-            "plains"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "plains ambience: wind in grasses, crickets, distant animal herds"
     },
     {
-        "path": "environment/wilderness/arctic_ambience.wav",
-        "prompt": "Arctic ambience: howling wind, cracking ice, distant seals",
+        "path": "environment/arctic_ambience.mp3",
         "tags": [
             "arctic",
-            "wilderness",
-            "ambience",
-            "ice"
+            "wilderness"
         ],
-        "requires": [
-            "arctic"
-        ],
-        "requires_any": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "arctic ambience: howling wind, cracking ice, distant seals, muffled silence"
     },
     {
-        "path": "environment/modern/arctic_ambience.wav",
-        "prompt": "Arctic ambience: howling wind",
+        "path": "environment/airport.mp3",
         "tags": [
-            "arctic",
-            "ambience",
-            "wind"
+            "airport"
         ],
-        "requires": [
-            "arctic"
-        ],
-        "requires_none": [
-            "wilderness",
-            "pre_industrial",
-            "early_industrial",
-            "dystopia",
-            "ruins"
-        ],
-        "interval": "loop"
+        "prompt": "airport ambience: ambient sounds of a busy airport terminal, including rolling luggage, distant PA announcements, soft chatter, and the occasional roar of planes taking off and landing"
     },
     {
-        "path": "environment/pre_industrial/transportation_hunting_trail.wav",
-        "prompt": "Footsteps on a soft earth trail, leaves crunching, distant animal calls",
+        "path": "environment/airstrip.mp3",
         "tags": [
-            "pre_industrial",
-            "transportation",
-            "hunting",
-            "trail"
+            "airstrip"
         ],
-        "interval": "occasional",
-        "requires": [
-            "hunting"
-        ],
-        "requires_any": [
-            "pre_industrial"
-        ]
+        "prompt": "airstrip ambience: open-air ambience with the hum of small aircraft engines, wind over flat land, and scattered distant voices and tool clinks from ground crew"
     },
     {
-        "path": "environment/pre_industrial/transportation_river_dugout_canoe.wav",
-        "prompt": "Wooden canoe gliding through water, gentle paddling, birdsong",
+        "path": "environment/algae_farm.mp3",
         "tags": [
-            "river",
-            "pre_industrial",
-            "transportation",
-            "canoe"
+            "algae_farm"
         ],
-        "interval": "occasional",
-        "requires": [
-            "canue",
-            "river",
-            "pre_industrial"
-        ]
+        "prompt": "algae farm ambience: quiet mechanical bubbling and soft flowing water with intermittent wet sloshes and faint hums of pumps in a humid, open structure"
     },
     {
-        "path": "environment/pre_industrial/transportation_horse_trail.wav",
-        "prompt": "Horses walking on a forest trail, birds and wind in trees",
+        "path": "environment/amphitheater.mp3",
         "tags": [
-            "pre_industrial",
-            "transportation",
-            "horse",
-            "trail"
+            "amphitheater"
         ],
-        "interval": "occasional",
-        "requires": [
-            "horse",
-            "pre_industrial"
-        ]
+        "prompt": "amphitheater ambience: audience murmurs and applause in a semi-open stone or concrete space, with voice echoes and natural reverb from a live performance or speech"
     },
     {
-        "path": "environment/pre_industrial/transportation_camel_caravan.wav",
-        "prompt": "Camels walking on sand, bells jingling, light wind",
+        "path": "environment/amusement_park.mp3",
         "tags": [
-            "desert",
-            "pre_industrial",
-            "transportation",
+            "amusement_park"
+        ],
+        "prompt": "amusement park ambience: a vibrant mix of mechanical whirs, people laughing and screaming in delight, carnival game bells, and ambient pop music in the distance"
+    },
+    {
+        "path": "environment/apartment.mp3",
+        "tags": [
+            "apartment"
+        ],
+        "prompt": "apartment ambience: interior domestic sounds like muffled voices through walls, footsteps on floors above, appliance hums, and occasional distant traffic"
+    },
+    {
+        "path": "environment/arcade.mp3",
+        "tags": [
+            "arcade"
+        ],
+        "prompt": "arcade ambience: retro and modern arcade machine loops, button presses, chiptune melodies, and a blend of excited voices and competitive banter"
+    },
+    {
+        "path": "environment/arena.mp3",
+        "tags": [
+            "arena"
+        ],
+        "prompt": "arena ambience: cheering crowd reverberating in a large enclosed space, echoing announcements, foot thumps, and team chants"
+    },
+    {
+        "path": "environment/bar.mp3",
+        "tags": [
+            "bar"
+        ],
+        "prompt": "bar ambience: low clink of glassware, background chatter and laughter, muffled music, and stools scraping on hard floors"
+    },
+    {
+        "path": "environment/barracks.mp3",
+        "tags": [
+            "barracks"
+        ],
+        "prompt": "barracks ambience: communal living sounds, distant talking and orders being shouted, gear clanking, and footsteps on wooden or concrete floors"
+    },
+    {
+        "path": "environment/boat.mp3",
+        "tags": [
+            "boat"
+        ],
+        "prompt": "boat ambience: wood creaking, gentle waves against the hull, seabirds in the distance, and rope or sail adjustments with occasional voices"
+    },
+    {
+        "path": "environment/bonfire.mp3",
+        "tags": [
+            "bonfire"
+        ],
+        "prompt": "bonfire ambience: crackling wood flames, wind rustling through trees or clothes, and murmured conversation or light acoustic music nearby"
+    },
+    {
+        "path": "environment/bowling_alley.mp3",
+        "tags": [
+            "bowling_alley"
+        ],
+        "prompt": "bowling alley ambience: echoes of heavy balls striking pins, electronic scoring systems, and players cheering or groaning"
+    },
+    {
+        "path": "environment/bridge.mp3",
+        "tags": [
+            "bridge"
+        ],
+        "prompt": "bridge ambience: wind and distant vehicle hums over a long span, with occasional footsteps or bike tires clattering on metal or wood planks"
+    },
+    {
+        "path": "environment/bus.mp3",
+        "tags": [
+            "bus"
+        ],
+        "prompt": "bus ambience: idling engine hums, door hisses, occasional conversations, and shifting chassis sounds over bumps"
+    },
+    {
+        "path": "environment/cable_car.mp3",
+        "tags": [
+            "cable_car"
+        ],
+        "prompt": "cable car ambience: quiet whooshing of suspended travel, with pulleys, swaying cables, and muffled interior chatter or wind outside"
+    },
+    {
+        "path": "environment/cafe.mp3",
+        "tags": [
+            "cafe"
+        ],
+        "prompt": "cafe ambience: quiet clinking of cups and saucers, soft conversations, ambient music, and occasional espresso machine hisses and chair movements"
+    },
+    {
+        "path": "environment/caravan.mp3",
+        "tags": [
             "caravan"
         ],
-        "interval": "occasional",
-        "requires": [
-            "caravan",
-            "desert",
-            "pre_industrial"
-        ]
+        "prompt": "caravan ambience: light footsteps on dirt, low chatter, animal sounds like hoofbeats or camels, and the creak of loaded carts or wagons"
     },
     {
-        "path": "environment/pre_industrial/transportation_river_wood_canoe.wav",
-        "prompt": "Canoe moving on a quiet river, paddles, forest wildlife",
+        "path": "environment/carts.mp3",
         "tags": [
-            "river",
-            "pre_industrial",
-            "transportation",
-            "canoe"
+            "carts"
         ],
-        "interval": "occasional",
-        "requires": [
-            "canoe",
-            "river",
-            "pre_industrial"
-        ]
+        "prompt": "carts ambience: wooden wheels rolling over uneven ground, creaking axles, and occasional shouts or animal sounds depending on use"
     },
     {
-        "path": "environment/pre_industrial/transportation_canoes.wav",
-        "prompt": "Canoes gliding in still water, soft splashes, insect sounds",
+        "path": "environment/church.mp3",
         "tags": [
-            "river",
-            "pre_industrial",
-            "transportation",
-            "canoe"
+            "church"
         ],
-        "interval": "occasional",
-        "requires": [
-            "canoe",
-            "river",
-            "pre_industrial"
-        ]
+        "prompt": "church ambience: soft murmuring of prayer, reverberant footsteps, church bells tolling in the distance"
     },
     {
-        "path": "environment/pre_industrial/transportation_rafts.wav",
-        "prompt": "Wooden rafts creaking, gentle water, human voices",
+        "path": "environment/cinema.mp3",
         "tags": [
-            "pre_industrial",
-            "transportation",
-            "raft"
+            "cinema"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial",
-            "water"
-        ],
-        "requires_any": [
-            "raft",
-            "boat"
-        ]
+        "prompt": "cinema ambience: rustling popcorn, faint whispers, projector whirr, and muffled sound effects or dialogue from a distant film screen"
     },
     {
-        "path": "environment/pre_industrial/housing_traditional_dwellings.wav",
-        "prompt": "Chatter around a traditional dwelling, fire crackling, animal sounds",
+        "path": "environment/clubhouse.mp3",
         "tags": [
-            "pre_industrial",
-            "housing",
-            "house"
+            "clubhouse"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "house",
-            "traditional_dwelling"
-        ]
+        "prompt": "clubhouse ambience: friendly conversation, wooden floor creaks, shuffling chairs, and occasional background music or laughter"
     },
     {
-        "path": "environment/pre_industrial/housing_tribal_camp.wav",
-        "prompt": "Low voices, fire crackling, distant night animals",
+        "path": "environment/coal_depot.mp3",
         "tags": [
-            "pre_industrial",
-            "housing",
-            "camp"
+            "coal_depot"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "camp",
-            "tribal_camp"
-        ]
+        "prompt": "coal depot ambience: heavy crunch of coal being shoveled, low rumble of conveyors, and dusty air with sporadic metallic clangs"
     },
     {
-        "path": "environment/pre_industrial/housing_log_cabin.wav",
-        "prompt": "Wood crackling in a hearth, creaking logs, wind outside",
+        "path": "environment/coal_terminal.mp3",
         "tags": [
-            "pre_industrial",
-            "housing",
-            "log_cabin"
+            "coal_terminal"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "log_cabin",
-            "cabin",
-            "house"
-        ]
+        "prompt": "coal terminal ambience: mechanical loading sounds, deep engine hums, echoing container shifts, and wind across wide open spaces"
     },
     {
-        "path": "environment/pre_industrial/housing_nomadic_tents.wav",
-        "prompt": "Canvas flapping, distant animal bells, wind",
+        "path": "environment/company_town.mp3",
         "tags": [
-            "pre_industrial",
-            "housing",
-            "nomadic_tent"
+            "company_town"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "nomadic_tent",
-            "tent",
-            "yurt"
-        ]
+        "prompt": "company town ambience: clustered daily activity including footsteps on boardwalks, workers calling out, machinery hums, and domestic background sounds"
     },
     {
-        "path": "environment/pre_industrial/housing_oasis_camp.wav",
-        "prompt": "Murmur of camp near oasis, water, date palms, animal brays",
+        "path": "environment/concert.mp3",
         "tags": [
-            "desert",
-            "pre_industrial",
-            "housing",
-            "oasis_camp"
+            "concert"
         ],
-        "interval": "occasional",
-        "requires": [
-            "desert",
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "oasis_camp",
-            "camp"
-        ]
+        "prompt": "concert ambience: cheering crowd, reverb-heavy live music, stage movements, and moments of silence followed by applause"
     },
     {
-        "path": "environment/pre_industrial/housing_mountain_village.wav",
-        "prompt": "Stone footsteps, goats, distant bells, mountain wind",
+        "path": "environment/delivery_hub.mp3",
         "tags": [
-            "mountain",
-            "pre_industrial",
-            "housing",
-            "mountain_village"
+            "delivery_hub"
         ],
-        "interval": "occasional",
-        "requires": [
-            "mountain",
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "mountain_village",
-            "village"
-        ]
+        "prompt": "delivery hub ambience: repetitive rolling of carts, beep of scanners, box impacts, and intercom announcements in a busy warehouse"
     },
     {
-        "path": "environment/pre_industrial/housing_fishing_village.wav",
-        "prompt": "Children playing, gulls, small waves, nets cast in water",
+        "path": "environment/dog_park.mp3",
         "tags": [
-            "coastal",
-            "pre_industrial",
-            "housing",
-            "fishing_village"
+            "dog_park"
         ],
-        "interval": "occasional",
-        "requires": [
-            "coastal",
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "fishing_village",
-            "village"
-        ]
+        "prompt": "dog park ambience: joyful barking, panting dogs running, distant conversations, rustling grass, and jingling collars"
     },
     {
-        "path": "environment/pre_industrial/housing_stilt_houses.wav",
-        "prompt": "Swamp village ambience: water slapping stilts, birds, village chatter",
+        "path": "environment/dome.mp3",
         "tags": [
-            "pre_industrial",
-            "housing",
-            "stilt_house"
+            "dome"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial",
-            "swamp"
-        ],
-        "requires_any": [
-            "stilt_house",
-            "house"
-        ]
+        "prompt": "dome ambience: large enclosed space with pronounced echoes, subtle machinery hums, and ambient footsteps or murmur"
     },
     {
-        "path": "environment/pre_industrial/housing_floating_villages.wav",
-        "prompt": "Floating house ambience: wood creaks, water movement, people talking",
+        "path": "environment/drive_in.mp3",
         "tags": [
-            "pre_industrial",
-            "housing",
+            "drive_in"
+        ],
+        "prompt": "drive in ambience: low hum of parked vehicles, faint film audio through tinny speakers, and background night insects or breeze"
+    },
+    {
+        "path": "environment/event.mp3",
+        "tags": [
+            "event"
+        ],
+        "prompt": "event ambience: crowd murmurs, speaker or performance sounds, occasional applause, and a general air of anticipation and energy"
+    },
+    {
+        "path": "environment/factory.mp3",
+        "tags": [
+            "factory"
+        ],
+        "prompt": "factory ambience: steady mechanical rhythms, hissing steam, metallic clanks, and layered machinery operating at varied tempos"
+    },
+    {
+        "path": "environment/farm.mp3",
+        "tags": [
+            "farm"
+        ],
+        "prompt": "farm ambience: ambient animal calls, rustling crops or grass, distant tools or tractors, and bird calls in open air"
+    },
+    {
+        "path": "environment/festival.mp3",
+        "tags": [
+            "festival"
+        ],
+        "prompt": "festival ambience: overlapping music, laughing voices, vendors calling out, footsteps on various terrain, and distant fireworks or instruments"
+    },
+    {
+        "path": "environment/floating_habitat.mp3",
+        "tags": [
+            "floating_habitat"
+        ],
+        "prompt": "floating habitat ambience: subtle water sloshes, distant engines or air systems, muffled movement of people, and creaking buoyant structures"
+    },
+    {
+        "path": "environment/floating_market.mp3",
+        "tags": [
+            "floating_market"
+        ],
+        "prompt": "floating market ambience: lively merchant voices, water splashing against boats, exchanges of goods, and ambient chatter"
+    },
+    {
+        "path": "environment/floating_village.mp3",
+        "tags": [
             "floating_village"
         ],
-        "interval": "occasional",
-        "requires": [
-            "pre_industrial",
-            "water"
-        ],
-        "requires_any": [
-            "floating_village",
-            "village"
-        ]
+        "prompt": "floating village ambience: quiet water movement, household sounds on wood, children playing, and distant oar or paddle sounds"
     },
     {
-        "path": "environment/pre_industrial/industry_subsistence_agriculture.wav",
-        "prompt": "Tools working earth, farm animals, distant voices",
+        "path": "environment/gallery.mp3",
         "tags": [
-            "pre_industrial",
-            "industry",
-            "agriculture"
+            "gallery"
         ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "subsistence_agriculture",
-            "agriculture",
-            "farming",
-            "farm"
-        ]
+        "prompt": "gallery ambience: soft footsteps on polished floors, quiet murmurs of viewers, ambient hum of lighting, and occasional camera clicks"
     },
     {
-        "path": "environment/pre_industrial/industry_swidden_agriculture.wav",
-        "prompt": "Fire crackling, machetes clearing brush, forest insects",
+        "path": "environment/garden.mp3",
         "tags": [
-            "rainforest",
-            "pre_industrial",
-            "industry",
-            "agriculture"
+            "garden"
         ],
-        "interval": "occasional",
-        "requires": [
-            "rainforest",
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "swidden_agriculture",
-            "agriculture",
-            "farming",
-            "farm"
-        ]
+        "prompt": "garden ambience: birdsong, rustling leaves, flowing water features, and distant human activity or tool use"
     },
     {
-        "path": "environment/pre_industrial/industry_oasis_farming.wav",
-        "prompt": "Digging, water irrigation, animal brays",
+        "path": "environment/gated_community.mp3",
         "tags": [
-            "desert",
-            "pre_industrial",
-            "industry",
-            "agriculture"
+            "gated_community"
         ],
-        "interval": "occasional",
-        "requires": [
-            "desert",
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "oasis_farming",
-            "agriculture",
-            "farming",
-            "farm"
-        ]
+        "prompt": "gated community ambience: low ambient traffic, distant sprinklers or yard work, occasional footsteps and passing conversations"
     },
     {
-        "path": "environment/pre_industrial/industry_subsistence_fishing.wav",
-        "prompt": "Casting nets, water splashes, water birds",
+        "path": "environment/hall.mp3",
         "tags": [
-            "pre_industrial",
-            "industry",
-            "fishing"
+            "hall"
         ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial",
-            "water"
-        ],
-        "requires_any": [
-            "subsistence_fishing",
-            "fishing",
-            "fishery"
-        ]
+        "prompt": "hall ambience: echoing footsteps, soft voices, occasional door creaks or distant claps, and reverberant indoor ambience"
     },
     {
-        "path": "environment/pre_industrial/industry_terraced_farming.wav",
-        "prompt": "Raking earth, water trickling, workers talking",
+        "path": "environment/herding_camp.mp3",
         "tags": [
-            "pre_industrial",
-            "industry",
-            "agriculture",
-            "terraced_farming"
+            "herding_camp"
         ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "terraced_farming",
-            "agriculture",
-            "farming",
-            "farm"
-        ]
+        "prompt": "herding camp ambience: animal sounds like bleating or mooing, gentle wind, human calls or whistles, and rustling grasses or fabric"
     },
     {
-        "path": "environment/pre_industrial/business_village_market.wav",
-        "prompt": "Crowd chatter, bartering, animal sounds, wood stalls",
+        "path": "environment/highway.mp3",
         "tags": [
-            "pre_industrial",
-            "business",
-            "village_market"
+            "highway"
         ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "village_market",
-            "market"
-        ],
-        "requires_none": [
-            "caravan",
-            "trading_stop",
-            "floating_market"
-        ]
+        "prompt": "highway ambience: steady flow of vehicles passing at varying speeds, occasional honks, and wind rushing past open stretches"
     },
     {
-        "path": "environment/pre_industrial/business_caravan_trading_stops.wav",
-        "prompt": "Camels settling, merchants haggling, market bustle",
+        "path": "environment/hotel.mp3",
         "tags": [
-            "pre_industrial",
-            "business",
-            "caravan"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial",
-            "desert"
-        ],
-        "requires_any": [
-            "caravan",
-            "trading_stop",
-            "market"
-        ],
-        "requires_none": [
-            "village_market",
-            "floating_market"
-        ]
-    },
-    {
-        "path": "environment/pre_industrial/business_floating_markets.wav",
-        "prompt": "Vendors calling, wooden boats, splashing, market chatter",
-        "tags": [
-            "pre_industrial",
-            "business",
-            "floating_market"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "floating_market",
-            "market"
-        ],
-        "requires_none": [
-            "village_market",
-            "caravan"
-        ]
-    },
-    {
-        "path": "environment/pre_industrial/culture_tribal_meeting_ground.wav",
-        "prompt": "Group singing, drums, fire crackling",
-        "tags": [
-            "pre_industrial",
-            "culture",
-            "tribal_meeting_ground"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "tribal_meeting_ground",
-            "meeting_ground",
-            "gathering"
-        ],
-        "requires_none": [
-            "ceremonial_gathering_site"
-        ]
-    },
-    {
-        "path": "environment/pre_industrial/culture_ceremonial_gathering_site.wav",
-        "prompt": "Ceremonial chants, group movement, fire sounds",
-        "tags": [
-            "pre_industrial",
-            "culture",
-            "ceremonial_gathering_site"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "ceremonial_gathering_site",
-            "gathering",
-            "meeting_ground"
-        ],
-        "requires_none": [
-            "tribal_meeting_ground"
-        ]
-    },
-    {
-        "path": "environment/pre_industrial/culture_marketplace.wav",
-        "prompt": "Crowds, traders, distant music, goods being sold",
-        "tags": [
-            "pre_industrial",
-            "culture",
-            "marketplace"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "pre_industrial"
-        ],
-        "requires_any": [
-            "marketplace",
-            "market"
-        ],
-        "requires_none": [
-            "village_market",
-            "caravan",
-            "floating_market"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/transportation_dirt_roads.wav",
-        "prompt": "Horse carts on dirt roads, wagon wheels, distant blacksmith hammer",
-        "tags": [
-            "early_industrial",
-            "transportation",
-            "dirt_road"
-        ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial"
-        ],
-        "requires_any": [
-            "dirt_road",
-            "wagon_road",
-            "road"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/transportation_railroad.wav",
-        "prompt": "Steam train approaching, whistle, track clatter",
-        "tags": [
-            "early_industrial",
-            "transportation",
-            "railroad"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "railroad"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/transportation_river_steamboat.wav",
-        "prompt": "Paddle steamer churning, water, passengers chatting",
-        "tags": [
-            "early_industrial",
-            "transportation",
-            "steamboat",
-            "river"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "steamboat"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/transportation_carts.wav",
-        "prompt": "Wooden carts, creaking wheels, shouts",
-        "tags": [
-            "early_industrial",
-            "transportation",
-            "cart"
-        ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial"
-        ],
-        "requires_any": [
-            "cart",
-            "wagon",
-            "carriage"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/transportation_river_barge.wav",
-        "prompt": "Barge creaks, water movement, workers loading",
-        "tags": [
-            "early_industrial",
-            "transportation",
-            "barge",
-            "river"
-        ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial",
-            "barge"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/housing_village.wav",
-        "prompt": "Children playing, distant animals, village chatter",
-        "tags": [
-            "early_industrial",
-            "housing",
-            "village"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "village"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/housing_town.wav",
-        "prompt": "Market bustle, bells, carts rolling on streets",
-        "tags": [
-            "early_industrial",
-            "housing",
-            "town"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "town"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/housing_logging_camp_clearcut.wav",
-        "prompt": "Saws cutting, workers shouting, falling trees",
-        "tags": [
-            "early_industrial",
-            "housing",
-            "logging_camp"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "logging_camp"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/housing_mining_camp.wav",
-        "prompt": "Machinery, clanking, distant explosions, worker voices",
-        "tags": [
-            "early_industrial",
-            "housing",
-            "mining_camp"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "mining_camp"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/housing_plantation_houses.wav",
-        "prompt": "Distant field work, wind in trees, footsteps on wood",
-        "tags": [
-            "early_industrial",
-            "housing",
-            "plantation"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "plantation"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/industry_factory_pollution.wav",
-        "prompt": "Machinery thumping, hiss of steam, pulleys and belts",
-        "tags": [
-            "early_industrial",
-            "industry",
-            "factory",
-            "pollution"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "factory"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/industry_mine_tailings.wav",
-        "prompt": "Distant blasts, rocks falling, metal on rock",
-        "tags": [
-            "early_industrial",
-            "industry",
-            "mine"
-        ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial",
-            "mine"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/industry_oil_extraction_pollution.wav",
-        "prompt": "Oil pump jacks, metallic clang, leaking fluids",
-        "tags": [
-            "early_industrial",
-            "industry",
-            "oil_extraction"
-        ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial"
-        ],
-        "requires_any": [
-            "oil_extraction",
-            "oil_well"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/industry_sawmill_clearcut.wav",
-        "prompt": "Buzz saws, logs rolling, workers' voices",
-        "tags": [
-            "early_industrial",
-            "industry",
-            "sawmill"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "sawmill"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/industry_windmill.wav",
-        "prompt": "Rotating wooden blades, creaks, wind",
-        "tags": [
-            "early_industrial",
-            "industry",
-            "windmill"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "windmill"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/industry_papermill_clearcut.wav",
-        "prompt": "Paper machines, water sprays, mechanical clatter",
-        "tags": [
-            "early_industrial",
-            "industry",
-            "papermill"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "papermill"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/business_trading_post.wav",
-        "prompt": "Bell rings, doors creak, conversation, goods exchanged",
-        "tags": [
-            "early_industrial",
-            "business",
-            "trading_post"
-        ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "trading_post"
-        ]
-    },
-    {
-        "path": "environment/early_industrial/business_hotel.wav",
-        "prompt": "Luggage rolling, bellhop, quiet lobby music",
-        "tags": [
-            "early_industrial",
-            "business",
             "hotel"
         ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "hotel"
-        ]
+        "prompt": "hotel ambience: indistinct lobby murmur, suitcase wheels on hard floor, elevator dings, and quiet ambient music"
     },
     {
-        "path": "environment/early_industrial/business_train_station.wav",
-        "prompt": "Steam train sounds, crowd chatter, announcements",
+        "path": "environment/hydroelectric_dam.mp3",
         "tags": [
-            "early_industrial",
-            "business",
-            "train_station"
+            "hydroelectric_dam"
         ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "train_station"
-        ]
+        "prompt": "hydroelectric dam ambience: low thunderous rush of water, mechanical hums from turbines, and occasional distant maintenance sounds"
     },
     {
-        "path": "environment/early_industrial/culture_church.wav",
-        "prompt": "Organ playing, congregation murmur, bells",
+        "path": "environment/hydrofoil.mp3",
         "tags": [
-            "early_industrial",
-            "culture",
-            "church"
+            "hydrofoil"
         ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial",
-            "church"
-        ]
+        "prompt": "hydrofoil ambience: gentle slicing of water, low whine of propulsion, occasional cabin rattles, and ambient passenger conversation"
     },
     {
-        "path": "environment/early_industrial/culture_town_square.wav",
-        "prompt": "Market crowd, carts, music, public speeches",
+        "path": "environment/library.mp3",
         "tags": [
-            "early_industrial",
-            "culture",
-            "town_square"
+            "library"
         ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "town_square"
-        ]
+        "prompt": "library ambience: pages turning, footsteps on carpet or tile, whispers, pen scratching, and distant carts rolling books"
     },
     {
-        "path": "environment/early_industrial/culture_community_hall.wav",
-        "prompt": "Gathered voices, wooden floor footsteps, laughter",
+        "path": "environment/light_rail.mp3",
         "tags": [
-            "early_industrial",
-            "culture",
-            "community_hall"
+            "light_rail"
         ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "community_hall"
-        ]
+        "prompt": "light rail ambience: quiet electric hum, smooth rail gliding sounds, door beeps, and station announcements"
     },
     {
-        "path": "environment/early_industrial/culture_theatre.wav",
-        "prompt": "Murmur of audience, musicians tuning",
+        "path": "environment/lodge.mp3",
         "tags": [
-            "early_industrial",
-            "culture",
-            "theatre"
+            "lodge"
         ],
-        "interval": "frequent",
-        "requires": [
-            "early_industrial",
-            "theatre"
-        ]
+        "prompt": "lodge ambience: wood creaking underfoot, fire crackling, soft murmurs, and distant wildlife or wind outside"
     },
     {
-        "path": "environment/early_industrial/culture_clock_tower.wav",
-        "prompt": "Mechanical ticking, bell chimes, birds",
+        "path": "environment/maglev_train.mp3",
         "tags": [
-            "early_industrial",
-            "culture",
-            "clock_tower"
+            "maglev_train"
         ],
-        "interval": "occasional",
-        "requires": [
-            "early_industrial",
-            "clock_tower"
-        ]
+        "prompt": "maglev train ambience: hushed air displacement, smooth gliding vibration, occasional electronic chimes, and quiet passenger space"
     },
     {
-        "path": "environment/modern/transportation_highways.wav",
-        "prompt": "Early highways, distant cars, sparse traffic",
+        "path": "environment/marina.mp3",
         "tags": [
-            "modern",
-            "transportation",
-            "highway"
+            "marina"
         ],
-        "interval": "loop",
-        "requires": [
-            "modern"
-        ],
-        "requires_any": [
-            "highway",
-            "road"
-        ]
+        "prompt": "marina ambience: light clinking of boat rigging, water lapping, seabirds calling, and soft footsteps on docks"
     },
     {
-        "path": "environment/modern/transportation_airport.wav",
-        "prompt": "Propeller aircraft, tarmac bustle, PA announcements",
+        "path": "environment/market.mp3",
         "tags": [
-            "modern",
-            "transportation",
-            "airport"
+            "market"
         ],
-        "interval": "frequent",
-        "requires": [
-            "modern",
-            "airport"
-        ]
+        "prompt": "market ambience: varied vendor voices, crowd murmur, items being shuffled or exchanged, and ambient trade sounds"
     },
     {
-        "path": "environment/modern/housing_apartments.wav",
-        "prompt": "Hallway footsteps, elevator bell, city hum",
+        "path": "environment/mill.mp3",
         "tags": [
-            "modern",
-            "housing",
-            "apartment"
+            "mill"
         ],
-        "interval": "frequent",
-        "requires": [
-            "modern",
-            "apartment"
-        ]
+        "prompt": "mill ambience: constant rotation sounds, grain or wood being processed, belt systems, and wooden creaks or mechanical whines"
     },
     {
-        "path": "environment/modern/industry_factory_pollution.wav",
-        "prompt": "Continuous machines, conveyor beeps, metal clanks",
+        "path": "environment/mine.mp3",
         "tags": [
-            "modern",
-            "industry",
-            "factory"
+            "mine"
         ],
-        "interval": "frequent",
-        "requires": [
-            "modern",
-            "factory"
-        ]
+        "prompt": "mine ambience: pick or machinery echoes, distant rock falls and explosions"
     },
     {
-        "path": "environment/current/transportation_highways.wav",
-        "prompt": "Distant roar of traffic, horns, whooshing cars",
+        "path": "environment/motel.mp3",
         "tags": [
-            "current",
-            "transportation",
-            "highway"
+            "motel"
         ],
-        "interval": "loop",
-        "requires": [
-            "current"
-        ],
-        "requires_any": [
-            "highway",
-            "expressway",
-            "road"
-        ]
+        "prompt": "motel ambience: faint traffic sounds, buzzing neon, TV murmurs through walls, and footsteps on gravel or pavement"
     },
     {
-        "path": "environment/current/transportation_airport.wav",
-        "prompt": "Jet engines, PA announcements, rolling suitcases",
+        "path": "environment/museum.mp3",
         "tags": [
-            "current",
-            "transportation",
-            "airport"
+            "museum"
         ],
-        "interval": "frequent",
-        "requires": [
-            "current",
-            "airport"
-        ]
+        "prompt": "museum ambience: muffled conversations, interactive display beeps, quiet footfalls, and ambient educational audio"
     },
     {
-        "path": "environment/current/transportation_subway_station.wav",
-        "prompt": "Subway train, crowd murmur, announcements",
+        "path": "environment/music_hall.mp3",
         "tags": [
-            "current",
-            "transportation",
-            "subway"
+            "music_hall"
         ],
-        "interval": "frequent",
-        "requires": [
-            "current",
-            "subway"
-        ]
+        "prompt": "music hall ambience: orchestral tuning, soft crowd murmurs, stage creaks, and detailed reverb of live instruments"
     },
     {
-        "path": "environment/current/housing_apartments.wav",
-        "prompt": "Footsteps in hallway, distant elevator ding, city outside",
+        "path": "environment/nature_center.mp3",
         "tags": [
-            "current",
-            "housing",
-            "apartment"
+            "nature_center"
         ],
-        "interval": "frequent",
-        "requires": [
-            "current",
-            "apartment"
-        ]
+        "prompt": "nature center ambience: birdsong, insect hums, distant conversation, soft wood creaks, and footsteps on gravel or boardwalk"
     },
     {
-        "path": "environment/current/industry_factory_pollution.wav",
-        "prompt": "Continuous machines, conveyor beeps, metal clanks",
+        "path": "environment/nursery.mp3",
         "tags": [
-            "current",
-            "industry",
-            "factory",
-            "pollution"
+            "nursery"
         ],
-        "interval": "frequent",
-        "requires": [
-            "current",
-            "factory"
-        ]
+        "prompt": "nursery ambience: young children playing and speaking, adult care workers talking softly, toys clattering"
     },
     {
-        "path": "environment/future/transportation_highways.wav",
-        "prompt": "Electric vehicles passing, faint hum, wind turbines",
+        "path": "environment/ocean waves.mp3",
         "tags": [
-            "future",
-            "transportation",
-            "highway"
+            "ocean waves"
         ],
-        "interval": "loop",
-        "requires": [
-            "future"
-        ],
-        "requires_any": [
-            "highway",
-            "expressway",
-            "road"
-        ]
+        "prompt": "ocean waves ambience: continuous wash and pull of surf on sand or rock, with seagull calls and coastal breeze"
     },
     {
-        "path": "environment/future/transportation_high_speed_train.wav",
-        "prompt": "Smooth train whoosh, automated announcements",
+        "path": "environment/office.mp3",
         "tags": [
-            "future",
-            "transportation",
-            "high_speed_train"
+            "office"
         ],
-        "interval": "frequent",
-        "requires": [
-            "future",
-            "high_speed_train"
-        ]
+        "prompt": "office ambience: keyboard clicks, printer hums, quiet talking, phone rings, and HVAC background"
     },
     {
-        "path": "environment/future/housing_eco_villages.wav",
-        "prompt": "Solar panels, soft garden sounds, quiet conversation",
+        "path": "environment/oil_platform.mp3",
         "tags": [
-            "future",
-            "housing",
-            "eco_village"
+            "oil_platform"
         ],
-        "interval": "frequent",
-        "requires": [
-            "future",
-            "eco_village"
-        ]
+        "prompt": "oil platform ambience: wind over metal surfaces, low rumble of drilling or machinery, footsteps on steel, and occasional alerts"
     },
     {
-        "path": "environment/future/industry_solar_farms.wav",
-        "prompt": "Faint inverter hum, wind, energy transmission",
+        "path": "environment/opera.mp3",
         "tags": [
-            "future",
-            "industry",
-            "solar_farm"
+            "opera"
         ],
-        "interval": "loop",
-        "requires": [
-            "future",
-            "solar_farm"
-        ]
+        "prompt": "opera ambience: powerful live vocal performance, rich orchestration, and audience shifting and applause in a large hall"
     },
     {
-        "path": "environment/dystopia/transportation_abandoned_highways.wav",
-        "prompt": "Wind over cracked pavement, distant crows, silence",
+        "path": "environment/paper mill.mp3",
         "tags": [
-            "dystopia",
-            "transportation",
-            "abandoned_highway"
+            "paper mill"
         ],
-        "interval": "loop",
-        "requires": [
-            "dystopia",
-            "abandoned_highway"
-        ]
+        "prompt": "paper mill ambience: steady machine rollers, paper tearing and folding, and layered industrial hums"
     },
     {
-        "path": "environment/dystopia/transportation_collapsed_bridges.wav",
-        "prompt": "Echoes, dripping water, rubble shifting",
+        "path": "environment/park.mp3",
         "tags": [
-            "dystopia",
-            "transportation",
-            "collapsed_bridge"
+            "park"
         ],
-        "interval": "rare",
-        "requires": [
-            "dystopia",
-            "collapsed_bridge"
-        ]
+        "prompt": "park ambience: children playing, bird calls, rustling trees, and dog barks in the distance"
     },
     {
-        "path": "environment/dystopia/housing_favelas.wav",
-        "prompt": "Quiet, wind through ruins, occasional voices",
+        "path": "environment/pier.mp3",
         "tags": [
-            "dystopia",
-            "housing",
-            "favela"
+            "pier"
         ],
-        "interval": "rare",
-        "requires": [
-            "dystopia",
-            "favela"
-        ]
+        "prompt": "pier ambience: wood creaks over water, gulls overhead, occasional splash or boat rope sound, and footsteps on planks"
     },
     {
-        "path": "environment/dystopia/industry_derelict_factories.wav",
-        "prompt": "Dripping water, distant clang, rats in metal pipes",
+        "path": "environment/plantation.mp3",
         "tags": [
-            "dystopia",
-            "industry",
-            "factory",
-            "derelict"
+            "plantation"
         ],
-        "interval": "rare",
-        "requires": [
-            "dystopia",
-            "factory"
-        ],
-        "requires_any": [
-            "factory",
-            "derelict_factory",
-            "abandoned_factory"
-        ]
+        "prompt": "plantation ambience: distant labor or tools, soft wind over tall plants, and creaking wood"
     },
     {
-        "path": "environment/dystopia/industry_abandoned_refinery.wav",
-        "prompt": "Echoes, rusting metal, hollow wind",
+        "path": "environment/playground.mp3",
         "tags": [
-            "dystopia",
-            "industry",
-            "refinery",
-            "abandoned"
+            "playground"
         ],
-        "interval": "rare",
-        "requires": [
-            "dystopia",
+        "prompt": "playground ambience: joyful child voices, swings creaking, running footsteps, and soft thuds on sand or rubber"
+    },
+    {
+        "path": "environment/pod.mp3",
+        "tags": [
+            "pod"
+        ],
+        "prompt": "pod ambience: soft interior hum, gentle echo from small space, air circulation sounds, and occasional movement or breathing"
+    },
+    {
+        "path": "environment/pool.mp3",
+        "tags": [
+            "pool"
+        ],
+        "prompt": "pool ambience: splashing water, echoing voices, dripping, and children's laughter bouncing off hard surfaces"
+    },
+    {
+        "path": "environment/power_plant.mp3",
+        "tags": [
+            "power_plant"
+        ],
+        "prompt": "power plant ambience: dense mechanical drone, electric buzzes, coolant hissing, and distant control room sounds"
+    },
+    {
+        "path": "environment/ranch.mp3",
+        "tags": [
+            "ranch"
+        ],
+        "prompt": "ranch ambience: livestock calls, distant barking and riding sounds"
+    },
+    {
+        "path": "environment/ranch_house.mp3",
+        "tags": [
+            "ranch_house"
+        ],
+        "prompt": "ranch house ambience: wood floor creaks, kitchen activity, and dogs and birds nearby"
+    },
+    {
+        "path": "environment/refinery.mp3",
+        "tags": [
             "refinery"
-        ]
+        ],
+        "prompt": "refinery ambience: rhythmic metallic noises, hiss of steam or gas, safety beeps, and constant machine drone"
+    },
+    {
+        "path": "environment/research_center.mp3",
+        "tags": [
+            "research_center"
+        ],
+        "prompt": "research center ambience: computer hums, typing, glassware clinks or electronics beeps, with reverberant sterile ambience"
+    },
+    {
+        "path": "environment/research_pod.mp3",
+        "tags": [
+            "research_pod"
+        ],
+        "prompt": "research pod ambience: compact interior with quiet beeps, subtle breathing or shifting, and controlled environmental hum"
+    },
+    {
+        "path": "environment/research_station.mp3",
+        "tags": [
+            "research_station"
+        ],
+        "prompt": "research station ambience: occasional equipment pings and scientific chatter, distant machinery"
+    },
+    {
+        "path": "environment/resort.mp3",
+        "tags": [
+            "resort"
+        ],
+        "prompt": "resort ambience: peaceful ambient music, fountains, clinking glasses, and happy relaxed voices"
+    },
+    {
+        "path": "environment/restaurant.mp3",
+        "tags": [
+            "restaurant"
+        ],
+        "prompt": "restaurant ambience: silverware clinks, soft ambient chatter, order calls from kitchen"
+    },
+    {
+        "path": "environment/river.mp3",
+        "tags": [
+            "river"
+        ],
+        "prompt": "river ambience: flowing water over rocks, occasional splash or wildlife call, and ambient forest or grassland rustle"
+    },
+    {
+        "path": "environment/roller_rink.mp3",
+        "tags": [
+            "roller_rink"
+        ],
+        "prompt": "roller rink ambience: rolling skates on smooth surface, upbeat music, echoed laughter and motion"
+    },
+    {
+        "path": "environment/rover.mp3",
+        "tags": [
+            "rover"
+        ],
+        "prompt": "rover ambience: mechanical servo movements, dusty crunches, sensor beeps"
+    },
+    {
+        "path": "environment/row_house.mp3",
+        "tags": [
+            "row_house"
+        ],
+        "prompt": "row house ambience: neighboring domestic sounds through walls, light city traffic, steps on stairs, and doors opening or closing"
+    },
+    {
+        "path": "environment/sawmill.mp3",
+        "tags": [
+            "sawmill"
+        ],
+        "prompt": "sawmill ambience: buzzing blades, wood impacts, conveyor hums, and scattered tool or human sounds"
+    },
+    {
+        "path": "environment/school.mp3",
+        "tags": [
+            "school"
+        ],
+        "prompt": "school ambience: distant student chatter, bell rings"
+    },
+    {
+        "path": "environment/shanty.mp3",
+        "tags": [
+            "shanty"
+        ],
+        "prompt": "shanty ambience: wind flapping thin walls, quiet conversation, distant domestic sounds, and footsteps on dirt"
+    },
+    {
+        "path": "environment/ship.mp3",
+        "tags": [
+            "ship"
+        ],
+        "prompt": "ship ambience: creaking wood or steel, distant ocean waves, rope and rigging sounds, and low thrum of engines"
+    },
+    {
+        "path": "environment/shop.mp3",
+        "tags": [
+            "shop"
+        ],
+        "prompt": "shop ambience: bell at entrance, shelves being stocked, checkout beeps, and quiet customer conversation"
+    },
+    {
+        "path": "environment/shuttle.mp3",
+        "tags": [
+            "shuttle"
+        ],
+        "prompt": "van ambience: vehicle travelling on road, engine hum, occasional bumps, and muffled radio or passenger chatter"
+    },
+    {
+        "path": "environment/skatepark.mp3",
+        "tags": [
+            "skatepark"
+        ],
+        "prompt": "skatepark ambience: skateboard wheels grinding on rails, occasional falls or cheers, and ambient urban noise"
+    },
+    {
+        "path": "environment/solar_farm.mp3",
+        "tags": [
+            "solar_farm"
+        ],
+        "prompt": "solar farm ambience: quiet wind, subtle motorized panel shifts, occasional bird calls, and faint inverter hums"
+    },
+    {
+        "path": "environment/stadium.mp3",
+        "tags": [
+            "stadium"
+        ],
+        "prompt": "stadium ambience: cheering fans, announcer echoes, distant music or horns, and team-related sounds"
+    },
+    {
+        "path": "environment/store.mp3",
+        "tags": [
+            "store"
+        ],
+        "prompt": "store ambience: ambient music, people browsing and chatting, checkout sounds, and carts rolling on tile"
+    },
+    {
+        "path": "environment/tavern.mp3",
+        "tags": [
+            "tavern"
+        ],
+        "prompt": "tavern ambience: crowded voices, clinking mugs, laughter, and the low hum of music or game dice"
+    },
+    {
+        "path": "environment/tents.mp3",
+        "tags": [
+            "tents"
+        ],
+        "prompt": "tents ambience: fabric flapping in breeze, muffled outdoor activity, zippers or rope tension sounds, and soft interior rustling"
+    },
+    {
+        "path": "environment/theatre.mp3",
+        "tags": [
+            "theatre"
+        ],
+        "prompt": "theatre ambience: audience whispers, stage creaks, applause"
+    },
+    {
+        "path": "environment/tower.mp3",
+        "tags": [
+            "tower"
+        ],
+        "prompt": "tower ambience: wind against structure, metal creaks or echoes, and distant environmental sounds from above"
+    },
+    {
+        "path": "environment/tractor.mp3",
+        "tags": [
+            "tractor"
+        ],
+        "prompt": "tractor ambience: low rumble of engine, treads or tires over soil, surrounding farm noises"
+    },
+    {
+        "path": "environment/traffic.mp3",
+        "tags": [
+            "traffic"
+        ],
+        "prompt": "traffic ambience: layered car and truck motion, horns, tires over pavement, and shifting city density"
+    },
+    {
+        "path": "environment/train.mp3",
+        "tags": [
+            "train"
+        ],
+        "prompt": "train ambience: steady rhythmic rail clatter, horn blasts"
+    },
+    {
+        "path": "environment/train_station.mp3",
+        "tags": [
+            "train_station"
+        ],
+        "prompt": "train station ambience: announcements over PA, footsteps on concrete, rolling luggage, and engine hiss or clang"
+    },
+    {
+        "path": "environment/tram.mp3",
+        "tags": [
+            "tram"
+        ],
+        "prompt": "tram ambience: smooth rolling hum, stop chimes, boarding footsteps, and open-window or speaker ambience"
+    },
+    {
+        "path": "environment/treehouse.mp3",
+        "tags": [
+            "treehouse"
+        ],
+        "prompt": "treehouse ambience: birds and leaves rustling, wood creaking, faint voices or footsteps, and distant ground activity"
+    },
+    {
+        "path": "environment/tribal_village.mp3",
+        "tags": [
+            "tribal_village"
+        ],
+        "prompt": "tribal village ambience: communal voices, drumbeats or singing, tools in use"
+    },
+    {
+        "path": "environment/village.mp3",
+        "tags": [
+            "village"
+        ],
+        "prompt": "village ambience: children playing, animals nearby, water being carried, and domestic activities in shared outdoor space"
+    },
+    {
+        "path": "environment/village_green.mp3",
+        "tags": [
+            "village_green"
+        ],
+        "prompt": "village green ambience: open laughter and play, wind in trees, community voices, and music or instruments in distance"
+    },
+    {
+        "path": "environment/water_taxi.mp3",
+        "tags": [
+            "water_taxi"
+        ],
+        "prompt": "water taxi ambience: boat engine hum, slapping water, radio static or voices, and coastal city sounds nearby"
+    },
+    {
+        "path": "environment/watermill.mp3",
+        "tags": [
+            "watermill"
+        ],
+        "prompt": "watermill ambience: flowing stream or river, wooden wheel rotations, internal gear sounds, and bird or village ambience"
+    },
+    {
+        "path": "environment/wave_generator.mp3",
+        "tags": [
+            "wave_generator"
+        ],
+        "prompt": "wave generator ambience: rhythmic hydraulic hisses, metal creaks, and ocean wave movements blending with mechanical output"
+    },
+    {
+        "path": "environment/wind_farm.mp3",
+        "tags": [
+            "wind_farm"
+        ],
+        "prompt": "wind farm ambience: broad wind gusts, slow blade rotations, faint generator hums, and distant rural openness"
+    },
+    {
+        "path": "environment/windmill.mp3",
+        "tags": [
+            "windmill"
+        ],
+        "prompt": "windmill ambience: rotor creaks, wind blowing past wooden or metal structures, and intermittent gear sounds inside"
     }
 ]
