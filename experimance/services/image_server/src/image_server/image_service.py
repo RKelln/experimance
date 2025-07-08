@@ -66,8 +66,6 @@ class ImageServerService(BaseService):
 
             # Create cache directory
             self.config.cache_dir.mkdir(parents=True, exist_ok=True)
-            
-            configure_external_loggers(logging.WARNING)
 
             # Initialize ZMQ worker service using composition
             self.zmq_service = WorkerService(self.config.zmq)

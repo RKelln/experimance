@@ -18,5 +18,13 @@ def configure_external_loggers(level=logging.WARNING):
         "asyncio",         # Asyncio debugging messages
         "PIL",             # Python Imaging Library (Pillow)
         "PIL.PngImagePlugin",  # Specific PIL PNG plugin that's very verbose
+        "websockets",      # WebSocket library
+        "websockets.client",  # WebSocket client library
     ]:
-        logging.getLogger(logger_name).setLevel(level)
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(level)
+        # Set all handlers to the same level
+        for handler in logger.handlers:
+            handler.setLevel(level)
+        # Prevent propagation to root logger if not desired
+        logger.propagate = False

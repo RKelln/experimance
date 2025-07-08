@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, Coroutine
 
+from experimance_common.logger import configure_external_loggers
 from experimance_common.service_state import ServiceState, StateManager
 from experimance_common.service_decorators import lifecycle_service
 
@@ -94,6 +95,9 @@ class BaseService:
             
         # Set state to INITIALIZED now that initialization is complete
         self._state_manager.state = ServiceState.INITIALIZED
+
+        # Trun off logging from spammy external libraries
+        configure_external_loggers(logging.WARNING)
     
     @property
     def state(self) -> ServiceState:

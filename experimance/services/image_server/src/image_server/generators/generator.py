@@ -21,9 +21,6 @@ from experimance_common.logger import configure_external_loggers
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Configure external loggers when module is imported
-configure_external_loggers()
-
 VALID_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 
 class ImageGenerator(ABC):
