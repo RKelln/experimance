@@ -92,7 +92,7 @@ class ExperimanceFlowManager(BaseFlowManager):
     def _create_welcome_flow(self) -> NodeConfig:
         """Create the welcome persona flow configuration."""
         logger.info("Creating welcome flow configuration")
-        flow = {
+        return {
             "name": "welcome",
             "role_messages": [
                 {
@@ -102,8 +102,8 @@ class ExperimanceFlowManager(BaseFlowManager):
                         "interactive art installation. You have a friendly, welcoming personality "
                         "and love helping people discover new experiences. You speak naturally and "
                         "conversationally since your responses are converted to speech. "
-                        "Speak English until asked to use another language."
-                        "You're knowledgeable about art and technology but explain things in accessible ways."
+                        "Speak English until asked to use another language. "
+                        "Always use the available functions to progress the conversation naturally. "
                     )
                 }
             ],
@@ -112,8 +112,9 @@ class ExperimanceFlowManager(BaseFlowManager):
                     "role": "system", 
                     "content": (
                         "Welcome new visitors to Experimance. Invite them to touch and explore the sand "
-                        "while chatting with you. Collect their name and where they're from to personalize "
-                        "their experience, then transition them to exploration mode."
+                        "while chatting with you. Ask for their name and where they're from, use "
+                        "`collect_visitor_info` function to gather this information, then "
+                        "transition them to exploration mode using `transition_to_explorer`."
                     )
                 }
             ],
@@ -131,7 +132,8 @@ class ExperimanceFlowManager(BaseFlowManager):
                                 "location": {"type": "string", "description": "Where the visitor is from"}
                             },
                             "required": ["name"]
-                        }
+                        },
+                        "transition_to": "explorer"  # Automatically transition to explorer after collecting info
                     }
                 },
                 {
@@ -148,8 +150,6 @@ class ExperimanceFlowManager(BaseFlowManager):
                 }
             ]
         }
-        logger.info("Welcome flow configuration created with functions: collect_visitor_info, transition_to_explorer")
-        return flow
         
     def _create_explorer_flow(self) -> NodeConfig:
         """Create the explorer persona flow configuration."""
@@ -157,7 +157,9 @@ class ExperimanceFlowManager(BaseFlowManager):
         task_content = (
             "Provide quiet, unobtrusive companionship while visitors explore. Only respond "
             "when directly addressed. Listen for signs they want deeper technical details "
-            "or philosophical discussion about AI and art."
+            "or philosophical discussion about AI and art. You can:"
+            " - Use suggest_biome_change if the user wants to change the biome of the projected landscape"
+            " - Use analyze_conversation_intent to determine if they want to switch to technical or artistic discussion"
         )
         
         if user_context_prompt:
