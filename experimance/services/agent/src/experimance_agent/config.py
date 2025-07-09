@@ -52,9 +52,9 @@ class PipecatBackendConfig(BaseModel):
     turn_detection_silence_ms: int = Field(default=800, description="Silence duration in ms before turn ends")
     
     # TTS settings (for ensemble mode)
-    elevenlabs_api_key: Optional[str] = Field(default=None, description="ElevenLabs API key (or use ELEVENLABS_API_KEY env var)")
     elevenlabs_voice_id: str = Field(default="EXAVITQu4vr4xnSDxMaL", description="ElevenLabs voice ID")
-    
+    cartesia_voice_id: str = Field(default="bf0a246a-8642-498a-9950-80c35e9276b5", description="Cartesia voice ID")
+                                   
     # System prompt
     system_prompt: str = Field(
         default=(

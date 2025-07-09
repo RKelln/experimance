@@ -24,6 +24,9 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai_realtime_beta import OpenAIRealtimeBetaLLMService
 from pipecat.services.openai_realtime_beta.events import SessionProperties, TurnDetection
+from pipecat.services.assemblyai.stt import AssemblyAISTTService, AssemblyAIConnectionParams
+from pipecat.services.cartesia.tts import CartesiaTTSService
+from pipecat.transcriptions.language import Language
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.transcript_processor import TranscriptProcessor
@@ -153,6 +156,11 @@ class PipecatBackend(AgentBackend):
     - graceful_shutdown(): Graceful shutdown using EndFrame - for when user leaves
     - say_goodbye_and_shutdown(): Says goodbye message then graceful shutdown
     - disconnect(): Graceful disconnect while keeping backend ready to reconnect
+    
+    Known Issues:
+    - Pipecat WebSocket services (AssemblyAI, ElevenLabs) have a 10+ second disconnect timeout
+    - stop() method uses immediate cancellation to avoid this delay
+    - WebSocket disconnection warnings are expected and harmless
     """
     
     def __init__(self, config: AgentServiceConfig):
@@ -168,6 +176,11 @@ class PipecatBackend(AgentBackend):
         self.pipeline_task: Optional[PipelineTask] = None
         self.runner: Optional[PipelineRunner] = None
         self.llm_context: Optional[OpenAILLMContext] = None
+        
+        # Services that need cleanup
+        self.stt_service: Optional[Any] = None
+        self.tts_service: Optional[Any] = None
+        self.realtime_service: Optional[Any] = None
         
         # Control
         self._pipeline_running = False
@@ -258,7 +271,7 @@ class PipecatBackend(AgentBackend):
         assert self.transport, "Transport must be initialized before starting pipeline"
 
         # Create OpenAI Realtime service
-        realtime_service = OpenAIRealtimeBetaLLMService(
+        self.realtime_service = OpenAIRealtimeBetaLLMService(
             api_key=os.getenv("OPENAI_API_KEY", "failed to load"),
             model=self.pipecat_config.openai_realtime_model,
             session_properties=SessionProperties(
@@ -273,6 +286,7 @@ class PipecatBackend(AgentBackend):
                 #tools=[]
             )
         )
+        realtime_service = self.realtime_service
 
         transcript = TranscriptProcessor()
         self.llm_context = OpenAILLMContext()
@@ -305,8 +319,8 @@ class PipecatBackend(AgentBackend):
             pipeline_context_aggregator.user(),       # Add user message to context
             llm_service,                              # OpenAI Realtime Beta or Flow Manager
             transcript.user(),                        # Placed after the LLM, as LLM pushes TranscriptionFrames downstream
-            event_processor,                          # Capture events
-            tool_processor,                           # Handle tool calls (if supported)
+            #event_processor,                          # Capture events
+            #tool_processor,                           # Handle tool calls (if supported)
             self.transport.output(),                  # Audio output (speakers)
             transcript.assistant(),                   # After the transcript output, to time with the audio output
             pipeline_context_aggregator.assistant()  # Add assistant response to context
@@ -327,8 +341,19 @@ class PipecatBackend(AgentBackend):
         assert self.transport, "Transport must be initialized before starting pipeline" 
 
         # Create STT service
-        stt = WhisperSTTService(model=self.pipecat_config.whisper_model)
+        #stt = WhisperSTTService(model=self.pipecat_config.whisper_model)
         
+        self.stt_service = AssemblyAISTTService(
+            api_key=os.getenv("ASSEMBLYAI_API_KEY", "failed to load"),
+            vad_force_turn_endpoint=False,  # Use AssemblyAI's STT-based turn detection
+            connection_params=AssemblyAIConnectionParams(
+                end_of_turn_confidence_threshold=0.7,
+                min_end_of_turn_silence_when_confident=160,  # in ms
+                max_turn_silence=2400,  # in ms
+            )
+        )
+        stt = self.stt_service
+
         # Create LLM service and context
         llm = OpenAILLMService(
             api_key=os.getenv("OPENAI_API_KEY", "failed to load"),
@@ -349,10 +374,23 @@ class PipecatBackend(AgentBackend):
         llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(llm, context_aggregator)
         
         # Create TTS service  
-        tts = ElevenLabsTTSService(
-            api_key=os.getenv("ELEVENLABS_API_KEY", "failed to load"),
-            voice_id=self.pipecat_config.elevenlabs_voice_id
+        # tts = ElevenLabsTTSService(
+        #     api_key=os.getenv("ELEVENLABS_API_KEY", "failed to load"),
+        #     voice_id=self.pipecat_config.elevenlabs_voice_id
+        # )
+        
+
+        # Configure Cartesia WebSocket service
+        tts = CartesiaTTSService(
+            api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
+            voice_id=self.pipecat_config.cartesia_voice_id,
+            model="sonic-2",
+            params=CartesiaTTSService.InputParams(
+                language=Language.EN,
+                speed="fast",  # Options: "fast", "normal", "slow"
+            )
         )
+        self.tts_service = tts
         
         # Create sentence aggregator for better speech flow
         sentence_aggregator = SentenceAggregator()
@@ -363,17 +401,17 @@ class PipecatBackend(AgentBackend):
             stt,                                             # Speech-to-text
             pipeline_context_aggregator.user(),             # Add user message to context
             llm_service,                                     # Language model or Flow Manager
-            tool_processor,                                  # Handle tool calls
+            #tool_processor,                                  # Handle tool calls
             sentence_aggregator,                             # Aggregate into sentences
-            event_processor,                                 # Capture events
+            #event_processor,                                 # Capture events
             tts,                                             # Text-to-speech
             self.transport.output(),                         # Audio output (speakers)
             pipeline_context_aggregator.assistant(),        # Add assistant response to context
         ])
     
     async def stop(self) -> None:
-        """Stop the Pipecat backend immediately and clean up resources."""
-        logger.info("Stopping Pipecat backend immediately...")
+        """Stop the Pipecat backend and clean up resources."""
+        logger.info("Stopping Pipecat backend...")
         
         self.is_active = False
         self.is_connected = False
@@ -381,11 +419,17 @@ class PipecatBackend(AgentBackend):
         # Signal shutdown
         self._shutdown_event.set()
         
-        # Immediate shutdown using task cancellation (as per Pipecat docs)
+        # NOTE: Pipecat has a bug where graceful shutdown takes 10+ seconds due to 
+        # WebSocket timeout issues in tts and stt services.
+        # We skip graceful shutdown and go straight to task cancellation for faster shutdown.
+        # The WebSocket connections will eventually close in the background.
+        
         if self.pipeline_task:
             try:
                 logger.info("Cancelling pipeline task for immediate shutdown...")
                 await self.pipeline_task.cancel()
+                logger.debug("Pipeline task cancelled - WebSocket cleanup will continue in background")
+                
             except Exception as e:
                 # Suppress common errors when pipeline hasn't fully started yet
                 error_msg = str(e).lower()
@@ -399,15 +443,22 @@ class PipecatBackend(AgentBackend):
                     logger.error(f"Error cancelling pipeline task: {e}")
         
         # Clean up components
+        self._cleanup_references()
+        
+        logger.info("Pipecat backend stopped - WebSocket services will disconnect in background")
+    
+    def _cleanup_references(self) -> None:
+        """Clean up object references."""
         self.transport = None
         self.pipeline = None
         self.pipeline_task = None
         self.runner = None
         self.llm_context = None
         self.flow_manager = None
+        self.stt_service = None
+        self.tts_service = None
+        self.realtime_service = None
         self._pipeline_running = False
-        
-        logger.info("Pipecat backend stopped")
         
     async def graceful_shutdown(self, goodbye_message: Optional[str] = None) -> None:
         """
@@ -435,8 +486,23 @@ class PipecatBackend(AgentBackend):
                 pass
             
             # Queue an EndFrame for graceful shutdown (as per Pipecat docs)
-            logger.info("Queueing EndFrame for graceful shutdown...")
+            logger.debug("Queueing EndFrame for graceful shutdown...")
             await self.pipeline_task.queue_frame(EndFrame())
+            
+            # Wait for pipeline to finish processing with timeout
+            try:
+                logger.debug("Waiting for pipeline to stop gracefully...")
+                await asyncio.wait_for(self._wait_for_pipeline_stop(), timeout=2.0)
+                logger.info("Pipeline gracefully stopped")
+            except asyncio.TimeoutError:
+                logger.warning("Graceful shutdown timed out after 2 seconds - this is normal for WebSocket cleanup")
+                # Set flags even if timeout occurred
+                self._pipeline_running = False
+                self.is_connected = False
+                
+                # Don't call stop() here to avoid recursion since stop() calls this method
+                # Instead, let the caller handle the timeout
+                raise
             
             # Update connection status but keep backend active for potential reconnection
             self.is_connected = False
@@ -445,12 +511,17 @@ class PipecatBackend(AgentBackend):
             # Emit disconnection event
             await self.emit_event(AgentBackendEvent.DISCONNECTED)
             
-            logger.info("Graceful shutdown initiated - pipeline will end after processing current frames")
+            logger.info("Graceful shutdown completed successfully")
             
         except Exception as e:
             logger.error(f"Error during graceful shutdown: {e}")
-            # Fall back to immediate shutdown if graceful fails
-            await self.stop()
+            # Re-raise to let the caller handle it
+            raise
+    
+    async def _wait_for_pipeline_stop(self) -> None:
+        """Wait for the pipeline to stop running."""
+        while self._pipeline_running:
+            await asyncio.sleep(0.1)
     
     async def say_goodbye_and_shutdown(self, goodbye_message: str = "Thank you for visiting Experimance. Have a wonderful day!") -> None:
         """

@@ -215,6 +215,27 @@ wheels = [
 ]
 
 [[package]]
+name = "cartesia"
+version = "2.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13' and python_full_version < '4.0'" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "iterators" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "pydub" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b0/33/00b77447109225b833c936c3eeabfd7bf43f93415670b6f3972a9082ee17/cartesia-2.0.5.tar.gz", hash = "sha256:7fd4651ed8ac38ef30bc54bbee53192695f24f866bb14558afb4d0fb08f011e5", size = 67257, upload_time = "2025-06-10T04:35:25.037Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4c/47/65ab4ecb0a3af05ea6089d5b04b033827421a9f2471250d00a5f2cbc18cb/cartesia-2.0.5-py3-none-any.whl", hash = "sha256:9ad0fd40fc451f323e561683e7cc7fae7278a9db81a7881421c4fe1df57fc178", size = 136073, upload_time = "2025-06-10T04:35:23.841Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2025.4.26"
 source = { registry = "https://pypi.org/simple" }
@@ -741,7 +762,7 @@ dependencies = [
     { name = "experimance-transition" },
     { name = "fal-client" },
     { name = "image-server" },
-    { name = "pipecat-ai", extra = ["openai"] },
+    { name = "pipecat-ai", extra = ["assemblyai", "cartesia", "elevenlabs", "openai"] },
     { name = "pipecat-ai-flows" },
     { name = "pyglet" },
     { name = "pyrealsense2" },
@@ -777,7 +798,7 @@ requires-dist = [
     { name = "fal-client", specifier = ">=0.6.0" },
     { name = "image-server", editable = "services/image_server" },
     { name = "mypy", marker = "extra == 'dev'" },
-    { name = "pipecat-ai", extras = ["openai"], specifier = ">=0.0.73" },
+    { name = "pipecat-ai", extras = ["assemblyai", "cartesia", "elevenlabs", "openai"], specifier = ">=0.0.73" },
     { name = "pipecat-ai-flows", specifier = ">=0.0.18" },
     { name = "pyglet", specifier = ">=2.1.6" },
     { name = "pyrealsense2", specifier = ">=2.55.1.6486" },
@@ -1148,6 +1169,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f2/97/ebf4da567aa6827c909642694d71c9fcf53e5b504f2d96afea02718862f3/iniconfig-2.1.0.tar.gz", hash = "sha256:3abbd2e30b36733fee78f9c7f7308f2d0050e88f0087fd25c2645f63c773e1c7", size = 4793, upload_time = "2025-03-19T20:09:59.721Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/e1/e6716421ea10d38022b952c159d5161ca1193197fb744506875fbb87ea7b/iniconfig-2.1.0-py3-none-any.whl", hash = "sha256:9deba5723312380e77435581c6bf4935c94cbfab9b1ed33ef8d238ea168eb760", size = 6050, upload_time = "2025-03-19T20:10:01.071Z" },
+]
+
+[[package]]
+name = "iterators"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/c4/135b5bdb9f14f728fe1274361b336f77c5f1606af9a5622a765fe75f5fa0/iterators-0.2.0.tar.gz", hash = "sha256:e9927a1ea1ef081830fd1512f3916857c36bd4b37272819a6cd29d0f44431b97", size = 4284, upload_time = "2023-01-23T16:07:02.46Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/a1/9c29772ac9f3bdf9837c92ba5c1fc93f75da14c2e0c3fc41e10485f68feb/iterators-0.2.0-py3-none-any.whl", hash = "sha256:1d7ff03f576c9de0e01bac66209556c066d6b1fc45583a99cfc9f4645be7900e", size = 5022, upload_time = "2023-01-23T16:07:00.352Z" },
 ]
 
 [[package]]
@@ -1836,7 +1866,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.70.0"
+version = "1.74.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1848,9 +1878,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/f5/ae0f3cd226c2993b4ac1cc4b5f6ca099764689f403c14922c9356accec66/openai-1.70.0.tar.gz", hash = "sha256:e52a8d54c3efeb08cf58539b5b21a5abef25368b5432965e4de88cdf4e091b2b", size = 409640, upload_time = "2025-03-31T17:45:42.784Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/29/6a31949f0935dd3190e5f4c101d409783943e90126b8b9dd58848888dcd8/openai-1.74.1.tar.gz", hash = "sha256:304fc7f3abb2184a2ab9bba4c6218ff2b687d7aa9bb641402be87e7b150b3c53", size = 427837, upload_time = "2025-04-16T15:40:26.435Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/39/c4b38317d2c702c4bc763957735aaeaf30dfc43b5b824121c49a4ba7ba0f/openai-1.70.0-py3-none-any.whl", hash = "sha256:f6438d053fd8b2e05fd6bef70871e832d9bbdf55e119d0ac5b92726f1ae6f614", size = 599070, upload_time = "2025-03-31T17:45:40.649Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/f8/910dabe008003cd56916f89e48a2657fac53be8d64225ada2d01f2b4880d/openai-1.74.1-py3-none-any.whl", hash = "sha256:9d50a119fcb647124096a4cbd6c6478894349f71c2f4cb4bf9772dbf9bda73a0", size = 644958, upload_time = "2025-04-16T15:40:24.386Z" },
 ]
 
 [[package]]
@@ -1930,11 +1960,12 @@ wheels = [
 
 [[package]]
 name = "pipecat-ai"
-version = "0.0.73"
+version = "0.0.75"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
+    { name = "docstring-parser" },
     { name = "loguru" },
     { name = "markdown" },
     { name = "numpy" },
@@ -1946,12 +1977,22 @@ dependencies = [
     { name = "resampy" },
     { name = "soxr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/38/bb/b9278fc84d1710d870ac6cfe6da56b48951069ffef26ab2708ca60ebaa66/pipecat_ai-0.0.73.tar.gz", hash = "sha256:355ae1f7f785183bc59760ba17a291d6053044d446a2de93f062a922ff0c6d8d", size = 2406854, upload_time = "2025-06-27T00:33:30.856Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/2f/01e87a22932475429fda8325dff73b2b092903d929a6fa5045bc514f4f18/pipecat_ai-0.0.75.tar.gz", hash = "sha256:15338be462fa25d2e3266535dfa1ad8e41846f2eb7e335a063ee7bdd218a4b6e", size = 2495542, upload_time = "2025-07-08T19:50:14.798Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/23/201b6016089e4c61c5cb1ffe917860544c335c2ef10a8086dbbca09f9c01/pipecat_ai-0.0.73-py3-none-any.whl", hash = "sha256:fcc8c09642a54ee6794017ed6d75f319df93f6a4592dae99e104e523918aa143", size = 2473531, upload_time = "2025-06-27T00:33:28.844Z" },
+    { url = "https://files.pythonhosted.org/packages/12/8f/a215884bb7e3a139f6ab76ec00d1ea4cd88a3216dd1717dc4fc4144b604d/pipecat_ai-0.0.75-py3-none-any.whl", hash = "sha256:b4c5d61caebda12ee26c9229f9a7bebda054a9efe72e5eb3c2e0bfe08d7371bd", size = 2581827, upload_time = "2025-07-08T19:50:11.9Z" },
 ]
 
 [package.optional-dependencies]
+assemblyai = [
+    { name = "websockets" },
+]
+cartesia = [
+    { name = "cartesia" },
+    { name = "websockets" },
+]
+elevenlabs = [
+    { name = "websockets" },
+]
 openai = [
     { name = "websockets" },
 ]

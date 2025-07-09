@@ -37,7 +37,7 @@ vad_enabled = true
 whisper_model = "tiny"  # Options: tiny, base, small, medium, large
 
 # LLM settings
-openai_model = "gpt-4o-mini"  # For ensemble mode
+openai_model = "gpt-4o"  # For ensemble mode
 
 # OpenAI Realtime settings (realtime mode only)
 openai_realtime_model = "gpt-4o-realtime-preview-2025-06-03"
@@ -75,7 +75,7 @@ vlm_device = "cuda"
 
 [transcript]
 # Transcript management
-display_transcripts = true
+display_transcripts = false
 transcript_max_lines = 3
 transcript_line_duration = 10.0
 transcript_fade_duration = 1.0
