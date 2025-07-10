@@ -183,7 +183,7 @@ def create_service_parser(
     # Standard arguments for all services - use tracked actions to track when explicitly set
     parser.add_argument(
         '--log-level', '-l',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL', 'debug', 'info', 'warning', 'error', 'critical'],
         default='INFO',
         action=TrackedAction,
         help='Set the logging level (default: INFO)'
