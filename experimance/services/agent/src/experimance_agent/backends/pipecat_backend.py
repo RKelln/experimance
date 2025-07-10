@@ -31,6 +31,7 @@ from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.aggregators.sentence import SentenceAggregator
+from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
 from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
@@ -56,8 +57,6 @@ class PipecatEventProcessor(FrameProcessor):
     def __init__(self, backend: 'PipecatBackend'):
         super().__init__()
         self.backend = backend
-        self.current_transcript_segments = []
-        self.current_bot_response = ""
         self.user_speaking = False
         self.bot_speaking = False
         
@@ -67,35 +66,14 @@ class PipecatEventProcessor(FrameProcessor):
         # Call parent class to handle StartFrame properly
         await super().process_frame(frame, direction)
         
-        # Handle transcription frames (user speech)
-        if isinstance(frame, TranscriptionFrame):
-            if frame.text.strip():
-                self.current_transcript_segments.append(frame.text)
-                logger.debug(f"Transcription: {frame.text}")
-                
         # Handle user speaking state
-        elif isinstance(frame, UserStartedSpeakingFrame):
+        if isinstance(frame, UserStartedSpeakingFrame):
             self.user_speaking = True
             await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED)
             logger.debug("User started speaking")
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self.user_speaking = False
-            
-            # Compile full transcript
-            if self.current_transcript_segments:
-                full_transcript = " ".join(self.current_transcript_segments).strip()
-                if full_transcript:
-                    # Store conversation turn using convenience method
-                    self.backend.add_conversation_turn("human", full_transcript)
-                    await self.backend.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
-                        "text": full_transcript
-                    })
-                    logger.debug(f"User message: {full_transcript}")
-                    
-                # Clear segments for next turn
-                self.current_transcript_segments = []
-                
             await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED)
             logger.debug("User stopped speaking")
             
@@ -109,24 +87,6 @@ class PipecatEventProcessor(FrameProcessor):
             self.bot_speaking = False
             await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING)
             logger.debug("Bot stopped speaking")
-            
-            # If we have accumulated bot response text, emit it
-            if self.current_bot_response.strip():
-                # Store conversation turn using convenience method
-                self.backend.add_conversation_turn("agent", self.current_bot_response.strip())
-                await self.backend.emit_event(AgentBackendEvent.RESPONSE_GENERATED, {
-                    "text": self.current_bot_response.strip()
-                })
-                logger.debug(f"Bot message: {self.current_bot_response.strip()}")
-                
-                # Clear for next response
-                self.current_bot_response = ""
-            
-        # Handle LLM response text
-        elif isinstance(frame, TextFrame):
-            if frame.text.strip():
-                self.current_bot_response += frame.text
-                logger.debug(f"Bot response text: {frame.text}")
             
         # Forward the frame to the next processor
         await self.push_frame(frame, direction)
@@ -189,6 +149,9 @@ class PipecatBackend(AgentBackend):
         """Start the Pipecat backend."""
         try:
             logger.info("Starting Pipecat backend v2...")
+            
+            # Call parent class to initialize transcript manager
+            await super().start()
 
             self.transport = self._create_transport()
             assert self.transport is not None, "Transport must be created successfully"
@@ -222,6 +185,25 @@ class PipecatBackend(AgentBackend):
             logger.error(f"Error starting Pipecat backend: {e}")
             raise
     
+    async def _on_transcript_update(self, processor, frame):
+        """Handle transcript updates from Pipecat's TranscriptProcessor."""
+        if hasattr(frame, 'messages'):
+            for message in frame.messages:
+                # TranscriptionMessage has role, content, timestamp
+                if hasattr(message, 'role') and hasattr(message, 'content'):
+                    if message.role == "user":
+                        await self.add_user_speech(message.content)
+                        await self.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
+                            "text": message.content
+                        })
+                        logger.debug(f"User transcription: {message.content}")
+                    elif message.role == "assistant":
+                        await self.add_agent_response(message.content)
+                        await self.emit_event(AgentBackendEvent.RESPONSE_GENERATED, {
+                            "text": message.content
+                        })
+                        logger.debug(f"Assistant response: {message.content}")
+
     async def stop(self) -> None:
         """Stop the Pipecat backend."""
         logger.info("Stopping Pipecat backend v2...")
@@ -230,6 +212,7 @@ class PipecatBackend(AgentBackend):
         self.is_connected = False
         
         try:
+            # Stop Pipecat components first
             # Cancel the pipeline task if it's running
             if self._pipeline_task and not self._pipeline_task.done():
                 logger.debug("Cancelling pipeline task...")
@@ -252,6 +235,9 @@ class PipecatBackend(AgentBackend):
             # Stop the transport
             if self.transport:
                 await self.transport.cleanup()
+                
+            # Call parent class to stop transcript manager
+            await super().stop()
                 
             logger.info("Pipecat backend v2 stopped successfully")
             
@@ -339,14 +325,28 @@ class PipecatBackend(AgentBackend):
         # Create event processor
         self.event_processor = PipecatEventProcessor(self)
         
-        # Create transcript processor for logging
+        # Create transcript processor for capturing complete conversations
         transcript_processor = TranscriptProcessor()
         
+        # Register transcript event handler as instance method
+        transcript_processor.event_handler("on_transcript_update")(self._on_transcript_update)
+        
+        # Mute user during function calls
+        stt_mute_processor = STTMuteFilter(
+            config=STTMuteConfig(
+                strategies={
+                    # STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
+                    STTMuteStrategy.FUNCTION_CALL,
+                }
+            ),
+        )
+
         assert self.transport is not None, "Transport must be created successfully"
 
         # Create pipeline
         self.pipeline = Pipeline([
             self.transport.input(),
+            stt_mute_processor,
             stt,
             transcript_processor.user(),
             context_aggregator.user(),
@@ -357,7 +357,7 @@ class PipecatBackend(AgentBackend):
             context_aggregator.assistant(),
             self.event_processor
         ])
-        
+
         # Create task and runner
         self.task = PipelineTask(self.pipeline)
         
@@ -403,6 +403,10 @@ class PipecatBackend(AgentBackend):
         
         # Create event processor
         self.event_processor = PipecatEventProcessor(self)
+        
+        # For realtime mode, we might need to handle transcription differently
+        # since the OpenAI Realtime API handles conversation internally
+        # TODO: Investigate how to get transcription events from realtime service
         
         assert self.transport is not None, "Transport must be created successfully"
         
@@ -461,6 +465,12 @@ class PipecatBackend(AgentBackend):
     def clear_conversation_history(self) -> None:
         """Clear conversation history."""
         super().clear_conversation_history()  # Call base class method
+        
+        # Also clear transcript manager if available
+        if hasattr(self, 'transcript_manager'):
+            self.transcript_manager._messages.clear()
+            
+        # Reset context aggregator if in ensemble mode
         if self.flow_manager and hasattr(self.flow_manager, '_context_aggregator'):
             # Reset context but keep system message
             self.flow_manager._context_aggregator.reset()

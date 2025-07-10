@@ -11,6 +11,8 @@ def configure_external_loggers(level=logging.WARNING):
     """
     for logger_name in [
         "httpx",           # HTTP client library often used by FAL
+        "httpcore.http11", # HTTP/1.1 implementation used by httpx
+        "httpcore.connection", 
         "aiohttp",         # Async HTTP client
         "requests",        # Synchronous HTTP client
         "urllib3",         # Used by requests
@@ -20,6 +22,7 @@ def configure_external_loggers(level=logging.WARNING):
         "PIL.PngImagePlugin",  # Specific PIL PNG plugin that's very verbose
         "websockets",      # WebSocket library
         "websockets.client",  # WebSocket client library
+        "openai._base_client",  # OpenAI base client logging
     ]:
         logger = logging.getLogger(logger_name)
         logger.setLevel(level)

@@ -9,7 +9,7 @@ controlling other services.
 import asyncio
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from experimance_common.base_service import BaseService, ServiceStatus
@@ -50,8 +50,7 @@ class AgentService(BaseService):
         self.audience_present = False
         self.agent_speaking = False
         
-        # Transcript management
-        self.conversation_history: list[ConversationTurn] = []
+        # Display text tracking (for transcript display)
         self.displayed_text_ids: set[str] = set()
         
         # ZMQ service for communication
@@ -61,8 +60,8 @@ class AgentService(BaseService):
         self.webcam_manager = None
         self.vlm_processor = None
         
-        # Transcript handler (will be initialized if enabled)
-        self.transcript_handler = None
+        # Transcript display handler (will be initialized if enabled)
+        self.transcript_display_handler = None
         
     async def start(self):
         """Initialize and start the agent service."""
@@ -84,7 +83,7 @@ class AgentService(BaseService):
         
         # Initialize transcript handling if enabled
         if self.config.transcript.display_transcripts:
-            await self._initialize_transcript_handler()
+            await self._initialize_transcript_display_handler()
         
         # Register background tasks
         self.add_task(self._conversation_monitor_loop())
@@ -225,13 +224,33 @@ class AgentService(BaseService):
         
         logger.info("Vision processing initialized (placeholder)")
     
-    async def _initialize_transcript_handler(self):
-        """Initialize transcript handling and display."""
-        # TODO: Import and initialize transcript handler
-        # from .transcript.handler import TranscriptHandler
-        # self.transcript_handler = TranscriptHandler(self.config.transcript)
+    async def _initialize_transcript_display_handler(self):
+        """Initialize transcript display handling."""
+        if not self.current_backend:
+            logger.warning("Cannot initialize transcript display handler: no backend available")
+            return
+            
+        # Register display callback with the backend's transcript manager
+        self.current_backend.transcript_manager.add_display_callback(
+            self._display_transcript_callback
+        )
         
-        logger.info("Transcript handler initialized (placeholder)")
+        logger.info("Transcript display handler initialized")
+    
+    async def _display_transcript_callback(self, message):
+        """Callback for displaying transcript messages."""
+        from experimance_common.transcript_manager import TranscriptMessageType
+        
+        # Only display speech messages, not system messages or tool calls
+        if message.message_type not in [TranscriptMessageType.USER_SPEECH, TranscriptMessageType.AGENT_RESPONSE]:
+            return
+            
+        # Skip partial messages for display
+        if message.is_partial:
+            return
+        
+        # Display the transcript text
+        await self._display_transcript_text(message.content, message.display_name)
     
     # =========================================================================
     # Background Task Loops
@@ -242,19 +261,21 @@ class AgentService(BaseService):
         while self.running:
             try:
                 if self.current_backend and self.current_backend.is_connected:
-                    # Update conversation history
-                    new_history = self.current_backend.get_conversation_history()
-                    if len(new_history) > len(self.conversation_history):
-                        # Process new conversation turns
-                        for turn in new_history[len(self.conversation_history):]:
-                            await self._process_conversation_turn(turn)
-                        self.conversation_history = new_history
+                    # Check if conversation is active based on recent messages
+                    if hasattr(self.current_backend, 'transcript_manager'):
+                        recent_messages = self.current_backend.transcript_manager.get_messages(limit=5)
+                        if recent_messages:
+                            # Update conversation active state based on recent activity
+                            last_message_time = recent_messages[-1].timestamp
+                            import time
+                            time_since_last = time.time() - last_message_time
+                            self.is_conversation_active = time_since_last < 30.0  # Active if message in last 30 seconds
                 
-                await self._sleep_if_running(1.0)  # Check every second
+                await self._sleep_if_running(5.0)  # Check every 5 seconds
                 
             except Exception as e:
                 self.record_error(e, is_fatal=False)
-                await self._sleep_if_running(5.0)  # Back off on error
+                await self._sleep_if_running(10.0)  # Back off on error
     
     async def _audience_detection_loop(self):
         """Monitor audience presence through vision processing."""
@@ -396,9 +417,19 @@ class AgentService(BaseService):
         """Process a new conversation turn."""
         logger.debug(f"Processing conversation turn: {turn.speaker} - {turn.content[:50]}...")
         
-        # Display transcript if enabled
-        if self.config.transcript.display_transcripts:
-            await self._display_transcript_text(turn.content, turn.speaker)
+        # The transcript manager in the backend handles saving automatically,
+        # we just need to handle any additional display logic here
+        
+        # Update conversation state
+        if turn.speaker == "human":
+            self.is_conversation_active = True
+        elif turn.speaker == "agent":
+            self.agent_speaking = True
+            
+        # Publish speech events if needed
+        if turn.speaker == "human":
+            await self._publish_agent_control_event("speech_detected", 
+                SpeechDetectedPayload(is_speaking=True).model_dump())
     
     async def _display_transcript_text(self, content: str, speaker: str):
         """Display transcript text on the visual interface."""
@@ -521,7 +552,6 @@ class AgentService(BaseService):
                 "is_conversation_active": self.is_conversation_active,
                 "audience_present": self.audience_present,
                 "agent_speaking": self.agent_speaking,
-                "conversation_history_length": len(self.conversation_history),
                 "displayed_text_count": len(self.displayed_text_ids),
             },
             "backend": None,
@@ -534,6 +564,12 @@ class AgentService(BaseService):
             }
         }
         
+        # Add transcript manager status if available
+        if self.current_backend and hasattr(self.current_backend, 'transcript_manager'):
+            transcript_stats = self.current_backend.transcript_manager.get_session_stats()
+            status["transcript"] = transcript_stats
+            status["service"]["conversation_history_length"] = transcript_stats.get("total_messages", 0)
+        
         # Get backend debug info if available
         if self.current_backend and hasattr(self.current_backend, 'get_debug_status'):
             status["backend"] = self.current_backend.get_debug_status()
@@ -541,4 +577,26 @@ class AgentService(BaseService):
             status["backend"] = self.current_backend.get_status()
         
         return status
+    
+    # =========================================================================
+    # Transcript Access Methods
+    # =========================================================================
+    
+    def get_conversation_history(self) -> List[ConversationTurn]:
+        """Get the current conversation history from the backend's transcript manager."""
+        if not self.current_backend:
+            return []
+        return self.current_backend.get_conversation_history()
+    
+    def get_transcript_messages(self, limit: Optional[int] = None):
+        """Get transcript messages from the backend's transcript manager."""
+        if not self.current_backend:
+            return []
+        return self.current_backend.get_transcript_messages(limit=limit)
+    
+    def get_transcript_session_stats(self) -> Dict[str, Any]:
+        """Get transcript session statistics."""
+        if not self.current_backend or not hasattr(self.current_backend, 'transcript_manager'):
+            return {}
+        return self.current_backend.transcript_manager.get_session_stats()
 

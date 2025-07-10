@@ -16,6 +16,7 @@ import logging
 
 from experimance_agent.config import AgentServiceConfig
 from experimance_common.constants import AGENT_SERVICE_DIR
+from experimance_common.transcript_manager import TranscriptManager, TranscriptMessage, TranscriptMessageType
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,14 @@ class AgentBackend(ABC):
         self.conversation_started = False  # Track if conversation has started
         self.user_context = UserContext()  # User context for the session
         
+        # Initialize transcript manager
+        self.transcript_manager = TranscriptManager(
+            save_to_file=config.transcript.save_transcripts,
+            output_directory=Path(config.transcript.transcript_directory),
+            max_memory_messages=100,
+            auto_flush_interval=30.0
+        )
+        
     # =========================================================================
     # Lifecycle Management
     # =========================================================================
@@ -133,14 +142,20 @@ class AgentBackend(ABC):
         Raises:
             Exception: If backend fails to start
         """
-        pass
+        # Start transcript session
+        session_metadata = {
+            "backend_type": self.__class__.__name__,
+            "user_context": self.user_context.summarize()
+        }
+        await self.transcript_manager.start_session(session_metadata)
     
     @abstractmethod
     async def stop(self) -> None:
         """
         Stop the agent backend and clean up resources.
         """
-        pass
+        # Stop transcript session
+        await self.transcript_manager.stop_session()
 
     async def graceful_shutdown(self, goodbye_message: Optional[str] = None) -> None:
         """
@@ -215,15 +230,8 @@ class AgentBackend(ABC):
         Clear the conversation history.
         """
         self._conversation_history.clear()
-    
-    def get_conversation_history(self) -> List[ConversationTurn]:
-        """
-        Get the current conversation history.
-        
-        Returns:
-            List of conversation turns
-        """
-        return self._conversation_history.copy()
+        # Also clear transcript manager
+        self.transcript_manager._messages.clear()
     
     def add_conversation_turn(self, speaker: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -242,6 +250,97 @@ class AgentBackend(ABC):
             metadata=metadata
         )
         self._conversation_history.append(turn)
+        
+        # Note: This method is for backward compatibility only.
+        # The transcript manager handles its own conversation history tracking.
+        # Prefer using add_user_speech() and add_agent_response() directly.
+    
+    # =========================================================================
+    # Transcript Management
+    # =========================================================================
+    
+    async def add_user_speech(
+        self, 
+        content: str, 
+        confidence: Optional[float] = None,
+        duration: Optional[float] = None,
+        is_partial: bool = False
+    ) -> TranscriptMessage:
+        """Add user speech to transcript and conversation history."""
+        # Add to transcript manager
+        message = await self.transcript_manager.add_user_speech(
+            content=content,
+            confidence=confidence,
+            duration=duration,
+            is_partial=is_partial
+        )
+        
+        # Add to legacy conversation history (only for final transcripts)
+        if not is_partial:
+            import time
+            turn = ConversationTurn(
+                speaker="human",
+                content=content,
+                timestamp=time.time(),
+                metadata={"confidence": confidence, "duration": duration}
+            )
+            self._conversation_history.append(turn)
+        
+        return message
+    
+    async def add_agent_response(self, content: str) -> TranscriptMessage:
+        """Add agent response to transcript and conversation history."""
+        agent_name = self.config.transcript.agent_speaker_name
+        
+        # Add to transcript manager
+        message = await self.transcript_manager.add_agent_response(content, agent_name)
+        
+        # Add to legacy conversation history
+        import time
+        turn = ConversationTurn(
+            speaker="agent",
+            content=content,
+            timestamp=time.time(),
+            metadata={}
+        )
+        self._conversation_history.append(turn)
+        
+        return message
+    
+    async def add_tool_call(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        result: Optional[Any] = None
+    ) -> TranscriptMessage:
+        """Add tool call to transcript."""
+        return await self.transcript_manager.add_tool_call(tool_name, parameters, result)
+    
+    def get_transcript_messages(
+        self,
+        limit: Optional[int] = None,
+        message_types: Optional[List[TranscriptMessageType]] = None
+    ) -> List[TranscriptMessage]:
+        """Get transcript messages with optional filtering."""
+        return self.transcript_manager.get_messages(limit=limit, message_types=message_types)
+    
+    def get_conversation_history(self) -> List[ConversationTurn]:
+        """Get conversation history from transcript manager."""
+        # Use transcript manager's conversation history which is more comprehensive
+        history_dicts = self.transcript_manager.get_conversation_history()
+        
+        # Convert to ConversationTurn objects
+        turns = []
+        for hist in history_dicts:
+            turn = ConversationTurn(
+                speaker=hist["speaker"],
+                content=hist["content"],
+                timestamp=hist["timestamp"],
+                metadata=hist.get("metadata")
+            )
+            turns.append(turn)
+        
+        return turns
     
     # =========================================================================
     # Tool Management
