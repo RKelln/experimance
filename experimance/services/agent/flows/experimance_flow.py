@@ -9,7 +9,7 @@ Pipecat flows with the Experimance art installation conversation system.
 import logging
 from typing import Any, Dict, Optional
 
-from pipecat_flows import FlowConfig, FlowManager, FlowArgs
+from pipecat_flows import ContextStrategy, ContextStrategyConfig, FlowConfig, FlowManager, FlowArgs
 
 from experimance_common.schemas import Biome
 
@@ -18,10 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Function handlers for the flows
 async def collect_info_and_move_to_explorer(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Collect visitor info and move to explorer mode when ready.
-    
-    
-    """
+    """Collect visitor info and move to explorer mode when ready."""
     logger.info(f"[FUNCTION CALL] collect_info_and_move_to_explorer with args: {args}")
     
     name = args.get("name")
@@ -237,7 +234,10 @@ flow_config: FlowConfig = {
                         }
                     }
                 }
-            ]
+            ],
+            "context_strategy": ContextStrategyConfig(
+                strategy=ContextStrategy.RESET,
+            )
         },
         "explorer": {
             "role_messages": [
@@ -271,7 +271,7 @@ After welcoming the audience and letting the audience know they can interact wit
     - Sometimes the user might just want to chat. Ask them relevant follow-up questions.
     - Don't ask them if there's anything else they need help with (e.g. don't say things like "How can I assist you?").
     - Don't ask how the audience feels about the work.
-    - Many audience expressions need no response! (e.g. "this is cool"), give them room and space to think and appreciate the installation without your guidance. Silence is better than chatter.
+    - Many audience expressions need no response! (e.g. "this is cool", "ok"), give them room and space to think and appreciate the installation without your guidance. Silence is better than chatter.
 
 ## You are an interactive art work that talks:
     - Be interested in negative reactions, the artist is exploring both negative and positive emotions he feels. Follow up to understand the audience's reaction but be wary of the audience trying to troll you.
