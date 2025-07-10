@@ -2,9 +2,11 @@
 Configuration for the Experimance Agent Service.
 """
 
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, Literal, Annotated
 from pathlib import Path
 from pydantic import BaseModel, Field
+from pydantic import field_validator
+from pydantic.types import StringConstraints
 
 from experimance_common.config import BaseServiceConfig
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
@@ -13,13 +15,42 @@ from experimance_common.constants import DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ
 
 DEFAULT_CONFIG_PATH = AGENT_SERVICE_DIR / "config.toml"
 
+
+class EnsembleSettings(BaseModel):
+    """Configuration for ensemble mode settings."""
+    stt: Annotated[Literal["assemblyai"], # TODO: deepgram, whsiper
+                   StringConstraints(to_lower=True)] = Field(
+        default="assemblyai",
+        description="Speech-to-Text provider to use in ensemble mode (whisper or assemblyai)"
+    )
+
+    llm: Annotated[Literal["openai"], 
+                   StringConstraints(to_lower=True)] = Field(
+        default="openai",
+        description="Language Model provider to use in ensemble mode (openai or anthropic)"
+    )
+
+    tts: Annotated[Literal["elevenlabs", "cartesia"], 
+                   StringConstraints(to_lower=True)] = Field(
+        default="elevenlabs",
+        description="Text-to-Speech provider to use in ensemble mode (elevenlabs or cartesia)"
+    )
+
+
 class PipecatBackendConfig(BaseModel):
     """Configuration for the Pipecat backend."""
     
     # Pipeline mode selection
-    mode: Literal["realtime", "ensemble"] = Field(
+    mode: Annotated[Literal["ensemble", "realtime"], 
+                   StringConstraints(to_lower=True)] = Field(
         default="realtime",
         description="Pipeline mode: 'realtime' for OpenAI Realtime Beta or 'ensemble' for separate STT/LLM/TTS"
+    )
+
+    # Flow configuration
+    flow_file: Optional[Path] = Field(
+        default=None,
+        description="Path to flow configuration file. If not specified, will look for flows/{flow_name}.py"
     )
     
     # Audio settings
@@ -51,27 +82,12 @@ class PipecatBackendConfig(BaseModel):
     turn_detection_threshold: float = Field(default=0.5, description="Voice activity detection threshold for realtime mode")
     turn_detection_silence_ms: int = Field(default=800, description="Silence duration in ms before turn ends")
     
-    # TTS settings (for ensemble mode)
-    elevenlabs_voice_id: str = Field(default="EXAVITQu4vr4xnSDxMaL", description="ElevenLabs voice ID")
-    cartesia_voice_id: str = Field(default="bf0a246a-8642-498a-9950-80c35e9276b5", description="Cartesia voice ID")
-                                   
-    # System prompt
-    system_prompt: str = Field(
-        default=(
-            "You are a helpful AI assistant for an interactive art installation called Experimance. "
-            "You can engage in natural conversation and help users explore and understand the art. "
-            "The installation represents the intersection of human experience and environmental change. "
-            "Keep your responses conversational and engaging, but concise. "
-            "Your responses will be converted to speech, so avoid special characters. "
-            "You can suggest different biomes and locations for the installation when appropriate."
-        ),
-        description="System prompt for the agent"
+    # Ensemble mode settings
+    ensemble: EnsembleSettings = Field(
+        default_factory=lambda: EnsembleSettings(stt="assemblyai", llm="openai", tts="cartesia"),
+        description="Settings for ensemble mode, including TTS and STT providers"
     )
 
-    # Flow configuration
-    use_flows: bool = Field(default=True, description="Enable Pipecat Flows for multi-persona conversations")
-    flow_type: str = Field(default="experimance", description="Type of flow manager ('experimance', 'simple', 'configurable')")
-    initial_persona: str = Field(default="welcome", description="Initial persona to start with")
 
 class BackendConfig(BaseModel):
     """Container for all backend configurations."""
@@ -137,6 +153,16 @@ class AgentServiceConfig(BaseServiceConfig):
     # Agent backend selection
     agent_backend: str = Field(default="pipecat", description="Agent backend to use (pipecat only currently supported)")
     
+    # API Keys
+    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
+    assemblyai_api_key: Optional[str] = Field(default=None, description="AssemblyAI API key")
+    cartesia_api_key: Optional[str] = Field(default=None, description="Cartesia API key")
+    elevenlabs_api_key: Optional[str] = Field(default=None, description="ElevenLabs API key")
+    
+    # TTS settings (for ensemble mode)
+    elevenlabs_voice_id: str = Field(default="EXAVITQu4vr4xnSDxMaL", description="ElevenLabs voice ID")
+    cartesia_voice_id: str = Field(default="bf0a246a-8642-498a-9950-80c35e9276b5", description="Cartesia voice ID")
+
     # Backend-specific configuration
     backend_config: BackendConfig = Field(
         default_factory=BackendConfig, 

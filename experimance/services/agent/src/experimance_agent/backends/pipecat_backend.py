@@ -1,17 +1,18 @@
 """
-Pipecat backend for the Experimance agent service.
+Pipecat backend v2 for the Experimance agent service.
 
 This module implements the AgentBackend interface using Pipecat's local audio pipeline,
 providing speech-to-text, LLM conversation, and text-to-speech capabilities in a single process.
-"""
 
+Based on the working ensemble implementation from flows_test.py with proper shutdown handling.
+"""
 import asyncio
 import logging
 import os
-import time
-from typing import Any, Dict, List, Optional, AsyncGenerator
-
-from dataclasses import dataclass
+import sys
+import importlib.util
+from typing import Any, Dict, List, Optional, AsyncGenerator, Callable
+from pathlib import Path
 
 from experimance_agent.config import AgentServiceConfig
 from pipecat.pipeline.pipeline import Pipeline
@@ -22,9 +23,10 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.openai_realtime_beta import OpenAIRealtimeBetaLLMService
+from pipecat.services.openai_realtime_beta.openai import OpenAIRealtimeBetaLLMService
 from pipecat.services.openai_realtime_beta.events import SessionProperties, TurnDetection
-from pipecat.services.assemblyai.stt import AssemblyAISTTService, AssemblyAIConnectionParams
+from pipecat.services.assemblyai.stt import AssemblyAISTTService
+from pipecat.services.assemblyai.models import AssemblyAIConnectionParams
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -32,816 +34,458 @@ from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
-    Frame, 
-    TextFrame,
-    TranscriptionFrame,
-    TranscriptionMessage,
-    BotStartedSpeakingFrame,
-    BotStoppedSpeakingFrame,
-    UserStartedSpeakingFrame,
-    UserStoppedSpeakingFrame,
-    EndFrame,
-    EndTaskFrame,
+    Frame, AudioRawFrame, TextFrame, TranscriptionFrame, 
+    TTSStartedFrame, TTSStoppedFrame, UserStartedSpeakingFrame, 
+    UserStoppedSpeakingFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame,
+    SystemFrame, CancelFrame, EndFrame
 )
-
-from .base import (
-    AgentBackend, 
-    AgentBackendEvent, 
-    ConversationTurn, 
-    ToolCall, 
-    UserContext,
-    load_prompt
-)
+from pipecat_flows import FlowManager, FlowArgs, FlowResult, FlowConfig
 
 from experimance_common.audio_utils import resolve_audio_device_index
-from openai.types.chat import ChatCompletionMessageParam
-
-# Import flow management
-from experimance_agent.flows import create_flow_manager, BaseFlowManager
+from experimance_common.constants import AGENT_SERVICE_DIR
+from .base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext, load_prompt
 
 logger = logging.getLogger(__name__)
 
 
 class PipecatEventProcessor(FrameProcessor):
-    """Frame processor that captures Pipecat events and forwards them to the backend."""
+    """
+    Event processor that captures conversation events and forwards them to the backend.
+    """
     
     def __init__(self, backend: 'PipecatBackend'):
         super().__init__()
         self.backend = backend
+        self.current_transcript_segments = []
+        self.current_bot_response = ""
+        self.user_speaking = False
+        self.bot_speaking = False
         
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """Process frames and emit appropriate events."""
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Process frames and extract conversation events."""
+        
+        # Call parent class to handle StartFrame properly
         await super().process_frame(frame, direction)
         
         # Handle transcription frames (user speech)
         if isinstance(frame, TranscriptionFrame):
-            turn = ConversationTurn(
-                speaker="human",
-                content=frame.text,
-                timestamp=time.time(),
-                metadata={"frame_type": "transcription"}
-            )
-            self.backend._conversation_history.append(turn)
-            await self.backend.emit_event(
-                AgentBackendEvent.TRANSCRIPTION_RECEIVED, 
-                {"transcription": frame.text, "turn": turn}
-            )
-            
-        # Handle LLM response frames (agent speech)
-        elif isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
-            turn = ConversationTurn(
-                speaker="agent",
-                content=frame.text,
-                timestamp=time.time(),
-                metadata={"frame_type": "llm_response"}
-            )
-            self.backend._conversation_history.append(turn)
-            await self.backend.emit_event(
-                AgentBackendEvent.RESPONSE_GENERATED,
-                {"response": frame.text, "turn": turn}
-            )
-            
-        # Handle speech detection events
+            if frame.text.strip():
+                self.current_transcript_segments.append(frame.text)
+                logger.debug(f"Transcription: {frame.text}")
+                
+        # Handle user speaking state
         elif isinstance(frame, UserStartedSpeakingFrame):
+            self.user_speaking = True
             await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED)
+            logger.debug("User started speaking")
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
+            self.user_speaking = False
+            
+            # Compile full transcript
+            if self.current_transcript_segments:
+                full_transcript = " ".join(self.current_transcript_segments).strip()
+                if full_transcript:
+                    # Store conversation turn using convenience method
+                    self.backend.add_conversation_turn("human", full_transcript)
+                    await self.backend.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
+                        "text": full_transcript
+                    })
+                    logger.debug(f"User message: {full_transcript}")
+                    
+                # Clear segments for next turn
+                self.current_transcript_segments = []
+                
             await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED)
+            logger.debug("User stopped speaking")
             
-        elif isinstance(frame, BotStartedSpeakingFrame):
-            if not self.backend.conversation_started:
-                # Emit conversation started event only once
-                self.backend.conversation_started = True
-                await self.backend.emit_event(
-                    AgentBackendEvent.CONVERSATION_STARTED,
-                    {"speaker": "agent"}
-                )
+        # Handle bot speaking state  
+        elif isinstance(frame, TTSStartedFrame):
+            self.bot_speaking = True
             await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING)
+            logger.debug("Bot started speaking")
             
-        elif isinstance(frame, BotStoppedSpeakingFrame):
-            # Don't emit CONVERSATION_ENDED here as the conversation continues
+        elif isinstance(frame, TTSStoppedFrame):
+            self.bot_speaking = False
             await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING)
+            logger.debug("Bot stopped speaking")
             
-        # Forward the frame downstream
-        await self.push_frame(frame, direction)
-
-
-class PipecatToolProcessor(FrameProcessor):
-    """Frame processor that handles tool calls from the LLM."""
-    
-    def __init__(self, backend: 'PipecatBackend'):
-        super().__init__()
-        self.backend = backend
-        
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """Process frames and handle tool calls if present."""
-        await super().process_frame(frame, direction)
-        
-        # TODO: Implement tool call detection and handling
-        # Pipecat's OpenAI LLM service supports function calling
-        # We would need to detect function call frames and route them through handle_tool_call
-        
+            # If we have accumulated bot response text, emit it
+            if self.current_bot_response.strip():
+                # Store conversation turn using convenience method
+                self.backend.add_conversation_turn("agent", self.current_bot_response.strip())
+                await self.backend.emit_event(AgentBackendEvent.RESPONSE_GENERATED, {
+                    "text": self.current_bot_response.strip()
+                })
+                logger.debug(f"Bot message: {self.current_bot_response.strip()}")
+                
+                # Clear for next response
+                self.current_bot_response = ""
+            
+        # Handle LLM response text
+        elif isinstance(frame, TextFrame):
+            if frame.text.strip():
+                self.current_bot_response += frame.text
+                logger.debug(f"Bot response text: {frame.text}")
+            
+        # Forward the frame to the next processor
         await self.push_frame(frame, direction)
 
 
 class PipecatBackend(AgentBackend):
     """
-    Pipecat-based agent backend using local audio transport.
-    
-    This backend runs the entire speech-to-text, LLM, and text-to-speech pipeline
-    in a single process using Pipecat's LocalAudioTransport.
-    
-    Shutdown Methods:
-    - stop(): Immediate shutdown using task cancellation - for force stops
-    - graceful_shutdown(): Graceful shutdown using EndFrame - for when user leaves
-    - say_goodbye_and_shutdown(): Says goodbye message then graceful shutdown
-    - disconnect(): Graceful disconnect while keeping backend ready to reconnect
-    
-    Known Issues:
-    - Pipecat WebSocket services (AssemblyAI, ElevenLabs) have a 10+ second disconnect timeout
-    - stop() method uses immediate cancellation to avoid this delay
-    - WebSocket disconnection warnings are expected and harmless
+    Pipecat backend implementation using the working ensemble approach from flows_test.py.
     """
     
-    def __init__(self, config: AgentServiceConfig):
-        """Initialize the Pipecat backend."""
+    def __init__(self, config: AgentServiceConfig, user_context: Optional[UserContext] = None):
         super().__init__(config)
+        self.pipecat_config = self.config.backend_config.pipecat
+        self.user_context = user_context or UserContext()
         
-        # Parse configuration
-        self.pipecat_config = config.backend_config.pipecat
-            
         # Pipeline components
-        self.transport: Optional[LocalAudioTransport] = None
         self.pipeline: Optional[Pipeline] = None
-        self.pipeline_task: Optional[PipelineTask] = None
+        self.task: Optional[PipelineTask] = None
         self.runner: Optional[PipelineRunner] = None
-        self.llm_context: Optional[OpenAILLMContext] = None
+        self.transport: Optional[LocalAudioTransport] = None
+        self.flow_manager: Optional[FlowManager] = None
+        self._pipeline_task: Optional[asyncio.Task] = None
         
-        # Services that need cleanup
-        self.stt_service: Optional[Any] = None
-        self.tts_service: Optional[Any] = None
-        self.realtime_service: Optional[Any] = None
+        # Event handling
+        self.event_processor: Optional[PipecatEventProcessor] = None
         
-        # Control
-        self._pipeline_running = False
-        self._shutdown_event = asyncio.Event()
+        # Conversation state
+        self.is_connected = False
+        self.is_running = False
         
-        # User context
-        self.user_context = UserContext()
 
-        # Flow management
-        self.flow_manager: Optional[BaseFlowManager] = None
-        self.current_persona: str = self.pipecat_config.initial_persona
-
-        # Audio device indices
-        self.input_device_index: Optional[int] = None
-        self.output_device_index: Optional[int] = None
-
-        # Persona and state management
-        self.current_persona: str = "default"
-        self._available_tools: Dict[str, Any] = {}  # Registered tools for the agent
+    def _load_flow_config(self) -> FlowConfig:
+        """Load flow configuration from the specified flow file."""
+        flow_file = self.pipecat_config.flow_file
+        if not flow_file:
+            raise ValueError("Flow file must be specified in the configuration")
+        flow_path = Path(flow_file)
+        if not flow_path.exists():
+            flow_path = AGENT_SERVICE_DIR / flow_file
+            if not flow_path.exists():
+                flow_path = AGENT_SERVICE_DIR / "flows" / flow_file
+                if not flow_path.exists():
+                    raise FileNotFoundError(f"Flow file not found: {flow_file}")
+            
+        # Import the flow module dynamically
+        spec = importlib.util.spec_from_file_location("flow_config", flow_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load flow file: {flow_path}")
+            
+        flow_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(flow_module)
         
+        # Get the flow configuration
+        if hasattr(flow_module, 'flow_config'):
+            return flow_module.flow_config
+        else:
+            raise ValueError(f"Flow file {flow_path} does not contain 'flow_config'")
+    
     async def start(self) -> None:
-        """Start the Pipecat backend and initialize the pipeline."""
-        logger.info(f"Starting Pipecat backend in {self.pipecat_config.mode} mode...")
-        
+        """Start the Pipecat backend."""
         try:
-            # Create audio transport with updated VAD configuration
-            # Resolve device indices from names if provided
-            self.input_device_index = resolve_audio_device_index(
-                self.pipecat_config.audio_input_device_index,
-                self.pipecat_config.audio_input_device_name,
-                input_device=True
-            )
-            self.output_device_index = resolve_audio_device_index(
-                self.pipecat_config.audio_output_device_index,
-                self.pipecat_config.audio_output_device_name,
-                input_device=False
-            )
+            logger.info("Starting Pipecat backend v2...")
+
+            self.transport = self._create_transport()
+            assert self.transport is not None, "Transport must be created successfully"
             
-            transport_params = LocalAudioTransportParams(
-                audio_in_enabled=self.pipecat_config.audio_in_enabled,
-                audio_out_enabled=self.pipecat_config.audio_out_enabled,
-                audio_in_sample_rate=self.pipecat_config.audio_in_sample_rate,
-                audio_out_sample_rate=self.pipecat_config.audio_out_sample_rate,
-                input_device_index=self.input_device_index,
-                output_device_index=self.output_device_index,
-            )
+            # Create pipeline based on mode
+            if self.config.backend_config.pipecat.mode == "realtime":
+                await self._create_realtime_pipeline()
+            else:
+                await self._create_ensemble_pipeline()
             
-            # Set up VAD analyzer (replacing deprecated vad_enabled parameter)
-            if self.pipecat_config.vad_enabled:
-                transport_params.vad_analyzer = SileroVADAnalyzer()
-            
-            self.transport = LocalAudioTransport(transport_params)
-            
-            # Create our custom processors
-            event_processor = PipecatEventProcessor(self)
-            tool_processor = PipecatToolProcessor(self)
-            
-            # Build pipeline based on mode
-            if self.pipecat_config.mode == "realtime":
-                await self._start_realtime_mode(event_processor, tool_processor)
-            else:  # ensemble mode
-                await self._start_ensemble_mode(event_processor, tool_processor)
-            
-            # Create pipeline task and runner
-            assert self.pipeline, "Pipeline must be initialized before starting task"
-            self.pipeline_task = PipelineTask(self.pipeline)
+            assert self.pipeline is not None, "Pipeline must be created successfully"
+            assert self.task is not None, "Pipeline task must be created successfully"
+
+            # runner
             self.runner = PipelineRunner()
             
-            # Initialize flow manager after pipeline task is created
-            if self.pipecat_config.use_flows:
-                logger.info(f"Flows are enabled! Initializing flow manager post-pipeline...")
-                await self._initialize_flow_manager_post_pipeline()
-            else:
-                logger.info("Flows are disabled - using standard pipeline")
+            # Call base class connect to set flags
+            await self.connect()
+            
+            logger.info("Pipecat backend v2 started successfully")
 
-            self.is_active = True
-            logger.info(f"Pipecat backend started successfully in {self.pipecat_config.mode} mode")
+            # Start the pipeline as a background task - this doesn't block
+            if self.runner and self.task:
+                self._pipeline_task = asyncio.create_task(
+                    self.runner.run(self.task),
+                    name="pipecat-pipeline"
+                )
+                logger.info("Pipecat pipeline started as background task")
             
         except Exception as e:
-            logger.error(f"Failed to start Pipecat backend: {e}")
-            await self.stop()
+            logger.error(f"Error starting Pipecat backend: {e}")
             raise
-            
-    async def _start_realtime_mode(self, event_processor: 'PipecatEventProcessor', tool_processor: 'PipecatToolProcessor') -> None:
-        """Initialize pipeline for OpenAI Realtime Beta mode."""
-        logger.info("Initializing OpenAI Realtime Beta pipeline...")
-        
-        assert self.transport, "Transport must be initialized before starting pipeline"
-
-        # Create OpenAI Realtime service
-        self.realtime_service = OpenAIRealtimeBetaLLMService(
-            api_key=os.getenv("OPENAI_API_KEY", "failed to load"),
-            model=self.pipecat_config.openai_realtime_model,
-            session_properties=SessionProperties(
-                modalities=["audio", "text"],
-                instructions=load_prompt(self.pipecat_config.system_prompt),
-                voice=self.pipecat_config.openai_voice,
-                turn_detection=TurnDetection(
-                    threshold=self.pipecat_config.turn_detection_threshold,
-                    silence_duration_ms=self.pipecat_config.turn_detection_silence_ms
-                ),
-                temperature=0.7,
-                #tools=[]
-            )
-        )
-        realtime_service = self.realtime_service
-
-        transcript = TranscriptProcessor()
-        self.llm_context = OpenAILLMContext()
-        context_aggregator = realtime_service.create_context_aggregator(self.llm_context)
-
-        # Prepare flow integration (actual initialization happens post-pipeline)
-        # With our custom adapter system, any flow manager can work with OpenAI Realtime Beta
-        if self.pipecat_config.use_flows:
-            if self.pipecat_config.mode == "realtime":
-                logger.info(f"🎭 Using {self.pipecat_config.flow_type} flow manager with OpenAI Realtime Beta - initial persona: {self.pipecat_config.initial_persona}")
-                # The custom adapter will handle OpenAI Realtime Beta compatibility automatically
-                llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(realtime_service, context_aggregator)
-                
-                # If flow manager was created successfully, use flow pipeline
-                if self.flow_manager and self.flow_manager.flow_manager:
-                    logger.info("Using flow manager in realtime pipeline with custom adapter")
-                    llm_service = self.flow_manager.flow_manager
-                else:
-                    logger.info("Flow manager not available, using standard realtime service")
-                    llm_service = realtime_service
-            else:
-                llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(realtime_service, context_aggregator)
-        else:
-            llm_service = realtime_service
-            pipeline_context_aggregator = context_aggregator
-
-        # Build simplified pipeline for realtime mode
-        self.pipeline = Pipeline([
-            self.transport.input(),                    # Audio input (microphone)
-            pipeline_context_aggregator.user(),       # Add user message to context
-            llm_service,                              # OpenAI Realtime Beta or Flow Manager
-            transcript.user(),                        # Placed after the LLM, as LLM pushes TranscriptionFrames downstream
-            #event_processor,                          # Capture events
-            #tool_processor,                           # Handle tool calls (if supported)
-            self.transport.output(),                  # Audio output (speakers)
-            transcript.assistant(),                   # After the transcript output, to time with the audio output
-            pipeline_context_aggregator.assistant()  # Add assistant response to context
-        ])
-
-        @transcript.event_handler("on_transcript_update")
-        async def on_transcript_update(processor, frame):
-            for msg in frame.messages:
-                if isinstance(msg, TranscriptionMessage):
-                    timestamp = f"[{msg.timestamp}] " if msg.timestamp else ""
-                    line = f"{timestamp}{msg.role}: {msg.content}"
-                    logger.info(f"Transcript: {line}")
-        
-    async def _start_ensemble_mode(self, event_processor: 'PipecatEventProcessor', tool_processor: 'PipecatToolProcessor') -> None:
-        """Initialize pipeline for ensemble mode with separate STT/LLM/TTS services."""
-        logger.info("Initializing ensemble pipeline with separate STT/LLM/TTS services...")
-        
-        assert self.transport, "Transport must be initialized before starting pipeline" 
-
-        # Create STT service
-        #stt = WhisperSTTService(model=self.pipecat_config.whisper_model)
-        
-        self.stt_service = AssemblyAISTTService(
-            api_key=os.getenv("ASSEMBLYAI_API_KEY", "failed to load"),
-            vad_force_turn_endpoint=False,  # Use AssemblyAI's STT-based turn detection
-            connection_params=AssemblyAIConnectionParams(
-                end_of_turn_confidence_threshold=0.7,
-                min_end_of_turn_silence_when_confident=160,  # in ms
-                max_turn_silence=2400,  # in ms
-            )
-        )
-        stt = self.stt_service
-
-        # Create LLM service and context
-        llm = OpenAILLMService(
-            api_key=os.getenv("OPENAI_API_KEY", "failed to load"),
-            model=self.pipecat_config.openai_model
-        )
-        
-        system_prompt = load_prompt(self.pipecat_config.system_prompt)
-        self.llm_context = OpenAILLMContext(
-            messages=[{
-                "role": "system",
-                "content": system_prompt
-            }],
-            #tools=tools
-        )
-        context_aggregator = llm.create_context_aggregator(self.llm_context)
-        
-        # Prepare flow integration (actual initialization happens post-pipeline)
-        llm_service, pipeline_context_aggregator = await self._prepare_flow_integration(llm, context_aggregator)
-        
-        # Create TTS service  
-        # tts = ElevenLabsTTSService(
-        #     api_key=os.getenv("ELEVENLABS_API_KEY", "failed to load"),
-        #     voice_id=self.pipecat_config.elevenlabs_voice_id
-        # )
-        
-
-        # Configure Cartesia WebSocket service
-        tts = CartesiaTTSService(
-            api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
-            voice_id=self.pipecat_config.cartesia_voice_id,
-            model="sonic-2",
-            params=CartesiaTTSService.InputParams(
-                language=Language.EN,
-                speed="fast",  # Options: "fast", "normal", "slow"
-            )
-        )
-        self.tts_service = tts
-        
-        # Create sentence aggregator for better speech flow
-        sentence_aggregator = SentenceAggregator()
-        
-        # Build full ensemble pipeline
-        self.pipeline = Pipeline([
-            self.transport.input(),                           # Audio input (microphone)
-            stt,                                             # Speech-to-text
-            pipeline_context_aggregator.user(),             # Add user message to context
-            llm_service,                                     # Language model or Flow Manager
-            #tool_processor,                                  # Handle tool calls
-            sentence_aggregator,                             # Aggregate into sentences
-            #event_processor,                                 # Capture events
-            tts,                                             # Text-to-speech
-            self.transport.output(),                         # Audio output (speakers)
-            pipeline_context_aggregator.assistant(),        # Add assistant response to context
-        ])
     
     async def stop(self) -> None:
-        """Stop the Pipecat backend and clean up resources."""
-        logger.info("Stopping Pipecat backend...")
+        """Stop the Pipecat backend."""
+        logger.info("Stopping Pipecat backend v2...")
         
-        self.is_active = False
+        self.is_running = False
         self.is_connected = False
         
-        # Signal shutdown
-        self._shutdown_event.set()
-        
-        # NOTE: Pipecat has a bug where graceful shutdown takes 10+ seconds due to 
-        # WebSocket timeout issues in tts and stt services.
-        # We skip graceful shutdown and go straight to task cancellation for faster shutdown.
-        # The WebSocket connections will eventually close in the background.
-        
-        if self.pipeline_task:
-            try:
-                logger.info("Cancelling pipeline task for immediate shutdown...")
-                await self.pipeline_task.cancel()
-                logger.debug("Pipeline task cancelled - WebSocket cleanup will continue in background")
-                
-            except Exception as e:
-                # Suppress common errors when pipeline hasn't fully started yet
-                error_msg = str(e).lower()
-                if any(phrase in error_msg for phrase in [
-                    "startframe not received yet",
-                    "trying to process cancelframe",
-                    "but startframe not received"
-                ]):
-                    logger.debug(f"Pipeline task cancelled before full startup (this is normal): {e}")
-                else:
-                    logger.error(f"Error cancelling pipeline task: {e}")
-        
-        # Clean up components
-        self._cleanup_references()
-        
-        logger.info("Pipecat backend stopped - WebSocket services will disconnect in background")
-    
-    def _cleanup_references(self) -> None:
-        """Clean up object references."""
-        self.transport = None
-        self.pipeline = None
-        self.pipeline_task = None
-        self.runner = None
-        self.llm_context = None
-        self.flow_manager = None
-        self.stt_service = None
-        self.tts_service = None
-        self.realtime_service = None
-        self._pipeline_running = False
-        
-    async def graceful_shutdown(self, goodbye_message: Optional[str] = None) -> None:
-        """
-        Gracefully shutdown the conversation when user leaves.
-        
-        This method uses EndFrame to allow any final messages to be processed
-        before terminating the pipeline. Should be called when vision detects
-        no users are present or core service indicates the session should end.
-        
-        Args:
-            goodbye_message: Optional goodbye message to say before shutting down
-        """
-        if not self.is_connected or not self.pipeline_task:
-            logger.warning("Cannot gracefully shutdown: pipeline not connected")
-            return
-            
-        logger.info("Initiating graceful shutdown of conversation...")
-        
         try:
-            # If we have a goodbye message, say it first
-            if goodbye_message:
-                logger.info(f"Saying goodbye: {goodbye_message}")
-                # We could inject the goodbye message into the pipeline here
-                # This would depend on having a way to inject TextFrames
-                pass
+            # Cancel the pipeline task if it's running
+            if self._pipeline_task and not self._pipeline_task.done():
+                logger.debug("Cancelling pipeline task...")
+                self._pipeline_task.cancel()
+                try:
+                    await self._pipeline_task
+                except asyncio.CancelledError:
+                    logger.debug("Pipeline task cancelled successfully")
+                except Exception as e:
+                    logger.warning(f"Error while cancelling pipeline task: {e}")
             
-            # Queue an EndFrame for graceful shutdown (as per Pipecat docs)
-            logger.debug("Queueing EndFrame for graceful shutdown...")
-            await self.pipeline_task.queue_frame(EndFrame())
-            
-            # Wait for pipeline to finish processing with timeout
-            try:
-                logger.debug("Waiting for pipeline to stop gracefully...")
-                await asyncio.wait_for(self._wait_for_pipeline_stop(), timeout=2.0)
-                logger.info("Pipeline gracefully stopped")
-            except asyncio.TimeoutError:
-                logger.warning("Graceful shutdown timed out after 2 seconds - this is normal for WebSocket cleanup")
-                # Set flags even if timeout occurred
-                self._pipeline_running = False
-                self.is_connected = False
+            # Stop the runner
+            if self.runner:
+                await self.runner.cleanup()
                 
-                # Don't call stop() here to avoid recursion since stop() calls this method
-                # Instead, let the caller handle the timeout
-                raise
-            
-            # Update connection status but keep backend active for potential reconnection
-            self.is_connected = False
-            self._pipeline_running = False
-            
-            # Emit disconnection event
-            await self.emit_event(AgentBackendEvent.DISCONNECTED)
-            
-            logger.info("Graceful shutdown completed successfully")
+            # Stop the task
+            if self.task:
+                await self.task.cleanup()
+                
+            # Stop the transport
+            if self.transport:
+                await self.transport.cleanup()
+                
+            logger.info("Pipecat backend v2 stopped successfully")
             
         except Exception as e:
-            logger.error(f"Error during graceful shutdown: {e}")
-            # Re-raise to let the caller handle it
-            raise
+            logger.error(f"Error stopping Pipecat backend: {e}")
     
-    async def _wait_for_pipeline_stop(self) -> None:
-        """Wait for the pipeline to stop running."""
-        while self._pipeline_running:
-            await asyncio.sleep(0.1)
+    def _create_transport(self) -> LocalAudioTransport:
+
+        # Resolve audio device indices
+        audio_in_device = resolve_audio_device_index(
+            self.pipecat_config.audio_input_device_index,
+            self.pipecat_config.audio_input_device_name,
+            input_device=True
+        )
+        audio_out_device = resolve_audio_device_index(
+            self.pipecat_config.audio_output_device_index,
+            self.pipecat_config.audio_output_device_name,
+            input_device=False
+        )
+        
+        # Create transport
+        transport_params = LocalAudioTransportParams(
+            audio_in_enabled=self.pipecat_config.audio_in_enabled,
+            audio_out_enabled=self.pipecat_config.audio_out_enabled,
+            audio_in_sample_rate=self.pipecat_config.audio_in_sample_rate,
+            audio_out_sample_rate=self.pipecat_config.audio_out_sample_rate,
+            input_device_index=audio_in_device,
+            output_device_index=audio_out_device,
+        )
+
+        if self.pipecat_config.vad_enabled and self.pipecat_config.mode == "ensemble":
+            transport_params.vad_analyzer = SileroVADAnalyzer()
+
+        return LocalAudioTransport(transport_params)
+        
+
+    async def _create_ensemble_pipeline(self) -> None:
+        """Create ensemble pipeline with separate STT/LLM/TTS services."""
+        logger.info("Creating ensemble pipeline...")
+        
+        # Create STT service
+        if self.pipecat_config.ensemble.stt == "assemblyai":
+            if os.getenv("ASSEMBLYAI_API_KEY") is None:
+                raise ValueError("AssemblyAI API key is required for ensemble mode")
+            
+            stt = AssemblyAISTTService(
+                api_key=os.getenv("ASSEMBLYAI_API_KEY", "failed"),
+                vad_force_turn_endpoint=False,
+                connection_params=AssemblyAIConnectionParams(
+                    end_of_turn_confidence_threshold=0.7,
+                    min_end_of_turn_silence_when_confident=160,
+                    max_turn_silence=2400,
+                )
+            )
+        
+        # Create LLM service  
+        if self.pipecat_config.ensemble.llm == "openai":
+            if os.getenv("OPENAI_API_KEY") is None:
+                raise ValueError("OpenAI API key is required")
+            
+            llm = OpenAILLMService(
+                api_key=os.getenv("OPENAI_API_KEY"),
+                model=self.pipecat_config.openai_model or "gpt-4o-mini"
+            )
+
+            # Create context aggregator
+            context = OpenAILLMContext()
+            context_aggregator = llm.create_context_aggregator(context)
+        
+        # Create TTS service
+        if self.pipecat_config.ensemble.tts == "cartesia":
+            if os.getenv("CARTESIA_API_KEY") is None:
+                raise ValueError("Cartesia API key is required for ensemble mode")
+            
+            tts = CartesiaTTSService(
+                api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
+                voice_id=self.config.cartesia_voice_id,
+                model="sonic-2",
+                params=CartesiaTTSService.InputParams(
+                    language=Language.EN,
+                    speed="fast",  # Options: "fast", "normal", "slow"
+                )
+            )
+        
+        # Create event processor
+        self.event_processor = PipecatEventProcessor(self)
+        
+        # Create transcript processor for logging
+        transcript_processor = TranscriptProcessor()
+        
+        assert self.transport is not None, "Transport must be created successfully"
+
+        # Create pipeline
+        self.pipeline = Pipeline([
+            self.transport.input(),
+            stt,
+            transcript_processor.user(),
+            context_aggregator.user(),
+            llm,
+            tts,
+            self.transport.output(),
+            transcript_processor.assistant(),
+            context_aggregator.assistant(),
+            self.event_processor
+        ])
+        
+        # Create task and runner
+        self.task = PipelineTask(self.pipeline)
+        
+        # Create flow manager
+        flow_config = self._load_flow_config()
+        
+        self.flow_manager = FlowManager(
+            task=self.task,
+            llm=llm,
+            context_aggregator=context_aggregator,
+            flow_config=flow_config
+        )
+
+        # Initialize the flow manager with the initial node
+        try:
+            await self.flow_manager.initialize()
+        except Exception as e:
+            logger.error(f"Failed to initialize flow manager: {e}")
+
     
-    async def say_goodbye_and_shutdown(self, goodbye_message: str = "Thank you for visiting Experimance. Have a wonderful day!") -> None:
-        """
-        Say a goodbye message and then gracefully shutdown.
+    async def _create_realtime_pipeline(self) -> None:
+        """Create realtime pipeline with OpenAI Realtime Beta."""
+        logger.info("Creating realtime pipeline...")
         
-        This is the recommended way to end a conversation when the user leaves,
-        as detected by vision or signaled by the core service.
+        if os.getenv("OPENAI_API_KEY") is None:
+            raise ValueError("OpenAI API key is required for realtime mode")
         
-        Args:
-            goodbye_message: The goodbye message to speak before shutting down
-        """
-        if not self.is_connected or not self.pipeline_task:
-            logger.warning("Cannot say goodbye: pipeline not connected")
-            return
-            
-        logger.info(f"Saying goodbye and shutting down: {goodbye_message}")
+        if self.config.backend_config.prompt_path is not None:
+            # Load prompt from file if specified
+            prompt = load_prompt(self.config.backend_config.prompt_path)
+        else:   
+            prompt = "Tell the user something has gone wrong with loading the agent configuration."
+
+        # TODO: get prompt 
+        realtime_service = OpenAIRealtimeBetaLLMService(
+            api_key=os.getenv("OPENAI_API_KEY", "failed"),
+            session_properties=SessionProperties(
+                instructions=prompt,
+                voice="alloy",
+                turn_detection=TurnDetection(type="server_vad")
+            )
+        )
         
-        try:
-            # Send the goodbye message to the conversation
-            await self.send_message(goodbye_message, speaker="agent")
-            
-            # Wait a moment for the message to be processed
-            await asyncio.sleep(1.0)
-            
-            # Now initiate graceful shutdown
-            await self.graceful_shutdown()
-            
-        except Exception as e:
-            logger.error(f"Error during goodbye and shutdown: {e}")
-            # Fall back to immediate shutdown
-            await self.stop()
+        # Create event processor
+        self.event_processor = PipecatEventProcessor(self)
         
-    async def connect(self) -> None:
-        """Connect and start the conversation pipeline."""
-        if not self.is_active:
-            raise RuntimeError("Backend must be started before connecting")
-            
-        logger.info("Connecting Pipecat pipeline...")
+        assert self.transport is not None, "Transport must be created successfully"
         
-        try:
-            # Start the pipeline in the background
-            if self.runner and self.pipeline_task:
-                self._pipeline_running = True
-                
-                # Start pipeline as background task
-                async def run_pipeline():
-                    try:
-                        # Type assertion since we already checked these are not None
-                        assert self.runner is not None
-                        assert self.pipeline_task is not None
-                        await self.runner.run(self.pipeline_task)
-                    except Exception as e:
-                        logger.error(f"Pipeline error: {e}")
-                        await self.emit_event(AgentBackendEvent.ERROR, {"error": str(e)})
-                    finally:
-                        self._pipeline_running = False
-                        
-                asyncio.create_task(run_pipeline())
-                
-                # Give the pipeline a moment to initialize
-                await asyncio.sleep(0.5)
-                
-                self.is_connected = True
-                await self.emit_event(AgentBackendEvent.CONNECTED)
-                logger.info("Pipecat pipeline connected and running")
-            else:
-                raise RuntimeError("Pipeline components not initialized")
-                
-        except Exception as e:
-            logger.error(f"Failed to connect Pipecat pipeline: {e}")
-            raise
-            
-    async def disconnect(self) -> None:
-        """Disconnect the pipeline while keeping backend active."""
-        logger.info("Disconnecting Pipecat pipeline...")
-        
-        self.is_connected = False
-        
-        # Stop the pipeline but keep the backend active
-        if self.pipeline:
-            try:
-                # For disconnect, we should use graceful shutdown instead
-                if self.pipeline_task:
-                    await self.graceful_shutdown()
-                    return
-            except Exception as e:
-                logger.error(f"Error disconnecting pipeline: {e}")
-                
-        self._pipeline_running = False
-        await self.emit_event(AgentBackendEvent.DISCONNECTED)
-        logger.info("Pipecat pipeline disconnected")
-        
-    async def send_message(self, message: str, speaker: str = "system") -> None:
+        # Create pipeline
+        self.pipeline = Pipeline([
+            self.transport.input(),
+            realtime_service,
+            self.transport.output(),
+            self.event_processor
+        ])
+
+        self.task = PipelineTask(self.pipeline)
+    
+    def _handle_backend_event(self, event: AgentBackendEvent) -> None:
+        """Handle events from the event processor."""
+        # This method is no longer needed as we use the base class emit_event
+        pass
+    
+    async def send_message(self, text: str, speaker: str = "system") -> None:
         """Send a message to the conversation."""
         if not self.is_connected:
-            raise RuntimeError("Backend must be connected to send messages")
-            
-        # Add message to conversation history
-        turn = ConversationTurn(
-            speaker=speaker,
-            content=message,
-            timestamp=time.time(),
-            metadata={"injected": True}
-        )
-        self._conversation_history.append(turn)
-        
-        # If this is a system message, we can inject it into the LLM context
-        if speaker == "system" and self.llm_context:
-            # For system messages, we could update the context
-            # This is a simplified approach - in practice you might want more sophisticated context management
-            pass
-            
-        logger.info(f"Message sent from {speaker}: {message}")
-        
-    async def get_conversation_history(self) -> List[ConversationTurn]:
-        """Get the current conversation history."""
-        return self._conversation_history.copy()
-        
-    async def handle_tool_call(self, tool_call: ToolCall) -> Any:
-        """Handle a tool call from the agent."""
-        logger.info(f"Handling tool call: {tool_call.tool_name}")
-        
-        # Check if tool is available
-        if tool_call.tool_name not in self._available_tools:
-            error_msg = f"Tool '{tool_call.tool_name}' not found"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-            
-        # Execute the tool
-        try:
-            tool_func = self._available_tools[tool_call.tool_name]
-            
-            # Emit tool call event
-            await self.emit_event(
-                AgentBackendEvent.TOOL_CALLED,
-                {"tool_name": tool_call.tool_name, "parameters": tool_call.parameters}
-            )
-            
-            # Call the tool function
-            if asyncio.iscoroutinefunction(tool_func):
-                result = await tool_func(**tool_call.parameters)
-            else:
-                result = tool_func(**tool_call.parameters)
-                
-            logger.info(f"Tool call completed: {tool_call.tool_name}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Tool call failed: {tool_call.tool_name} - {e}")
-            await self.emit_event(AgentBackendEvent.ERROR, {"error": str(e)})
-            raise
-            
-    async def set_system_prompt(self, prompt: str) -> None:
-        """Set or update the system prompt for the agent."""
-        logger.info("Updating system prompt")
-        
-        # Update the configuration
-        self.pipecat_config.system_prompt = prompt
-        
-        # If we have an active context, update it
-        if self.llm_context and self.llm_context.messages:
-            self.llm_context.messages[0]["content"] = prompt
-            logger.info("System prompt updated in active context")
-        else:
-            logger.warning("No active LLM context to update")
-            
-    async def process_image(self, image_data: bytes, prompt: Optional[str] = None) -> Optional[str]:
-        """Process an image through the agent (not implemented in base Pipecat setup)."""
-        logger.warning("Image processing not implemented in basic Pipecat backend")
-        return None
-        
-    async def get_transcript_stream(self) -> AsyncGenerator[ConversationTurn, None]:
-        """Get a real-time stream of conversation turns."""
-        # This is a simplified implementation
-        # In a real scenario, you might want to use asyncio.Queue or similar
-        last_count = 0
-        
-        while self.is_connected:
-            current_count = len(self._conversation_history)
-            if current_count > last_count:
-                # Yield new turns
-                for turn in self._conversation_history[last_count:current_count]:
-                    yield turn
-                last_count = current_count
-                
-            await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
-            
-    def get_debug_status(self) -> Dict[str, Any]:
-        """Get detailed debug status information."""
-        base_status = super().get_debug_status()
-        base_status.update({
-            "pipeline_running": self._pipeline_running,
-            "transport_connected": self.transport is not None,
-            "pipeline_initialized": self.pipeline is not None,
-            "user_context": {
-                "is_identified": self.user_context.is_identified,
-                "full_name": self.user_context.full_name,
-                "location": self.user_context.location,
-            },
-            "flow_manager": {
-                "enabled": self.flow_manager is not None,
-                "current_persona": self.get_current_persona(),
-                "conversation_state": self.get_conversation_state() if self.flow_manager else {},
-                "flow_type": self.pipecat_config.flow_type if self.flow_manager else None,
-            },
-            "config": {
-                "mode": self.pipecat_config.mode,
-                "whisper_model": self.pipecat_config.whisper_model,
-                "openai_model": self.pipecat_config.openai_model,
-                "vad_enabled": self.pipecat_config.vad_enabled,
-                "use_flows": self.pipecat_config.use_flows,
-                "flow_type": self.pipecat_config.flow_type,
-                "initial_persona": self.pipecat_config.initial_persona,
-                "audio_in_sample_rate": self.pipecat_config.audio_in_sample_rate,
-                "audio_out_sample_rate": self.pipecat_config.audio_out_sample_rate,
-                "audio_input_device_index": self.input_device_index,
-                "audio_output_device_index": self.output_device_index,
-                "audio_input_device_name": self.pipecat_config.audio_input_device_name,
-                "audio_output_device_name": self.pipecat_config.audio_output_device_name,
-            }
-        })
-        return base_status
-
-    async def _initialize_flow_manager_post_pipeline(self) -> None:
-        """Complete flow manager initialization after pipeline task is created."""
-        if not self.pipecat_config.use_flows or not self.flow_manager:
-            logger.warning("⚠️ Cannot initialize flow manager: flows disabled or flow manager not created")
+            logger.warning("Backend not connected, cannot send message")
             return
             
-        logger.info("🔧 Completing flow manager initialization with pipeline task...")
-        
         try:
-            # Set the task on the existing flow manager
-            self.flow_manager.task = self.pipeline_task
-            logger.info("✅ Pipeline task set on flow manager")
-            
-            # Complete the initialization now that we have a task
-            self.flow_manager.complete_initialization()
-            logger.info(f"🎉 Flow manager initialization completed successfully!")
-            logger.info(f"🎭 Active persona: {self.flow_manager.current_persona}")
-            logger.info(f"🎭 Flow manager ready with {len(self.flow_manager.get_available_personas())} personas")
+            # For ensemble mode with flow manager, we can inject context messages
+            if self.flow_manager and hasattr(self.flow_manager, '_context_aggregator'):
+                if speaker == "system":
+                    # Add system message to context
+                    self.flow_manager._context_aggregator.add_message({
+                        "role": "system",
+                        "content": text
+                    })
+                else:
+                    # Add user message to context
+                    self.flow_manager._context_aggregator.add_message({
+                        "role": "user", 
+                        "content": text
+                    })
+                    
+            logger.debug(f"Sent message from {speaker}: {text}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to complete flow manager initialization: {e}")
-            # Don't fail completely, just log the error and continue with standard mode
-            self.flow_manager = None
-
-    async def _prepare_flow_integration(self, llm_service, context_aggregator):
-        """Prepare flow integration components for pipeline construction."""
-        if not self.pipecat_config.use_flows:
-            logger.info("Flows disabled - returning standard LLM service")
-            return llm_service, context_aggregator
-            
-        # Create flow manager with actual LLM service
-        logger.info(f"🎭 Creating {self.pipecat_config.flow_type} flow manager with initial persona '{self.pipecat_config.initial_persona}'...")
-        
-        try:
-            self.flow_manager = create_flow_manager(
-                flow_type=self.pipecat_config.flow_type,
-                task=None,  # Will be set after pipeline task creation
-                llm=llm_service,  # Pass the actual LLM service
-                context_aggregator=context_aggregator,
-                initial_persona=self.pipecat_config.initial_persona,
-                user_context=self.user_context
-            )
-            logger.info(f"✅ Flow manager created successfully: {type(self.flow_manager).__name__}")
-            logger.info(f"🎭 Current persona: {self.flow_manager.current_persona}")
-            logger.info(f"🎭 Available personas: {list(self.flow_manager.get_available_personas().keys())}")
-            
-            # Return the flow manager's internal FlowManager as the LLM service
-            # and keep the same context aggregator
-            if self.flow_manager.flow_manager is not None:
-                logger.info("🔄 Using flow manager's internal FlowManager as LLM service")
-                return self.flow_manager.flow_manager, context_aggregator
-            else:
-                # Flow manager not fully initialized yet, use original LLM service
-                logger.info("⏳ Flow manager not fully initialized yet, will complete after pipeline task creation")
-                return llm_service, context_aggregator
-            
-        except Exception as e:
-            logger.error(f"Failed to create flow manager: {e}")
-            # Fall back to standard mode
-            self.flow_manager = None
-            return llm_service, context_aggregator
-
-    async def switch_persona(self, persona: str) -> None:
-        """Switch to a different persona in the flow manager."""
-        if not self.flow_manager:
-            logger.warning("Cannot switch persona: flow manager not initialized")
-            return
-            
-        logger.info(f"Switching persona from {self.current_persona} to {persona}")
-        try:
-            await self.flow_manager.switch_persona(persona)
-            self.current_persona = persona
-            await self.emit_event(
-                AgentBackendEvent.PERSONA_SWITCHED,
-                {"from_persona": self.current_persona, "to_persona": persona}
-            )
-        except Exception as e:
-            logger.error(f"Failed to switch persona to {persona}: {e}")
-            await self.emit_event(AgentBackendEvent.ERROR, {"error": str(e)})
-
-    def get_current_persona(self) -> str:
-        """Get the current persona."""
-        if self.flow_manager:
-            return self.flow_manager.current_persona
-        return "default"
-
-    def get_conversation_state(self) -> Dict[str, Any]:
-        """Get the current conversation state from the flow manager."""
-        if self.flow_manager:
-            return self.flow_manager.conversation_state.copy()
-        return {}
-
-    async def update_user_context_from_flows(self) -> None:
-        """Update user context based on flow manager information."""
-        if not self.flow_manager:
-            return
-            
-        # The flow manager's user context should already be synchronized
-        # since we passed the same UserContext instance during initialization
-        logger.debug("User context synchronized with flow manager")
+            logger.error(f"Error sending message: {e}")
+    
+    async def interrupt_bot(self) -> None:
+        """Interrupt the bot if it's currently speaking."""
+        if self.task and self.is_running:
+            try:
+                # Send cancel frame to interrupt
+                await self.task.queue_frame(CancelFrame())
+                logger.debug("Bot interrupted")
+            except Exception as e:
+                logger.error(f"Error interrupting bot: {e}")
+    
+    def clear_conversation_history(self) -> None:
+        """Clear conversation history."""
+        super().clear_conversation_history()  # Call base class method
+        if self.flow_manager and hasattr(self.flow_manager, '_context_aggregator'):
+            # Reset context but keep system message
+            self.flow_manager._context_aggregator.reset()
+    
+    def get_connection_status(self) -> Dict[str, Any]:
+        """Get connection status information."""
+        return {
+            "is_connected": self.is_connected,
+            "is_running": self.is_running,
+            "mode": self.config.backend_config.pipecat.mode,
+            "conversation_turns": len(self._conversation_history),
+            "user_context": self.user_context.__dict__ if self.user_context else None
+        }
+    
+    def get_available_tools(self) -> List[Dict[str, Any]]:
+        """Get available tools for the current flow."""
+        # For now, return empty list - tools would be defined in flow config
+        return []
+    
+    async def call_tool(self, tool_call: ToolCall) -> Dict[str, Any]:
+        """Execute a tool call."""
+        # Tool calling would be handled by the flow manager
+        # For now, return empty result
+        return {"result": "Tool calling not yet implemented"}
+    
+    def get_pipeline_task(self) -> Optional[asyncio.Task]:
+        """Get the pipeline task for external management."""
+        return self._pipeline_task

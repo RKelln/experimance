@@ -91,9 +91,6 @@ class AgentService(BaseService):
         self.add_task(self._audience_detection_loop())
         self.add_task(self._vision_analysis_loop())
         
-        # Connect the backend to start processing audio
-        await self.current_backend.connect()  # type: ignore
-
         # ALWAYS call super().start() LAST
         await super().start()
         self.status = ServiceStatus.HEALTHY
@@ -168,9 +165,18 @@ class AgentService(BaseService):
                 
                 # Start the backend
                 await backend.start()  # type: ignore
+                
+                # Add pipeline task to service task management if available
+                if hasattr(backend, 'get_pipeline_task'):
+                    pipeline_task = backend.get_pipeline_task()
+                    if pipeline_task:
+                        self.add_task(pipeline_task)
+                        logger.info("Added pipeline task to service task management")
+                
+                # Debug output
+                if hasattr(backend, 'get_debug_status'):
+                    print(json.dumps(backend.get_debug_status(), indent=2))
                                 
-                print(json.dumps(backend.get_debug_status(), indent=2))
-
                 logger.info(f"Successfully initialized {backend_name} backend")
             else:
                 logger.info(f"Agent service started in placeholder mode (no {backend_name} backend)")
@@ -237,7 +243,7 @@ class AgentService(BaseService):
             try:
                 if self.current_backend and self.current_backend.is_connected:
                     # Update conversation history
-                    new_history = await self.current_backend.get_conversation_history()
+                    new_history = self.current_backend.get_conversation_history()
                     if len(new_history) > len(self.conversation_history):
                         # Process new conversation turns
                         for turn in new_history[len(self.conversation_history):]:

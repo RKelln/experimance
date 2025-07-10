@@ -164,22 +164,26 @@ class AgentBackend(ABC):
         logger.info(f"Polite farewell not implemented for {self.backend_name}")
         await self.graceful_shutdown(goodbye_message=goodbye_message)
     
-    @abstractmethod
     async def connect(self) -> None:
         """
         Connect to the agent service (e.g., join room, establish session).
+        Default implementation just sets is_connected flag.
+        Override in backends that need specific connection logic.
         
         Raises:
             Exception: If connection fails
         """
-        pass
+        self.is_connected = True
+        logger.info(f"Connected to {self.backend_name} backend")
     
-    @abstractmethod
     async def disconnect(self) -> None:
         """
         Disconnect from the agent service while keeping backend active.
+        Default implementation just clears is_connected flag.
+        Override in backends that need specific disconnection logic.
         """
-        pass
+        self.is_connected = False
+        logger.info(f"Disconnected from {self.backend_name} backend")
 
     # =========================================================================
     # Conversation Management
@@ -196,21 +200,48 @@ class AgentBackend(ABC):
         """
         pass
     
-    @abstractmethod
-    async def get_conversation_history(self) -> List[ConversationTurn]:
+    # @abstractmethod
+    # async def get_conversation_history(self) -> List[ConversationTurn]:
+    #     """
+    #     Get the current conversation history.
+        
+    #     Returns:
+    #         List of conversation turns
+    #     """
+    #     pass
+    
+    def clear_conversation_history(self) -> None:
+        """
+        Clear the conversation history.
+        """
+        self._conversation_history.clear()
+    
+    def get_conversation_history(self) -> List[ConversationTurn]:
         """
         Get the current conversation history.
         
         Returns:
             List of conversation turns
         """
-        pass
+        return self._conversation_history.copy()
     
-    async def clear_conversation_history(self) -> None:
+    def add_conversation_turn(self, speaker: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
-        Clear the conversation history.
+        Add a conversation turn to the history.
+        
+        Args:
+            speaker: Speaker identifier ("human", "agent", etc.)
+            content: The text content
+            metadata: Optional metadata for the turn
         """
-        self._conversation_history.clear()
+        import time
+        turn = ConversationTurn(
+            speaker=speaker,
+            content=content,
+            timestamp=time.time(),
+            metadata=metadata
+        )
+        self._conversation_history.append(turn)
     
     # =========================================================================
     # Tool Management
@@ -248,21 +279,21 @@ class AgentBackend(ABC):
         """
         return self._available_tools.copy()
     
-    @abstractmethod
-    async def handle_tool_call(self, tool_call: ToolCall) -> Any:
-        """
-        Handle a tool call from the agent.
+    # @abstractmethod
+    # async def handle_tool_call(self, tool_call: ToolCall) -> Any:
+    #     """
+    #     Handle a tool call from the agent.
         
-        Args:
-            tool_call: The tool call to execute
+    #     Args:
+    #         tool_call: The tool call to execute
             
-        Returns:
-            Result of the tool call
+    #     Returns:
+    #         Result of the tool call
             
-        Raises:
-            Exception: If tool call fails
-        """
-        pass
+    #     Raises:
+    #         Exception: If tool call fails
+    #     """
+    #     pass
     
     # =========================================================================
     # Event System

@@ -84,7 +84,7 @@ def _apply_immediate_patch():
                     logger.warning("⚠️  IMMEDIATE PATCH: OpenAI Realtime adapter requested but not available")
             
             # Fall back to the original create_adapter function
-            logger.debug(f"IMMEDIATE PATCH: Falling back to original create_adapter for {llm_type}")
+            #logger.debug(f"IMMEDIATE PATCH: Falling back to original create_adapter for {llm_type}")
             return original_create_adapter(llm)
         
         # Replace the create_adapter function immediately

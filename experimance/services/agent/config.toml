@@ -16,7 +16,10 @@ speech_detection_enabled = true
 system_prompt = "prompt.md"
 
 # Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
-mode = "realtime"  # Change to "realtime" to use OpenAI Realtime Beta
+mode = "ensemble"  # Change to "realtime" to use OpenAI Realtime Beta
+
+# ensemble mode requires a flow file:
+flow_file = "flows/experimance_flow.py"
 
 # Audio settings
 audio_in_enabled = true
@@ -33,9 +36,6 @@ audio_output_device_name = "Yealink"  # USB Conference speaker
 # Voice Activity Detection
 vad_enabled = true
 
-# STT (Speech-to-Text) settings (ensemble mode only)
-whisper_model = "tiny"  # Options: tiny, base, small, medium, large
-
 # LLM settings
 openai_model = "gpt-4o"  # For ensemble mode
 
@@ -47,11 +47,7 @@ turn_detection_silence_ms = 800
 
 # TTS (Text-to-Speech) settings (ensemble mode only)
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
-
-# Flow configuration - enables multi-persona conversations
-use_flows = true
-flow_type = "experimance"
-initial_persona = "welcome"
+cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 
 [vision]
 # Vision processing configuration
