@@ -392,13 +392,37 @@ class PanoramaRenderer(LayerRenderer):
         # Calculate sprite scaling to reach target tile size
         if rescale_mode == "width":
             scale_factor = target_tile_width / image.width
+            # For width scaling, center the image vertically if it's taller than target
+            scaled_height = image.height * scale_factor
+            if scaled_height > target_tile_height:
+                # Image will be taller than target - center it vertically
+                vertical_offset = (scaled_height - target_tile_height) / 2
+                tile_y_adjusted = tile_y - int(vertical_offset)
+                logger.debug(f"Width scaling: image will be {scaled_height:.1f}px tall (target: {target_tile_height}px), "
+                           f"centering with offset {vertical_offset:.1f}px")
+            else:
+                tile_y_adjusted = tile_y
+            tile_x_adjusted = tile_x  # No horizontal adjustment for width scaling
         elif rescale_mode == "height":
             scale_factor = target_tile_height / image.height
+            # For height scaling, center the image horizontally if it's wider than target
+            scaled_width = image.width * scale_factor
+            if scaled_width > target_tile_width:
+                # Image will be wider than target - center it horizontally
+                horizontal_offset = (scaled_width - target_tile_width) / 2
+                tile_x_adjusted = tile_x - int(horizontal_offset)
+                logger.debug(f"Height scaling: image will be {scaled_width:.1f}px wide (target: {target_tile_width}px), "
+                           f"centering with offset {horizontal_offset:.1f}px")
+            else:
+                tile_x_adjusted = tile_x
+            tile_y_adjusted = tile_y
         else:  # "shortest" - maintain aspect ratio
             scale_factor = min(target_tile_width / image.width, target_tile_height / image.height)
+            tile_x_adjusted = tile_x
+            tile_y_adjusted = tile_y
         
-        # Convert tile position to screen coordinates
-        screen_x, screen_y = self._panorama_to_screen(tile_x, tile_y)
+        # Convert adjusted tile position to screen coordinates
+        screen_x, screen_y = self._panorama_to_screen(tile_x_adjusted, tile_y_adjusted)
         
         # Set anchor point for consistent positioning - do this once for the image
         image.anchor_x = 0
@@ -444,14 +468,40 @@ class PanoramaRenderer(LayerRenderer):
         # Create mirrored tile if mirroring is enabled
         if self.panorama_config.mirror:
             # Calculate mirror position: reflect across the center of the panorama
+            # Use the original tile position for mirror calculation, not the adjusted one
             panorama_center_x = self.panorama_width / 2
             # Use the target tile width (after scaling) for the mirror calculation
             target_scaled_width = target_tile_width  # This is the size in panorama space
             mirror_x = int(2 * panorama_center_x - tile_x - target_scaled_width)
-            mirror_screen_x, mirror_screen_y = self._panorama_to_screen(mirror_x, tile_y)
+            
+            # Apply the same centering adjustments to the mirror
+            if rescale_mode == "width":
+                scaled_height = image.height * scale_factor
+                if scaled_height > target_tile_height:
+                    vertical_offset = (scaled_height - target_tile_height) / 2
+                    mirror_y = tile_y - int(vertical_offset)
+                else:
+                    mirror_y = tile_y
+            elif rescale_mode == "height":
+                scaled_width = image.width * scale_factor
+                if scaled_width > target_tile_width:
+                    horizontal_offset = (scaled_width - target_tile_width) / 2
+                    mirror_x_adjusted = mirror_x - int(horizontal_offset)
+                else:
+                    mirror_x_adjusted = mirror_x
+                mirror_y = tile_y
+            else:  # "shortest"
+                mirror_x_adjusted = mirror_x
+                mirror_y = tile_y
+            
+            # For width scaling, we already set mirror_y above
+            if rescale_mode != "height":
+                mirror_x_adjusted = mirror_x
+            
+            mirror_screen_x, mirror_screen_y = self._panorama_to_screen(mirror_x_adjusted, mirror_y)
             
             logger.debug(f"Mirror calculation: center={panorama_center_x}, tile_x={tile_x}, "
-                        f"target_width={target_scaled_width}, mirror_x={mirror_x}")
+                        f"target_width={target_scaled_width}, mirror_x={mirror_x}, adjusted_mirror_x={mirror_x_adjusted}")
             
             # Create mirrored sprite using the same image (with shared anchor point)
             mirror_sprite = pyglet.sprite.Sprite(image, x=mirror_screen_x, y=mirror_screen_y,
@@ -463,10 +513,10 @@ class PanoramaRenderer(LayerRenderer):
             scaled_width = image.width * combined_scale
             mirror_sprite.x = mirror_screen_x + scaled_width
             
-            logger.info(f"Tile {request_id}: mirror at panorama ({mirror_x}, {tile_y}), screen ({mirror_sprite.x}, {mirror_sprite.y})")
+            logger.info(f"Tile {request_id}: mirror at panorama ({mirror_x_adjusted}, {mirror_y}), screen ({mirror_sprite.x}, {mirror_sprite.y})")
             
             # Create mirrored tile
-            mirror_tile = PanoramaTile(mirror_sprite, (mirror_x, tile_y), mirror_id,
+            mirror_tile = PanoramaTile(mirror_sprite, (mirror_x_adjusted, mirror_y), mirror_id,
                                      original_size=(image.width, image.height),
                                      fade_duration=tile_config.fade_duration)
             self.tiles[mirror_id] = mirror_tile
