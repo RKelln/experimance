@@ -190,16 +190,6 @@ await service.stop()
 }
 ```
 
-#### ImageReady Message
-```python
-{
-    "image_id": "unique-identifier",     # Required: unique ID for this image
-    "uri": "file:///path/image.jpg",     # Required: file path or URL
-    "image_type": "satellite_landscape", # Optional: image type hint
-    "transition_duration": 1.0          # Optional: custom transition timing
-}
-```
-
 #### VideoMask Message
 ```python
 {

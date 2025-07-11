@@ -1,0 +1,34 @@
+[display]
+fullscreen = false
+monitor = 0
+fps_limit = 30
+vsync = true
+debug_overlay = false
+resolution = [1920, 1080]  # Force specific resolution for testing
+#background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
+
+[panorama]
+enabled = true
+rescale = "width"  # Changed to shortest so we can see the entire panorama
+output_width = 11520  # 6x 1920 for 6 projectors total (includes mirroring)
+output_height = 1080
+start_blur = 5.0
+end_blur = 0.0
+blur_duration = 10.0
+mirror = true
+
+[panorama.tiles]
+width = 1920  # Smaller tiles to see more of them
+height = 1080
+fade_duration = 3.0
+
+[zmq.subscriber]
+address = "tcp://localhost"
+port = 5555
+topics = ["DisplayMedia"]
+
+[title_screen]
+enabled = false 
+text = "Sohkepayin"           # Text to display
+duration = 10.0               # Duration in seconds
+fade_out_duration = 10.0      # Fade out duration in seconds

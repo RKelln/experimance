@@ -23,11 +23,22 @@ import os
 import random
 import sys
 import uuid
+import tempfile
+import base64
+import io
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 import zmq
 import zmq.asyncio
+
+# For dynamic image generation
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("Warning: PIL not available - panorama test will be limited")
 
 from experimance_common.schemas import ContentType, DisplayMedia, MessageType
 
@@ -69,11 +80,15 @@ class DisplayCLI:
             ),
             subscriber=None  # Not used for CLI
         )
+        logger.info(f"🔧 CLI setting up publisher with config: {config}")
+        if config.publisher:
+            logger.info(f"🔧 Publishing to: {config.publisher.address}:{config.publisher.port}")
+        
         self.pubsub_service = PubSubService(config, name="DisplayCLI")
         await self.pubsub_service.start()
         self._running = True
         await asyncio.sleep(0.5)  # Allow time for service to start
-        logger.info("PubSubService publisher initialized")
+        logger.info("✅ PubSubService publisher initialized")
 
     async def cleanup(self):
         """Cleanup PubSubService resources."""
@@ -98,10 +113,12 @@ class DisplayCLI:
             uri=uri,
         )
 
-        logger.debug(f"Sending ImageReady: {message}")
+        logger.info(f"📤 CLI SENDING DisplayMedia message: {message}")
+        logger.info(f"📤 Publishing to topic: {MessageType.DISPLAY_MEDIA}")
+        logger.info(f"📤 Publisher config: {self.pubsub_service.config.publisher}")
 
         await self.pubsub_service.publish(message, topic=MessageType.DISPLAY_MEDIA)
-        logger.info(f"Sent ImageReady: {os.path.basename(image_path)}")
+        logger.info(f"✅ Sent ImageReady: {os.path.basename(image_path)}")
 
         await asyncio.sleep(0.2)  # Allow time for processing before cleanup
     
@@ -262,6 +279,369 @@ def get_default_video() -> Optional[str]:
     """Get the default video file for transitions."""
     video_path = VIDEOS_DIR_ABS / "video_overlay.mp4"
     return str(video_path) if video_path.exists() else None
+
+
+def generate_panorama_base_image(width: int, height: int, label: str = "BASE") -> str:
+    """Generate a test base image for panorama testing with visual guides.
+    
+    Returns:
+        str: Path to temporary image file
+    """
+    if not PIL_AVAILABLE:
+        raise RuntimeError("PIL is required for panorama test image generation")
+    
+    # Create image with gradient background
+    img = Image.new('RGB', (width, height), color='black')
+    draw = ImageDraw.Draw(img)
+    
+    # Color gradient sweep across width (horizontal rainbow)
+    for x in range(width):
+        # Create rainbow effect
+        hue = (x / width) * 360
+        # Convert HSV to RGB (simplified)
+        if hue < 60:
+            r, g, b = 255, int(255 * hue / 60), 0
+        elif hue < 120:
+            r, g, b = int(255 * (120 - hue) / 60), 255, 0
+        elif hue < 180:
+            r, g, b = 0, 255, int(255 * (hue - 120) / 60)
+        elif hue < 240:
+            r, g, b = 0, int(255 * (240 - hue) / 60), 255
+        elif hue < 300:
+            r, g, b = int(255 * (hue - 240) / 60), 0, 255
+        else:
+            r, g, b = 255, 0, int(255 * (360 - hue) / 60)
+        
+        draw.line([(x, 0), (x, height)], fill=(r, g, b))
+    
+    # Add grid lines every 100 pixels
+    grid_spacing = 100
+    for x in range(0, width, grid_spacing):
+        draw.line([(x, 0), (x, height)], fill='white', width=2)
+    for y in range(0, height, grid_spacing):
+        draw.line([(0, y), (width, y)], fill='white', width=2)
+    
+    # Add corner markers
+    corner_size = 50
+    # Top-left (red)
+    draw.rectangle([0, 0, corner_size, corner_size], fill='red')
+    # Top-right (green)
+    draw.rectangle([width-corner_size, 0, width, corner_size], fill='green')
+    # Bottom-left (blue)
+    draw.rectangle([0, height-corner_size, corner_size, height], fill='blue')
+    # Bottom-right (yellow)
+    draw.rectangle([width-corner_size, height-corner_size, width, height], fill='yellow')
+    
+    # Add dimension labels
+    try:
+        # Try to use a default font, fallback to basic if not available
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)  # Doubled from 24
+    except (OSError, IOError):
+        try:
+            font = ImageFont.load_default()
+        except:
+            font = None
+    
+    if font:
+        # Center label
+        center_text = f"{label}\n{width}x{height}"
+        bbox = draw.textbbox((0, 0), center_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        text_x = (width - text_width) // 2
+        text_y = (height - text_height) // 2
+        
+        # Black background for text readability
+        draw.rectangle([text_x-10, text_y-10, text_x+text_width+10, text_y+text_height+10], fill='black')
+        draw.text((text_x, text_y), center_text, fill='white', font=font)
+        
+        # Corner labels
+        draw.text((10, 10), "TL", fill='white', font=font)
+        draw.text((width-30, 10), "TR", fill='black', font=font)
+        draw.text((10, height-30), "BL", fill='white', font=font)
+        draw.text((width-30, height-30), "BR", fill='black', font=font)
+    
+    # Save to temporary file
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    img.save(temp_file.name, 'PNG')
+    temp_file.close()
+    
+    return temp_file.name
+
+
+def generate_panorama_tile_image(width: int, height: int, tile_id: str, position: tuple = (0, 0)) -> str:
+    """Generate a test tile image for panorama testing.
+    
+    Args:
+        width: Tile width
+        height: Tile height  
+        tile_id: Identifier for this tile
+        position: (x, y) position in panorama space
+        
+    Returns:
+        str: Path to temporary image file
+    """
+    if not PIL_AVAILABLE:
+        raise RuntimeError("PIL is required for panorama test image generation")
+    
+    # Create image with distinct color based on tile position
+    pos_x, pos_y = position
+    # Generate distinct color based on position
+    color_r = (pos_x * 123) % 255
+    color_g = (pos_y * 234) % 255
+    color_b = ((pos_x + pos_y) * 156) % 255
+    
+    img = Image.new('RGB', (width, height), color=(color_r, color_g, color_b))
+    draw = ImageDraw.Draw(img)
+    
+    # Add diagonal stripes to distinguish from base
+    stripe_spacing = 20
+    for i in range(0, width + height, stripe_spacing):
+        draw.line([(i, 0), (i - height, height)], fill='white', width=2)
+    
+    # Add border
+    border_width = 5
+    draw.rectangle([0, 0, width, border_width], fill='black')  # Top
+    draw.rectangle([0, height-border_width, width, height], fill='black')  # Bottom
+    draw.rectangle([0, 0, border_width, height], fill='black')  # Left
+    draw.rectangle([width-border_width, 0, width, height], fill='black')  # Right
+    
+    # Add grid lines
+    grid_spacing = 50
+    for x in range(0, width, grid_spacing):
+        draw.line([(x, 0), (x, height)], fill='gray', width=1)
+    for y in range(0, height, grid_spacing):
+        draw.line([(0, y), (width, y)], fill='gray', width=1)
+    
+    # Add corner markers (smaller than base image)
+    corner_size = 25
+    draw.rectangle([0, 0, corner_size, corner_size], fill='red')
+    draw.rectangle([width-corner_size, 0, width, corner_size], fill='green')
+    draw.rectangle([0, height-corner_size, corner_size, height], fill='blue')
+    draw.rectangle([width-corner_size, height-corner_size, width, height], fill='yellow')
+    
+    # Add labels
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)  # Doubled from 20
+    except (OSError, IOError):
+        try:
+            font = ImageFont.load_default()
+        except:
+            font = None
+    
+    if font:
+        # Center label
+        center_text = f"TILE {tile_id}\n{width}x{height}\nPos: {pos_x},{pos_y}"
+        bbox = draw.textbbox((0, 0), center_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        text_x = (width - text_width) // 2
+        text_y = (height - text_height) // 2
+        
+        # Semi-transparent background for text
+        draw.rectangle([text_x-5, text_y-5, text_x+text_width+5, text_y+text_height+5], fill=(0, 0, 0, 200))
+        draw.text((text_x, text_y), center_text, fill='white', font=font)
+    
+    # Save to temporary file
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    img.save(temp_file.name, 'PNG')
+    temp_file.close()
+    
+    return temp_file.name
+
+
+def load_display_config(config_path: str):
+    """Load display service configuration from file."""
+    try:
+        with open(config_path, 'r') as f:
+            import toml
+            config_data = toml.load(f)
+        
+        from experimance_display.config import DisplayServiceConfig
+        return DisplayServiceConfig(**config_data)
+    except ImportError:
+        print("Error: toml library required for config loading. Install with: pip install toml")
+        raise
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        raise
+
+
+async def send_display_image(cli: 'DisplayCLI', image_path: str, x: Optional[int] = None, y: Optional[int] = None, blur_sigma: float = 0.0):
+    """Send display image with optional positioning and blur."""
+    if not os.path.exists(image_path):
+        logger.error(f"Image file not found: {image_path}")
+        return
+
+    # Convert to absolute path and URI
+    abs_path = os.path.abspath(image_path)
+    uri = f"file://{abs_path}"
+
+    # Create position tuple if x,y provided
+    position = None
+    if x is not None and y is not None:
+        position = (x, y)
+
+    message = DisplayMedia(
+        request_id=str(uuid.uuid4()),
+        content_type=ContentType.IMAGE,
+        uri=uri,
+        position=position,
+    )
+
+    logger.info(f"📤 CLI SENDING DisplayMedia message with position {position}: {message}")
+    logger.info(f"📤 Publishing to topic: {MessageType.DISPLAY_MEDIA}")
+
+    await cli.pubsub_service.publish(message, topic=MessageType.DISPLAY_MEDIA)
+
+
+async def test_panorama(args, cli):
+    """Test panorama display mode with generated test images."""
+    if not args.config:
+        print("Error: --config is required for panorama mode")
+        return
+    
+    if not PIL_AVAILABLE:
+        print("Error: PIL is required for panorama testing. Install with: pip install Pillow")
+        return
+    
+    # Load config to verify panorama mode and get tile dimensions
+    try:
+        config = load_display_config(args.config)
+        if not config.panorama:
+            print("Error: Config file does not enable panorama mode")
+            return
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return
+    
+    # Get target tile dimensions from config (panorama space)
+    target_tile_width = config.panorama.tiles.width
+    target_tile_height = config.panorama.tiles.height
+    
+    print(f"Testing panorama mode with {args.tile_count} tiles...")
+    print(f"Base image: {args.base_width}x{args.base_height}")
+    print(f"Generated tile size: {args.tile_width}x{args.tile_height}")
+    print(f"Target tile size (from config): {target_tile_width}x{target_tile_height}")
+    print(f"Positioning in panorama space using {target_tile_width}px intervals")
+    
+    # Generate base image
+    print("Generating base image...")
+    base_image_path = generate_panorama_base_image(args.base_width, args.base_height, "PANORAMA_BASE")
+    
+    try:
+        # Send base image
+        await send_display_image(cli, base_image_path, blur_sigma=2.0 if args.blur_test else 0.0)
+        print("✓ Base image sent")
+        input(f"Press Enter to continue to next tile (or Ctrl+C to exit)...")
+        
+        # Generate and send tiles
+        tile_paths = []
+        for i in range(args.tile_count):
+            # Position tiles in panorama space using target tile width intervals
+            # This ensures tiles are positioned correctly regardless of generated image size
+            x_pos = i * target_tile_width
+            y_pos = int((args.base_height - target_tile_height) / 2)  # Center vertically
+            
+            print(f"Generating tile {i+1} at panorama position ({x_pos}, {y_pos})...")
+            tile_path = generate_panorama_tile_image(args.tile_width, args.tile_height, 
+                                                   f"{i+1}", (x_pos, y_pos))
+            tile_paths.append(tile_path)
+            
+            # Send tile with delay
+            await asyncio.sleep(2.0)
+            await send_display_image(cli, tile_path, x=x_pos, y=y_pos)
+            print(f"✓ Tile {i+1} sent to panorama position ({x_pos}, {y_pos})")
+            print(f"  (Generated as {args.tile_width}x{args.tile_height}, will be scaled to {target_tile_width}x{target_tile_height})")
+            
+            # Wait for user input to continue
+            input(f"Press Enter to continue to next tile (or Ctrl+C to exit)...")
+        
+        print(f"\nPanorama test running for {args.duration} seconds...")
+        print("Check your display service for the panorama rendering!")
+        await asyncio.sleep(args.duration)
+        
+    finally:
+        # Clean up temporary files
+        try:
+            os.unlink(base_image_path)
+            for tile_path in tile_paths:
+                os.unlink(tile_path)
+        except:
+            pass
+
+
+async def test_scaling(args, cli):
+    """Test panorama scaling modes with generated images.""" 
+    if not args.config:
+        print("Error: --config is required for scaling test")
+        return
+    
+    if not PIL_AVAILABLE:
+        print("Error: PIL is required for scaling testing. Install with: pip install Pillow")
+        return
+    
+    try:
+        config = load_display_config(args.config)
+        if not config.panorama:
+            print("Error: Config file does not enable panorama mode")
+            return
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return
+    
+    # Get screen dimensions from config
+    screen_width, screen_height = config.display.resolution
+    
+    # Test different panorama dimensions that require scaling
+    test_dimensions = [
+        (5760, 1080, "6x HD projector array"),
+        (7680, 1080, "Wide panorama"),
+        (3840, 2160, "4K landscape"),
+        (2560, 1440, "QHD panorama"),
+    ]
+    
+    print(f"Testing scaling mode: {args.mode}")
+    print(f"Screen dimensions: {screen_width}x{screen_height}")
+    
+    if args.show_info:
+        print(f"Panorama config rescale mode: {config.panorama.rescale}")
+    
+    for pano_width, pano_height, description in test_dimensions:
+        print(f"\n--- Testing {description} ({pano_width}x{pano_height}) ---")
+        
+        # Calculate what the scaling should be
+        if args.mode == 'width':
+            scale = screen_width / pano_width
+        elif args.mode == 'height':
+            scale = screen_height / pano_height
+        else:  # shortest
+            scale = min(screen_width / pano_width, screen_height / pano_height)
+        
+        final_width = int(pano_width * scale)
+        final_height = int(pano_height * scale)
+        
+        if args.show_info:
+            print(f"  Scale factor: {scale:.3f}")
+            print(f"  Final size: {final_width}x{final_height}")
+        
+        # Generate test image
+        test_image_path = generate_panorama_base_image(pano_width, pano_height, 
+                                                     f"{description}\n{pano_width}x{pano_height}\nScale: {scale:.3f}")
+        
+        try:
+            # Send the image
+            await send_display_image(cli, test_image_path)
+            print(f"✓ Sent {description}")
+            await asyncio.sleep(3.0)  # Give time to see the result
+            
+        finally:
+            try:
+                os.unlink(test_image_path)
+            except:
+                pass
+    
+    print("\nScaling test complete!")
 
 
 # Default text content options
@@ -433,6 +813,24 @@ def main():
     # List command
     subparsers.add_parser("list", help="List available test resources")
 
+    # Panorama test commands
+    panorama_parser = subparsers.add_parser('panorama', help='Test panorama display mode')
+    panorama_parser.add_argument('--config', type=str, help='Display service config file (required for panorama mode)')
+    panorama_parser.add_argument('--base-width', type=int, default=5760, help='Base image width (default: 11520 - includes mirroring)')
+    panorama_parser.add_argument('--base-height', type=int, default=1080, help='Base image height (default: 1080)')
+    panorama_parser.add_argument('--tile-count', type=int, default=3, help='Number of tiles to generate (default: 3)')
+    panorama_parser.add_argument('--tile-width', type=int, default=800, help='Generated tile image width (default: 800) - positioning uses config')
+    panorama_parser.add_argument('--tile-height', type=int, default=600, help='Generated tile image height (default: 600) - positioning uses config')
+    panorama_parser.add_argument('--duration', type=float, default=30.0, help='Test duration in seconds')
+    panorama_parser.add_argument('--blur-test', action='store_true', help='Test blur transitions (sigma 2.0 -> 0.0)')
+
+    # Panorama scaling test
+    scaling_parser = subparsers.add_parser('scaling', help='Test panorama scaling modes')
+    scaling_parser.add_argument('--config', type=str, help='Display service config file (required)')
+    scaling_parser.add_argument('--mode', choices=['width', 'height', 'shortest'], default='width', 
+                               help='Rescale mode to test (default: width)')
+    scaling_parser.add_argument('--show-info', action='store_true', help='Show detailed scaling calculations')
+
     # Stress test command
     stress_parser = subparsers.add_parser("stress", help="Run stress test (randomly send text, image, or change map)")
     stress_parser.add_argument("interval", type=float, help="Interval in seconds between sends (float)")
@@ -539,6 +937,14 @@ def main():
                     print(f"  {video_file}")
 
                 return  # Don't wait for cleanup
+
+            elif args.command == "panorama":
+                await test_panorama(args, cli)
+                return
+
+            elif args.command == "scaling":
+                await test_scaling(args, cli)
+                return
 
             elif args.command == "stress":
                 logger.info(f"Starting stress test with interval {args.interval}s")

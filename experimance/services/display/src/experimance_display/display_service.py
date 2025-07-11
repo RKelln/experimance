@@ -35,10 +35,12 @@ from experimance_common.service_state import ServiceState
 from .config import DisplayServiceConfig
 from .renderers.layer_manager import LayerManager
 from .renderers.image_renderer import ImageRenderer
+from .renderers.panorama_renderer import PanoramaRenderer
 from .renderers.video_overlay_renderer import VideoOverlayRenderer
 from .renderers.mask_renderer import MaskRenderer
 from .renderers.text_overlay_manager import TextOverlayManager
 from .renderers.debug_overlay_renderer import DebugOverlayRenderer
+from .renderers.panorama_renderer import PanoramaRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ class DisplayService(BaseService):
         self.window = None
         self.layer_manager = None
         self.image_renderer = None
+        self.panorama_renderer = None
         self.video_overlay_renderer = None
         self.mask_renderer = None
         self.text_overlay_manager = None
@@ -111,7 +114,14 @@ class DisplayService(BaseService):
         self.add_task(self._run_pyglet_loop())
         
         # Start the ZMQ service
+        logger.info(f"🔌 Starting ZMQ service with config: {self.config.zmq}")
         await self.zmq_service.start()
+        
+        if self.config.zmq.subscriber:
+            logger.info(f"✅ ZMQ service started, subscriber listening on {self.config.zmq.subscriber.address}:{self.config.zmq.subscriber.port}")
+            logger.info(f"📡 Subscribed to topics: {self.config.zmq.subscriber.topics}")
+        else:
+            logger.info("✅ ZMQ service started (no subscriber configured)")
         
         # Start the base service
         await super().start()
@@ -247,13 +257,29 @@ class DisplayService(BaseService):
             )
             
             # Create individual renderers
-            self.image_renderer = ImageRenderer(
-                config=self.config,
-                window=self.window,
-                batch=batch,
-                order=(layer_count := layer_count + 1),  # Increment layer count for each renderer,
-            )
-            self.layer_manager.register_renderer("background", self.image_renderer)
+            # Choose between standard image renderer and panorama renderer
+            if self.config.panorama.enabled:
+                self.panorama_renderer = PanoramaRenderer(
+                    config=self.config,
+                    window=self.window,
+                    batch=batch,
+                    order=(layer_count := layer_count + 1),
+                )
+                self.layer_manager.register_renderer("panorama", self.panorama_renderer)
+                # Set image_renderer to None when using panorama mode
+                self.image_renderer = None
+                logger.info("Using panorama rendering mode")
+            else:
+                self.image_renderer = ImageRenderer(
+                    config=self.config,
+                    window=self.window,
+                    batch=batch,
+                    order=(layer_count := layer_count + 1),  # Increment layer count for each renderer,
+                )
+                self.layer_manager.register_renderer("background", self.image_renderer)
+                # Set panorama_renderer to None when using standard mode
+                self.panorama_renderer = None
+                logger.info("Using standard image rendering mode")
             
             if self.config.video_overlay.enabled:
                 self.video_overlay_renderer = VideoOverlayRenderer(
@@ -324,6 +350,7 @@ class DisplayService(BaseService):
     async def _handle_display_media(self, message: MessageDataType):
         """Handle DisplayMedia messages."""
         try:
+            logger.info(f"🎯 RECEIVED DisplayMedia message: {message}")
             
             if message is None:
                 logger.error("Received None message in handle_display_media")
@@ -334,25 +361,35 @@ class DisplayService(BaseService):
             
             logger.debug(f"Received DisplayMedia: {message.get('content_type')}")
             
-            # could differnet types of media
+            # Route to appropriate renderer based on configuration and content type
             match message.get("content_type"):
                 case ContentType.IMAGE:
-                    if self.image_renderer:
+                    logger.info(f"📸 Routing IMAGE to renderer (panorama={bool(self.panorama_renderer)})")
+                    # Route to panorama renderer if enabled, otherwise standard image renderer
+                    if self.panorama_renderer:
+                        self.panorama_renderer.handle_display_media(message)
+                    elif self.image_renderer:
                         await self.image_renderer.handle_display_media(message)
 
                 case ContentType.VIDEO:
+                    logger.info("🎬 Routing VIDEO to video overlay renderer")
                     if self.video_overlay_renderer:
                         logger.debug("Handling video overlay")
                         #await self.video_overlay_renderer.handle_display_media(message)
             
                 case ContentType.IMAGE_SEQUENCE:
+                    logger.info("🎞️ Routing IMAGE_SEQUENCE to image renderer")
                     if self.image_renderer:
                         logger.debug("Handling video sequence")
                         #await self.image_renderer.handle_image_sequence(message)
 
                 case ContentType.DEBUG_DEPTH:
+                    logger.info("🔧 Routing DEBUG_DEPTH to debug renderer")
+                    # Debug images go to standard image renderer even in panorama mode
                     if self.image_renderer:
                         await self.image_renderer.handle_display_media(message)
+                    elif self.panorama_renderer:
+                        self.panorama_renderer.handle_display_media(message)
 
             # now that we've recieved a display media message, we can remove the change map
             if self.video_overlay_renderer is not None:

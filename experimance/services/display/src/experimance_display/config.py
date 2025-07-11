@@ -280,7 +280,7 @@ class VideoOverlayConfig(BaseModel):
     """Configuration for video overlay with masking."""
     
     enabled: bool = Field(
-        default=True,
+        default=False,
         description="Whether video overlay is enabled"
     )
     
@@ -307,6 +307,79 @@ class VideoOverlayConfig(BaseModel):
     size: Tuple[int, int] = Field(
         default=(1024, 1024),
         description="Size of the video overlay in pixels"
+    )
+
+
+class PanoramaTilesConfig(BaseModel):
+    """Configuration for panorama tiles."""
+    
+    width: int = Field(
+        default=1920,
+        description="Target width for individual tiles"
+    )
+    
+    height: int = Field(
+        default=1080,
+        description="Target height for individual tiles"
+    )
+    
+    fade_duration: float = Field(
+        default=3.0,
+        description="Duration for tile fade-in animation in seconds"
+    )
+    
+    rescale: Optional[Literal["width", "height", "shortest"]] = Field(
+        default="width",
+        description="Override rescaling mode for tiles (inherits from panorama if None)"
+    )
+
+
+class PanoramaConfig(BaseModel):
+    """Configuration for panoramic display mode."""
+    
+    enabled: bool = Field(
+        default=False,
+        description="Whether panorama mode is enabled"
+    )
+    
+    rescale: Literal["width", "height", "shortest"] = Field(
+        default="width",
+        description="How to rescale images to fit panorama dimensions"
+    )
+    
+    output_width: int = Field(
+        default=1920,
+        description="Final width of panorama after any mirroring"
+    )
+    
+    output_height: int = Field(
+        default=1080,
+        description="Final height of panorama"
+    )
+    
+    start_blur: float = Field(
+        default=5.0,
+        description="Initial blur sigma for base image"
+    )
+    
+    end_blur: float = Field(
+        default=0.0,
+        description="Final blur sigma for base image"
+    )
+    
+    blur_duration: float = Field(
+        default=10.0,
+        description="Duration of blur transition in seconds"
+    )
+    
+    mirror: bool = Field(
+        default=True,
+        description="Whether to mirror image horizontally"
+    )
+    
+    tiles: PanoramaTilesConfig = Field(
+        default_factory=PanoramaTilesConfig,
+        description="Configuration for panorama tiles"
     )
 
 
@@ -341,6 +414,7 @@ class DisplayServiceConfig(BaseServiceConfig):
     text_styles: TextStylesConfig = Field(default_factory=TextStylesConfig)
     title_screen: TitleScreenConfig = Field(default_factory=TitleScreenConfig)
     video_overlay: VideoOverlayConfig = Field(default_factory=VideoOverlayConfig)
+    panorama: PanoramaConfig = Field(default_factory=PanoramaConfig)
     
 
 def create_test_display_config(**overrides) -> DisplayServiceConfig:
