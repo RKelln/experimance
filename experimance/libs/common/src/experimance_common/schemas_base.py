@@ -257,10 +257,13 @@ class RenderRequest(MessageBase):
     request_id: str  # Unique identifier for tracking the request
     prompt: str
     negative_prompt: Optional[str] = None
+    width: Optional[int]  # Width of the generated image (default 1024)
+    height: Optional[int]  # Height of the generated image (default 1024)
     style: Optional[str] = None  # Optional style hint
     seed: Optional[int] = None
     reference_image: Optional[ImageSource] = None  # Optional reference image to guide generation
     depth_map: Optional[ImageSource] = None  # Optional depth map URI for depth-aware generation
+
 
 class IdleStatus(MessageBase):
     """Event published when the idle status changes."""
@@ -355,21 +358,12 @@ class LoopRequest(MessageBase):
     style: str  # Hint for the animation style
 
 
-class ContentType(str, Enum):
+class ContentType(StringComparableEnum):
     """Types of content that can be displayed."""
     IMAGE = "image"                    # Single static image
     IMAGE_SEQUENCE = "image_sequence"  # Sequence of images (for transitions)
     VIDEO = "video"                    # Video file
     DEBUG_DEPTH = "debug_depth"        # Debug depth map for alignment
-
-    def __str__(self):
-        """Return the string representation of the content type."""
-        return self.value
-    
-    def __eq__(self, value: object) -> bool:
-        if isinstance(value, str):
-            return self.value == value
-        return super().__eq__(value)
 
 class DisplayMedia(MessageBase, ImageSource):
     """Message for sending media content to display service."""
@@ -394,5 +388,5 @@ class DisplayMedia(MessageBase, ImageSource):
     loop: bool = False                    # Whether to loop the content
     fade_in: Optional[float] = None       # Fade in duration in seconds
     fade_out: Optional[float] = None      # Fade out duration in seconds
-    
+    position: Optional[tuple[int,int]|str] = None  # Position on screen (x, y) or anchor name ("top right")
     # Note: Context information (era, biome) added in project-specific extensions
