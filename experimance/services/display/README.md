@@ -5,6 +5,7 @@ The Display Service is the visual rendering component of the Experimance install
 ## Features
 
 - **Satellite Landscape Images**: Displays background images with smooth crossfade transitions
+- **Panorama Display**: Wide-aspect panoramic images with base image blur transitions and positioned tiles
 - **Masked Video Overlays**: Dynamic video overlays that respond to sand interaction using grayscale masks
 - **Text Overlays**: Multiple concurrent text displays with speaker-specific styling (agent, system, debug)
 - **Custom Transitions**: Support for custom transition videos between scenes
@@ -76,6 +77,27 @@ resolution = [1920, 1080]      # Window resolution (if not fullscreen)
 vsync = true                   # Enable vertical sync
 debug_overlay = false          # Show debug information
 
+# Panorama settings
+[panorama]
+enabled = true                 # Enable panorama renderer
+output_width = 6000            # Total panorama width in pixels
+output_height = 1080           # Panorama height in pixels
+rescale = "shortest"           # Scaling mode: "width", "height", "shortest"
+mirror = true                  # Enable horizontal mirroring
+blur = true                    # Enable blur post-processing
+
+# Base image blur transition
+start_blur = 5.0               # Initial blur sigma
+end_blur = 0.0                 # Final blur sigma (0 = sharp)
+blur_duration = 4.0            # Blur transition duration in seconds
+
+# Tile configuration
+[panorama.tiles]
+width = 300                    # Target tile width in panorama space
+height = 400                   # Target tile height in panorama space
+fade_duration = 3.0            # Built-in tile fade duration
+rescale = "shortest"           # Tile-specific rescaling (optional)
+
 # ZeroMQ addresses
 [zmq]
 images_sub_address = "tcp://localhost:5555"  # Unified events channel
@@ -94,6 +116,116 @@ shader_path = "shaders/"      # Path to custom shaders
 ```
 
 > **Important**: All settings must be placed in their appropriate sections. For example, `fullscreen` must be inside the `[display]` section, not at the root level.
+
+## Panorama Mode
+
+The panorama renderer is designed for wide-aspect displays or multi-projector setups that create immersive panoramic experiences. It supports base images with dynamic blur transitions and positioned tiles that can fade in independently.
+
+### Key Features
+
+- **Base Image Display**: Large panoramic background images with configurable blur-to-sharp transitions
+- **Positioned Tiles**: Smaller images positioned at specific coordinates within the panorama space
+- **Horizontal Mirroring**: Automatic mirroring for seamless 360° panoramic displays
+- **Independent Fade Controls**: Base images and tiles can have separate opacity fade-in durations
+- **Post-Processing Blur**: GPU-accelerated Gaussian blur with smooth σ→0 transitions
+- **Flexible Scaling**: Multiple rescaling modes to handle various aspect ratios
+
+### Configuration
+
+Enable panorama mode in `config.toml`:
+
+```toml
+[panorama]
+enabled = true                 # Enable panorama renderer
+output_width = 6000            # Total panorama width (includes mirrored portion)
+output_height = 1080           # Panorama height
+rescale = "shortest"           # "width", "height", or "shortest" 
+mirror = true                  # Enable horizontal mirroring
+blur = true                    # Enable blur post-processing
+
+# Base image blur transition
+start_blur = 5.0               # Initial blur sigma
+end_blur = 0.0                 # Final blur sigma (0 = sharp)
+blur_duration = 4.0            # Blur transition duration
+
+# Tile settings
+[panorama.tiles]
+width = 300                    # Target tile width in panorama space
+height = 400                   # Target tile height
+fade_duration = 3.0            # Default tile fade animation
+rescale = "shortest"           # Tile-specific rescaling (optional)
+```
+
+### Usage
+
+#### Base Images
+Send base images without a position to fill the panoramic background:
+
+```python
+{
+    "type": "DisplayMedia",
+    "content_type": "image",
+    "uri": "file:///path/to/panorama.jpg",
+    "fade_in": 2.0,                      # Opacity fade-in duration
+    # No position = base image
+}
+```
+
+Base images will:
+- Scale to fit the panorama dimensions (respecting rescale mode)
+- Start with configured blur and gradually sharpen over `blur_duration`
+- Fade in the entire panorama group opacity over `fade_in` duration (independent of blur timing)
+- Automatically mirror if `mirror = true`
+
+#### Positioned Tiles
+Send images with position coordinates to place tiles within the panorama:
+
+```python
+{
+    "type": "DisplayMedia", 
+    "content_type": "image",
+    "uri": "file:///path/to/tile.png",
+    "position": [1200, 300],             # [x, y] in panorama space
+    "fade_in": 1.5,                      # Custom opacity fade-in
+}
+```
+
+Tiles will:
+- Position at the specified coordinates in panorama space
+- Scale to fit the configured tile dimensions
+- Fade in individually over the specified `fade_in` duration (or use config default)
+- Automatically create mirrored copies if `mirror = true`
+
+#### Clearing
+Send a clear command to fade out all content:
+
+```python
+{
+    "type": "DisplayMedia",
+    "content_type": "clear",
+    "fade_in": 3.0,                      # Fade-out duration (reuses fade_in field)
+}
+```
+
+Clear operations will:
+- Fade out the entire panorama using group opacity
+- Handle individual tiles that were mid-fade when clearing started
+- Increase blur during fade-out if `blur = true`
+- Stop any ongoing fade animations smoothly
+
+### Coordinate System
+
+- **Panorama Space**: Coordinates are in the logical panorama dimensions (e.g., 6000x1080)
+- **Mirroring**: If enabled, the left half (0 to width/2) is automatically mirrored to the right
+- **Tile Positioning**: Position `[x, y]` represents the top-left corner of the tile
+- **Screen Mapping**: Panorama coordinates are automatically scaled to fit the display window
+
+### Performance Considerations
+
+- **GPU Memory**: Large panoramic images consume significant texture memory
+- **Blur Processing**: Real-time Gaussian blur is GPU-intensive; disable if performance issues occur
+- **Mirroring**: Doubles the number of sprites; monitor performance with many tiles
+- **Development Mode**: Use `rescale = "shortest"` to fit large panoramas in smaller dev windows
 
 ## Message Types
 
@@ -204,15 +336,17 @@ await service.stop()
 The display service uses a layered rendering approach:
 
 1. **Background Layer**: Satellite landscape images with crossfade transitions
-2. **Video Overlay Layer**: Masked video responding to sand interaction
-3. **Text Overlay Layer**: Multiple concurrent text items
-4. **Debug Layer**: Performance metrics and system information
+2. **Panorama Layer**: Wide-aspect panoramic displays with base images and positioned tiles
+3. **Video Overlay Layer**: Masked video responding to sand interaction
+4. **Text Overlay Layer**: Multiple concurrent text items
+5. **Debug Layer**: Performance metrics and system information
 
 ### Key Components
 
 - **DisplayService**: Main service coordinating ZMQ and rendering
 - **LayerManager**: Z-order rendering coordination
 - **ImageRenderer**: Background image display with crossfades
+- **PanoramaRenderer**: Panoramic display with blur post-processing and positioned tiles
 - **VideoOverlayRenderer**: Masked video overlay with dynamic updates
 - **TextOverlayManager**: Multiple text overlays with styling
 - **ResourceCache**: Texture and resource management (future)
@@ -302,6 +436,14 @@ uv run -m experimance_display --windowed --log-level INFO
 - Check file permissions and format support
 - Monitor log output for loading errors
 - Test with known good image files
+
+**Panorama issues**
+- Check panorama is enabled: `[panorama] enabled = true`
+- Verify panorama dimensions match your setup
+- For development, use `rescale = "shortest"` to fit in smaller windows
+- Disable blur if experiencing performance issues: `blur = false`
+- Check tile positioning is within panorama bounds (0 to output_width/height)
+- Use debug overlay (F1) to verify panorama scaling and positioning
 
 ### Log Analysis
 

@@ -321,6 +321,7 @@ class AgentControlEvent(MessageBase):
     sub_type: str  # "SuggestBiome", "AudiencePresent", "SpeechDetected"
     payload: Dict  # Structure varies based on sub_type
 
+FadeDurationType = Union[float, tuple[float, float]]  # Single fade duration or (fade_in, fade_out) tuple
 
 class DisplayText(MessageBase):
     """Message for displaying text overlays."""
@@ -331,7 +332,7 @@ class DisplayText(MessageBase):
     speaker: Optional[str] = None  # Name of the speaker (if applicable)
     duration: Optional[float] = None  # Duration in seconds to display the text
     style: Optional[Dict[str, Any]] = None  # Optional style overrides for the text (otherwise set by speaker)
-    fade_duration: Optional[float|tuple[float,float]] = None  # Fade in duration in seconds (single symmetric fade) or tuple (fade_in, fade_out)
+    fade_duration: Optional[FadeDurationType] = None  # Fade in duration in seconds (single symmetric fade) or tuple (fade_in, fade_out)
 
 class RemoveText(MessageBase):
     """Message for removing text overlays."""
@@ -364,6 +365,7 @@ class ContentType(StringComparableEnum):
     IMAGE_SEQUENCE = "image_sequence"  # Sequence of images (for transitions)
     VIDEO = "video"                    # Video file
     DEBUG_DEPTH = "debug_depth"        # Debug depth map for alignment
+    CLEAR = "clear"                    # Clear the display (no content)
 
 class DisplayMedia(MessageBase, ImageSource):
     """Message for sending media content to display service."""

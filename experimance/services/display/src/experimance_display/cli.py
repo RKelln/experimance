@@ -467,8 +467,24 @@ def load_display_config(config_path: str):
         raise
 
 
-async def send_display_image(cli: 'DisplayCLI', image_path: str, x: Optional[int] = None, y: Optional[int] = None, blur_sigma: float = 0.0):
+async def send_display_image(cli: 'DisplayCLI', image_path: str|None, x: Optional[int] = None, y: Optional[int] = None):
     """Send display image with optional positioning and blur."""
+    
+    logger.info(f"Sending display image: {image_path} at position ({x}, {y})")
+    if image_path is None:
+        logger.info("No image path provided, sending clear message")
+        # Send a clear message if no image path provided
+        message = DisplayMedia(
+            request_id=str(uuid.uuid4()),
+            content_type=ContentType.CLEAR,
+            uri=None,
+            position=None,
+            fade_in=1.5,
+        )
+        await cli.pubsub_service.publish(message, topic=MessageType.DISPLAY_MEDIA)
+        logger.info("Sent clear display message")
+        return
+    
     if not os.path.exists(image_path):
         logger.error(f"Image file not found: {image_path}")
         return
@@ -487,10 +503,8 @@ async def send_display_image(cli: 'DisplayCLI', image_path: str, x: Optional[int
         content_type=ContentType.IMAGE,
         uri=uri,
         position=position,
+        fade_in=3.0,  # Default fade-in duration
     )
-
-    logger.info(f"📤 CLI SENDING DisplayMedia message with position {position}: {message}")
-    logger.info(f"📤 Publishing to topic: {MessageType.DISPLAY_MEDIA}")
 
     await cli.pubsub_service.publish(message, topic=MessageType.DISPLAY_MEDIA)
 
@@ -525,50 +539,50 @@ async def test_panorama(args, cli):
     print(f"Target tile size (from config): {target_tile_width}x{target_tile_height}")
     print(f"Positioning in panorama space using {target_tile_width}px intervals")
     
-    # Generate base image
-    print("Generating base image...")
-    base_image_path = generate_panorama_base_image(args.base_width, args.base_height, "PANORAMA_BASE")
-    
-    try:
-        # Send base image
-        await send_display_image(cli, base_image_path, blur_sigma=2.0 if args.blur_test else 0.0)
-        print("✓ Base image sent")
-        input(f"Press Enter to continue to next tile (or Ctrl+C to exit)...")
-        
-        # Generate and send tiles
-        tile_paths = []
-        for i in range(args.tile_count):
-            # Position tiles in panorama space using target tile width intervals
-            # This ensures tiles are positioned correctly regardless of generated image size
-            x_pos = i * target_tile_width
-            y_pos = int((args.base_height - target_tile_height) / 2)  # Center vertically
-            
-            print(f"Generating tile {i+1} at panorama position ({x_pos}, {y_pos})...")
-            tile_path = generate_panorama_tile_image(args.tile_width, args.tile_height, 
-                                                   f"{i+1}", (x_pos, y_pos))
-            tile_paths.append(tile_path)
-            
-            # Send tile with delay
-            await asyncio.sleep(2.0)
-            await send_display_image(cli, tile_path, x=x_pos, y=y_pos)
-            print(f"✓ Tile {i+1} sent to panorama position ({x_pos}, {y_pos})")
-            print(f"  (Generated as {args.tile_width}x{args.tile_height}, will be scaled to {target_tile_width}x{target_tile_height})")
-            
-            # Wait for user input to continue
-            input(f"Press Enter to continue to next tile (or Ctrl+C to exit)...")
-        
-        print(f"\nPanorama test running for {args.duration} seconds...")
-        print("Check your display service for the panorama rendering!")
-        await asyncio.sleep(args.duration)
-        
-    finally:
-        # Clean up temporary files
+    while True:
         try:
-            os.unlink(base_image_path)
-            for tile_path in tile_paths:
-                os.unlink(tile_path)
-        except:
-            pass
+            # Send base image
+            print("Generating base image...")
+            base_image_path = generate_panorama_base_image(args.base_width, args.base_height, "PANORAMA_BASE")
+            await send_display_image(cli, base_image_path)
+            print("✓ Base image sent")
+            #input(f"Press Enter to continue to next tile (or Ctrl+C to exit)...")
+            
+            # Generate and send tiles
+            tile_paths = []
+            for i in range(args.tile_count):
+                # Position tiles in panorama space using target tile width intervals
+                # This ensures tiles are positioned correctly regardless of generated image size
+                x_pos = i * target_tile_width
+                y_pos = int((args.base_height - target_tile_height) / 2)  # Center vertically
+                
+                print(f"Generating tile {i+1} at panorama position ({x_pos}, {y_pos})...")
+                tile_path = generate_panorama_tile_image(args.tile_width, args.tile_height, 
+                                                    f"{i+1}", (x_pos, y_pos))
+                tile_paths.append(tile_path)
+                
+                # Send tile with delay
+                await asyncio.sleep(2.0)
+                await send_display_image(cli, tile_path, x=x_pos, y=y_pos)
+                print(f"✓ Tile {i+1} sent to panorama position ({x_pos}, {y_pos})")
+                print(f"  (Generated as {args.tile_width}x{args.tile_height}, will be scaled to {target_tile_width}x{target_tile_height})")
+                
+                # Wait for user input to continue
+                #input(f"Press Enter to continue to next tile (or Ctrl+C to exit)...")
+            
+            print("All tiles sent successfully!")
+            # send clear message
+            await send_display_image(cli, None)
+            await asyncio.sleep(5.0)
+            
+        finally:
+            # Clean up temporary files
+            try:
+                os.unlink(base_image_path)
+                for tile_path in tile_paths:
+                    os.unlink(tile_path)
+            except:
+                pass
 
 
 async def test_scaling(args, cli):
@@ -821,8 +835,6 @@ def main():
     panorama_parser.add_argument('--tile-count', type=int, default=3, help='Number of tiles to generate (default: 3)')
     panorama_parser.add_argument('--tile-width', type=int, default=800, help='Generated tile image width (default: 800) - positioning uses config')
     panorama_parser.add_argument('--tile-height', type=int, default=600, help='Generated tile image height (default: 600) - positioning uses config')
-    panorama_parser.add_argument('--duration', type=float, default=30.0, help='Test duration in seconds')
-    panorama_parser.add_argument('--blur-test', action='store_true', help='Test blur transitions (sigma 2.0 -> 0.0)')
 
     # Panorama scaling test
     scaling_parser = subparsers.add_parser('scaling', help='Test panorama scaling modes')

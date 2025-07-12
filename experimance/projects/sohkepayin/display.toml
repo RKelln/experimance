@@ -3,7 +3,7 @@ fullscreen = false
 monitor = 0
 fps_limit = 30
 vsync = true
-debug_overlay = false
+debug_overlay = true
 resolution = [1920, 1080]  # Force specific resolution for testing
 #background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
 
@@ -29,7 +29,7 @@ port = 5555
 topics = ["DisplayMedia"]
 
 [title_screen]
-enabled = false 
+enabled = true 
 text = "Sohkepayin"           # Text to display
 duration = 10.0               # Duration in seconds
 fade_out_duration = 10.0      # Fade out duration in seconds

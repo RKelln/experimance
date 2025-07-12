@@ -391,6 +391,14 @@ class DisplayService(BaseService):
                     elif self.panorama_renderer:
                         self.panorama_renderer.handle_display_media(message)
 
+                case ContentType.CLEAR:
+                    logger.info("🧹 Routing CLEAR to active renderer")
+                    # Route clear command to active renderer
+                    if self.panorama_renderer:
+                        self.panorama_renderer.handle_display_media(message)
+                    elif self.image_renderer:
+                        await self.image_renderer.handle_display_media(message)
+
             # now that we've recieved a display media message, we can remove the change map
             if self.video_overlay_renderer is not None:
                 logger.debug("Removing video mask after display media")
