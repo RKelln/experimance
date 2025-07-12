@@ -356,6 +356,11 @@ class PanoramaConfig(BaseModel):
         default=1080,
         description="Final height of panorama"
     )
+
+    blur : bool = Field(
+        default=True,
+        description="Whether to apply blur effect when new panorama is loaded",
+    )
     
     start_blur: float = Field(
         default=5.0,

@@ -12,9 +12,10 @@ enabled = true
 rescale = "width"  # Changed to shortest so we can see the entire panorama
 output_width = 11520  # 6x 1920 for 6 projectors total (includes mirroring)
 output_height = 1080
-start_blur = 5.0
+blur = true
+start_blur =15.0
 end_blur = 0.0
-blur_duration = 10.0
+blur_duration = 10
 mirror = true
 
 [panorama.tiles]
