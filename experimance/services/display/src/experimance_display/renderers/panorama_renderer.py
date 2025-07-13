@@ -10,7 +10,11 @@ Features:
 - Positioned tiles that fade in as they complete
 - Horizontal mirroring support
 - Configurable rescaling modes
-- Support for squashed projector outputs (e.g., 1920x1080 stretched to 6 outputs)
+- Support             self.blur_shader_program = ShaderProgram(vert_shader, frag_shader)
+            
+            positions = (-1.0, -1.0, 0.0, 1.0,   # bl
+             1.0, -1.0, 0.0, 1.0,   # br
+            -1.0,  1.0, 0.0, 1.0,   # tlrojector outputs (e.g., 1920x1080 stretched to 6 outputs)
 """
 
 import logging
@@ -31,6 +35,7 @@ from pyglet.image.codecs import ImageDecodeException
 from pyglet import gl
 from pyglet.graphics.shader import Shader, ShaderProgram
 from pyglet.image import Framebuffer
+from pyglet.math import Mat4
 
 from .layer_manager import LayerRenderer
 from ..utils.pyglet_utils import load_pyglet_image_from_message, cleanup_temp_file, create_positioned_sprite
@@ -40,79 +45,102 @@ logger = logging.getLogger(__name__)
 
 # GLSL Shaders for Post-Processing Blur
 VERTEX_SHADER_SOURCE = """#version 150 core
-in vec4 position;
-in vec2 tex_coords;
-out vec2 v_tex_coords;
+in  vec4 position;
+in  vec2 tex_coords;
+out vec2 v_tex;
 
-uniform WindowBlock
-{
-    mat4 projection;
-    mat4 view;
-} window;
-
-void main()
-{
-    gl_Position = window.projection * window.view * position;
-    v_tex_coords = tex_coords;
+void main() {
+    gl_Position = position;
+    v_tex       = tex_coords;
 }
 """
 
 FRAGMENT_SHADER_SOURCE = """#version 150 core
-in vec2 v_tex_coords;
-out vec4 final_color;
+in  vec2 v_tex;
+out vec4 frag;
 
 uniform sampler2D scene_texture;
-uniform float blur_sigma;
+uniform float     blur_sigma;     // in **framebuffer** pixels
+uniform int       enable_mirror;  // use int (!) for pyglet
 
-void main()
-{
-    if (blur_sigma <= 0.0) {
-        final_color = texture(scene_texture, v_tex_coords);
-        return;
-    }
+vec4 fast_blur(vec2 tc) {
+    if (blur_sigma < 0.5)               // ~no-blur fast-path
+        return texture(scene_texture, tc);
+
+    vec2 texel = 1.0 / vec2(textureSize(scene_texture, 0));
     
-    vec2 tex_size = textureSize(scene_texture, 0);
-    vec2 texel_size = 1.0 / tex_size;
+    // Increased blur radius for more dramatic effects - up to 9x9 kernel
+    int r = int(min(4.0, ceil(blur_sigma * 0.6)));
+    float sigma2 = blur_sigma * blur_sigma;
     
-    // Gaussian blur - smoother than box blur, eliminates "shake"
-    vec4 color = vec4(0.0);
-    float total_weight = 0.0;
+    vec4 col = vec4(0.0);
+    float wsum = 0.0;
     
-    // Calculate radius (3-sigma rule covers ~99.7% of Gaussian distribution)
-    float radius = blur_sigma * 3.0;
-    int max_radius = int(ceil(radius));
-    max_radius = min(max_radius, 20); // Clamp for performance
-    
-    // Two-pass separable Gaussian blur would be more efficient,
-    // but this single-pass approach is simpler and works well for our needs
-    for (int x = -max_radius; x <= max_radius; x++) {
-        for (int y = -max_radius; y <= max_radius; y++) {
-            vec2 offset = vec2(float(x), float(y)) * texel_size;
-            
-            // Gaussian weight calculation
-            float distance_sq = float(x * x + y * y);
-            float weight = exp(-distance_sq / (2.0 * blur_sigma * blur_sigma));
-            
-            color += texture(scene_texture, v_tex_coords + offset) * weight;
-            total_weight += weight;
+    // Sample in a cross pattern for better performance
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            float dist2 = float(x*x + y*y);
+            float w = exp(-dist2 / (2.0 * sigma2));
+            col += texture(scene_texture, tc + vec2(x, y) * texel) * w;
+            wsum += w;
         }
     }
-    
-    // Normalize by total weight
-    final_color = color / total_weight;
+    return col / wsum;
+}
+
+void main() {
+    vec2 tc = v_tex;
+
+    // Handle mirroring first
+    if (enable_mirror == 1 && tc.x > 0.5) {
+        tc.x = 1.0 - tc.x;
+    }
+
+    vec4 blurred = fast_blur(tc);
+    frag = blurred;
 }
 """
 
-# No-op fragment shader for debugging (bypasses blur)
+# Optimized fragment shader for better performance
 FRAGMENT_SHADER_SOURCE_NOOP = """#version 150 core
-in vec2 v_tex_coords;
-out vec4 final_color;
+in vec2 v_tex;
+out vec4 frag;
 
 uniform sampler2D scene_texture;
+uniform float blur_sigma;
+uniform int enable_mirror;
 
 void main()
 {
-    final_color = texture(scene_texture, v_tex_coords);
+    vec2 tc = v_tex;
+
+    // Handle mirroring if enabled
+    if (enable_mirror == 1 && tc.x > 0.5) {
+        tc.x = 1.0 - tc.x;
+    }
+    
+    // Handle blur if enabled - use much more efficient implementation
+    if (blur_sigma < 0.5) {
+        // No blur - direct sampling
+        frag = texture(scene_texture, tc);
+    } else {
+        // Enhanced box blur for more dramatic effects - up to 9x9 kernel
+        vec2 texel = 1.0 / textureSize(scene_texture, 0);
+        int r = int(min(4.0, ceil(blur_sigma * 0.5)));
+        
+        vec3 result = vec3(0.0);
+        int samples = 0;
+        
+        for (int x = -r; x <= r; x++) {
+            for (int y = -r; y <= r; y++) {
+                vec2 offset = vec2(float(x), float(y)) * texel;
+                result += texture(scene_texture, tc + offset).rgb;
+                samples++;
+            }
+        }
+        
+        frag = vec4(result / float(samples), 1.0);
+    }
 }
 """
 
@@ -137,6 +165,17 @@ class _CaptureGroup(pyglet.graphics.Group):
             fb_height = self.panorama_renderer.texture.height
             gl.glViewport(0, 0, fb_width, fb_height)
             
+            # CRITICAL: Set up projection matrix for framebuffer size using modern pyglet
+            # Store original projection to restore later
+            self._original_projection = self.panorama_renderer.window.projection
+            
+            # Create orthographic projection for framebuffer coordinates
+            self.panorama_renderer.window.projection = Mat4.orthogonal_projection(
+                0, fb_width,   # left, right
+                0, fb_height,  # bottom, top
+                -1, 1          # near, far
+            )
+            
             # Enable blending for sprite rendering
             gl.glEnable(gl.GL_BLEND)
             gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -144,7 +183,7 @@ class _CaptureGroup(pyglet.graphics.Group):
             logger.error(f"_CaptureGroup: framebuffer is None!")
     
     def unset_state(self):
-        """Unbind framebuffer."""
+        """Unbind framebuffer and restore original state."""
         if self.panorama_renderer.framebuffer:
             self.panorama_renderer.framebuffer.unbind()
             
@@ -152,6 +191,10 @@ class _CaptureGroup(pyglet.graphics.Group):
             win_width = self.panorama_renderer.window.width
             win_height = self.panorama_renderer.window.height
             gl.glViewport(0, 0, win_width, win_height)
+            
+            # Restore original projection matrix
+            if hasattr(self, '_original_projection'):
+                self.panorama_renderer.window.projection = self._original_projection
         else:
             logger.error(f"_CaptureGroup: framebuffer is None!")
 
@@ -171,46 +214,45 @@ class _DisplayGroup(pyglet.graphics.Group):
             # Ensure framebuffer is unbound (safety)
             renderer.framebuffer.unbind()
             
-            if renderer.blur_enabled:
-                # Use shader-based blur post-processing
-                if (renderer.blur_shader_program and 
-                    renderer.blur_quad and 
-                    renderer.texture):
-                    
-                    # Activate shader
-                    renderer.blur_shader_program.use()
-                    
-                    # Bind the captured texture
-                    glActiveTexture(GL_TEXTURE0)
-                    glBindTexture(renderer.texture.target, renderer.texture.id)
-                    
-                    # Set shader uniforms
-                    renderer.blur_shader_program['scene_texture'] = 0
-                    
-                    # Scale blur sigma for screen space
-                    scaled_blur_sigma = renderer.current_blur_sigma * renderer.panorama_scale
-                    renderer.blur_shader_program['blur_sigma'] = scaled_blur_sigma
-                    
-                    # Draw fullscreen quad
-                    renderer.blur_quad.draw(gl.GL_TRIANGLE_STRIP)
-                    
-                    # Clean up shader
-                    renderer.blur_shader_program.stop()
+            # Always use the shader for consistent rendering
+            if (renderer.blur_shader_program and 
+                renderer.blur_quad and 
+                renderer.texture):
+                
+                # Activate shader
+                renderer.blur_shader_program.use()
+                
+                # Bind the captured texture
+                glActiveTexture(GL_TEXTURE0)
+                glBindTexture(renderer.texture.target, renderer.texture.id)
+                
+                # Set shader uniforms
+                renderer.blur_shader_program['scene_texture'] = 0
+                
+                # Set blur sigma (0 if blur disabled)
+                if renderer.blur_enabled:
+                    sigma = renderer.current_blur_sigma
                 else:
-                    logger.error(f"_DisplayGroup: missing components for blur - shader_program={renderer.blur_shader_program is not None}, "
-                                f"quad={renderer.blur_quad is not None}, texture={renderer.texture is not None}")
+                    sigma = 0.0
+                renderer.blur_shader_program['blur_sigma'] = float(sigma)
+                
+                # Set mirroring uniforms
+                renderer.blur_shader_program['enable_mirror'] = int(renderer.panorama_config.mirror)
+                
+                # Draw fullscreen quad - shader handles mirroring + scaling
+                renderer.blur_quad.draw(gl.GL_TRIANGLE_STRIP)
+                
+                # Clean up shader
+                renderer.blur_shader_program.stop()
             else:
-                # Use direct texture blitting (no blur)
-                if renderer.texture:
-                    renderer.texture.blit(0, 0)
-                else:
-                    logger.error(f"_DisplayGroup: no texture available for direct blitting")
+                logger.error(f"_DisplayGroup: missing components for render - shader_program={renderer.blur_shader_program is not None}, "
+                            f"quad={renderer.blur_quad is not None}, texture={renderer.texture is not None}")
                     
         except Exception as e:
             logger.error(f"_DisplayGroup: error during render: {e}", exc_info=True)
             # Try to clean up shader if it was activated
             try:
-                if renderer.blur_enabled and renderer.blur_shader_program:
+                if renderer.blur_shader_program:
                     renderer.blur_shader_program.stop()
             except:
                 pass
@@ -268,20 +310,30 @@ class PanoramaRenderer(LayerRenderer):
         # Base image state
         self.base_image = None
         self.base_sprite = None
-        self.base_mirror_sprite = None  # For mirrored base image
         self.base_image_id = None
+        
+        # Panorama dimensions - set these first before creating framebuffer
+        self.panorama_width = self.panorama_config.output_width
+        self.panorama_height = self.panorama_config.output_height
         
         # Blur post-processing setup - always use post-processing architecture
         self.blur_enabled = self.panorama_config.blur
         logger.info(f"Panorama blur {'enabled' if self.blur_enabled else 'DISABLED'} (config.panorama.blur={self.panorama_config.blur})")
         
         # PanoramaRenderer is the parent group for post-processing (blur or no-op)
+        # Create framebuffer at panorama size - mirroring happens in panorama space
+        # then entire result gets scaled to screen by fullscreen quad
+        fb_width = self.panorama_width
+        fb_height = self.panorama_height
         self.texture = pyglet.image.Texture.create(
-            window.width, window.height, 
+            fb_width, fb_height, 
             min_filter=GL_LINEAR, mag_filter=GL_LINEAR
         )
         self.framebuffer = Framebuffer()
         self.framebuffer.attach_texture(self.texture, attachment=GL_COLOR_ATTACHMENT0)
+        
+        logger.info(f"Created panorama framebuffer: {fb_width}x{fb_height} (will be scaled to screen {window.width}x{window.height})")
+        logger.info(f"Panorama config: mirror={self.panorama_config.mirror}")
         
         # Shader setup - choose blur or no-op based on config
         self.blur_shader_program = None
@@ -298,12 +350,6 @@ class PanoramaRenderer(LayerRenderer):
         self.dummy_sprite = pyglet.sprite.Sprite(dummy_image, x=-1000, y=-1000,  # Off-screen
                                                batch=self.batch, group=self.display)
         self.dummy_sprite.visible = False  # Make it invisible
-        logger.debug(f"Created dummy sprite for _DisplayGroup to ensure rendering")
-        
-        # Create a test sprite for debugging - visible white square in center of screen
-        test_image = pyglet.image.SolidColorImagePattern((255, 255, 255, 255)).create_image(100, 100)
-        test_image.anchor_x = 50
-        test_image.anchor_y = 50
 
         # Base image blur transition
         self.blur_timer = 0.0
@@ -325,10 +371,6 @@ class PanoramaRenderer(LayerRenderer):
         self.clear_timer = 0.0
         self.clear_duration = 3.0  # Default fade out duration
         self.clear_target_blur = self.config.panorama.start_blur
-        
-        # Panorama dimensions
-        self.panorama_width = self.panorama_config.output_width
-        self.panorama_height = self.panorama_config.output_height
         
         # Calculate scaling and projection
         self._calculate_panorama_transform()
@@ -371,6 +413,7 @@ class PanoramaRenderer(LayerRenderer):
     def _setup_blur_shader(self):
         """Setup shader and fullscreen quad - choose blur or no-op based on config."""
         try:
+            logger.debug(f"Setting up blur shader: blur_enabled={self.blur_enabled}")
             # Choose shader based on blur configuration
             vert_shader = Shader(VERTEX_SHADER_SOURCE, 'vertex')
             if self.blur_enabled:
@@ -379,23 +422,28 @@ class PanoramaRenderer(LayerRenderer):
                 frag_shader = Shader(FRAGMENT_SHADER_SOURCE_NOOP, 'fragment')
             
             self.blur_shader_program = ShaderProgram(vert_shader, frag_shader)
-            
-            # Create fullscreen quad using window coordinates (not NDC)
-            positions = (
-                0, 0, 0, 1,                          # bottom-left
-                self.window.width, 0, 0, 1,          # bottom-right
-                0, self.window.height, 0, 1,         # top-left
-                self.window.width, self.window.height, 0, 1,  # top-right
-            )
-            tex_coords = (0, 0,  1, 0,  0, 1,  1, 1)
+
+            # Create quad based on squeeze setting
+            # if self.panorama_config.squeeze:
+            #     # “squeezed”: quad spans the whole window in NDC
+            #     positions = (-1,-1,  1,-1, -1,1,  1,1)
+            # else:
+            #     # frame-buffer-sized quad (no squeeze)
+            #     w, h = self.panorama_width / self.window.width, self.panorama_height / self.window.height
+            #     positions = (-w, -h,  w, -h, -w,  h,  w,  h)
+            #positions = (-1,-1,  1,-1, -1,1,  1,1)
+            positions = (-1.0, -1.0, 0.0, 1.0,   # bl
+             1.0, -1.0, 0.0, 1.0,   # br
+            -1.0,  1.0, 0.0, 1.0,   # tl
+             1.0,  1.0, 0.0, 1.0)   # tr
             
             self.blur_quad = self.blur_shader_program.vertex_list(
                 4, gl.GL_TRIANGLE_STRIP,
                 position=('f', positions),
-                tex_coords=('f', tex_coords)
+                tex_coords=('f', (0, 0,  1, 0,  0, 1,  1, 1))  # Fixed Y coordinates for proper text orientation
             )
             
-            logger.debug(f"Blur shader setup complete: {self.window.width}x{self.window.height}")
+            logger.debug("Blur shader setup complete")
             
         except Exception as e:
             logger.error(f"Failed to setup blur shader: {e}", exc_info=True)
@@ -414,61 +462,24 @@ class PanoramaRenderer(LayerRenderer):
         This ensures the panorama is properly scaled and centered regardless of
         window size - critical for dev mode where window != production size.
         """
+        # New panorama-space architecture: No scaling needed
+        # All sprites work in panorama coordinates, shader handles screen scaling
+        self.panorama_scale = self._calculate_panorama_scale()
+        
+        # For debugging only - track what screen dimensions would be
         window_width = self.window.width
         window_height = self.window.height
         
-        # Calculate scale to fit panorama in window
-        scale_x = window_width / self.panorama_width
-        scale_y = window_height / self.panorama_height
-        
-        # Apply rescaling strategy
-        if self.panorama_config.rescale == "width":
-            self.panorama_scale = scale_x
-            # For very wide panoramas, this might make them tall and thin
-            final_width = self.panorama_width * scale_x
-            final_height = self.panorama_height * scale_x
-        elif self.panorama_config.rescale == "height":
-            self.panorama_scale = scale_y
-            final_width = self.panorama_width * scale_y
-            final_height = self.panorama_height * scale_y
-        else:  # "shortest" - maintain aspect ratio, fit entirely in window
-            self.panorama_scale = min(scale_x, scale_y)
-            final_width = self.panorama_width * self.panorama_scale
-            final_height = self.panorama_height * self.panorama_scale
-        
-        # Center the scaled panorama in the window
-        self.panorama_offset_x = (window_width - final_width) / 2
-        self.panorama_offset_y = (window_height - final_height) / 2
-        
-        # Store final dimensions for debugging
-        self.final_panorama_width = final_width
-        self.final_panorama_height = final_height
-        
-        logger.debug(f"Panorama transform: scale={self.panorama_scale:.3f}")
-        logger.debug(f"  Window: {window_width}x{window_height}")
-        logger.debug(f"  Panorama: {self.panorama_width}x{self.panorama_height}")
-        logger.debug(f"  Final: {final_width:.1f}x{final_height:.1f}")
-        logger.debug(f"  Offset: ({self.panorama_offset_x:.1f}, {self.panorama_offset_y:.1f})")
+        logger.info(f"Panorama space: {self.panorama_width}x{self.panorama_height} → screen: {window_width}x{window_height}")
         
         # Warn if panorama is much larger than window (common in dev)
         if self.panorama_scale < 0.5:
             logger.info(f"Panorama is significantly larger than window (scale={self.panorama_scale:.2f}). "
                        f"This is normal in dev mode testing production-sized panoramas.")
-        
-        # Warn if panorama extends beyond window bounds
-        if (final_width > window_width * 1.1 or final_height > window_height * 1.1):
-            logger.warning(f"Panorama extends beyond window bounds. Consider using rescale='shortest' "
-                          f"for dev mode.")
     
-    def _panorama_to_screen(self, pano_x: int, pano_y: int) -> Tuple[int, int]:
-        """Convert panorama coordinates to screen coordinates.
-        
-        Note: Uses top-left coordinate system to match image anchors.
-        """
-        screen_x = int(self.panorama_offset_x + (pano_x * self.panorama_scale))
-        # For top-left coordinate system, y=0 should be at the top of the panorama area
-        screen_y = int(self.panorama_offset_y + self.final_panorama_height - (pano_y * self.panorama_scale))
-        return screen_x, screen_y
+    def _calculate_panorama_scale(self) -> float:
+        """Calculate scale factor for panorama space positioning."""
+        return 1.0  # No scaling - work in panorama space directly
     
     def _scale_image_for_panorama(self, image: pyglet.image.AbstractImage) -> pyglet.image.AbstractImage:
         """Scale image according to panorama rescale mode.
@@ -483,13 +494,8 @@ class PanoramaRenderer(LayerRenderer):
     @property
     def is_visible(self) -> bool:
         """Check if the layer should be rendered."""
-        visible = (self._visible and self.panorama_config.enabled and 
-                  (self.base_sprite is not None or len(self.tiles) > 0))
-        logger.debug(f"PanoramaRenderer.is_visible: _visible={self._visible}, "
-                    f"enabled={self.panorama_config.enabled}, "
-                    f"has_base_sprite={self.base_sprite is not None}, "
-                    f"tiles_count={len(self.tiles)}, result={visible}")
-        return visible
+        return (self._visible and self.panorama_config.enabled and 
+                (self.base_sprite is not None or len(self.tiles) > 0))
     
     @property
     def opacity(self) -> float:
@@ -502,11 +508,9 @@ class PanoramaRenderer(LayerRenderer):
         self._opacity = max(0.0, min(1.0, value))
         base_opacity = int(255 * self._opacity)
         
-        # Only update base image sprites - tiles manage their own opacity
+        # Only update base image sprite - no mirror sprites with shader approach
         if self.base_sprite:
             self.base_sprite.opacity = base_opacity
-        if self.base_mirror_sprite:
-            self.base_mirror_sprite.opacity = base_opacity
     
     def handle_display_media(self, message: MessageDataType) -> None:
         """Handle DisplayMedia message for panorama content."""
@@ -571,24 +575,18 @@ class PanoramaRenderer(LayerRenderer):
         if self.base_sprite:
             self.base_sprite.delete()
             self.base_sprite = None
-        if self.base_mirror_sprite:
-            self.base_mirror_sprite.delete()
-            self.base_mirror_sprite = None
         
         # Don't transform the image - use sprite scaling instead
         # This is more reliable and handles mirroring better
         
-        # Set image anchor point to top-left to match our coordinate system
-        # By default pyglet uses bottom-left anchor which causes positioning issues
-        # Set this once and both sprites will use the same anchor
+        # Set image anchor point to bottom-left (pyglet default) for consistent positioning
+        # This ensures (0,0) places the bottom-left corner of the image at (0,0)
         image.anchor_x = 0
-        image.anchor_y = image.height  # Top of image
+        image.anchor_y = 0  # Bottom of image at coordinate y
 
-        # Create sprite at panorama origin
-        screen_x, screen_y = self._panorama_to_screen(0, 0)
-        
-        # Create base image sprite (z=0 for bottom layer)
-        sprite = pyglet.sprite.Sprite(image, x=screen_x, y=screen_y, 
+        # Create sprite at panorama origin (no screen scaling here)
+        # Sprites work in panorama space, shader handles all screen scaling
+        sprite = pyglet.sprite.Sprite(image, x=0, y=0, 
                                       batch=self.batch, group=self.capture, z=0)
         
         # Set initial group opacity for fade-in effect (affects entire panorama)
@@ -596,82 +594,34 @@ class PanoramaRenderer(LayerRenderer):
             self.opacity = 0.0  # Start transparent for fade-in
         else:
             self.opacity = 1.0  # Full opacity immediately
-            
-        logger.debug(f"Created base sprite: batch={self.batch}, group={self.capture}, z=0")
-        logger.debug(f"Base sprite visible={sprite.visible}, opacity={sprite.opacity}")
-        logger.debug(f"Base sprite position=({sprite.x}, {sprite.y}), size=({sprite.width}, {sprite.height})")
-        logger.debug(f"Base sprite image size=({image.width}, {image.height}), anchor=({image.anchor_x}, {image.anchor_y})")
         
         # Calculate target dimensions for the base image
-        # output_width is inclusive of mirroring - it represents total final width
-        # If mirroring is enabled, the base image should fill half the total panorama width
-        # If not mirroring, it should fill the full panorama width
         if self.panorama_config.mirror:
-            target_width = self.panorama_width / 2  # Half of total width for the original
+            target_width = self.panorama_width / 2  # Half of framebuffer width
             target_height = self.panorama_height
-            logger.info(f"Mirroring enabled: scaling base image to fit {target_width}x{target_height} "
-                       f"(half of total panorama {self.panorama_width}x{self.panorama_height})")
+            logger.info(f"Mirroring mode: scaling base image to fill left half ({target_width}x{target_height})")
         else:
-            target_width = self.panorama_width  # Full width
+            target_width = self.panorama_width  # Full framebuffer width
             target_height = self.panorama_height
-            logger.info(f"No mirroring: scaling base image to fit {target_width}x{target_height} (full panorama)")
+            logger.info(f"No mirroring: scaling base image to full framebuffer ({target_width}x{target_height})")
         
-        # Calculate scaling to fit target dimensions
+        # Calculate scaling to target panorama dimensions
         scale_x = target_width / image.width
         scale_y = target_height / image.height
         
         # Apply rescale mode to determine which scale to use
         if self.panorama_config.rescale == "width":
-            base_scale = scale_x
+            final_scale = scale_x
         elif self.panorama_config.rescale == "height":
-            base_scale = scale_y
+            final_scale = scale_y
         else:  # "shortest" - maintain aspect ratio
-            base_scale = min(scale_x, scale_y)
+            final_scale = min(scale_x, scale_y)
         
-        # Combine with screen scaling to get final scale
-        combined_scale = base_scale * self.panorama_scale
-        sprite.scale = combined_scale
+        # Apply the scaling (sprites work in panorama space)
+        sprite.scale = final_scale
         
-        logger.debug(f"After scaling: sprite size=({sprite.width}, {sprite.height}), scale={sprite.scale}")
-        logger.debug(f"Final sprite bounds: left={sprite.x}, right={sprite.x + sprite.width}, "
-                    f"top={sprite.y}, bottom={sprite.y - sprite.height}")
-        logger.debug(f"Window bounds: width={self.window.width}, height={self.window.height}")
-        
-        logger.info(f"Base image scaling: target={target_width:.0f}x{target_height:.0f}, "
-                   f"base_scale={base_scale:.3f}, screen_scale={self.panorama_scale:.3f}, "
-                   f"final_scale={combined_scale:.3f}")
-        logger.info(f"Final base size: {image.width * combined_scale:.1f}x{image.height * combined_scale:.1f}")
-        
-        # Clean up old base images first
-        if self.base_sprite:
-            self.base_sprite.delete()
-        if self.base_mirror_sprite:
-            self.base_mirror_sprite.delete()
-            self.base_mirror_sprite = None
-        
-        # Handle mirroring positioning
-        if self.panorama_config.mirror:
-            # Create mirrored copy of the base image
-            mirror_screen_x = screen_x + (target_width * self.panorama_scale)  # Position at right half
-            
-            # Create second sprite using the same image (with shared anchor point)
-            mirror_sprite = pyglet.sprite.Sprite(image, x=mirror_screen_x, y=screen_y,
-                                                batch=self.batch, group=self.capture, z=0)
-            mirror_sprite.scale_x = -combined_scale  # Flip horizontally
-            mirror_sprite.scale_y = combined_scale
-            
-            # Group opacity will handle both sprites together
-            
-            # Adjust position for right-edge anchoring behavior
-            # When we flip horizontally, the sprite flips around its anchor point
-            # Since the image has left-edge anchor, we need to adjust for the flip
-            scaled_width = image.width * combined_scale
-            mirror_sprite.x = mirror_screen_x + scaled_width
-            
-            logger.info(f"Created mirrored base image at ({mirror_sprite.x}, {mirror_sprite.y}) with scale ({-combined_scale:.3f}, {combined_scale:.3f})")
-            
-            # Store both sprites
-            self.base_mirror_sprite = mirror_sprite
+        logger.info(f"Base image: {image.width}x{image.height} → {target_width:.0f}x{target_height:.0f} "
+                   f"(scale: {final_scale:.3f})")
         
         self.base_image = image
         self.base_sprite = sprite
@@ -681,12 +631,9 @@ class PanoramaRenderer(LayerRenderer):
         if fade_in_duration is not None and fade_in_duration > 0:
             self._start_base_opacity_fade(fade_in_duration)
         
-        logger.info(f"Base image setup complete:")
-        logger.info(f"  Original sprite at ({sprite.x}, {sprite.y}) with scale {sprite.scale}")
-        if self.base_mirror_sprite:
-            logger.info(f"  Mirror sprite at ({self.base_mirror_sprite.x}, {self.base_mirror_sprite.y}) with scale ({self.base_mirror_sprite.scale_x}, {self.base_mirror_sprite.scale_y})")
-        else:
-            logger.info(f"  No mirror sprite (mirroring disabled)")
+        logger.info(f"Base image setup complete at ({sprite.x}, {sprite.y}) with scale {sprite.scale}")
+        if self.panorama_config.mirror:
+            logger.info("Shader-based mirroring enabled")
         
         # Start blur transition independently (uses config blur_duration, not fade_in_duration)
         self._start_blur_transition()
@@ -748,15 +695,14 @@ class PanoramaRenderer(LayerRenderer):
             tile_x_adjusted = tile_x
             tile_y_adjusted = tile_y
         
-        # Convert adjusted tile position to screen coordinates
-        screen_x, screen_y = self._panorama_to_screen(tile_x_adjusted, tile_y_adjusted)
-        
-        # Set anchor point for consistent positioning - do this once for the image
+        # Set image anchor point to bottom-left for consistent positioning (same as base image)
+        # This ensures (tile_x, tile_y) places the bottom-left corner of the image at that coordinate
         image.anchor_x = 0
-        image.anchor_y = image.height  # Top of image
+        image.anchor_y = 0  # Bottom of image at coordinate y
         
-        # Create original tile sprite (z=1 for top layer)
-        sprite = pyglet.sprite.Sprite(image, x=screen_x, y=screen_y, 
+        # Create tile sprite in panorama space (no screen coordinate conversion)
+        # Position tiles directly in panorama coordinates - shader handles all scaling
+        sprite = pyglet.sprite.Sprite(image, x=tile_x_adjusted, y=tile_y_adjusted, 
                                       batch=self.batch, group=self.capture, z=1)
         
         # Set initial opacity for tile fade-in effect (individual tile control)
@@ -765,16 +711,11 @@ class PanoramaRenderer(LayerRenderer):
         else:
             sprite.opacity = 255  # Full opacity immediately
         
-        # Apply combined scaling: tile rescaling * panorama screen scaling
-        combined_scale = scale_factor * self.panorama_scale
-        sprite.scale = combined_scale
+        # Apply tile scaling (tiles work in panorama space)
+        sprite.scale = scale_factor
         
-        final_tile_width = image.width * combined_scale
-        final_tile_height = image.height * combined_scale
-        
-        logger.info(f"Tile {request_id}: scale_factor={scale_factor:.3f}, screen_scale={self.panorama_scale:.3f}, "
-                   f"combined_scale={combined_scale:.3f}")
-        logger.info(f"Tile {request_id}: final size {final_tile_width:.1f}x{final_tile_height:.1f} at screen ({screen_x}, {screen_y})")
+        logger.info(f"Tile {request_id}: {image.width}x{image.height} → {target_tile_width}x{target_tile_height} "
+                   f"at ({tile_x_adjusted}, {tile_y_adjusted}) scale={scale_factor:.3f}")
         
         # Remove old tiles if they exist
         if request_id in self.tiles:
@@ -783,13 +724,7 @@ class PanoramaRenderer(LayerRenderer):
             if request_id in self.tile_order:
                 self.tile_order.remove(request_id)
         
-        # Also remove mirrored version if it exists
-        mirror_id = f"{request_id}_mirror"
-        if mirror_id in self.tiles:
-            old_mirror = self.tiles[mirror_id]
-            old_mirror.sprite.delete()
-            if mirror_id in self.tile_order:
-                self.tile_order.remove(mirror_id)
+        # No need to handle mirror tiles - shader takes care of mirroring
         
         # Create original tile - use message fade_in for custom duration or config default
         if fade_in_duration is not None and fade_in_duration > 0:
@@ -805,67 +740,6 @@ class PanoramaRenderer(LayerRenderer):
             
         self.tiles[request_id] = tile
         self.tile_order.append(request_id)
-        
-        # Create mirrored tile if mirroring is enabled
-        if self.panorama_config.mirror:
-            # Calculate mirror position: reflect across the center of the panorama
-            # Use the original tile position for mirror calculation, not the adjusted one
-            panorama_center_x = self.panorama_width / 2
-            # Use the target tile width (after scaling) for the mirror calculation
-            target_scaled_width = target_tile_width  # This is the size in panorama space
-            mirror_x = int(2 * panorama_center_x - tile_x - target_scaled_width)
-            
-            # Apply the same centering adjustments to the mirror
-            if rescale_mode == "width":
-                scaled_height = image.height * scale_factor
-                if scaled_height > target_tile_height:
-                    vertical_offset = (scaled_height - target_tile_height) / 2
-                    mirror_y = tile_y - int(vertical_offset)
-                else:
-                    mirror_y = tile_y
-            elif rescale_mode == "height":
-                scaled_width = image.width * scale_factor
-                if scaled_width > target_tile_width:
-                    horizontal_offset = (scaled_width - target_tile_width) / 2
-                    mirror_x_adjusted = mirror_x - int(horizontal_offset)
-                else:
-                    mirror_x_adjusted = mirror_x
-                mirror_y = tile_y
-            else:  # "shortest"
-                mirror_x_adjusted = mirror_x
-                mirror_y = tile_y
-            
-            # For width scaling, we already set mirror_y above
-            if rescale_mode != "height":
-                mirror_x_adjusted = mirror_x
-            
-            mirror_screen_x, mirror_screen_y = self._panorama_to_screen(mirror_x_adjusted, mirror_y)
-            
-            logger.debug(f"Mirror calculation: center={panorama_center_x}, tile_x={tile_x}, "
-                        f"target_width={target_scaled_width}, mirror_x={mirror_x}, adjusted_mirror_x={mirror_x_adjusted}")
-            
-            # Create mirrored sprite using the same image (z=1 for top layer)
-            mirror_sprite = pyglet.sprite.Sprite(image, x=mirror_screen_x, y=mirror_screen_y,
-                                                batch=self.batch, group=self.capture, z=1)
-            mirror_sprite.scale_x = -combined_scale  # Flip horizontally
-            mirror_sprite.scale_y = combined_scale
-            
-            # Set same initial opacity as main tile sprite
-            mirror_sprite.opacity = sprite.opacity
-            
-            # Adjust x position for flipped sprite (pyglet flips around sprite anchor)
-            scaled_width = image.width * combined_scale
-            mirror_sprite.x = mirror_screen_x + scaled_width
-            
-            logger.info(f"Tile {request_id}: mirror at panorama ({mirror_x_adjusted}, {mirror_y}), screen ({mirror_sprite.x}, {mirror_sprite.y})")
-            
-            # Create mirrored tile
-            mirror_tile = PanoramaTile(mirror_sprite, (mirror_x_adjusted, mirror_y), mirror_id,
-                                     original_size=(image.width, image.height),
-                                     fade_duration=tile.fade_duration)  # Use same fade duration as original tile
-                    
-            self.tiles[mirror_id] = mirror_tile
-            self.tile_order.append(mirror_id)
     
     def _start_base_opacity_fade(self, fade_duration: float) -> None:
         """Start opacity fade-in for entire panorama group."""
@@ -960,8 +834,6 @@ class PanoramaRenderer(LayerRenderer):
             # Update the current blur sigma for the shader
             self.current_blur_sigma = self.current_blur
             self._update_blur_effect()  # Update blur group with new parameters
-            #logger.debug(f"Blur transition progress: {progress:.2f}, "
-            #            f"current_blur_sigma={self.current_blur_sigma:.3f}")
             if progress >= 1.0:
                 self.blur_active = False
                 logger.debug("Blur transition complete")
@@ -978,8 +850,6 @@ class PanoramaRenderer(LayerRenderer):
         # Update sprite visibility
         if self.base_sprite:
             self.base_sprite.visible = visible
-        if self.base_mirror_sprite:
-            self.base_mirror_sprite.visible = visible
             
         for tile in self.tiles.values():
             tile.sprite.visible = visible
@@ -1031,9 +901,6 @@ class PanoramaRenderer(LayerRenderer):
         if self.base_sprite:
             self.base_sprite.delete()
             self.base_sprite = None
-        if self.base_mirror_sprite:
-            self.base_mirror_sprite.delete()
-            self.base_mirror_sprite = None
         
         self.base_image = None
         self.base_image_id = None
@@ -1079,13 +946,18 @@ class PanoramaRenderer(LayerRenderer):
         old_width, old_height = self.window.width, self.window.height
         self.window.width, self.window.height = new_size
         
-        # Recreate resources for new size
+        # Recreate resources for new size - keep framebuffer at panorama size
+        fb_width = self.panorama_width
+        fb_height = self.panorama_height
         self.texture = pyglet.image.Texture.create(
-            new_size[0], new_size[1], 
+            fb_width, fb_height, 
             min_filter=GL_LINEAR, mag_filter=GL_LINEAR
         )
         self.framebuffer = Framebuffer()
         self.framebuffer.attach_texture(self.texture, attachment=GL_COLOR_ATTACHMENT0)
+        
+        # Recreate shader with correct quad size for new window dimensions
+        self._setup_blur_shader()
         
         # Recreate child groups
         self.capture = _CaptureGroup(self)
@@ -1102,65 +974,26 @@ class PanoramaRenderer(LayerRenderer):
         # Recalculate panorama transform
         self._calculate_panorama_transform()
         
-        # Update existing sprite positions and groups
+        # Update existing sprite groups (positions don't change - they're in panorama space)
         if self.base_sprite:
-            screen_x, screen_y = self._panorama_to_screen(0, 0)
-            
-            # Update base sprite to use new capture group
+            # Update base sprite to use new capture group (position stays the same)
             old_sprite = self.base_sprite
             self.base_sprite = pyglet.sprite.Sprite(
-                old_sprite.image, x=screen_x, y=screen_y,
+                old_sprite.image, x=0, y=0,
                 batch=self.batch, group=self.capture, z=0
             )
-            self.base_sprite.scale = self.panorama_scale
+            self.base_sprite.scale = old_sprite.scale  # Keep panorama scale
             old_sprite.delete()
-            
-            if self.base_mirror_sprite:
-                old_mirror = self.base_mirror_sprite
-                mirror_screen_x = screen_x + (self.panorama_width / 2 * self.panorama_scale)
-                self.base_mirror_sprite = pyglet.sprite.Sprite(
-                    old_mirror.image, x=mirror_screen_x, y=screen_y,
-                    batch=self.batch, group=self.capture, z=0
-                )
-                self.base_mirror_sprite.scale_x = -self.panorama_scale
-                self.base_mirror_sprite.scale_y = self.panorama_scale
-                # Adjust for flipped positioning
-                scaled_width = old_mirror.image.width * self.panorama_scale
-                self.base_mirror_sprite.x = mirror_screen_x + scaled_width
-                old_mirror.delete()
         
-        # Update tile positions and groups
+        # Update tile groups (positions don't change - they're in panorama space)
         for tile in self.tiles.values():
-            screen_x, screen_y = self._panorama_to_screen(*tile.position)
-            
-            # Recreate tile sprite with new capture group
+            # Recreate tile sprite with new capture group (position stays the same)
             old_sprite = tile.sprite
             tile.sprite = pyglet.sprite.Sprite(
-                old_sprite.image, x=screen_x, y=screen_y,
+                old_sprite.image, x=old_sprite.x, y=old_sprite.y,
                 batch=self.batch, group=self.capture, z=1
             )
-            
-            # Recalculate tile scaling using stored original size
-            tile_config = self.panorama_config.tiles
-            rescale_mode = tile_config.rescale or self.panorama_config.rescale
-            
-            image_width, image_height = tile.original_size
-                
-            if rescale_mode == "width":
-                scale_factor = tile_config.width / image_width
-            elif rescale_mode == "height": 
-                scale_factor = tile_config.height / image_height
-            else:  # "shortest"
-                scale_factor = min(tile_config.width / image_width, tile_config.height / image_height)
-            
-            combined_scale = scale_factor * self.panorama_scale
-            tile.sprite.scale = combined_scale
+            tile.sprite.scale = old_sprite.scale  # Keep panorama scale
             old_sprite.delete()
-            
-            # Handle mirrored tiles
-            if tile.tile_id.endswith('_mirror'):
-                tile.sprite.scale_x = -combined_scale
-                scaled_tile_width = image_width * combined_scale
-                tile.sprite.x = screen_x + scaled_tile_width
         
         logger.debug(f"Panorama renderer resize complete: {old_width}x{old_height} → {new_size}")

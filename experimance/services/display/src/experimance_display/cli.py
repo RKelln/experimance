@@ -572,8 +572,9 @@ async def test_panorama(args, cli):
             
             print("All tiles sent successfully!")
             # send clear message
+            await asyncio.sleep(10.0)
             await send_display_image(cli, None)
-            await asyncio.sleep(5.0)
+            await asyncio.sleep(4.0)
             
         finally:
             # Clean up temporary files
