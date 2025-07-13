@@ -15,14 +15,17 @@ from pydantic import BaseModel, Field
 import numpy as np
 
 from experimance_common.config import BaseConfig
-from experimance_common.constants import DEFAULT_PORTS, CORE_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.constants import (
+    DEFAULT_PORTS, CORE_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX,
+    get_project_config_path
+)
 from experimance_common.zmq.config import (
     ControllerServiceConfig, WorkerConfig, PublisherConfig, 
     SubscriberConfig, ControllerPushConfig, ControllerPullConfig, MessageType
 )
 
-# Define the default configuration path relative to the project root
-DEFAULT_CONFIG_PATH = CORE_SERVICE_DIR / "config.toml"
+# Define the default configuration path with project-aware fallback
+DEFAULT_CONFIG_PATH = get_project_config_path("core", CORE_SERVICE_DIR)
 DEFAULT_CAMERA_CONFIG_DIR = CORE_SERVICE_DIR
 DEFAULT_CAMERA_CONFIG_PATH = DEFAULT_CAMERA_CONFIG_DIR / "depth_camera_config.json"
 

@@ -11,9 +11,12 @@ from pydantic.types import StringConstraints
 from experimance_common.config import BaseServiceConfig
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.schemas import MessageType
-from experimance_common.constants import DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX, AGENT_SERVICE_DIR
+from experimance_common.constants import (
+    DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX, AGENT_SERVICE_DIR,
+    get_project_config_path
+)
 
-DEFAULT_CONFIG_PATH = AGENT_SERVICE_DIR / "config.toml"
+DEFAULT_CONFIG_PATH = get_project_config_path("agent", AGENT_SERVICE_DIR)
 
 
 class EnsembleSettings(BaseModel):

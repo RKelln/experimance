@@ -12,7 +12,10 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseConfig, BaseServiceConfig
-from experimance_common.constants import DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.constants import (
+    DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX,
+    get_project_config_path
+)
 from experimance_common.zmq.config import (
     WorkerServiceConfig, PublisherConfig, SubscriberConfig, 
     WorkerPushConfig, WorkerPullConfig, MessageType
@@ -28,7 +31,7 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 #from image_server.generators.sdxl.sdxl_generator import SDXLGeneratorConfig
 #from image_server.generators.openai.openai_generator import OpenAIGeneratorConfig
 
-DEFAULT_CONFIG_PATH = f"{IMAGE_SERVER_SERVICE_DIR}/config.toml"
+DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVICE_DIR)
 
 class GeneratorConfig(BaseModel):
     """Configuration for image generator selection and common settings."""

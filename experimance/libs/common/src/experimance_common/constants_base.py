@@ -100,8 +100,53 @@ IMAGE_SERVER_SERVICE_DIR = SERVICES_DIR / "image_server"
 AGENT_SERVICE_DIR = SERVICES_DIR / "agent"
 DISPLAY_SERVICE_DIR = SERVICES_DIR / "display"
 
+def get_project_config_path(service_name: str, fallback_dir: Path | None = None) -> Path:
+    """
+    Get the configuration path for a service, with project-aware defaults.
+    
+    This function implements the following priority:
+    1. If PROJECT_ENV is set and projects/{PROJECT_ENV}/{service_name}.toml exists, use that
+    2. If fallback_dir is provided and fallback_dir/config.toml exists, use that
+    3. Default to projects/{PROJECT_ENV}/{service_name}.toml (may not exist)
+    4. If PROJECT_ENV is not set, default to fallback_dir/config.toml
+    
+    Args:
+        service_name: Name of the service (e.g., "core", "display", "audio")
+        fallback_dir: Directory containing the legacy config.toml (e.g., CORE_SERVICE_DIR)
+        
+    Returns:
+        Path to the configuration file
+        
+    Examples:
+        get_project_config_path("core", CORE_SERVICE_DIR)
+        get_project_config_path("display", DISPLAY_SERVICE_DIR)
+    """
+    import os
+    
+    project_env = os.getenv("PROJECT_ENV")
+    
+    if project_env and project_env != "":
+        # Try project-specific config first
+        project_config = PROJECT_SPECIFIC_DIR / project_env / f"{service_name}.toml"
+        if project_config.exists():
+            return project_config
+        
+        # If fallback_dir is provided and its config exists, use it
+        if fallback_dir and (fallback_dir / "config.toml").exists():
+            return fallback_dir / "config.toml"
+            
+        # Default to project-specific path (even if it doesn't exist yet)
+        return project_config
+    else:
+        # No PROJECT_ENV set, use fallback or raise error
+        if fallback_dir:
+            return fallback_dir / "config.toml"
+        else:
+            raise ValueError("PROJECT_ENV not set and no fallback_dir provided")
+
 __all__ = [
     "PROJECT_ROOT", 
+    "PROJECT_SPECIFIC_DIR",
     "DEFAULT_PORTS", 
     "DEFAULT_TIMEOUT", 
     "HEARTBEAT_INTERVAL", 
@@ -147,5 +192,7 @@ __all__ = [
     "AUDIO_SERVICE_DIR",
     "IMAGE_SERVER_SERVICE_DIR",
     "AGENT_SERVICE_DIR",
-    "DISPLAY_SERVICE_DIR"
+    "DISPLAY_SERVICE_DIR",
+    # Config helpers
+    "get_project_config_path"
 ]

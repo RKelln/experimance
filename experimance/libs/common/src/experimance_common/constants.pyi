@@ -18,10 +18,13 @@ from experimance_common.constants_base import (
     # Project structure constants
     PROJECT_ROOT,
     PROJECT_SPECIFIC_DIR,
-    
+
+    # Config helpers
+    get_project_config_path,
+
     # Port configurations
     DEFAULT_PORTS,
-    
+
     # Timeout settings
     DEFAULT_TIMEOUT,
     HEARTBEAT_INTERVAL,
@@ -30,31 +33,31 @@ from experimance_common.constants_base import (
     DEFAULT_RECV_TIMEOUT,
     HEARTBEAT_TOPIC,
     TICK,
-    
+
     # Image transport configuration
     IMAGE_TRANSPORT_MODES,
     DEFAULT_IMAGE_TRANSPORT_MODE,
     IMAGE_TRANSPORT_SIZE_THRESHOLD,
-    
+
     # Temporary file settings
     TEMP_FILE_PREFIX,
     TEMP_FILE_SUFFIX,
     TEMP_FILE_CLEANUP_AGE,
     TEMP_FILE_CLEANUP_INTERVAL,
     DEFAULT_TEMP_DIR,
-    
+
     # URI and URL constants
     FILE_URI_PREFIX,
     DATA_URL_PREFIX,
     BASE64_PNG_PREFIX,
-    
+
     # ZMQ address patterns
     ZMQ_TCP_BIND_PREFIX,
     ZMQ_TCP_CONNECT_PREFIX,
-    
+
     # Data directory
     DATA_DIR,
-    
+
     # Media directories (relative paths)
     MEDIA_DIR,
     IMAGES_DIR,
@@ -62,7 +65,7 @@ from experimance_common.constants_base import (
     MOCK_IMAGES_DIR,
     AUDIO_DIR,
     VIDEOS_DIR,
-    
+
     # Media directories (absolute paths)
     MEDIA_DIR_ABS,
     IMAGES_DIR_ABS,
@@ -70,7 +73,7 @@ from experimance_common.constants_base import (
     MOCK_IMAGES_DIR_ABS,
     AUDIO_DIR_ABS,
     VIDEOS_DIR_ABS,
-    
+
     # Services directories
     SERVICES_DIR,
     CORE_SERVICE_DIR,
@@ -78,6 +81,7 @@ from experimance_common.constants_base import (
     IMAGE_SERVER_SERVICE_DIR,
     AGENT_SERVICE_DIR,
     DISPLAY_SERVICE_DIR,
+
 )
 
 # PROJECT constant that's set dynamically
@@ -94,6 +98,8 @@ if TYPE_CHECKING:
         pass
     elif _PROJECT_ENV == "sohkepayin":
         # Import sohkepayin-specific constants if they exist
+        # For now, the sohkepayin constants.py file is mostly empty,
+        # but this allows for future project-specific constants
         pass
     else:
         # Fallback for unknown projects
@@ -106,51 +112,54 @@ __all__: list[str] = [
     # Project structure constants
     "PROJECT_ROOT",
     "PROJECT_SPECIFIC_DIR",
-    
+
+    # Config helpers
+    "get_project_config_path",
+
     # Port configurations
     "DEFAULT_PORTS",
-    
+
     # Timeout settings
     "DEFAULT_TIMEOUT",
-    "HEARTBEAT_INTERVAL", 
+    "HEARTBEAT_INTERVAL",
     "DEFAULT_RETRY_ATTEMPTS",
     "DEFAULT_RETRY_DELAY",
     "DEFAULT_RECV_TIMEOUT",
     "HEARTBEAT_TOPIC",
     "TICK",
-    
+
     # Image transport configuration
     "IMAGE_TRANSPORT_MODES",
     "DEFAULT_IMAGE_TRANSPORT_MODE",
     "IMAGE_TRANSPORT_SIZE_THRESHOLD",
-    
+
     # Temporary file settings
     "TEMP_FILE_PREFIX",
     "TEMP_FILE_SUFFIX",
-    "TEMP_FILE_CLEANUP_AGE", 
+    "TEMP_FILE_CLEANUP_AGE",
     "TEMP_FILE_CLEANUP_INTERVAL",
     "DEFAULT_TEMP_DIR",
-    
+
     # URI and URL constants
     "FILE_URI_PREFIX",
     "DATA_URL_PREFIX",
     "BASE64_PNG_PREFIX",
-    
+
     # ZMQ address patterns
     "ZMQ_TCP_BIND_PREFIX",
     "ZMQ_TCP_CONNECT_PREFIX",
-    
+
     # Data directory
     "DATA_DIR",
-    
+
     # Media directories (relative paths)
     "MEDIA_DIR",
     "IMAGES_DIR",
     "GENERATED_IMAGES_DIR",
-    "MOCK_IMAGES_DIR", 
+    "MOCK_IMAGES_DIR",
     "AUDIO_DIR",
     "VIDEOS_DIR",
-    
+
     # Media directories (absolute paths)
     "MEDIA_DIR_ABS",
     "IMAGES_DIR_ABS",
@@ -158,7 +167,7 @@ __all__: list[str] = [
     "MOCK_IMAGES_DIR_ABS",
     "AUDIO_DIR_ABS",
     "VIDEOS_DIR_ABS",
-    
+
     # Services directories
     "SERVICES_DIR",
     "CORE_SERVICE_DIR",
@@ -166,4 +175,5 @@ __all__: list[str] = [
     "IMAGE_SERVER_SERVICE_DIR",
     "AGENT_SERVICE_DIR",
     "DISPLAY_SERVICE_DIR",
+
 ]

@@ -1,0 +1,51 @@
+## Display service configuration
+
+# Display settings
+[display]
+fullscreen = true             # Whether to run in fullscreen mode
+monitor = 0                   # Monitor to display on (0 = primary)
+resolution = [1920, 1080]     # Resolution to use if not fullscreen
+fps_limit = 30                # Frame rate limit
+vsync = true                  # Whether to use vertical sync
+debug_overlay = false          # Whether to show debug overlay
+#background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
+mask="circle"
+#debug_image = "media/images/projector_alignment.png"
+
+# ZeroMQ configuration
+#[zmq]
+#events_sub_address = "tcp://localhost:5555"  # Address to subscribe to events on
+
+# Transitions
+[transitions]
+crossfade_duration = 1.0      # Duration of crossfade in seconds
+preload_frames = true         # Whether to preload transition frames
+max_preload_mb = 500          # Maximum memory to use for preloading in MB
+
+# Rendering [NOT USED]
+#[rendering]
+#shader_path = "shaders/"      # Path to shader files
+#backend = "opengl"            # Options: "opengl", "SDL", "godot"
+
+# Title screen
+[title_screen]
+enabled = true                # Whether to show title screen on startup
+text = "Experimance"          # Text to display
+duration = 10.0                # Duration in seconds
+fade_out_duration = 10.0      # Fade out duration in seconds
+
+# Video overlay with masking
+[video_overlay]
+enabled = true                     # Whether video overlay is enabled
+default_video_path = "video_overlay.mp4"  # Path to default video (relative to media/videos/ or absolute)
+loop_video = true                  # Whether to loop the video playback
+fallback_mask_enabled = true       # Whether to create fallback mask if none provided
+start_mask_path = "images/ring_map.png"  # Path to mask file to load on startup
+
+
+# Text styles for different speakers
+[text_styles.title]
+font_size = 72                # Large font for title
+color = [255, 255, 255, 255]  # White color
+position = "center"           
+background = false            # No background for title

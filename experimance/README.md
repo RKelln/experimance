@@ -168,12 +168,52 @@ This codebase supports multiple art installation projects through a **dynamic lo
 - Set `PROJECT_ENV=experimance` or `PROJECT_ENV=projectname` to switch projects
 - Each project can have different enums and message extensions
 
-### Adding New Projects
-1. Create `projects/{new_project}/` directory
-2. Add project-specific `.env`, `schemas.py`, `constants.py` files
-3. In `schemas.py`, extend base classes: e.g. `class RenderRequest(_BaseRenderRequest):`
-4. Define project-specific enums
-5. Update mypy_path in `pyproject.toml` to include the new project directory
+
+## Creating a New Project
+
+You can create a new project either manually or using the interactive setup script:
+
+### Option 1: Manual Creation
+
+1. **Create the project directory:**
+   - Add a new folder under `projects/{new_project}/`
+2. **Add project-specific files:**
+   - `.env` for environment variables
+   - `config.toml` for project-wide configuration
+   - `constants.py` for project-specific constants
+   - `schemas.py` for project-specific schemas (extend base classes as needed)
+   - `schemas.pyi` for type stubs
+   - `<service>.toml` for each service config (e.g., `core.toml`, `display.toml`)
+3. **Extend base schemas and enums:**
+   - In `schemas.py`, extend base classes (see [libs/common/README_SERVICE.md](libs/common/README_SERVICE.md) for examples)
+   - Define project-specific enums and message types
+4. **Update static analysis paths:**
+   - Add your project directory to `mypy_path` in `pyproject.toml` for type checking
+5. **Test your project:**
+   - Set `PROJECT_ENV={new_project}` and run services to verify correct loading
+
+### Option 2: Using the Interactive Script
+
+Use the provided script to automate project setup:
+
+```bash
+uv run python scripts/create_new_project.py
+```
+
+This script will:
+- Prompt for project name and services
+- Copy config templates from existing projects or service defaults
+- Generate all necessary files and directories
+- Ensure proper structure for multi-project support
+
+**Features:**
+- Supports copying configs from other projects or service defaults
+- Generates TOML config, Python templates, and type stubs
+- Interactive prompts for customization
+
+See [scripts/README.md](scripts/README.md) for usage details and options.
+
+---
 
 ### Schema Extension Pattern
 ```python

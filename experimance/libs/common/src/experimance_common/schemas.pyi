@@ -27,18 +27,18 @@ from experimance_common.schemas_base import (
     ContentType,
     
     # Message types that are NOT extended by projects
-    ImageSource,
-    IdleStatus,
-    TransitionReady,
-    LoopReady,
+    AgentControlEvent,
     AgentControlEventPayload,
     AudiencePresentPayload,
-    SpeechDetectedPayload,
-    AgentControlEvent,
     DisplayText,
-    RemoveText,
-    TransitionRequest,
+    IdleStatus,
+    ImageSource,
+    LoopReady,
     LoopRequest,
+    RemoveText,
+    SpeechDetectedPayload,
+    TransitionReady,
+    TransitionRequest,
 )
 
 # Conditionally import project-specific types based on PROJECT_ENV
@@ -46,19 +46,25 @@ if TYPE_CHECKING:
     _PROJECT_ENV = os.getenv("PROJECT_ENV", "experimance")
     
     if _PROJECT_ENV == "experimance":
-        # Import all experimance-specific types
-        #from projects.experimance.schemas import *  # type: ignore[misc]
         from projects.experimance.schemas import (
-            Era,
             Biome,
-            SpaceTimeUpdate,
-            RenderRequest,
+            DisplayMedia,
+            Era,
             ImageReady,
-            # Add any other experimance-specific types here
+            RenderRequest,
+            SpaceTimeUpdate,
+            SuggestBiomePayload,
         )
     elif _PROJECT_ENV == "sohkepayin":
-        # Import all sohkepayin-specific types
-        from projects.sohkepayin.schemas import *  # type: ignore[misc]
+        from projects.sohkepayin.schemas import (
+            Biome,
+            DisplayMedia,
+            Emotion,
+            ImageReady,
+            RenderRequest,
+            SpaceTimeUpdate,
+            SuggestTimePeriodPayload,
+        )
     else:
         # Fallback for unknown projects - use base types and create minimal stubs
         from experimance_common.schemas_base import (
@@ -91,19 +97,27 @@ __all__: list[str] = [
     "ContentType",
     
     # Message types that are NOT extended by projects
-    "ImageSource",
-    "IdleStatus",
-    "TransitionReady",
-    "LoopReady",
-    "AgentControlEventPayload",
-    "AudiencePresentPayload", 
-    "SpeechDetectedPayload",
     "AgentControlEvent",
+    "AgentControlEventPayload",
+    "AudiencePresentPayload",
     "DisplayText",
-    "RemoveText",
-    "TransitionRequest",
+    "IdleStatus",
+    "ImageSource",
+    "LoopReady",
     "LoopRequest",
+    "RemoveText",
+    "SpeechDetectedPayload",
+    "TransitionReady",
+    "TransitionRequest",
     
-    # Project-specific types (conditionally imported above with import *)
-    # The actual symbols depend on PROJECT_ENV and what's defined in each project
+    # Common project-specific types (available in all projects)
+    "Biome",  # Extended by all projects
+    "DisplayMedia",  # Extended by all projects
+    "ImageReady",  # Extended by all projects
+    "RenderRequest",  # Extended by all projects
+    "SpaceTimeUpdate",  # Extended by all projects
+    
+    # Note: Project-specific types like Era, Emotion, SuggestBiomePayload, etc.
+    # are not included here since they're not universal across all projects.
+    # They are still available for import when the appropriate PROJECT_ENV is set.
 ]

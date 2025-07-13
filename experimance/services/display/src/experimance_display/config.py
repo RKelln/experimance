@@ -12,12 +12,15 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseConfig, BaseServiceConfig
-from experimance_common.constants import DEFAULT_PORTS, DISPLAY_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.constants import (
+    DEFAULT_PORTS, DISPLAY_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX,
+    get_project_config_path
+)
 from experimance_common.zmq.config import (
     PubSubServiceConfig, SubscriberConfig, MessageType
 )
 
-DEFAULT_CONFIG_PATH = f"{DISPLAY_SERVICE_DIR}/config.toml"
+DEFAULT_CONFIG_PATH = get_project_config_path("display", DISPLAY_SERVICE_DIR)
 
 
 
@@ -356,7 +359,7 @@ class PanoramaConfig(BaseModel):
         default=1080,
         description="Final height of panorama"
     )
-    
+
     blur : bool = Field(
         default=True,
         description="Whether to apply blur effect when new panorama is loaded",

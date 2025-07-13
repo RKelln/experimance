@@ -30,7 +30,7 @@ def get_project_dirs() -> List[str]:
     projects_dir = PROJECT_ROOT / "projects"
     if not projects_dir.exists():
         return []
-    return [d.name for d in projects_dir.iterdir() if d.is_dir()]
+    return sorted([d.name for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
 
 def extract_classes_from_ast(file_path: Path) -> List[str]:
     """Extract class names from a Python file using AST parsing."""
@@ -117,10 +117,29 @@ def get_project_specific_constants(project: str) -> List[str]:
     project_file = PROJECT_ROOT / "projects" / project / "constants.py"
     return extract_constants_from_ast(project_file)
 
+def get_common_schemas_across_projects() -> List[str]:
+    """Get schemas that are defined in ALL projects."""
+    projects = get_project_dirs()
+    if not projects:
+        return []
+    
+    # Get schemas from each project
+    project_schemas = {}
+    for project in projects:
+        project_schemas[project] = set(get_project_specific_classes(project, "schemas"))
+    
+    # Find intersection of all project schemas
+    if project_schemas:
+        common_schemas = set.intersection(*project_schemas.values())
+        return sorted(list(common_schemas))
+    
+    return []
+
 def generate_schemas_pyi() -> str:
     """Generate the content for schemas.pyi."""
     base_classes = get_schemas_base_classes()
     projects = get_project_dirs()
+    common_schemas = get_common_schemas_across_projects()
     
     # Classes that are typically NOT extended by projects (from current schemas.pyi)
     non_extended_classes = {
@@ -182,9 +201,9 @@ if TYPE_CHECKING:
         project_classes = get_project_specific_classes(project, "schemas")
         
         if i == 0:
-            content += f'    if _PROJECT_ENV == "{project}":\\n'
+            content += f'    if _PROJECT_ENV == "{project}":\n'
         else:
-            content += f'    elif _PROJECT_ENV == "{project}":\\n'
+            content += f'    elif _PROJECT_ENV == "{project}":\n'
         
         if project_classes:
             content += f"        from projects.{project}.schemas import (\n"
@@ -237,8 +256,17 @@ __all__: list[str] = [
             content += f'    "{cls}",\n'
     
     content += '''    
-    # Project-specific types (conditionally imported above)
-    # The actual symbols depend on PROJECT_ENV and what's defined in each project
+    # Common project-specific types (available in all projects)
+'''
+    
+    # Add common schemas that exist in all projects
+    for schema in common_schemas:
+        content += f'    "{schema}",  # Extended by all projects\n'
+    
+    content += '''    
+    # Note: Project-specific types like Era, Emotion, SuggestBiomePayload, etc.
+    # are not included here since they're not universal across all projects.
+    # They are still available for import when the appropriate PROJECT_ENV is set.
 ]'''
     
     return content
@@ -270,6 +298,7 @@ from experimance_common.constants_base import (
     # Group constants by category for better organization
     constant_groups = {
         "# Project structure constants": ["PROJECT_ROOT", "PROJECT_SPECIFIC_DIR"],
+        "# Config helpers": ["get_project_config_path"],
         "# Port configurations": ["DEFAULT_PORTS"],
         "# Timeout settings": ["DEFAULT_TIMEOUT", "HEARTBEAT_INTERVAL", "DEFAULT_RETRY_ATTEMPTS", 
                               "DEFAULT_RETRY_DELAY", "DEFAULT_RECV_TIMEOUT", "HEARTBEAT_TOPIC", "TICK"],
@@ -311,9 +340,9 @@ if TYPE_CHECKING:
         project_constants = get_project_specific_constants(project)
         
         if i == 0:
-            content += f'    if _PROJECT_ENV == "{project}":\\n'
+            content += f'    if _PROJECT_ENV == "{project}":\n'
         else:
-            content += f'    elif _PROJECT_ENV == "{project}":\\n'
+            content += f'    elif _PROJECT_ENV == "{project}":\n'
         
         if project_constants:
             content += f"        # Import {project}-specific constants if they exist\n"

@@ -1,0 +1,85 @@
+# Experimance Agent Service Configuration
+# This configuration uses the Pipecat backend for local audio processing
+
+service_name = "agent"
+
+# Agent backend selection - use pipecat for local audio processing
+agent_backend = "pipecat"
+
+# Tool calling capabilities
+tool_calling_enabled = true
+biome_suggestions_enabled = true
+speech_detection_enabled = true
+
+[backend_config.pipecat]
+# Pipecat-specific configuration
+system_prompt = "prompt.md"
+
+# Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
+mode = "ensemble"  # Change to "realtime" to use OpenAI Realtime Beta
+
+# ensemble mode requires a flow file:
+flow_file = "flows/experimance_flow.py"
+
+# Audio settings
+audio_in_enabled = true
+audio_out_enabled = true
+audio_in_sample_rate = 16000
+audio_out_sample_rate = 16000
+
+# Audio device selection (comment out to use default devices)
+# Use `uv run python scripts/list_audio_devices.py` to list available devices
+# Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
+audio_input_device_name = "Yealink"   # USB Conference microphone
+audio_output_device_name = "Yealink"  # USB Conference speaker
+
+# Voice Activity Detection
+vad_enabled = true
+
+# LLM settings
+openai_model = "gpt-4o"  # For ensemble mode
+
+# OpenAI Realtime settings (realtime mode only)
+openai_realtime_model = "gpt-4o-realtime-preview-2025-06-03"
+openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+turn_detection_threshold = 0.5
+turn_detection_silence_ms = 800
+
+# TTS (Text-to-Speech) settings (ensemble mode only)
+elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
+cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
+
+[vision]
+# Vision processing configuration
+webcam_enabled = true
+webcam_device_id = 0
+webcam_width = 640
+webcam_height = 480
+webcam_fps = 30
+
+# Audience detection
+audience_detection_enabled = true
+audience_detection_interval = 2.0
+audience_detection_threshold = 0.5
+
+# Vision Language Model
+vlm_enabled = true
+vlm_model = "moondream"
+vlm_analysis_interval = 10.0
+vlm_max_image_size = 512
+vlm_device = "cuda"
+
+[transcript]
+# Transcript management
+display_transcripts = false
+transcript_max_lines = 3
+transcript_line_duration = 10.0
+transcript_fade_duration = 1.0
+
+# Speaker names
+agent_speaker_name = "Experimance"
+human_speaker_name = "Visitor"
+
+# Transcript archival
+save_transcripts = true
+transcript_directory = "transcripts"

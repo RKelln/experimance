@@ -14,9 +14,12 @@ from pydantic import BaseModel, Field, model_validator
 from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.schemas import MessageType
 from experimance_common.zmq.config import SubscriberConfig, PubSubServiceConfig
-from experimance_common.constants import DEFAULT_PORTS, AUDIO_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX
+from experimance_common.constants import (
+    DEFAULT_PORTS, AUDIO_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX,
+    get_project_config_path
+)
 
-DEFAULT_CONFIG_PATH = f"{AUDIO_SERVICE_DIR}/config.toml"
+DEFAULT_CONFIG_PATH = get_project_config_path("audio", AUDIO_SERVICE_DIR)
 
 class OscConfig(BaseModel):
     """OSC configuration for SuperCollider communication."""

@@ -176,7 +176,7 @@ class MyServiceConfig(BaseServiceConfig):
         default_factory=lambda: PubSubServiceConfig(
             publisher=PublisherConfig(
                 address=ZMQ_BIND_ADDRESS,
-                port=DEFAULT_PUBLISHER_PORT + 10,  # Offset for your service
+                port=DEFAULT_PUBLISHER_PORT
                 topics=[MessageType.STATUS, MessageType.HEARTBEAT]
             ),
             subscriber=SubscriberConfig(
@@ -501,6 +501,50 @@ class TestMyServiceConfig:
         assert MessageType.HEARTBEAT in config.zmq.publisher.topics
         assert MessageType.COMMAND in config.zmq.subscriber.topics
 ```
+
+## Project-Aware Service Configuration
+
+**New: Project-Specific Config Paths**
+
+All services use a project-aware configuration system. The recommended pattern is:
+
+```python
+from experimance_common.constants import get_project_config_path, CORE_SERVICE_DIR
+DEFAULT_CONFIG_PATH = get_project_config_path("core", CORE_SERVICE_DIR)
+```
+
+- Config files should live in `projects/{PROJECT_ENV}/{service}.toml` (e.g., `projects/experimance/core.toml`)
+- The helper function `get_project_config_path(service_name, fallback_dir)` will:
+  1. Use the project-specific config if `PROJECT_ENV` is set and the file exists
+  2. Fall back to the legacy `<SERVICE>_DIR/config.toml` if the project config does not exist
+  3. Always default to the project config path if `PROJECT_ENV` is set (even if the file doesn't exist yet)
+  4. If `PROJECT_ENV` is not set or is empty, use the legacy path
+
+**Example:**
+```python
+# In src/core/config.py
+from experimance_common.constants import get_project_config_path, CORE_SERVICE_DIR
+DEFAULT_CONFIG_PATH = get_project_config_path("core", CORE_SERVICE_DIR)
+```
+
+**Behavior:**
+- When `PROJECT_ENV=experimance`, config path is `projects/experimance/core.toml`
+- When `PROJECT_ENV=sohkepayin`, config path is `projects/sohkepayin/core.toml`
+- If the project config does not exist, falls back to `services/core/config.toml`
+- If `PROJECT_ENV` is not set, uses legacy path only
+
+**Why?**
+- Supports multi-project architecture
+- Keeps project-specific configs isolated
+- Maintains backward compatibility
+- Works with the centralized config system and CLI
+
+**Migration:**
+- Move service configs to `projects/{project}/{service}.toml`
+- Update service config files to use `get_project_config_path()`
+- Legacy configs will still work as fallback
+
+---
 
 ## Testing Patterns and Best Practices
 
@@ -1005,8 +1049,9 @@ except Exception as e:
 async def main_work_loop(self):
     while self.running:
         try:
-            result = await do_work()
-            if should_shutdown(result):
+            await do_work()
+            # Check for shutdown condition
+            if check_shutdown_condition():
                 # ✅ Non-blocking shutdown from within a task
                 self.request_stop()
                 break
@@ -1066,6 +1111,7 @@ async def start(self):
     # Register tasks for background operations
     self.add_task(self.background_worker())
     self.add_task(self.health_monitor())
+    self.add_task(self.periodic_cleanup())
     
     # Always call parent start() last
     await super().start()
@@ -1089,7 +1135,7 @@ async def start(self):
 async def background_worker(self):
     while self.running:
         await do_work()
-        await asyncio.sleep(1.0)  # Prevent CPU spinning
+        await asyncio.sleep(TICK)  # Small delay to prevent CPU spinning
 
 # ✅ GOOD: Work with delays and state checking
 async def complex_worker(self):
@@ -1174,24 +1220,23 @@ async def process_data(self, data):
 
 #### Error Recovery Patterns
 ```python
-async def resilient_operation(self):
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries and self.running:
+async def resilient_operation(self, max_retries: int = 3):
+    """Perform an operation with exponential backoff retry."""
+    for attempt in range(max_retries):
         try:
             return await potentially_failing_operation()
         except RetryableError as e:
-            retry_count += 1
-            self.record_error(e, is_fatal=False,
-                             custom_message=f"Retryable error (attempt {retry_count}/{max_retries}): {e}")
-            
-            if retry_count >= max_retries:
-                self.record_error(e, is_fatal=True,
-                                 custom_message=f"Max retries ({max_retries}) exceeded, operation failed: {e}")
+            if attempt == max_retries - 1:
+                # Last attempt failed
+                self.record_error(e, is_fatal=True)
                 raise
                 
-            await asyncio.sleep(2 ** retry_count)  # Exponential backoff
+            self.record_error(e, is_fatal=False)
+            backoff_time = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Attempt {attempt + 1} failed, retrying in {backoff_time:.1f}s")
+            
+            if not await self._sleep_if_running(backoff_time):
+                raise ServiceStoppingError("Service stopped during retry")
 ```
 
 ### 5. State and Lifecycle Management
@@ -1262,21 +1307,36 @@ async def process_request(self, request):
 
 #### Test Lifecycle Transitions
 ```python
-async def test_service_startup():
-    service = MyService("test")
+async def test_service_lifecycle():
+    # Create the service
+    service = MyService(name="test-service")
     
-    # Test state transitions
-    assert service.state == ServiceState.INITIALIZED
-    
+    # Start the service and wait for it to transition to STARTED state
     await service.start()
     assert service.state == ServiceState.STARTED
     
-    # Test running state
+    # Create a task to run the service
     run_task = asyncio.create_task(service.run())
-    await service.wait_for_state(ServiceState.RUNNING, timeout=1.0)
     
-    # Test shutdown
-    await service.stop()
+    # Wait for the service to transition to RUNNING state
+    await service._state_manager.wait_for_state(ServiceState.RUNNING, timeout=1.0)
+    assert service.state == ServiceState.RUNNING
+    
+    # Test service functionality here
+    # ...
+    
+    # Stop the service and wait for it to transition to STOPPED state
+    async with service._state_manager.observe_state_change(ServiceState.STOPPED):
+        await service.stop()
+        
+    # Clean up the run task
+    if not run_task.done():
+        run_task.cancel()
+        try:
+            await run_task
+        except asyncio.CancelledError:
+            pass
+    
     assert service.state == ServiceState.STOPPED
 ```
 
@@ -1537,47 +1597,20 @@ class MyMessagingService(BaseService):
         super().__init__("my-service", "messaging")
         
         # Create ZMQ configuration
-        self.zmq_config = PubSubServiceConfig(...)
-        
-        # Use composition, not inheritance
-        self.zmq_service = PubSubService(self.zmq_config)
-```
-
-**Available ZMQ Service Types:**
-- **`PubSubService`**: Bidirectional communication (publisher + subscriber)
-- **`WorkerService`**: Task processing (pull work, push results)
-- **`ControllerService`**: Task distribution (push work, pull results, pub/sub for coordination)
-
-**Key Benefits of Composition:**
-- Clear separation of concerns
-- Easier testing with mock ZMQ services
-- More flexible service architectures
-- Better error handling and resource management
-
-## ZMQ Service Patterns
-
-### PubSub Pattern (Bidirectional Communication)
-```python
-from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
-from experimance_common.zmq.services import PubSubService
-
-class EventService(BaseService):
-    def __init__(self):
-        super().__init__("event-service", "messaging")
-        
         self.zmq_config = PubSubServiceConfig(
-            name=self.service_name,
             publisher=PublisherConfig(
-                address="tcp://*",
-                port=5555,
-                default_topic="events"
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT + 10,
+                topics=[MessageType.STATUS, MessageType.HEARTBEAT]
             ),
             subscriber=SubscriberConfig(
-                address="tcp://localhost", 
-                port=5556,
-                topics=["heartbeat", "commands"]
+                address=ZMQ_BIND_ADDRESS,
+                port=DEFAULT_PUBLISHER_PORT,
+                topics=[MessageType.COMMAND, MessageType.HEARTBEAT]
             )
         )
+        
+        # Use composition, not inheritance
         self.zmq_service = PubSubService(self.zmq_config)
     
     async def start(self):
@@ -1591,12 +1624,37 @@ class EventService(BaseService):
         # Register background tasks
         self.add_task(self._publishing_loop())
         
+        # Call BaseService start last
         await super().start()
+        self.status = ServiceStatus.HEALTHY
+        
+    async def stop(self):
+        # Call BaseService stop first
+        await super().stop()
+        
+        # Stop ZMQ service
+        await self.zmq_service.stop()
+        
+    async def _handle_heartbeat(self, message_data):
+        """Handle heartbeat messages."""
+        service = message_data.get("service", "unknown")
+        logger.info(f"Received heartbeat from {service}")
+        
+    async def _handle_command(self, message_data):
+        """Handle command messages."""
+        command = message_data.get("command", "unknown")
+        logger.info(f"Processing command: {command}")
         
     async def _publishing_loop(self):
+        """Publish periodic status updates."""
         while self.running:
-            event = {"type": "status", "service": self.service_name}
-            await self.zmq_service.publish(event, "events")
+            status = {
+                "type": "status",
+                "service": self.service_name,
+                "state": self.state.value,
+                "uptime": self.uptime
+            }
+            await self.zmq_service.publish(status, "status")
             await self._sleep_if_running(5.0)
 ```
 
@@ -1720,7 +1778,7 @@ class MyModernService(BaseService):
         self.zmq_config = PubSubServiceConfig(
             name=self.service_name,
             publisher=PublisherConfig(
-                address="tcp://*",
+                address=ZMQ_BIND_ADDRESS,
                 port=DEFAULT_PORTS["events"],
                 default_topic="status"
             ),
@@ -1777,20 +1835,6 @@ class MyModernService(BaseService):
             }
             await self.zmq_service.publish(status, "status")
             await self._sleep_if_running(5.0)
-
-async def main():
-    service = MyModernService()
-    try:
-        await service.start()
-        await service.run()  # Runs until signal
-    except KeyboardInterrupt:
-        pass
-    finally:
-        await service.stop()
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
 ```
 
 ## ZMQ Configuration
@@ -1860,405 +1904,3 @@ async def test_service_lifecycle():
     assert service.state == ServiceState.STOPPED
 ```
 
-
-## Service Development Tips and Patterns
-
-### 1. Task Loop Patterns
-
-#### Simple Continuous Work Pattern
-```python
-from experimance_common.constants import TICK
-
-async def background_worker(self):
-    """Simple continuous work with consistent timing."""
-    while self.running:
-        await do_work()
-        await asyncio.sleep(TICK)  # Small delay to prevent CPU spinning
-```
-
-#### Work-Sleep-Work Pattern
-```python
-async def complex_worker(self):
-    """Pattern for work followed by delay followed by more work."""
-    while self.running:
-        await do_first_batch_of_work()
-        
-        # Use _sleep_if_running for state-aware sleeping
-        if not await self._sleep_if_running(5.0):
-            break  # Service stopped during sleep
-            
-        await do_second_batch_of_work()
-```
-
-#### Periodic Task Pattern
-```python
-async def periodic_maintenance(self):
-    """Pattern for tasks that run periodically."""
-    while self.running:
-        try:
-            await perform_maintenance()
-        except Exception as e:
-            self.record_error(e, is_fatal=False, 
-                             custom_message=f"Maintenance task failed: {e}")
-            
-        # Sleep for maintenance interval
-        if not await self._sleep_if_running(300):  # 5 minutes
-            break
-```
-
-### 2. Performance and Resource Management
-
-#### Batch Processing Pattern
-```python
-async def batch_processor(self):
-    """Process items in batches for efficiency."""
-    batch = []
-    batch_size = 10
-    
-    while self.running:
-        try:
-            # Collect items for batch
-            item = await self.get_next_item(timeout=1.0)
-            if item:
-                batch.append(item)
-                
-            # Process batch when full or on timeout
-            if len(batch) >= batch_size or not item:
-                if batch:
-                    await self.process_batch(batch)
-                    batch.clear()
-                    
-        except TimeoutError:
-            # Process partial batch on timeout
-            if batch:
-                await self.process_batch(batch)
-                batch.clear()
-        except Exception as e:
-            self.record_error(e, is_fatal=False, 
-                             custom_message=f"Batch processing failed: {e}")
-            batch.clear()  # Clear batch on error
-```
-
-#### Resource Pool Pattern
-```python
-class PooledResourceService(BaseService):
-    def __init__(self, name: str, pool_size: int = 5):
-        super().__init__(name)
-        self.pool_size = pool_size
-        self.resource_pool = []
-        
-    async def start(self):
-        # Initialize resource pool
-        for _ in range(self.pool_size):
-            resource = await create_expensive_resource()
-            self.resource_pool.append(resource)
-            
-        await super().start()
-        
-    async def get_resource(self):
-        """Get a resource from the pool."""
-        while self.running and not self.resource_pool:
-            await asyncio.sleep(0.1)  # Wait for available resource
-            
-        if self.resource_pool:
-            return self.resource_pool.pop()
-        return None
-        
-    def return_resource(self, resource):
-        """Return a resource to the pool."""
-        self.resource_pool.append(resource)
-```
-
-### 3. Error Resilience Patterns
-
-#### Circuit Breaker Pattern
-```python
-class CircuitBreakerService(BaseService):
-    def __init__(self, name: str):
-        super().__init__(name)
-        self.failure_count = 0
-        self.failure_threshold = 5
-        self.recovery_timeout = 30
-        self.last_failure_time = None
-        self.circuit_open = False
-        
-    async def call_external_service(self):
-        # Check circuit breaker state
-        if self.circuit_open:
-            if time.time() - self.last_failure_time > self.recovery_timeout:
-                self.circuit_open = False
-                self.failure_count = 0
-                logger.info("Circuit breaker reset")
-            else:
-                raise CircuitBreakerOpenError("Circuit breaker is open")
-                
-        try:
-            result = await external_service_call()
-            self.failure_count = 0  # Reset on success
-            return result
-        except Exception as e:
-            self.failure_count += 1
-            self.last_failure_time = time.time()
-            
-            if self.failure_count >= self.failure_threshold:
-                self.circuit_open = True
-                logger.warning("Circuit breaker opened due to failures")
-                
-            self.record_error(e, is_fatal=False)
-            raise
-```
-
-#### Retry with Backoff Pattern
-```python
-async def resilient_operation(self, max_retries: int = 3):
-    """Perform an operation with exponential backoff retry."""
-    for attempt in range(max_retries):
-        try:
-            return await potentially_failing_operation()
-        except RetryableError as e:
-            if attempt == max_retries - 1:
-                # Last attempt failed
-                self.record_error(e, is_fatal=True)
-                raise
-                
-            self.record_error(e, is_fatal=False)
-            backoff_time = (2 ** attempt) + random.uniform(0, 1)
-            logger.warning(f"Attempt {attempt + 1} failed, retrying in {backoff_time:.1f}s")
-            
-            if not await self._sleep_if_running(backoff_time):
-                raise ServiceStoppingError("Service stopped during retry")
-```
-
-### 4. Monitoring and Observability
-
-#### Custom Metrics Pattern
-```python
-class MetricsTrackingService(BaseService):
-    def __init__(self, name: str):
-        super().__init__(name)
-        self.custom_metrics = {
-            'requests_processed': 0,
-            'errors_recovered': 0,
-            'last_success_time': None,
-            'processing_times': []
-        }
-        
-    async def process_request(self, request):
-        start_time = time.time()
-        try:
-            result = await handle_request(request)
-            
-            # Track success metrics
-            self.custom_metrics['requests_processed'] += 1
-            self.custom_metrics['last_success_time'] = time.time()
-            
-            processing_time = time.time() - start_time
-            self.custom_metrics['processing_times'].append(processing_time)
-            
-            # Keep only recent processing times
-            if len(self.custom_metrics['processing_times']) > 100:
-                self.custom_metrics['processing_times'] = \
-                    self.custom_metrics['processing_times'][-50:]
-                    
-            return result
-        except Exception as e:
-            self.record_error(e, is_fatal=False)
-            self.custom_metrics['errors_recovered'] += 1
-            raise
-            
-    def get_average_processing_time(self):
-        times = self.custom_metrics['processing_times']
-        return sum(times) / len(times) if times else 0
-```
-
-#### Health Check Pattern
-```python
-async def health_monitor(self):
-    """Monitor service health and report status."""
-    while self.running:
-        try:
-            # Check various health indicators
-            database_ok = await self.check_database_health()
-            external_service_ok = await self.check_external_services()
-            resource_usage_ok = self.check_resource_usage()
-            
-            if all([database_ok, external_service_ok, resource_usage_ok]):
-                if self.status != ServiceStatus.HEALTHY:
-                    self.reset_error_status()
-            else:
-                logger.warning("Health check failed")
-                self.status = ServiceStatus.WARNING
-                
-        except Exception as e:
-            self.record_error(e, is_fatal=False)
-            
-        await self._sleep_if_running(30)  # Check every 30 seconds
-```
-
-### 5. Configuration and Environment
-
-#### Environment-Aware Configuration
-```python
-class ConfigurableService(BaseService):
-    def __init__(self, name: str):
-        super().__init__(name)
-        
-        # Load configuration based on environment
-        env = os.getenv('ENVIRONMENT', 'development')
-        self.config = self.load_config(env)
-        
-        # Validate required configuration
-        self.validate_config()
-        
-    def load_config(self, env: str) -> dict:
-        config_file = f"config/{env}.toml"
-        with open(config_file, 'r') as f:
-            return toml.load(f)
-            
-    def validate_config(self):
-        required_keys = ['database_url', 'api_key', 'max_connections']
-        for key in required_keys:
-            if key not in self.config:
-                raise ConfigurationError(f"Missing required config: {key}")
-```
-
-### 6. Testing Patterns
-
-#### Service Testing Utilities
-```python
-class ServiceTestBase:
-    """Base class for service testing with common utilities."""
-    
-    async def start_service_for_test(self, service):
-        """Start a service and wait for it to be running."""
-        await service.start()
-        
-        # Run the service in background
-        self.run_task = asyncio.create_task(service.run())
-        
-        # Wait for it to be fully running
-        await service.wait_for_state(ServiceState.RUNNING, timeout=5.0)
-        
-    async def stop_service_after_test(self, service):
-        """Cleanly stop a service after testing."""
-        if service.state != ServiceState.STOPPED:
-            await service.stop()
-            
-        # Clean up the run task
-        if hasattr(self, 'run_task') and not self.run_task.done():
-            self.run_task.cancel()
-            try:
-                await self.run_task
-            except asyncio.CancelledError:
-                pass
-                
-    @contextmanager
-    def expect_error_logged(self, error_type):
-        """Context manager to verify that an error was logged."""
-        initial_error_count = service.errors
-        yield
-        assert service.errors > initial_error_count
-        assert service.status in [ServiceStatus.ERROR, ServiceStatus.FATAL]
-```
-
-### 7. Memory Management and Performance
-
-#### Avoiding Memory Leaks
-```python
-async def process_large_dataset(self, dataset):
-    """Process large datasets without memory accumulation."""
-    # Process in chunks to avoid memory buildup
-    chunk_size = 1000
-    
-    for i in range(0, len(dataset), chunk_size):
-        if not self.running:
-            break
-            
-        chunk = dataset[i:i + chunk_size]
-        
-        try:
-            await self.process_chunk(chunk)
-        except Exception as e:
-            self.record_error(e, is_fatal=False)
-            
-        # Explicitly clear chunk reference
-        del chunk
-        
-        # Yield control to prevent blocking
-        await asyncio.sleep(0)
-```
-
-## Quick Reference
-
-### Essential Service Patterns
-
-```python
-# Service structure template
-class MyService(BaseService):
-    def __init__(self, name: str):
-        super().__init__(name, "service_type")
-        # Initialize service-specific attributes
-        
-    async def start(self):
-        # Initialize resources
-        self.add_task(self.background_task())
-        await super().start()
-        
-    async def stop(self):
-        await super().stop() # do this first before stopping your own resources
-        # Clean up resources
-        
-    async def background_task(self):
-        while self.running:
-            try:
-                await do_work()
-            except FatalError as e:
-                self.record_error(e, is_fatal=True)
-                break
-            except RetryableError as e:
-                self.record_error(e, is_fatal=False)
-            
-            await self._sleep_if_running(1.0)
-```
-
-### Shutdown Methods Quick Reference
-
-| Method                                   | Use Case                      | Blocks Caller | Auto Cleanup |
-| ---------------------------------------- | ----------------------------- | ------------- | ------------ |
-| `await service.stop()`                   | Immediate shutdown needed     | ✅ Yes         | ✅ Yes        |
-| `service.request_stop()`                 | Non-blocking shutdown request | ❌ No          | ✅ Yes        |
-| `service.record_error(e, is_fatal=True)` | Error-triggered shutdown      | ❌ No          | ✅ Yes        |
-
-### Error Handling Quick Reference
-
-| Error Type           | `is_fatal` | Service Behavior  | Use Case                                      |
-| -------------------- | ---------- | ----------------- | --------------------------------------------- |
-| `RecoverableError`   | `False`    | Continues running | Network timeouts, temporary failures          |
-| `ConfigurationError` | `True`     | Auto-stops        | Invalid config, missing resources             |
-| `ValidationError`    | `False`    | Continues running | Bad input data, recoverable issues            |
-| `SystemError`        | `True`     | Auto-stops        | System resource exhaustion, critical failures |
-
-### State Checking Patterns
-
-```python
-# Check if service should continue
-if not self.running:
-    return
-
-# State-aware sleeping
-if not await self._sleep_if_running(5.0):
-    break  # Service stopped during sleep
-
-# Wait for specific state in tests
-await service.wait_for_state(ServiceState.RUNNING, timeout=5.0)
-```
-
-### Common Imports
-
-```python
-import asyncio
-import logging
-from experimance_common.base_service import BaseService, ServiceStatus
-from experimance_common.service_state import ServiceState
-from experimance_common.constants import TICK
-```
