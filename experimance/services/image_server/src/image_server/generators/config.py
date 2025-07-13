@@ -32,9 +32,11 @@ class SDXLConfig(BaseGeneratorConfig):
 if TYPE_CHECKING:
     from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
     from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
+    from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2IConfig
     
     # Type for all possible generator configs
     GeneratorConfigType = Union[
         MockGeneratorConfig,
         FalComfyGeneratorConfig,
+        FalLightningI2IConfig,
     ]

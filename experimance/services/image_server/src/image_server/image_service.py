@@ -33,6 +33,8 @@ from .generators.generator import ImageGenerator
 from image_server.generators.mock.mock_generator import MockImageGenerator
 from image_server.generators.fal.fal_comfy_generator import FalComfyGenerator
 from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig, FalGeneratorConfig
+from image_server.generators.fal.fal_lightning_i2i_generator import FalLightningI2IGenerator
+from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2IConfig
 
 # Future generator implementations:
 # from image_server.generators.mock.mock_generator import MockGenerator, MockGeneratorConfig

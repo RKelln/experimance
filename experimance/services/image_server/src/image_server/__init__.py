@@ -11,6 +11,7 @@ from .generators.generator import (
 )
 from .generators.mock.mock_generator import MockImageGenerator
 from .generators.fal.fal_comfy_generator import FalComfyGenerator
+from .generators.fal.fal_lightning_i2i_generator import FalLightningI2IGenerator
 from .generators.openai.openai_generator import OpenAIGenerator
 from .generators.local.sdxl_generator import LocalSDXLGenerator
 from .config import ImageServerConfig
@@ -22,6 +23,7 @@ __all__ = [
     'ImageGenerator',
     'MockImageGenerator',
     'FalComfyGenerator',
+    'FalLightningI2IGenerator',
     'OpenAIGenerator',
     'LocalSDXLGenerator',
     'ImageServerConfig',
