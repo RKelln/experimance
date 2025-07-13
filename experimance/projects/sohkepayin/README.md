@@ -54,9 +54,10 @@ are generated individually at higher resolution.
 
 * Listen:
   * `StoryHeard` ➜ call `infer_location()` (cloud LLM) to create a prompt.
+    * Send `DisplayMedia` with `ContentType.CLEAR` to `display` to clear panorama.
   * `UpdateLocation` ➜ call `update_location()` to modify the existing prompt.
 * Build prompt → dispatch `RenderRequest` at N width * 1 height aspect.
-* On full aspect image ready → send `DisplayMedia`.
+* On full aspect image ready → send `DisplayMedia` with no `position`.
 * Calculate tiles and use those as base/reference images.
 * Fire N hi‑res `RenderRequest`s, one for for each tile.
 * Send each each tile as `DisplayMedia` with `position` info to `display`.
@@ -88,13 +89,13 @@ uv sohkepayin_display --config projects/sohkepayin/display.toml
 
 1. **BaseImage** – fast‑pass base image, starting with large dynamic blur σ→0 over N s.
 2. **Tiles** – each new tile is rescaled and positioned and alpha‑fades 0→1 in 3 s.
-3. **Projection shader** – `uv.x /= 3.0`; optional mirror.
-4. Output 1920 × 1080 to projector.
+3. **Projection shader** – optional mirror, rescale to screen size
 
 ## Key config (`config.toml`)
 
 ```toml
 [panorama]
+enabled = true
 rescale = "width" # or "height" or "shortest", applies to tiles as well
 output_width = 1920 # final size of panorama after mirroring
 output_height = 1080
@@ -104,7 +105,7 @@ blur_duration = 10.0 #seconds
 mirror = true # mirror image horizontally
 
 [panorama.tiles]
-width = 1920
+width = 1920   # actual image size of tiles rescaled to this size in panorama
 height = 1080
 fade_duration = 3.0
 ```
