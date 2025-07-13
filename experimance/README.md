@@ -71,7 +71,9 @@ experimance/
 │   │   ├─ config.toml      # Experimance project configuration
 │   │   ├─ constants.py     # constants specific to Experimance project
 │   │   ├─ schemas.py       # schemas specific to Experimance project
-│   │   └─ schemas.pyi      # type stubs for schemas
+│   │   ├─ schemas.pyi      # type stubs for schemas
+│   │   ├─ core.toml        # configuration for the core service
+│   │   └─ <service>.toml   # configuration for the <service>
 │   └─ sohkepayin/          # overrides for Sohkepayin project
 │       └─ ...              # configuration files for Sohkepayin project  
 │
@@ -139,6 +141,18 @@ This structure makes development cleaner by:
 - Avoiding complex import hacks
 - Supporting proper editable installs
 - Making packages independently testable
+
+### Type Stub Automation
+
+To keep type stubs (`schemas.pyi` and `constants.pyi`) up to date for static analysis and IDE support, use the provided script:
+
+```bash
+uv run python scripts/update_pyi_stubs.py --diff   # Show diffs and confirm before overwriting
+uv run python scripts/update_pyi_stubs.py --dry-run # Preview generated files only
+uv run python scripts/update_pyi_stubs.py           # Update files directly
+```
+
+This script automatically generates and updates the stub files based on the current base and project-specific schemas/constants. Use the `--diff` or `--dry-run` options for safety before overwriting.
 
 
 ## Multi-Project Architecture
