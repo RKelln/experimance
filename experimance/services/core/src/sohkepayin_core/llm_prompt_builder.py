@@ -85,15 +85,40 @@ class LLMPromptBuilder:
         """
         try:
             # Query the LLM
-            json_result = await self.llm.query(
+            result = await self.llm.query(
                 content=story_content,
             )
             
-            if json_result is None:
+            if result is None:
                 raise ValueError("LLM returned no result")
+            
+            if result == "<invalid>" or "invalid" in result.lower():
+                logger.warning(f"LLM returned invalid response ({result}), using fallback prompt")
+                data = {
+                    "prompt": "A cinematic landscape scene",
+                }
+            else: #try to parse json
+                # Attempt to parse the JSON response
+                try:
+                    data = json.loads(result)
+                except json.JSONDecodeError:
+                    # Debug: Log the raw response
+                    logger.debug(f"Raw LLM response: {repr(data)}")
+                    
+                    # Clean up the response - remove markdown code blocks if present
+                    json_content = data.strip()
+                    if json_content.startswith("```json"):
+                        # Remove opening ```json
+                        json_content = json_content[7:]
+                    if json_content.startswith("```"):
+                        # Remove opening ``` (fallback)
+                        json_content = json_content[3:]
+                    if json_content.endswith("```"):
+                        # Remove closing ```
+                        json_content = json_content[:-3]
+                    json_content = json_content.strip()
 
-            # Parse the JSON response
-            data = json.loads(json_result)
+                    data = json.loads(json_content)
 
         except Exception as e:
             logger.error(f"LLM prompt generation failed: {e}")

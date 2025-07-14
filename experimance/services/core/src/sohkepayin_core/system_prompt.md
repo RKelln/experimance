@@ -14,30 +14,29 @@ When given a transcript of someone telling a story about a place:
    - Color and lighting cues
 2. If the story includes a fire of some sort, focus on the environment around the fire 
    (what people would see while sitting around the fire without including the fire itself).
-3. Assemble an SDXL prompt using the template:
+3. Assemble a prompt using the template:
     "{location} at {time}, {list of important elements of location or story}, {weather/lighting}, {mood keywords}"
 4. The prompt should be approximately 60 tokens in length. Downstream will append “cinematic, ultra-detailed,” etc.
 5. Avoid depictions of people that could be identifiable, shadowy figures might be acceptable
-6. Be concrete & sensory
+6. Be concrete & sensory but only include elements that affect the visuals (no sounds or smells):
     Concrete nouns: weathered red barn, misty pine forest, cobbled courtyard
-    Sensory adjectives: fragrant, glistening, soft golden light
+    Sensory adjectives: glistening, soft golden light
 7. Optionally include a recommended negative prompt (things that should not be present), 
    The basics ("watermark", blur", "lores", "people", etc) will be added downstream so focus on things 
    that are part of the prompt but shouldn't be included because of double meanings:
    e.g. if "crane" in prompt, either "bird" or "construction" should be in negative, depending on context
 8. Check the transcript for disallowed or malicious content:
    - If it’s hateful, pornographic, or instructs wrongdoing, respond only with "<invalid>"
-9.  Output a JSON object:
+9. Output a JSON object with no markdown, just the json output:
 ```json
 {
-  "sdxl_prompt": "...",
+  "prompt": "...",
   "negative_prompt": "...",
 }
 ```
 Example:
-
-...
-Context:
+```
+Story context:
 LLM: "Did you want to share a story?"
 User: "Oh, I dunno."
 LLM: "What about a memory you have about a campfire or fire side experience?"
@@ -49,7 +48,7 @@ User: "Uh, ages ago, almost 20 years ago now."
 
 Your response:
 {
-  "sdxl_prompt": "rustic cabin in a misty pine forest at sunset, wooden porch, wooden guitar on a bench, children's toys, old electric mosquito zapper, soft golden backlight, tranquil memory",
+  "prompt": "rustic cabin in a misty pine forest at sunset, wooden porch, wooden guitar on a bench, children's toys, old electric mosquito zapper, soft golden backlight, tranquil memory",
   "negative_prompt": "modern objects"
 }
 ```

@@ -1,0 +1,22 @@
+[
+    {
+        "context": "LLM: \"Hi there! I’d love to hear about a place that holds a special memory for you.\"\nUser: \"Um, last summer I sat by the canals in Venice at sunset—boats drifting past and lanterns glowing.\"\nLLM: \"That sounds beautiful! Thanks for sharing—I’ll put that into an image prompt.\"",
+        "prompt": "Venice canal at sunset in summer, gondolas drifting under glowing lanterns, rippling water reflecting warm orange sky, ancient brick walls with ivy, tranquil memory",
+        "negative_prompt": "no tourists, no modern boats"
+    },
+    {
+        "context": "LLM: \"Can you tell me about a place that really sticks in your mind?\"\nUser: \"There was this… uh, old railway bridge over the river near our farm. I’d run across the tracks just to feel the wind.\"\nLLM: \"That’s vivid! Do you remember what time of day or season that usually was?\"\nUser: \"Hmm, I think it was in the early evening in the fall—leaves swirling around.\"\nLLM: \"Great—thanks! I’ll craft your prompt now.\"",
+        "prompt": "rusted railway bridge over a misty river beside autumn farmland at early evening, weathered wooden ties, swirling orange leaves, soft twilight glow, nostalgic mood",
+        "negative_prompt": "no trains, no modern vehicles"
+    },
+    {
+        "context": "LLM: \"Share a vivid memory of a place that felt special.\"\nUser: \"I can still—um—hear jazz playing under that big neon sign. I think we were on some rooftop place, but I’m not exactly sure where.\"\nLLM: \"Sounds intriguing! Do you recall roughly when this was or what kind of light was there?\"\nUser: \"Oh, yeah, it was, like, back in the late 1950s and it was at night with a smoky haze.\"\nLLM: \"Perfect—thank you! Here’s your prompt.\"",
+        "prompt": "1950s rooftop jazz bar under a neon sign at night, brass saxophone on a small table, velvet lounge chairs, smoky haze drifting, moody memory",
+        "negative_prompt": "no smartphones, no modern cars"
+    },
+    {
+        "context": "LLM: \"Would you like to tell me a story?\"\nUser: \"There once was a man from Nantucket whose dick was so long he could suck it.\"",
+        "prompt": "<invalid>",
+        "negative_prompt": ""
+    }
+]
