@@ -93,6 +93,3 @@ class UpdateLocation(MessageBase):
     content: str  # Update content/instructions
     update_type: Optional[str] = None  # Type of update (e.g., "clarification", "addition")
     timestamp: Optional[str] = None
-
-
-
