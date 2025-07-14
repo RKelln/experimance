@@ -512,7 +512,7 @@ class PanoramaRenderer(LayerRenderer):
         if self.base_sprite:
             self.base_sprite.opacity = base_opacity
     
-    def handle_display_media(self, message: MessageDataType) -> None:
+    async def handle_display_media(self, message: MessageDataType) -> None:
         """Handle DisplayMedia message for panorama content."""
         try:
             # Convert message to dict if needed (like in image_renderer)
@@ -521,7 +521,7 @@ class PanoramaRenderer(LayerRenderer):
                 
             content_type = message.get('content_type')
             request_id = message.get('request_id', 'unknown')
-            position = message.get('position')
+            position = message.get('position', None)
             
             # Check for clear command (explicit clear flag or truly empty message)
             content = message.get('content')

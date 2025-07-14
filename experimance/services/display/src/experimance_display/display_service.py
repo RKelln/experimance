@@ -367,7 +367,7 @@ class DisplayService(BaseService):
                     logger.info(f"📸 Routing IMAGE to renderer (panorama={bool(self.panorama_renderer)})")
                     # Route to panorama renderer if enabled, otherwise standard image renderer
                     if self.panorama_renderer:
-                        self.panorama_renderer.handle_display_media(message)
+                        await self.panorama_renderer.handle_display_media(message)
                     elif self.image_renderer:
                         await self.image_renderer.handle_display_media(message)
 
@@ -389,13 +389,13 @@ class DisplayService(BaseService):
                     if self.image_renderer:
                         await self.image_renderer.handle_display_media(message)
                     elif self.panorama_renderer:
-                        self.panorama_renderer.handle_display_media(message)
+                        await self.panorama_renderer.handle_display_media(message)
 
                 case ContentType.CLEAR:
                     logger.info("🧹 Routing CLEAR to active renderer")
                     # Route clear command to active renderer
                     if self.panorama_renderer:
-                        self.panorama_renderer.handle_display_media(message)
+                        await self.panorama_renderer.handle_display_media(message)
                     elif self.image_renderer:
                         await self.image_renderer.handle_display_media(message)
 
