@@ -67,8 +67,3 @@ class ImageReady(_BaseImageReady):
 class SuggestBiomePayload(AgentControlEventPayload):
     """Experimance-specific SuggestBiomePayload with biome_suggestion field."""
     biome_suggestion: Biome
-
-class DisplayMedia(_BaseDisplayMedia):
-    """Experimance-specific DisplayMedia with era and biome context."""
-    era: Optional[Era]
-    biome: Optional[Biome]

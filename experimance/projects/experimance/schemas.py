@@ -81,12 +81,6 @@ class SuggestBiomePayload(AgentControlEventPayload):
     biome_suggestion: Biome
 
 
-class DisplayMedia(_BaseDisplayMedia):
-    """Experimance-specific DisplayMedia with era and biome context."""
-    era: Optional[Era] = None
-    biome: Optional[Biome] = None
-
-
 # Add any other Experimance-specific schema extensions here
 # For example, completely new message types specific to Experimance:
 

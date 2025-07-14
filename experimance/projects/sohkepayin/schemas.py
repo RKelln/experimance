@@ -15,7 +15,9 @@ from experimance_common.schemas_base import (
     ImageReady as _BaseImageReady,
     AgentControlEventPayload,
     DisplayMedia as _BaseDisplayMedia,
-    MessageType
+    MessageBase,
+    MessageType as _BaseMessageType,
+    ContentType
 )
 
 # Sohkepayin-specific enums (different from Experimance)
@@ -43,39 +45,54 @@ class Emotion(StringComparableEnum):
     HOPE = "hope"
 
 
-# Sohkepayin-specific extensions of base message types
-
-class SpaceTimeUpdate(_BaseSpaceTimeUpdate):
-    """Sohkepayin-specific SpaceTimeUpdate with era, biome, and emotion."""
-    time_period: Optional[str] = None  # Sohkepayin uses time_period instead of era
-    biome: Biome
-    emotion: Optional[Emotion] = None  # Sohkepayin adds emotional context
-
-
-class RenderRequest(_BaseRenderRequest):
-    """Sohkepayin-specific RenderRequest with era, biome, and emotion."""
-    time_period: Optional[str] = None  # Sohkepayin uses time_period instead of era
-    biome: Biome
-    emotion: Optional[Emotion] = None  # Sohkepayin adds emotional context
-    setting_tags: Optional[List[str]] = None  # Additional setting descriptors
-
-
-class ImageReady(_BaseImageReady):
-    """Sohkepayin-specific ImageReady with era, biome, and emotion."""
-    time_period: Optional[str] = None  # Sohkepayin uses time_period instead of era
-    biome: Biome
-    emotion: Optional[Emotion] = None
+# Extended MessageType with Sohkepayin-specific message types
+class MessageType(StringComparableEnum):
+    """Message types used in the Sohkepayin system (extends base MessageType)."""
+    # Base Experimance message types
+    SPACE_TIME_UPDATE = "SpaceTimeUpdate"
+    RENDER_REQUEST = "RenderRequest"
+    IDLE_STATUS = "IdleStatus"
+    IMAGE_READY = "ImageReady"
+    TRANSITION_READY = "TransitionReady"
+    LOOP_READY = "LoopReady"
+    AGENT_CONTROL_EVENT = "AgentControlEvent"
+    TRANSITION_REQUEST = "TransitionRequest"
+    LOOP_REQUEST = "LoopRequest"
+    HEARTBEAT = "Heartbeat"
+    ALERT = "Alert"
+    # Display service message types
+    DISPLAY_MEDIA = "DisplayMedia"
+    DISPLAY_TEXT = "DisplayText"
+    REMOVE_TEXT = "RemoveText"
+    CHANGE_MAP = "ChangeMap"
+    
+    # Sohkepayin-specific message types
+    STORY_HEARD = "StoryHeard"
+    UPDATE_LOCATION = "UpdateLocation"
 
 
 class SuggestTimePeriodPayload(AgentControlEventPayload):
-    """Sohkepayin-specific SuggestBiomePayload with biome_suggestion field."""
+    """Sohkepayin-specific SuggestTimePeriodPayload with time_period field."""
     time_period: str
 
 
-class DisplayMedia(_BaseDisplayMedia):
-    """Sohkepayin-specific DisplayMedia with time_period, biome, and emotion context."""
-    time_period: Optional[str] = None
-    biome: Optional[Biome] = None
-    emotion: Optional[Emotion] = None
+# Sohkepayin-specific message types for story handling
+
+class StoryHeard(MessageBase):
+    """Message sent when a complete story is heard from the audience."""
+    type: MessageType = MessageType.STORY_HEARD
+    content: str  # The story content/transcript
+    speaker_id: Optional[str] = None  # Optional speaker identification
+    confidence: Optional[float] = None  # Optional confidence score
+    timestamp: Optional[str] = None  # When the story was heard
+
+
+class UpdateLocation(MessageBase):
+    """Message to update the current environmental setting."""
+    type: MessageType = MessageType.UPDATE_LOCATION
+    content: str  # Update content/instructions
+    update_type: Optional[str] = None  # Type of update (e.g., "clarification", "addition")
+    timestamp: Optional[str] = None
+
 
 

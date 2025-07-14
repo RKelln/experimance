@@ -30,6 +30,7 @@ from experimance_common.schemas_base import (
     AgentControlEvent,
     AgentControlEventPayload,
     AudiencePresentPayload,
+    DisplayMedia,
     DisplayText,
     IdleStatus,
     ImageSource,
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
     if _PROJECT_ENV == "experimance":
         from projects.experimance.schemas import (
             Biome,
-            DisplayMedia,
             Era,
             ImageReady,
             RenderRequest,
@@ -57,13 +57,11 @@ if TYPE_CHECKING:
         )
     elif _PROJECT_ENV == "sohkepayin":
         from projects.sohkepayin.schemas import (
-            Biome,
-            DisplayMedia,
             Emotion,
-            ImageReady,
-            RenderRequest,
-            SpaceTimeUpdate,
+            MessageType,
+            StoryHeard,
             SuggestTimePeriodPayload,
+            UpdateLocation,
         )
     else:
         # Fallback for unknown projects - use base types and create minimal stubs

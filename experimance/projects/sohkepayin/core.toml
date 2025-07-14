@@ -1,1 +1,31 @@
-# sohkepayin core config placeholder
+# Sohkepayin Core Service Configuration
+
+service_name = "sohkepayin_core"
+heartbeat_interval = 5.0
+
+[panorama]
+# Base panorama dimensions (before mirroring)
+width = 5760  # 3 tiles * 1920, will be mirrored to 11520 in display
+height = 1080
+
+[tiles]
+# Tile generation settings
+max_width = 1920
+max_height = 1080
+min_overlap_percent = 15.0  # 15% overlap for seamless blending
+max_megapixels = 1.0  # Keep tiles around 1MP for reasonable generation time
+
+[llm]
+# LLM provider configuration
+provider = "openai"
+model = "gpt-4o"
+# api_key = "your-api-key-here"  # Set via environment variable OPENAI_API_KEY
+max_tokens = 500
+temperature = 0.7
+timeout = 30.0
+
+[rendering]
+# Image generation timeouts
+timeout = 120.0
+base_image_timeout = 60.0
+tile_timeout = 90.0

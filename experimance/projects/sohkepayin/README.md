@@ -27,7 +27,7 @@ graph TD
 
 1. **0 s** – Story finish → half length strip request.
 2. **\~1 s** – Strip arrives, blurred on screen.
-3. **≤5 s** – Three 1920 × 1080 tiles fade‑in. Mirror to reach full length.
+3. **≤5 s** – Three tiles fade‑in. Mirror to reach full length.
 
 ---
 
@@ -40,17 +40,19 @@ graph TD
 ```bash
 uv pip install -e services/core
 export PROJECT_ENV=sohkepayin
-uv run -m sohkepayin_core --config services/core/sohkepayin.toml
+uv run -m sohkepayin_core
 ```
 
 ## Responsibilities
 
-Creates a panorama image based on a story told by the audience. The story is obtained from the `agent` service then passed to the `core` that manges the rendering of the
+Creates a panorama image based on a story told by the audience. The story is obtained from 
+the `agent` service then passed to the `core` that manges the rendering of the
 panorama using `image_server` and then sends the pieces of the panorma to `display`.
 
 Geenerally the panoram is half the total wall length and mirrored (in `display`).
 So first a base image is generated for the entire half length, then tiles of that 
-are generated individually at higher resolution.
+are generated individually at higher resolution using the base image as a reference 
+to ensure they tile seamlessly.
 
 * Listen:
   * `StoryHeard` ➜ call `infer_location()` (cloud LLM) to create a prompt.
@@ -66,11 +68,23 @@ are generated individually at higher resolution.
 ## Package layout
 
 ```
-sohkepayin_core/
+services/core/src/sohkepayin_core/
 ├─ sohkepaying_core.py  # Idle ▸ Listening ▸ BaseImage ▸ Tiles
 ├─ llm.py               # OpenAI / … wrapper
-└─ prompt_builder.py
+├─ tiler.py             # Manages tiling
+└─ prompt_builder.py    # Creates or updates text-to-image prompts based on narratives
 ```
+
+# Tiled images
+
+The core service has to intelligently manage image tiling, given a base image. 
+It will overlap the tiles and mask out the edges to help with blending before sending
+the correctly positioned tiles to display service.
+
+Given a base image, a maximum tile size and minimum amount of overlap it will create 
+these tiles by cropping the base image. It uses these for image to image generation,
+then applies a mask to the edges of the generated images to create transparent PNGs
+that can be sent directly to the display wioth proper positioning.
 
 ---
 

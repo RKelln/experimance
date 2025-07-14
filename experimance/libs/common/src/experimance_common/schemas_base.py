@@ -257,9 +257,9 @@ class RenderRequest(MessageBase):
     request_id: str  # Unique identifier for tracking the request
     prompt: str
     negative_prompt: Optional[str] = None
-    width: Optional[int]  # Width of the generated image (default 1024)
-    height: Optional[int]  # Height of the generated image (default 1024)
-    style: Optional[str] = None  # Optional style hint
+    width: Optional[int] = 1024   # Width of the generated image (default 1024)
+    height: Optional[int] = 1024  # Height of the generated image (default 1024)
+    style: Optional[str] = None   # Optional style hint (can be used for loras, etc)
     seed: Optional[int] = None
     reference_image: Optional[ImageSource] = None  # Optional reference image to guide generation
     depth_map: Optional[ImageSource] = None  # Optional depth map URI for depth-aware generation
