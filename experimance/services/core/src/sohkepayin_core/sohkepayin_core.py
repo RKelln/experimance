@@ -21,15 +21,16 @@ from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 
 from experimance_common.base_service import BaseService
+from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import ControllerService  
 from experimance_common.schemas import (
     StoryHeard, UpdateLocation, ImageReady, RenderRequest, DisplayMedia, 
     ContentType, MessageType
 )
 
-from .config import SohkepayinCoreConfig
-from .llm import LLMManager, LocationInference
-from .prompt_builder import SohkepayinPromptBuilder, ImagePrompt
+from .config import SohkepayinCoreConfig, ImagePrompt
+from .llm import LLMProvider, get_llm_provider
+from .llm_prompt_builder import LLMPromptBuilder
 from .tiler import PanoramaTiler, TileSpec
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,6 @@ class ActiveRequest:
     """Tracks an active image generation request."""
     
     request_id: str
-    location: LocationInference
     base_prompt: ImagePrompt
     tiles: List[TileSpec] = field(default_factory=list)
     base_image_ready: bool = False
@@ -70,24 +70,20 @@ class SohkepayinCoreService(BaseService):
     
     def __init__(self, config: SohkepayinCoreConfig):
         """Initialize the Sohkepayin core service."""
-        super().__init__(config)
+        super().__init__(config.service_name, service_type="core")
         
         self.config = config
-        self.core_state = CoreState.IDLE  # Application-level state (separate from service lifecycle)
+        self.core_state = CoreState.IDLE  # services already have state, we track core state
         self.current_request: Optional[ActiveRequest] = None
         self.pending_image_requests: Dict[str, str] = {}  # request_id -> type
         
         # Initialize components
-        self.llm_manager = LLMManager(
-            provider=config.llm.provider,
-            model=config.llm.model,
-            api_key=config.llm.api_key,
-            max_tokens=config.llm.max_tokens,
-            temperature=config.llm.temperature,
-            timeout=config.llm.timeout
-        )
+        self.llm = get_llm_provider(**config.llm.model_dump())
         
-        self.prompt_builder = SohkepayinPromptBuilder()
+        self.prompt_builder = LLMPromptBuilder(
+            llm=self.llm,
+            system_prompt_or_file=config.llm.system_prompt_or_file
+        )
         
         self.tiler = PanoramaTiler(
             max_tile_width=config.tiles.max_width,
@@ -110,7 +106,7 @@ class SohkepayinCoreService(BaseService):
         
         # Set up message handlers
         self.zmq_service.add_message_handler(MessageType.STORY_HEARD, self._handle_story_heard)
-        self.zmq_service.add_message_handler(MessageType.UPDATE_LOCATION, self._handle_update_location)
+        self.zmq_service.add_message_handler(MessageType.UPDATE_LOCATION, self._handle_story_heard) # for now use the same handler
         
         # Set up worker response handler for image results
         self.zmq_service.add_response_handler(self._handle_worker_response)
@@ -150,7 +146,7 @@ class SohkepayinCoreService(BaseService):
                 self.current_request = None
                 self.pending_image_requests.clear()
     
-    async def _handle_story_heard(self, topic: str, message_data):
+    async def _handle_story_heard(self, topic: str, message_data: MessageDataType):
         """
         Handle StoryHeard message - start new visualization pipeline.
         
@@ -158,32 +154,29 @@ class SohkepayinCoreService(BaseService):
             topic: The message topic
             message_data: Message data (dict or MessageBase)
         """
-        # Convert to StoryHeard object if needed
-        if isinstance(message_data, dict):
-            message = StoryHeard(**message_data)
-        else:
-            message = message_data
-        logger.info(f"Story heard: {len(str(message))} chars")
-        
-        # Cancel any ongoing requests
-        if self.current_request:
-            logger.info("Canceling previous request for new story")
-            self.pending_image_requests.clear()
-        
-        # Send clear display message
-        await self._send_clear_display()
-        
         try:
+            story : StoryHeard = StoryHeard.to_message_type(message_data) # type: ignore[assignment]
+            if not story or not isinstance(story, StoryHeard):
+                logger.warning("Failed to convert message to StoryHeard type")
+                return
+        
+            logger.info(f"Story heard: {len(str(story.content))} chars")
+            
+            # Cancel any ongoing requests
+            if self.current_request:
+                logger.info("Canceling previous request for new story")
+                self.pending_image_requests.clear()
+            
+            # Send clear display message
+            await self._send_clear_display()
+        
+
             # Analyze story to infer location
             logger.info("Analyzing story with LLM")
-            location = await self.llm_manager.infer_location(message)
             
             # Create base image prompt
-            base_prompt = self.prompt_builder.build_prompt(
-                location=location,
-                width=self.config.panorama.width,
-                height=self.config.panorama.height,
-                is_base_image=True
+            base_prompt = await self.prompt_builder.build_prompt(
+                story.content
             )
             
             # Calculate tiling strategy
@@ -195,7 +188,6 @@ class SohkepayinCoreService(BaseService):
             # Create new active request
             self.current_request = ActiveRequest(
                 request_id=str(uuid.uuid4()),
-                location=location,
                 base_prompt=base_prompt,
                 tiles=tiles,
                 total_tiles=len(tiles)
@@ -203,7 +195,7 @@ class SohkepayinCoreService(BaseService):
             
             logger.info(
                 f"New request {self.current_request.request_id}: "
-                f"{location.biome}/{location.emotion}, {len(tiles)} tiles"
+                f"{len(tiles)} tiles"
             )
             
             # Transition to base image generation
@@ -215,63 +207,7 @@ class SohkepayinCoreService(BaseService):
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Failed to process story")
             await self._transition_to_state(CoreState.LISTENING)
-    
-    async def _handle_update_location(self, topic: str, message_data):
-        """
-        Handle UpdateLocation message - modify current visualization.
-        
-        Args:
-            topic: The message topic
-            message_data: Message data (dict or MessageBase)
-        """
-        # Convert to UpdateLocation object if needed
-        if isinstance(message_data, dict):
-            message = UpdateLocation(**message_data)
-        else:
-            message = message_data
-        if not self.current_request:
-            logger.warning("Received UpdateLocation but no active request")
-            return
-        
-        logger.info("Updating location for current request")
-        
-        try:
-            # Update location inference
-            updated_location = await self.llm_manager.update_location(
-                self.current_request.location, 
-                message
-            )
-            
-            # If significant change, restart the pipeline
-            if (updated_location.biome != self.current_request.location.biome or
-                updated_location.emotion != self.current_request.location.emotion):
-                
-                logger.info("Significant location change, restarting pipeline")
-                
-                # Clear display and pending requests
-                await self._send_clear_display()
-                self.pending_image_requests.clear()
-                
-                # Update request with new location and prompt
-                self.current_request.location = updated_location
-                self.current_request.base_prompt = self.prompt_builder.build_prompt(
-                    location=updated_location,
-                    width=self.config.panorama.width,
-                    height=self.config.panorama.height,
-                    is_base_image=True
-                )
-                self.current_request.base_image_ready = False
-                self.current_request.completed_tiles.clear()
-                
-                # Restart with new base image
-                await self._transition_to_state(CoreState.BASE_IMAGE)
-                await self._request_base_image()
-            else:
-                logger.info("Minor location update, continuing current pipeline")
-                self.current_request.location = updated_location
-                
-        except Exception as e:
-            self.record_error(e, is_fatal=False, custom_message="Failed to update location")
+
     
     async def _handle_worker_response(self, worker_name: str, response_data):
         """
@@ -328,10 +264,14 @@ class SohkepayinCoreService(BaseService):
         
         request_id = f"{self.current_request.request_id}_base"
         
+        panorama_prompt = self.prompt_builder.base_prompt_to_panorama_prompt(
+            self.current_request.base_prompt,
+        )
+
         render_request = RenderRequest(
             request_id=request_id,
-            prompt=self.current_request.base_prompt.prompt,
-            negative_prompt=self.current_request.base_prompt.negative_prompt,
+            prompt=panorama_prompt.prompt,
+            negative_prompt=panorama_prompt.negative_prompt,
             width=self.config.panorama.width,
             height=self.config.panorama.height,
             # Add other parameters as needed
@@ -386,12 +326,10 @@ class SohkepayinCoreService(BaseService):
             return
         
         # Build tile-specific prompt
-        tile_prompt = self.prompt_builder.build_tile_prompt(
-            base_prompt=self.current_request.base_prompt,
-            tile_index=tile_spec.tile_index,
-            total_tiles=tile_spec.total_tiles,
-            tile_width=tile_spec.width,
-            tile_height=tile_spec.height
+        # TODO: look at the reference image to create prompt?
+
+        tile_prompt = self.prompt_builder.base_prompt_to_tile_prompt(
+            self.current_request.base_prompt,
         )
         
         request_id = f"{self.current_request.request_id}_tile_{tile_spec.tile_index}"
@@ -498,15 +436,6 @@ async def run_sohkepayin_core_service(
     # Create and run service
     service = SohkepayinCoreService(config)
     
-    try:
-        await service.start()
-        logger.info("Sohkepayin core service started successfully")
-        await service.run()
-    except KeyboardInterrupt:
-        logger.info("Shutdown requested")
-    except Exception as e:
-        logger.error(f"Service error: {e}", exc_info=True)
-        raise
-    finally:
-        await service.stop()
-        logger.info("Sohkepayin core service stopped")
+    await service.start()
+    logger.info("Sohkepayin core service started successfully")
+    await service.run()

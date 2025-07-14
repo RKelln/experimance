@@ -196,7 +196,7 @@ class PanoramaTiler:
                 dimension, max_tile_size, num_tiles
             )
             
-            if tile_size is None:  # Invalid solution
+            if tile_size is None or overlap is None:  # Invalid solution
                 continue
                 
             # Score solution (prefer fewer tiles, reasonable overlap)
@@ -217,6 +217,12 @@ class PanoramaTiler:
             tile_size, overlap = self._calculate_tile_size_and_overlap(
                 dimension, max_tile_size, num_tiles
             )
+            if tile_size is None or overlap is None:
+                logger.error(
+                    f"Failed to calculate valid tiling for {dimension}px dimension "
+                    f"with max tile size {max_tile_size}px"
+                )
+                return num_tiles, max_tile_size, 0
             logger.warning(
                 f"Using fallback tiling: {num_tiles} tiles, {overlap}px overlap "
                 f"({overlap/tile_size*100:.1f}%)"

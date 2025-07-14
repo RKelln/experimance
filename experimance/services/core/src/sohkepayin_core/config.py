@@ -6,6 +6,7 @@ This module defines Pydantic models for validating and accessing
 core service configuration in a type-safe way.
 """
 
+from dataclasses import dataclass
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,15 @@ from experimance_common.schemas import MessageType
 # Define the default configuration path with project-aware fallback
 DEFAULT_CONFIG_PATH = get_project_config_path("core", CORE_SERVICE_DIR)
 
+# dataclasses
+@dataclass
+class ImagePrompt:
+    """Data class for image generation prompts."""
+    
+    prompt: str
+    negative_prompt: Optional[str] = ""
+
+# config classess
 
 class PanoramaConfig(BaseModel):
     """Configuration for panorama generation."""
@@ -109,6 +119,11 @@ class LLMConfig(BaseModel):
         le=120.0
     )
 
+    system_prompt_or_file: Optional[str] = Field(
+        default=None,
+        description="System prompt as a string or path to a file containing the prompt"
+    )
+
 
 class RenderingConfig(BaseModel):
     """Configuration for image rendering."""
@@ -172,10 +187,9 @@ class SohkepayinCoreConfig(BaseServiceConfig):
     
     zmq: ControllerServiceConfig = Field(
         default_factory=lambda: ControllerServiceConfig(
-            name="sohkepayin-core",
             publisher=PublisherConfig(
                 address=ZMQ_TCP_BIND_PREFIX,
-                port=DEFAULT_PORTS["events"],
+                port=DEFAULT_PORTS["events"],  # Publish to events channel
                 default_topic=MessageType.DISPLAY_MEDIA
             ),
             subscriber=SubscriberConfig(
