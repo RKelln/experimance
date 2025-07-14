@@ -135,7 +135,7 @@ class OpenAIProvider(LLMProvider):
 class MockLLMProvider(LLMProvider):
     """Mock LLM provider for testing."""
     
-    def __init__(self, delay: float = 0.5):
+    def __init__(self, delay: float = 0.5, **kwargs: Optional[dict]):
         """
         Initialize mock provider.
         
