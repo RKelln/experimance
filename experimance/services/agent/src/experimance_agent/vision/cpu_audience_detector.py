@@ -105,8 +105,9 @@ class CPUAudienceDetector:
         
         Args:
             frame: BGR video frame from webcam
-            **kwargs: Additional arguments (webcam_manager, vlm_processor, etc.)
-                     Accepted for compatibility but not used in CPU detection
+            **kwargs: Additional arguments including:
+                     - include_motion_mask: bool - Whether to include motion mask in results (default: False)
+                     - webcam_manager, vlm_processor, etc. - Accepted for compatibility but not used
             
         Returns:
             dict: Detection results with confidence scores and metadata
@@ -117,6 +118,9 @@ class CPUAudienceDetector:
         try:
             start_time = time.time()
             
+            # Extract options from kwargs
+            include_motion_mask = kwargs.get('include_motion_mask', False)
+            
             # Scale down frame for faster processing
             small_frame = self._scale_frame(frame)
             
@@ -124,7 +128,7 @@ class CPUAudienceDetector:
             person_result = await self._detect_persons_hog(small_frame)
             
             # Perform motion detection
-            motion_result = await self._detect_motion(small_frame)
+            motion_result = await self._detect_motion(small_frame, include_mask=include_motion_mask)
             
             # Combine results
             detection_result = self._combine_cpu_results(person_result, motion_result)
@@ -247,12 +251,13 @@ class CPUAudienceDetector:
                 "error": str(e)
             }
     
-    async def _detect_motion(self, frame: np.ndarray) -> Dict[str, Any]:
+    async def _detect_motion(self, frame: np.ndarray, include_mask: bool = False) -> Dict[str, Any]:
         """
         Detect motion using background subtraction.
         
         Args:
             frame: BGR image frame
+            include_mask: Whether to include the motion mask in results (for visualization)
             
         Returns:
             dict: Motion detection results
@@ -285,13 +290,19 @@ class CPUAudienceDetector:
             motion_intensity_threshold = self.profile.detection.motion_intensity_threshold
             motion_detected = len(significant_contours) > 0 and motion_intensity > motion_intensity_threshold
             
-            return {
+            result = {
                 "motion_detected": motion_detected,
                 "motion_intensity": motion_intensity,
                 "contour_count": len(significant_contours),
                 "total_motion_area": total_motion_area,
                 "confidence": min(0.8, motion_intensity * 10) if motion_detected else 0.0
             }
+            
+            # Only include motion mask if requested (for visualization during tuning)
+            if include_mask:
+                result["motion_mask"] = fg_mask
+            
+            return result
             
         except Exception as e:
             logger.error(f"Motion detection failed: {e}")

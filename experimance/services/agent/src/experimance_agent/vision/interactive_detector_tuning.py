@@ -47,6 +47,7 @@ class InteractiveDetectorTuner:
         self.show_info = True
         self.detector_needs_reload = False
         self.setup_complete = False  # Prevent callback during setup
+        self._debug_motion = False  # Debug motion detection
         
         # Current parameters (will be set from profile)
         self.params = {
@@ -214,7 +215,8 @@ class InteractiveDetectorTuner:
         
         # Mark setup as complete to enable callbacks
         self.setup_complete = True
-        print(f"Initialized trackbars with profile '{self.profile.name}' values")
+        profile_name = self.profile.name if self.profile else "Unknown"
+        print(f"Initialized trackbars with profile '{profile_name}' values")
     
     
     
@@ -327,9 +329,47 @@ class InteractiveDetectorTuner:
             motion_det = result['motion_detection']
             if 'motion_mask' in motion_det and motion_det['motion_mask'] is not None:
                 motion_mask = motion_det['motion_mask']
-                # Find contours in motion mask
-                contours, _ = cv2.findContours(motion_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(vis_frame, contours, -1, (0, 0, 255), 1)
+                try:
+                    # Ensure motion_mask is uint8 and single channel
+                    if len(motion_mask.shape) == 3:
+                        motion_mask = cv2.cvtColor(motion_mask, cv2.COLOR_BGR2GRAY)
+                    if motion_mask.dtype != np.uint8:
+                        motion_mask = motion_mask.astype(np.uint8)
+                    
+                    # Resize motion mask to match frame size if needed
+                    frame_height, frame_width = vis_frame.shape[:2]
+                    mask_height, mask_width = motion_mask.shape
+                    if (mask_height != frame_height) or (mask_width != frame_width):
+                        motion_mask = cv2.resize(motion_mask, (frame_width, frame_height), interpolation=cv2.INTER_NEAREST)
+                        
+                        # Debug resize operation
+                        if hasattr(self, '_debug_motion') and getattr(self, '_frame_count', 0) % 60 == 0:
+                            print(f"Resized motion mask: {mask_width}x{mask_height} → {frame_width}x{frame_height}")
+                    
+                    # Find contours in motion mask
+                    contours, _ = cv2.findContours(motion_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    if len(contours) > 0:
+                        # Draw contour outlines in red
+                        cv2.drawContours(vis_frame, contours, -1, (0, 0, 255), 2)
+                        
+                        # Draw filled contours with transparency for better visibility
+                        mask_overlay = np.zeros_like(vis_frame)
+                        cv2.drawContours(mask_overlay, contours, -1, (0, 0, 255), -1)
+                        vis_frame = cv2.addWeighted(vis_frame, 0.8, mask_overlay, 0.2, 0)
+                        
+                except Exception as e:
+                    if hasattr(self, '_debug_motion'):
+                        print(f"Error drawing motion: {e}")
+            elif hasattr(self, '_debug_motion') and getattr(self, '_frame_count', 0) % 60 == 0:
+                # Debug: Show why motion isn't being drawn
+                if 'motion_detection' not in result:
+                    print("No 'motion_detection' in result")
+                elif 'motion_mask' not in motion_det:
+                    print("No 'motion_mask' in motion_detection")
+                elif motion_det['motion_mask'] is None:
+                    print("motion_mask is None")
+        
         
         # Draw overall detection status
         presence = result.get('audience_detected', False)
@@ -360,7 +400,7 @@ class InteractiveDetectorTuner:
                 f"HOG: {self.params['hog_threshold']/100-1:.2f}",
                 f"MOG2Var: {self.params['mog2_var_threshold']}",
                 f"HOG Dets: {len(result.get('person_detection', {}).get('detections', []))}",
-                f"Motion: {result.get('motion_detection', {}).get('intensity', 0.0):.3f}",
+                f"Motion: {result.get('motion_detection', {}).get('motion_intensity', 0.0):.3f}",
                 f"Person Count: {result.get('person_detection', {}).get('count', 0)}"
             ]
             
@@ -419,6 +459,7 @@ class InteractiveDetectorTuner:
         print(f"  h: Toggle HOG detection display")
         print(f"  m: Toggle motion detection display")
         print(f"  i: Toggle info display")
+        print(f"  d: Toggle motion debug output")
         print(f"\nAdjust parameters using the trackbars in the Controls window")
         print(f"Press SPACEBAR to apply changes to detector")
         print(f"\nDetection Tips:")
@@ -446,44 +487,31 @@ class InteractiveDetectorTuner:
                     # Add timing debug
                     import time
                     start_time = time.time()
-                    result = self.loop.run_until_complete(self.detector.detect_audience(frame))
+                    result = self.loop.run_until_complete(
+                        self.detector.detect_audience(frame, include_motion_mask=True)
+                    )
                     detection_time = time.time() - start_time
                     
                     # Debug output every 30 frames (roughly once per second)
                     frame_count = getattr(self, '_frame_count', 0)
                     self._frame_count = frame_count + 1
                     if frame_count % 30 == 0:
-                        print(f"Detection took {detection_time:.3f}s, result keys: {list(result.keys())}")
+                        print(f"Detection: {detection_time:.3f}s | "
+                              f"HOG: {len(result.get('person_detection', {}).get('detections', []))} | "
+                              f"Motion: {result.get('motion_detection', {}).get('motion_intensity', 0.0):.3f} | "
+                              f"Presence: {result.get('audience_detected', False)}")
                         if 'error' in result:
                             print(f"  ERROR: {result['error']}")
-                        else:
-                            print(f"  HOG detections: {len(result.get('person_detection', {}).get('detections', []))}")
-                            print(f"  Motion intensity: {result.get('motion_detection', {}).get('intensity', 0.0):.3f}")
-                            print(f"  Presence: {result.get('audience_detected', False)}")
                     
                 except Exception as e:
                     logger.warning(f"Detection failed: {e}")
-                    import traceback
-                    traceback.print_exc()
                     # Create dummy result for visualization
                     result = {
                         'audience_detected': False,
                         'confidence': 0.0,
                         'person_detection': {'detections': [], 'count': 0},
-                        'motion_detection': {'motion_mask': None, 'intensity': 0.0},
+                        'motion_detection': {'motion_intensity': 0.0},
                         'error': str(e)
-                    }
-                
-                # Handle error results from detector
-                if 'error' in result:
-                    # Create a proper result structure for visualization
-                    error_msg = result.get('error', 'Unknown error')
-                    result = {
-                        'audience_detected': False,
-                        'confidence': 0.0,
-                        'person_detection': {'detections': [], 'count': 0},
-                        'motion_detection': {'motion_mask': None, 'intensity': 0.0},
-                        'error': error_msg
                     }
                 
                 # Draw visualizations
@@ -511,6 +539,9 @@ class InteractiveDetectorTuner:
                 elif key == ord('i'):
                     self.show_info = not self.show_info
                     cv2.setTrackbarPos('Show Info', self.controls_window, int(self.show_info))
+                elif key == ord('d'):
+                    self._debug_motion = not self._debug_motion
+                    print(f"Motion debug: {'ON' if self._debug_motion else 'OFF'}")
         
         finally:
             self.cleanup()
