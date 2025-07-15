@@ -718,28 +718,29 @@ class PanoramaRenderer(LayerRenderer):
                    f"at ({tile_x_adjusted}, {tile_y_adjusted}) scale={scale_factor:.3f}")
         
         # Remove old tiles if they exist
-        if request_id in self.tiles:
-            old_tile = self.tiles[request_id]
-            old_tile.sprite.delete()
-            if request_id in self.tile_order:
-                self.tile_order.remove(request_id)
+        # Generate unique ID if request_id is None to avoid collisions
+        tile_id = request_id if request_id is not None else f"tile_{tile_x}_{tile_y}"
         
-        # No need to handle mirror tiles - shader takes care of mirroring
+        if tile_id in self.tiles:
+            old_tile = self.tiles[tile_id]
+            old_tile.sprite.delete()
+            if tile_id in self.tile_order:
+                self.tile_order.remove(tile_id)
         
         # Create original tile - use message fade_in for custom duration or config default
         if fade_in_duration is not None and fade_in_duration > 0:
             # Use custom fade duration from message
-            tile = PanoramaTile(sprite, (tile_x, tile_y), request_id, 
+            tile = PanoramaTile(sprite, (tile_x, tile_y), tile_id, 
                                original_size=(image.width, image.height),
                                fade_duration=fade_in_duration)
         else:
             # Use config fade duration for built-in animation
-            tile = PanoramaTile(sprite, (tile_x, tile_y), request_id, 
+            tile = PanoramaTile(sprite, (tile_x, tile_y), tile_id, 
                                original_size=(image.width, image.height),
                                fade_duration=tile_config.fade_duration)
             
-        self.tiles[request_id] = tile
-        self.tile_order.append(request_id)
+        self.tiles[tile_id] = tile
+        self.tile_order.append(tile_id)
     
     def _start_base_opacity_fade(self, fade_duration: float) -> None:
         """Start opacity fade-in for entire panorama group."""
@@ -878,7 +879,7 @@ class PanoramaRenderer(LayerRenderer):
         logger.info(f"Starting panorama clear with {fade_duration}s fade")
         self.is_clearing = True
         self.clear_timer = 0.0
-        self.clear_duration = fade_duration
+        self.clear_duration = fade_duration or 1.0
         
         # Stop all ongoing tile fade animations and store their current opacity
         for tile in self.tiles.values():
