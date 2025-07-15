@@ -46,13 +46,14 @@ class ImageGenerator(ABC):
         pass
     
     @abstractmethod
-    async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
+    async def generate_image(self, prompt: str, **kwargs) -> str:
         """Generate an image based on the given prompt and optional depth map.
         
         Args:
             prompt: Text description of the image to generate
-            depth_map_b64: Optional base64-encoded depth map PNG
             **kwargs: Additional generation parameters
+                Use depth_map_b64 for depth map base 64 string if needed
+                Use image_b64 for image-to-image generation if needed
             
         Returns:
             Path to the generated image file

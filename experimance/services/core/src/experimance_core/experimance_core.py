@@ -102,7 +102,7 @@ class ExperimanceCoreService(BaseService):
         # Initialize base service
         super().__init__(
             service_name=config.service_name,
-            service_type="core_coordinator"
+            service_type="core"
         )
         
         # Initialize ZMQ controller service using composition

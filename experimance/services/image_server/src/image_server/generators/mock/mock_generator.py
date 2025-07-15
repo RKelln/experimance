@@ -51,7 +51,7 @@ class MockImageGenerator(ImageGenerator):
         if not self._existing_images:
             logger.warning("No existing images found - will fall back to generated placeholders")
     
-    async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
+    async def generate_image(self, prompt: str, **kwargs) -> str:
         """Generate a mock image with the prompt text or copy an existing image."""
         self._validate_prompt(prompt)
         
@@ -89,7 +89,18 @@ class MockImageGenerator(ImageGenerator):
     async def _generate_placeholder_image(self, prompt: str, **kwargs) -> str:
         """Generate a simple placeholder image with the prompt text."""
         # Create a simple image with the prompt text
-        image = Image.new("RGB", self.config.image_size, self.config.background_color)
+        default_size = {
+            "width": self.config.image_size[0],
+            "height": self.config.image_size[1]
+        }
+        width = kwargs.get('width', kwargs.get("image_size", default_size)["width"])
+        height = kwargs.get('height', kwargs.get("image_size", default_size)["height"])
+
+        background_color = self.config.background_color or (random.randint(0,128), random.randint(0,128), random.randint(0,128))
+
+        logger.debug(f"Creating placeholder image of size {width}x{height} with background {background_color}")
+        
+        image = Image.new("RGB", (width, height), background_color)
         draw = ImageDraw.Draw(image)
         
         # Try to use a font, fall back to default if not available

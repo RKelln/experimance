@@ -14,7 +14,7 @@ load_dotenv(dotenv_path="../../.env", override=True)
 # Configure logging
 logger = logging.getLogger(__name__)
 
-from experimance_common.schemas import Era
+
 from image_server.generators.generator import ImageGenerator, configure_external_loggers
 from image_server.generators.config import BaseGeneratorConfig, DEFAULT_GENERATOR_TIMEOUT
 from .fal_comfy_config import FalGeneratorConfig, FalComfyGeneratorConfig
@@ -72,6 +72,7 @@ class FalComfyGenerator(ImageGenerator):
             # modify lora strength based on era
             era = kwargs.get('era', None)
             if era:
+                from experimance_common.schemas import Era
                 if era == Era.WILDERNESS:
                     kwargs['lora_url'] = "https://civitai.com/api/download/models/179152?type=Model&format=SafeTensor"
                     kwargs['lora_strength'] = self.config.lora_strength * 0.8

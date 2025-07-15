@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, Type
+from typing import Dict, Any, Optional, Union, Type, List
 
 from image_server.generators.generator import ImageGenerator
 from image_server.generators.config import BaseGeneratorConfig
@@ -115,3 +115,122 @@ def create_generator(
         strategy = config.strategy
         config_dict = config.model_dump() if hasattr(config, "model_dump") else vars(config)
         return create_generator_from_config(strategy, config_dict, cache_dir)
+
+
+class GeneratorManager:
+    """Manager for dynamic generator creation and caching.
+    
+    This class manages multiple generator instances, creating them on-demand
+    and caching them for reuse. It supports dynamic strategy selection
+    based on RenderRequest.generator attribute.
+    """
+    
+    def __init__(self, default_strategy: str, cache_dir: Optional[Union[str, Path]] = None, 
+                 timeout: int = 60, default_configs: Optional[Dict[str, Dict[str, Any]]] = None):
+        """Initialize the generator manager.
+        
+        Args:
+            default_strategy: Default generator strategy to use
+            cache_dir: Directory to store generated images
+            timeout: Default timeout for generation in seconds
+            default_configs: Default configurations for each strategy
+        """
+        self.default_strategy = default_strategy
+        self.cache_dir = cache_dir
+        self.timeout = timeout
+        self.default_configs = default_configs or {}
+        self._generators: Dict[str, ImageGenerator] = {}
+        
+        logger.info(f"GeneratorManager initialized with default strategy: {default_strategy}")
+    
+    def get_generator(self, strategy: Optional[str] = None, 
+                     config_overrides: Optional[Dict[str, Any]] = None) -> ImageGenerator:
+        """Get or create a generator for the specified strategy.
+        
+        Args:
+            strategy: Generator strategy to use (defaults to default_strategy)
+            config_overrides: Optional configuration overrides for this request
+            
+        Returns:
+            ImageGenerator instance
+            
+        Raises:
+            ValueError: If strategy is not supported
+        """
+        if strategy is None:
+            strategy = self.default_strategy
+        
+        # Create a cache key that includes config overrides if any
+        cache_key = strategy
+        if config_overrides:
+            # Create a deterministic key from sorted config items
+            override_key = "_".join(f"{k}={v}" for k, v in sorted(config_overrides.items()))
+            cache_key = f"{strategy}_{override_key}"
+        
+        # Return cached generator if available
+        if cache_key in self._generators:
+            logger.debug(f"Using cached generator for strategy: {strategy}")
+            return self._generators[cache_key]
+        
+        # Create new generator
+        logger.info(f"Creating new generator for strategy: {strategy}")
+        
+        # Start with default config for this strategy
+        config_data = self.default_configs.get(strategy, {}).copy()
+        
+        # Apply any config overrides
+        if config_overrides:
+            config_data.update(config_overrides)
+        
+        # Create the generator
+        generator = create_generator_from_config(
+            strategy=strategy,
+            config_data=config_data,
+            cache_dir=self.cache_dir,
+            timeout=self.timeout
+        )
+        
+        # Cache the generator
+        self._generators[cache_key] = generator
+        
+        logger.debug(f"Created and cached generator for strategy: {strategy}")
+        return generator
+    
+    def is_image_to_image_generator(self, strategy: Optional[str] = None) -> bool:
+        """Check if the specified strategy supports image-to-image generation.
+        
+        Args:
+            strategy: Generator strategy to check (defaults to default_strategy)
+            
+        Returns:
+            True if the strategy supports image-to-image generation
+        """
+        if strategy is None:
+            strategy = self.default_strategy
+        
+        # Check if strategy name indicates image-to-image capability
+        i2i_strategies = {"falai_lightning_i2i"}
+        return strategy in i2i_strategies
+    
+    def get_available_strategies(self) -> List[str]:
+        """Get list of available generator strategies.
+        
+        Returns:
+            List of available strategy names
+        """
+        return list(GENERATORS.keys())
+    
+    async def stop_all_generators(self):
+        """Stop all cached generators and clear the cache."""
+        logger.info("Stopping all generators...")
+        
+        for strategy, generator in self._generators.items():
+            try:
+                if hasattr(generator, 'stop'):
+                    await generator.stop()
+                logger.debug(f"Stopped generator for strategy: {strategy}")
+            except Exception as e:
+                logger.warning(f"Error stopping generator {strategy}: {e}")
+        
+        self._generators.clear()
+        logger.info("All generators stopped and cache cleared")

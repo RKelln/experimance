@@ -37,32 +37,61 @@ class ImagePrompt:
 class PanoramaConfig(BaseModel):
     """Configuration for panorama generation."""
     
-    width: int = Field(
+    display_width: int = Field(
         default=5760,  # 3 tiles * 1920 before mirroring
         description="Base panorama width in pixels",
-        ge=1280
+        ge=512
     )
     
-    height: int = Field(
+    display_height: int = Field(
         default=1080,
         description="Base panorama height in pixels", 
+        ge=120
+    )
+
+    generated_width: int = Field(
+        default=2240,  # 3 tiles
+        description="Base panorama width in pixels",
         ge=512
+    )
+    
+    generated_height: int = Field(
+        default=420,
+        description="Base panorama height in pixels", 
+        ge=120
+    )
+
+    generator: str = Field(
+        default="mock",
+        description="Image generator to use for panorama generation"
     )
 
 
 class TileConfig(BaseModel):
     """Configuration for tile generation."""
     
-    max_width: int = Field(
+    display_width: int = Field(
         default=1920,
-        description="Maximum tile width in pixels",
+        description="Base panorama width in pixels",
         ge=512
     )
     
-    max_height: int = Field(
-        default=1080, 
-        description="Maximum tile height in pixels",
+    display_height: int = Field(
+        default=1080,
+        description="Base panorama height in pixels", 
+        ge=120
+    )
+
+    generated_width: int = Field(
+        default=1344,
+        description="Base panorama width in pixels",
         ge=512
+    )
+    
+    generated_height: int = Field(
+        default=758,
+        description="Base panorama height in pixels", 
+        ge=120
     )
     
     min_overlap_percent: float = Field(
@@ -77,6 +106,11 @@ class TileConfig(BaseModel):
         description="Maximum megapixels per tile (1MP = 1,000,000 pixels)",
         ge=0.5,
         le=5.0
+    )
+
+    generator: str = Field(
+        default="mock",
+        description="Image generator to use for panorama generation"
     )
 
 

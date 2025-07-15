@@ -83,20 +83,22 @@ class LLMPromptBuilder:
         Returns:
             ImagePrompt with LLM-generated prompt and metadata
         """
+        # fallback prompt
+        data = {
+            "prompt": "A cinematic landscape scene",
+        }
         try:
             # Query the LLM
+            logger.info(f"Querying LLM for prompt generation: {story_content[:100]}...")
             result = await self.llm.query(
                 content=story_content,
             )
-            
             if result is None:
                 raise ValueError("LLM returned no result")
+            logger.debug(f"LLM query result: {result}")
             
             if result == "<invalid>" or "invalid" in result.lower():
                 logger.warning(f"LLM returned invalid response ({result}), using fallback prompt")
-                data = {
-                    "prompt": "A cinematic landscape scene",
-                }
             else: #try to parse json
                 # Attempt to parse the JSON response
                 try:
@@ -106,7 +108,7 @@ class LLMPromptBuilder:
                     logger.debug(f"Raw LLM response: {repr(data)}")
                     
                     # Clean up the response - remove markdown code blocks if present
-                    json_content = data.strip()
+                    json_content = result.strip()
                     if json_content.startswith("```json"):
                         # Remove opening ```json
                         json_content = json_content[7:]
@@ -122,7 +124,6 @@ class LLMPromptBuilder:
 
         except Exception as e:
             logger.error(f"LLM prompt generation failed: {e}")
-            # Fallback to simple template-based prompt
             data = {
                 "prompt": "A cinematic landscape scene",
             }

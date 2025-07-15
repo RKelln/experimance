@@ -15,7 +15,7 @@ from .generators.fal.fal_lightning_i2i_generator import FalLightningI2IGenerator
 from .generators.openai.openai_generator import OpenAIGenerator
 from .generators.local.sdxl_generator import LocalSDXLGenerator
 from .config import ImageServerConfig
-from .generators.factory import create_generator
+from .generators.factory import create_generator, GeneratorManager
 
 __version__ = '0.1.0'
 __all__ = [
@@ -28,5 +28,6 @@ __all__ = [
     'LocalSDXLGenerator',
     'ImageServerConfig',
     'create_generator',
+    'GeneratorManager',
 ]
 

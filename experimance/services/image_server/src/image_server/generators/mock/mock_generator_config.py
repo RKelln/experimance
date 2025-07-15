@@ -9,7 +9,7 @@ from experimance_common.constants import PROJECT_ROOT
 class MockGeneratorConfig(BaseGeneratorConfig):
     strategy: Literal["mock"] = "mock"
     image_size: tuple = (1024, 1024)
-    background_color: tuple = (100, 150, 200)
+    background_color: Optional[tuple[int,int,int]] = None
     text_color: tuple = (255, 255, 255)
     use_existing_images: bool = False
     existing_images_dir: Optional[Path] = None

@@ -14,7 +14,6 @@ load_dotenv(dotenv_path="../../.env", override=True)
 # Configure logging
 logger = logging.getLogger(__name__)
 
-from experimance_common.schemas import Era
 from image_server.generators.generator import ImageGenerator, configure_external_loggers
 from image_server.generators.config import BaseGeneratorConfig, DEFAULT_GENERATOR_TIMEOUT
 from .fal_lightning_i2i_config import FalLightningI2IConfig
@@ -47,8 +46,8 @@ class FalLightningI2IGenerator(ImageGenerator):
         })
         logger.info(f"FalLightningI2IGenerator initialized with endpoint: {self.config.endpoint}")
 
-    async def generate_image(self, prompt: str, image_url: Optional[str] = None, 
-                             depth_map_b64: Optional[str] = None, **kwargs) -> str:
+    async def generate_image(self, prompt: str, image_b64: Optional[str] = None, 
+                             **kwargs) -> str:
         """Generate an image using FAL.AI Lightning image-to-image API.
         
         Args:
@@ -66,34 +65,11 @@ class FalLightningI2IGenerator(ImageGenerator):
         """
         self._validate_prompt(prompt)
         
-        if not image_url:
+        if not image_b64:
             raise ValueError("image_url is required for image-to-image generation")
         
         # Handle config overrides for this specific request
         current_config = self.config
-        if isinstance(kwargs, dict):
-            # modify strength and other parameters based on era
-            era = kwargs.get('era', None)
-            if era:
-                if era == Era.WILDERNESS:
-                    kwargs['strength'] = self.config.strength * 0.8  # Less modification for wilderness
-                elif era == Era.PRE_INDUSTRIAL:
-                    kwargs['strength'] = self.config.strength * 0.9  # Slight modification
-                elif era == 'future':
-                    kwargs['strength'] = self.config.strength * 1.1  # More modification for future
-
-            # Create a new config with overrides applied
-            # remove kwargs that are not in the config schema
-            kwargs = {k: v for k, v in kwargs.items() if k in self.config.model_fields}
-
-            # Create a new config instance with the current config and overrides
-            current_config = FalLightningI2IConfig(**{
-                **self.config.model_dump(),
-                **kwargs
-            })
-            logger.debug(f"FalLightningI2IGenerator: Using config overrides: {current_config}")
-        else:
-            current_config = self.config
         
         try:
             import fal_client
@@ -103,7 +79,7 @@ class FalLightningI2IGenerator(ImageGenerator):
         logger.info(f"FalLightningI2IGenerator: Generating image with FAL.AI Lightning I2I for prompt: {prompt[:50]}...")
         
         current_config.prompt = prompt
-        current_config.image_url = image_url
+        current_config.image_url = image_b64
 
         logger.info(current_config)
 

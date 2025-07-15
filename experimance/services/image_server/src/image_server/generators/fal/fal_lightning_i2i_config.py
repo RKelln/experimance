@@ -23,15 +23,15 @@ class FalLightningI2IConfig(SDXLConfig):
     endpoint: str = FALLIGHTNINGI2I_ENDPOINT
     
     # Image-to-image specific parameters
-    image_url: Optional[str] = None  # Required for I2I generation
-    strength: float = 0.95  # How much the generated image resembles the initial image
+    image_url: str = ""  # Required for I2I generation
+    strength: float = 0.4  # How much the generated image resembles the initial image
     
     # Standard Lightning SDXL parameters
-    image_size: str = "square_hd"  # Can be: square_hd, square, portrait_4_3, portrait_16_9, landscape_4_3, landscape_16_9
     num_images: int = 1
+    image_size: dict[str, int] = {"width": 1024, "height": 1024}  # Default size for I2I
     format: Literal["jpeg", "png"] = "jpeg"
-    enable_safety_checker: bool = True
-    safety_checker_version: Literal["v1", "v2"] = "v1"
+    enable_safety_checker: bool = False
+    safety_checker_version: Literal["v1", "v2"] = "v2"
     expand_prompt: bool = False
     guidance_rescale: Optional[float] = None
     preserve_aspect_ratio: bool = False
@@ -81,7 +81,6 @@ class FalLightningI2IConfig(SDXLConfig):
         return (
             f"FalLightningI2IConfig("
             f"endpoint={self.endpoint!r}, "
-            f"image_url={'Provided' if self.image_url else 'None'}, "
             f"strength={self.strength}, "
             f"image_size={self.image_size if isinstance(self.image_size, str) else self.dimensions}, "
             f"prompt={self.prompt[:50]!r}, seed={self.seed})"

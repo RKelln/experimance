@@ -14,12 +14,11 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
-from experimance_common.base_service import BaseService, ServiceStatus
-from experimance_common.image_utils import ImageLoadFormat, load_image_from_message, png_to_base64url
-from experimance_common.service_state import ServiceState
-from experimance_common.schemas import Biome, Era, ImageReady, RenderRequest, MessageType
+from experimance_common.base_service import BaseService
+from experimance_common.image_utils import extract_image_as_base64
+from experimance_common.schemas import ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS
@@ -27,20 +26,7 @@ from experimance_common.logger import configure_external_loggers
 from pydantic import ValidationError
 
 from .config import ImageServerConfig
-from .generators.factory import create_generator_from_config
-from .generators.generator import ImageGenerator
-
-from image_server.generators.mock.mock_generator import MockImageGenerator
-from image_server.generators.fal.fal_comfy_generator import FalComfyGenerator
-from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig, FalGeneratorConfig
-from image_server.generators.fal.fal_lightning_i2i_generator import FalLightningI2IGenerator
-from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2IConfig
-
-# Future generator implementations:
-# from image_server.generators.mock.mock_generator import MockGenerator, MockGeneratorConfig
-# from image_server.generators.openai.openai_generator import OpenAIGenerator, OpenAIGeneratorConfig
-# from image_server.generators.sdxl.sdxl_generator import SDXLGenerator, SDXLGeneratorConfig
-
+from .generators.factory import GeneratorManager
 
 logger = logging.getLogger(__name__)
 
@@ -72,31 +58,26 @@ class ImageServerService(BaseService):
             # Initialize ZMQ worker service using composition
             self.zmq_service = WorkerService(self.config.zmq)
             
-            # For compatibility with tests
-            self._generator_strategy = self.config.generator.strategy
+            # Collect strategy-specific configurations for the generator manager
+            default_configs = {}
+            for strategy in ["mock", "falai", "falai_lightning_i2i", "openai", "local"]:
+                if hasattr(config, strategy):
+                    strategy_config_obj = getattr(config, strategy)
+                    if strategy_config_obj:
+                        if hasattr(strategy_config_obj, "model_dump"):
+                            default_configs[strategy] = strategy_config_obj.model_dump()
+                        else:
+                            default_configs[strategy] = dict(strategy_config_obj)
             
-            # Create generator directly from the configuration
-            strategy = config.generator.strategy
-            strategy_config = {}
-            
-            # Get strategy-specific config if available
-            if hasattr(config, strategy):
-                strategy_config_obj = getattr(config, strategy)
-                if strategy_config_obj:
-                    if hasattr(strategy_config_obj, "model_dump"):
-                        strategy_config = strategy_config_obj.model_dump()
-                    else:
-                        strategy_config = dict(strategy_config_obj)
-            
-            # Create the generator
-            self.generator = create_generator_from_config(
-                strategy=strategy,
-                config_data=strategy_config,
+            # Initialize generator manager for dynamic generator creation
+            self.generator_manager = GeneratorManager(
+                default_strategy=config.generator.strategy,
                 cache_dir=config.cache_dir,
-                timeout=getattr(config.generator, "timeout", 120)
+                timeout=getattr(config.generator, "timeout", 120),
+                default_configs=default_configs
             )
             
-            logger.info(f"ImageServerService initialized with strategy: {self.config.generator.strategy}")
+            logger.info(f"ImageServerService initialized with default strategy: {self.config.generator.strategy}")
         except Exception as e:
             error_msg = f"Failed to initialize ImageServerService: {e}"
             logger.error(error_msg, exc_info=True)
@@ -131,6 +112,10 @@ class ImageServerService(BaseService):
     async def stop(self):
         """Stop the image server service."""
         try:
+            # Stop all generators
+            if hasattr(self, 'generator_manager'):
+                await self.generator_manager.stop_all_generators()
+            
             # Stop the ZMQ service
             if hasattr(self, 'zmq_service'):
                 await self.zmq_service.stop()
@@ -183,7 +168,7 @@ class ImageServerService(BaseService):
                 )
                 return
 
-            logger.info(f"Processing RenderRequest {request.request_id} for {request.era}/{request.biome}")
+            logger.info(f"Processing RenderRequest {request.request_id}")
 
             # Schedule the image generation task using the full RenderRequest object
             logger.debug(f"Creating and scheduling task for request {request.request_id}")
@@ -214,7 +199,7 @@ class ImageServerService(BaseService):
             return False
         
         return True
-    
+
     async def _process_render_request(
         self,
         request: RenderRequest,
@@ -222,14 +207,7 @@ class ImageServerService(BaseService):
         """Process a render request and generate an image.
         
         Args:
-            request_id: Unique identifier for this request
-            prompt: Text prompt for image generation
-            depth_map_b64: Optional base64-encoded depth map
-            era: Era context for generation
-            biome: Biome context for generation
-            seed: Random seed for generation
-            negative_prompt: Negative prompt for generation
-            style: Style hint for generation
+            request: RenderRequest object with generation parameters
         """
         try:
             logger.debug(f"Starting _process_render_request for {request.request_id}")
@@ -237,33 +215,47 @@ class ImageServerService(BaseService):
             # Unpack fields from RenderRequest (from schemas.py)
             request_id = request.request_id
             prompt = request.prompt
-            era = request.era
-            biome = request.biome
-            negative_prompt = getattr(request, 'negative_prompt', None)
-            style = getattr(request, 'style', None)
-            seed = getattr(request, 'seed', None)
+            
+            # Handle optional fields that may be added by project-specific schemas
+            era = getattr(request, 'era', None)
+            biome = getattr(request, 'biome', None)
+            
+            # Get generator strategy from request or use default
+            generator_strategy = getattr(request, 'generator', None)
 
-            # Handle depth_map (ImageSource or None)
+            # Standardized image processing using utility functions
+            # Extract depth map as base64 if present
             depth_map_b64 = None
             if hasattr(request, 'depth_map') and request.depth_map is not None:
-                # If depth_map is an ImageSource with image_data, use it
-                if hasattr(request.depth_map, 'image_data') and request.depth_map.image_data:
-                    depth_map_b64 = request.depth_map.image_data
-                # If depth_map is a dict (from deserialization)
-                elif isinstance(request.depth_map, dict) and request.depth_map.get('image_data'):
-                    depth_map_b64 = request.depth_map['image_data']
+                depth_map_b64 = extract_image_as_base64(request.depth_map, "depth_map")
+
+            # Extract reference image as base64 if present
+            reference_image_b64 = None
+            if hasattr(request, 'reference_image') and request.reference_image is not None:
+                reference_image_b64 = extract_image_as_base64(request.reference_image, "reference_image")
+
+            # Log the request details
+            strategy_info = f" using {generator_strategy}" if generator_strategy else ""
+            context_info = f" for {era}/{biome}" if era and biome else ""
+            reference_info = " (image-to-image)" if reference_image_b64 else ""
+            depth_info = " (with depth map)" if depth_map_b64 else ""
+            logger.info(f"Processing RenderRequest {request_id}{strategy_info}{context_info}{reference_info}{depth_info}")
 
             # Generate the image with full context
             logger.debug(f"Calling _generate_image for {request_id}")
             image_path = await self._generate_image(
+                request_id=request_id,  # Include request_id for filename
                 prompt=prompt,
+                negative_prompt = getattr(request, 'negative_prompt', None),
                 depth_map_b64=depth_map_b64,
-                era=str(era),
-                biome=str(biome),
-                seed=seed,
-                negative_prompt=negative_prompt,
-                style=style,
-                request_id=request_id  # Include request_id for filename
+                strategy=generator_strategy,
+                reference_image_b64=reference_image_b64,  # Use standardized base64 format
+                era=str(era) if era else None,
+                biome=str(biome) if biome else None,
+                seed=getattr(request, 'seed', None),
+                style=getattr(request, 'style', None),
+                width=request.get('width', None),
+                height=request.get('height', None),
             )
             logger.debug(f"Generated image path: {image_path}")
 
@@ -291,15 +283,17 @@ class ImageServerService(BaseService):
         self,
         prompt: str,
         depth_map_b64: Optional[str] = None,
+        reference_image_b64: Optional[str] = None,
         strategy: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Generate an image using the specified strategy.
+        """Generate an image using the specified or default strategy.
         
         Args:
             prompt: Text prompt for generation
             depth_map_b64: Optional base64-encoded depth map
             strategy: Generator strategy to use (defaults to configured strategy)
+            reference_image_b64: Optional base64-encoded reference image for image-to-image generation
             **kwargs: Additional parameters for the generator
             
         Returns:
@@ -311,10 +305,26 @@ class ImageServerService(BaseService):
         if strategy is None:
             strategy = self.config.generator.strategy
         
+        # Get the appropriate generator from the manager
+        generator = self.generator_manager.get_generator(strategy)
+        
+        # Prepare generation parameters based on generator capabilities
+        generation_kwargs = kwargs.copy()
+        logger.debug(f"Using generator {generator.__class__.__name__} for strategy {strategy} with kwargs: {generation_kwargs}")
+        
+        generation_kwargs['depth_map_b64'] = depth_map_b64
+
+        # Handle image-to-image generation
+        if reference_image_b64 and self.generator_manager.is_image_to_image_generator(strategy):
+            logger.info(f"Using image-to-image generation with strategy: {strategy}")
+            generation_kwargs['image_b64'] = reference_image_b64
+        elif reference_image_b64:
+            logger.warning(f"Reference image provided but strategy {strategy} doesn't support image-to-image generation")
+        
         # Generate the image with timeout
         try:
             image_path = await asyncio.wait_for(
-                self.generator.generate_image(prompt, depth_map_b64, **kwargs),
+                generator.generate_image(prompt, **generation_kwargs),
                 timeout=self.config.generator.timeout
             )
             return image_path
@@ -330,8 +340,8 @@ class ImageServerService(BaseService):
         self, 
         request_id: str, 
         image_path: str,
-        era: Era,
-        biome: Biome,
+        era: Optional[Any] = None,
+        biome: Optional[Any] = None,
         prompt: Optional[str] = None,
     ):
         """Publish an ImageReady message.
@@ -340,8 +350,8 @@ class ImageServerService(BaseService):
             request_id: The original request ID
             image_path: Path to the generated image
             prompt: The prompt used for generation
-            era: Era context for the image
-            biome: Biome context for the image
+            era: Era context for the image (project-specific)
+            biome: Biome context for the image (project-specific)
             
         Raises:
             RuntimeError: If publishing the message fails
@@ -353,13 +363,20 @@ class ImageServerService(BaseService):
             # Generate unique image ID
             image_id = str(uuid.uuid4())
             
-            message = ImageReady(
-                request_id=request_id,
-                uri=image_uri,
-                era=era,
-                biome=biome,
-                prompt=prompt,
-            )
+            # Create base message
+            message_data = {
+                "request_id": request_id,
+                "uri": image_uri,
+                "prompt": prompt,
+            }
+            
+            # Add era and biome if they exist (project-specific fields)
+            if era is not None:
+                message_data["era"] = era
+            if biome is not None:
+                message_data["biome"] = biome
+            
+            message = ImageReady(**message_data)
             
             # If configured for remote deployment, include base64 data
             if getattr(self.config, 'include_image_data', False):

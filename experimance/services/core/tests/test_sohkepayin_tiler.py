@@ -24,8 +24,10 @@ class TestPanoramaTiler:
     def test_single_tile_scenario(self):
         """Test when panorama fits in a single tile."""
         tiler = PanoramaTiler(
-            max_tile_width=1920,
-            max_tile_height=1080,
+            display_tile_width=1920,
+            display_tile_height=1080,
+            generated_tile_width=1344,
+            generated_tile_height=768,
             max_megapixels=2.0
         )
         
@@ -34,14 +36,15 @@ class TestPanoramaTiler:
         
         assert len(tiles) == 1
         tile = tiles[0]
-        assert tile.x == 0
-        assert tile.y == 0
-        assert tile.width == 1600
-        assert tile.height == 900
+        assert tile.display_x == 0
+        assert tile.display_y == 0
+        assert tile.display_width == 1600
+        assert tile.display_height == 900
+        assert tile.generated_width == 1344
+        assert tile.generated_height == 768
         assert tile.tile_index == 0
         assert tile.total_tiles == 1
-        assert tile.final_x == 0
-        assert tile.final_y == 0
+        assert tile.has_left_fade == False
     
     def test_horizontal_tiling_simple(self):
         """Test simple horizontal tiling scenario."""

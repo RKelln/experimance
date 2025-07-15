@@ -255,6 +255,7 @@ class RenderRequest(MessageBase):
     type: MessageType = MessageType.RENDER_REQUEST
     
     request_id: str  # Unique identifier for tracking the request
+    generator: Optional[str] = None  # Name of the generator to use (or use the default generator)
     prompt: str
     negative_prompt: Optional[str] = None
     width: Optional[int] = 1024   # Width of the generated image (default 1024)

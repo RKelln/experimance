@@ -21,6 +21,7 @@ from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 
 from experimance_common.base_service import BaseService
+from experimance_common.config import ConfigError, resolve_path
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import ControllerService  
 from experimance_common.schemas import (
@@ -31,7 +32,7 @@ from experimance_common.schemas import (
 from .config import SohkepayinCoreConfig, ImagePrompt
 from .llm import LLMProvider, get_llm_provider
 from .llm_prompt_builder import LLMPromptBuilder
-from .tiler import PanoramaTiler, TileSpec
+from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,10 @@ class SohkepayinCoreService(BaseService):
     
     def __init__(self, config: SohkepayinCoreConfig):
         """Initialize the Sohkepayin core service."""
-        super().__init__(config.service_name, service_type="core")
+        super().__init__(
+            service_name=config.service_name,
+            service_type="core"
+        )
         
         self.config = config
         self.core_state = CoreState.IDLE  # services already have state, we track core state
@@ -80,17 +84,25 @@ class SohkepayinCoreService(BaseService):
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
         
+        print(config.llm.system_prompt_or_file)
+
+        # system prompt
+        if config.llm.system_prompt_or_file is not None:
+            try:
+                system_prompt = resolve_path(config.llm.system_prompt_or_file, hint="project")
+                logger.info(f"Using system prompt from: {system_prompt}")
+            except ConfigError:
+                # its a string or doesn't exist
+                system_prompt = config.llm.system_prompt_or_file
+                logger.info(f"Could not resolve: {system_prompt}")
+        
+
         self.prompt_builder = LLMPromptBuilder(
             llm=self.llm,
-            system_prompt_or_file=config.llm.system_prompt_or_file
+            system_prompt_or_file=system_prompt
         )
         
-        self.tiler = PanoramaTiler(
-            max_tile_width=config.tiles.max_width,
-            max_tile_height=config.tiles.max_height,
-            min_overlap_percent=config.tiles.min_overlap_percent,
-            max_megapixels=config.tiles.max_megapixels
-        )
+        self.tiler = create_tiler_from_config(config.tiles)
         
         # ZMQ communication will be initialized in start()
         self.zmq_service: ControllerService = None  # type: ignore # Will be initialized in start()
@@ -181,8 +193,8 @@ class SohkepayinCoreService(BaseService):
             
             # Calculate tiling strategy
             tiles = self.tiler.calculate_tiles(
-                self.config.panorama.width,
-                self.config.panorama.height
+                self.config.panorama.display_width,
+                self.config.panorama.display_height
             )
             
             # Create new active request
@@ -272,8 +284,8 @@ class SohkepayinCoreService(BaseService):
             request_id=request_id,
             prompt=panorama_prompt.prompt,
             negative_prompt=panorama_prompt.negative_prompt,
-            width=self.config.panorama.width,
-            height=self.config.panorama.height,
+            width=self.config.panorama.generated_width,
+            height=self.config.panorama.generated_height,
             # Add other parameters as needed
         )
         
@@ -283,7 +295,7 @@ class SohkepayinCoreService(BaseService):
         # Send render request
         await self.zmq_service.send_work_to_worker("image_server", render_request)
         
-        logger.info(f"Requested base image: {self.config.panorama.width}x{self.config.panorama.height}")
+        logger.info(f"Requested base image: {self.config.panorama.generated_width}x{self.config.panorama.generated_height}")
     
     async def _handle_base_image_ready(self, response: ImageReady):
         """Handle completion of base image generation."""
@@ -338,8 +350,8 @@ class SohkepayinCoreService(BaseService):
             request_id=request_id,
             prompt=tile_prompt.prompt,
             negative_prompt=tile_prompt.negative_prompt,
-            width=tile_spec.width,
-            height=tile_spec.height,
+            width=tile_spec.generated_width,
+            height=tile_spec.generated_height,
             # Add reference image and other tile-specific parameters
         )
         
@@ -349,7 +361,7 @@ class SohkepayinCoreService(BaseService):
         # Send render request
         await self.zmq_service.send_work_to_worker("image_server", render_request)
         
-        logger.debug(f"Requested tile {tile_spec.tile_index}: {tile_spec.width}x{tile_spec.height}")
+        logger.debug(f"Requested tile {tile_spec.tile_index}: {tile_spec.generated_width}x{tile_spec.generated_height}")
     
     async def _handle_tile_image_ready(self, response: ImageReady, tile_index: int):
         """Handle completion of tile image generation."""
@@ -374,11 +386,13 @@ class SohkepayinCoreService(BaseService):
         
         # Send tile to display with position
         display_message = DisplayMedia(
+            request_id=response.request_id,
             content_type=ContentType.IMAGE,
             uri=response.uri,
-            position=(tile_spec.final_x, tile_spec.final_y),  # Position in panorama space
+            position=(tile_spec.display_x, tile_spec.display_y),  # Position in panorama space
             fade_in=1.5  # Tile fade-in duration
         )
+        logger.debug(f"Sending tile {tile_index} to display at position {tile_spec.display_x}, {tile_spec.display_y}")
         
         await self.zmq_service.publish(display_message)
         

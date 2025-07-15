@@ -21,18 +21,20 @@ logger = logging.getLogger(__name__)
 class TileSpec:
     """Specification for a single tile."""
     
-    x: int  # X position in base image
-    y: int  # Y position in base image  
-    width: int  # Tile width
-    height: int  # Tile height
+    # Display positioning (final layout coordinates)
+    display_x: int  # X position in display panorama
+    display_y: int  # Y position in display panorama
+    display_width: int  # Width in display panorama (without overlap)
+    display_height: int  # Height in display panorama
+    
+    # Generation parameters (for render requests - includes overlap)
+    generated_width: int  # Width to generate (includes overlap extension)
+    generated_height: int  # Height to generate 
+    
+    # Tile metadata
     tile_index: int  # Tile number (0-based)
     total_tiles: int  # Total number of tiles
-    
-    # Position in final panorama (after any transformations)
-    final_x: int = 0
-    final_y: int = 0
-    final_width: int = 0
-    final_height: int = 0
+    has_left_fade: bool = False  # Whether this tile should fade its left edge
 
 
 class PanoramaTiler:
@@ -48,258 +50,223 @@ class PanoramaTiler:
     
     def __init__(
         self,
-        max_tile_width: int = 1920,
-        max_tile_height: int = 1080,
+        display_tile_width: int = 1920,
+        display_tile_height: int = 1080,
+        generated_tile_width: int = 1344,
+        generated_tile_height: int = 768,
         min_overlap_percent: float = 15.0,
-        max_megapixels: float = 1.0,
-        edge_blend_pixels: int = 50
+        max_megapixels: float = 1.0
     ):
         """
         Initialize tiler with configuration.
         
         Args:
-            max_tile_width: Maximum width for generated tiles
-            max_tile_height: Maximum height for generated tiles  
+            display_tile_width: Base tile width for display positioning
+            display_tile_height: Base tile height for display positioning
+            generated_tile_width: Base tile width for generation (before overlap extension)
+            generated_tile_height: Base tile height for generation
             min_overlap_percent: Minimum overlap between tiles (5-50%)
             max_megapixels: Maximum megapixels per tile (0.5-5.0)
-            edge_blend_pixels: Pixels to blend at tile edges
         """
-        self.max_tile_width = max_tile_width
-        self.max_tile_height = max_tile_height
+        self.display_tile_width = display_tile_width
+        self.display_tile_height = display_tile_height
+        self.generated_tile_width = generated_tile_width
+        self.generated_tile_height = generated_tile_height
         self.min_overlap_percent = min_overlap_percent
         self.max_megapixels = max_megapixels
-        self.edge_blend_pixels = edge_blend_pixels
         
         # Calculate effective max pixels
         self.max_pixels = int(max_megapixels * 1_000_000)
         
+        # Verify aspect ratios are consistent
+        self._validate_aspect_ratios()
+        
         logger.info(
-            f"Tiler initialized: max_size={max_tile_width}x{max_tile_height}, "
-            f"min_overlap={min_overlap_percent}%, max_mp={max_megapixels}, "
-            f"blend_px={edge_blend_pixels}"
+            f"Tiler initialized: display={display_tile_width}x{display_tile_height}, "
+            f"generated={generated_tile_width}x{generated_tile_height}, "
+            f"min_overlap={min_overlap_percent}%, max_mp={max_megapixels}"
         )
     
-    def calculate_tiles(self, panorama_width: int, panorama_height: int) -> List[TileSpec]:
+    def _validate_aspect_ratios(self):
+        """Validate that display and generated aspect ratios are consistent."""
+        display_aspect = self.display_tile_width / self.display_tile_height
+        generated_aspect = self.generated_tile_width / self.generated_tile_height
+        
+        aspect_diff = abs(display_aspect - generated_aspect) / display_aspect
+        
+        if aspect_diff > 0.05:  # Allow 5% tolerance
+            logger.warning(
+                f"Aspect ratio mismatch: display={display_aspect:.3f}, "
+                f"generated={generated_aspect:.3f}, diff={aspect_diff*100:.1f}%"
+            )
+        else:
+            logger.debug(
+                f"Aspect ratios consistent: display={display_aspect:.3f}, "
+                f"generated={generated_aspect:.3f}"
+            )
+    
+    def calculate_tiles(
+        self, 
+        panorama_display_width: int, 
+        panorama_display_height: int
+    ) -> List[TileSpec]:
         """
         Calculate optimal tiling strategy for a panorama.
         
         Args:
-            panorama_width: Width of the panorama to tile
-            panorama_height: Height of the panorama to tile
+            panorama_display_width: Display width of the panorama to tile
+            panorama_display_height: Display height of the panorama to tile
             
         Returns:
             List of TileSpec objects describing each tile
         """
-        logger.info(f"Calculating tiles for {panorama_width}x{panorama_height} panorama")
+        logger.info(f"Calculating tiles for {panorama_display_width}x{panorama_display_height} display panorama")
         
         # Check if we can fit the entire panorama in a single tile
-        if (panorama_width <= self.max_tile_width and 
-            panorama_height <= self.max_tile_height and
-            panorama_width * panorama_height <= self.max_pixels):
+        if (panorama_display_width <= self.display_tile_width and 
+            panorama_display_height <= self.display_tile_height):
             
             logger.info("Panorama fits in single tile")
             return [TileSpec(
-                x=0, y=0,
-                width=panorama_width,
-                height=panorama_height,
+                display_x=0, 
+                display_y=0,
+                display_width=panorama_display_width,
+                display_height=panorama_display_height,
+                generated_width=self.generated_tile_width,
+                generated_height=self.generated_tile_height,
                 tile_index=0,
                 total_tiles=1,
-                final_x=0, final_y=0,
-                final_width=panorama_width,
-                final_height=panorama_height
+                has_left_fade=False
             )]
         
-        # Calculate horizontal tiling
-        tiles_x, tile_width, overlap_x = self._calculate_dimension_tiling(
-            panorama_width, self.max_tile_width
-        )
+        # Calculate how many tiles we need horizontally
+        num_tiles = math.ceil(panorama_display_width / self.display_tile_width)
         
-        # Calculate vertical tiling (usually 1 for panoramas)
-        tiles_y, tile_height, overlap_y = self._calculate_dimension_tiling(
-            panorama_height, self.max_tile_height
-        )
+        # Calculate overlap needed in display space
+        if num_tiles == 1:
+            overlap_display = 0
+        else:
+            # Work backwards: total_width = num_tiles * tile_width - (num_tiles-1) * overlap
+            # So: overlap = (num_tiles * tile_width - total_width) / (num_tiles - 1)
+            overlap_display = (num_tiles * self.display_tile_width - panorama_display_width) / (num_tiles - 1)
+            overlap_display = int(overlap_display)
         
-        total_tiles = tiles_x * tiles_y
+        # Calculate overlap needed in generated space (scale proportionally)
+        display_to_generated_ratio = self.generated_tile_width / self.display_tile_width
+        overlap_generated = int(overlap_display * display_to_generated_ratio)
         
         logger.info(
-            f"Tiling strategy: {tiles_x}x{tiles_y} = {total_tiles} tiles, "
-            f"tile_size={tile_width}x{tile_height}, "
-            f"overlap={overlap_x}x{overlap_y}px"
+            f"Tiling strategy: {num_tiles} tiles, "
+            f"display_overlap={overlap_display}px, generated_overlap={overlap_generated}px"
         )
         
         # Generate tile specifications
         tiles = []
-        tile_index = 0
         
-        for y_idx in range(tiles_y):
-            for x_idx in range(tiles_x):
-                # Calculate position in base image
-                x_pos = x_idx * (tile_width - overlap_x) if x_idx > 0 else 0
-                y_pos = y_idx * (tile_height - overlap_y) if y_idx > 0 else 0
-                
-                # Clamp to image bounds
-                actual_width = min(tile_width, panorama_width - x_pos)
-                actual_height = min(tile_height, panorama_height - y_pos)
-                
-                # Verify tile stays under megapixel limit
-                if actual_width * actual_height > self.max_pixels:
-                    logger.warning(
-                        f"Tile {tile_index} exceeds megapixel limit: "
-                        f"{actual_width}x{actual_height} = "
-                        f"{actual_width * actual_height / 1_000_000:.2f}MP"
-                    )
-                
-                tiles.append(TileSpec(
-                    x=x_pos,
-                    y=y_pos,
-                    width=actual_width,
-                    height=actual_height,
-                    tile_index=tile_index,
-                    total_tiles=total_tiles,
-                    final_x=x_pos,  # Same as source for now
-                    final_y=y_pos,
-                    final_width=actual_width,
-                    final_height=actual_height
-                ))
-                
-                tile_index += 1
+        for i in range(num_tiles):
+            # Calculate display position and dimensions
+            if i == 0:
+                # First tile: no overlap, starts at 0
+                display_x = 0
+                display_width = self.display_tile_width
+            else:
+                # Subsequent tiles: positioned at tile_width intervals, but shifted left by overlap
+                display_x = (i * self.display_tile_width) - overlap_display
+                display_width = self.display_tile_width + overlap_display  # Base width + left overlap
+            
+            # Clamp to panorama bounds for the last tile
+            if display_x + display_width > panorama_display_width:
+                display_width = panorama_display_width - display_x
+            
+            # Calculate generated dimensions (includes overlap extension)
+            # With left-edge-only fading, only add left overlap for non-first tiles
+            generated_width = self.generated_tile_width
+            generated_height = self.generated_tile_height
+            
+            if i > 0:  # All tiles except first get left overlap
+                # Add overlap while maintaining aspect ratio
+                generated_width += overlap_generated
+                # Adjust height proportionally to maintain aspect ratio
+                aspect_ratio = self.generated_tile_width / self.generated_tile_height
+                generated_height = int(generated_width / aspect_ratio)
+            
+            # Check megapixel constraint
+            if generated_width * generated_height > self.max_pixels:
+                logger.warning(
+                    f"Tile {i} exceeds megapixel limit: "
+                    f"{generated_width}x{generated_height} = "
+                    f"{generated_width * generated_height / 1_000_000:.2f}MP"
+                )
+            
+            tiles.append(TileSpec(
+                display_x=display_x,
+                display_y=0,  # Panoramas are typically single row
+                display_width=display_width,
+                display_height=panorama_display_height,
+                generated_width=generated_width,
+                generated_height=generated_height,
+                tile_index=i,
+                total_tiles=num_tiles,
+                has_left_fade=(i > 0)  # All tiles except first have left fade
+            ))
         
         return tiles
     
-    def _calculate_dimension_tiling(
-        self, 
-        dimension: int, 
-        max_tile_size: int
-    ) -> Tuple[int, int, int]:
+    def get_overlap_pixels(self, panorama_display_width: int) -> tuple[int, int]:
         """
-        Calculate tiling for a single dimension.
+        Calculate overlap pixels for display and generated resolutions.
         
         Args:
-            dimension: Size of the dimension to tile
-            max_tile_size: Maximum size per tile
+            panorama_display_width: Display width of the panorama
             
         Returns:
-            Tuple of (num_tiles, tile_size, overlap_pixels)
+            Tuple of (display_overlap_pixels, generated_overlap_pixels)
         """
-        if dimension <= max_tile_size:
-            return 1, dimension, 0
+        num_tiles = math.ceil(panorama_display_width / self.display_tile_width)
         
-        # Calculate minimum number of tiles needed
-        min_tiles = math.ceil(dimension / max_tile_size)
+        if num_tiles <= 1:
+            return 0, 0
         
-        # Try different tile counts to find optimal solution
-        best_solution = None
-        best_score = float('inf')
+        # Calculate overlap in display space
+        overlap_display = (num_tiles * self.display_tile_width - panorama_display_width) / (num_tiles - 1)
+        overlap_display = int(overlap_display)
         
-        for num_tiles in range(min_tiles, min_tiles + 3):  # Try a few options
-            tile_size, overlap = self._calculate_tile_size_and_overlap(
-                dimension, max_tile_size, num_tiles
-            )
-            
-            if tile_size is None or overlap is None:  # Invalid solution
-                continue
-                
-            # Score solution (prefer fewer tiles, reasonable overlap)
-            overlap_percent = (overlap / tile_size) * 100 if tile_size > 0 else 100
-            if overlap_percent < self.min_overlap_percent:
-                continue  # Skip if overlap too small
-            
-            # Score: balance number of tiles vs overlap efficiency
-            score = num_tiles + (overlap_percent / 100) * 0.5
-            
-            if score < best_score:
-                best_score = score
-                best_solution = (num_tiles, tile_size, overlap)
+        # Calculate overlap in generated space
+        display_to_generated_ratio = self.generated_tile_width / self.display_tile_width
+        overlap_generated = int(overlap_display * display_to_generated_ratio)
         
-        if best_solution is None:
-            # Fallback: force minimum tiles with whatever overlap we get
-            num_tiles = min_tiles
-            tile_size, overlap = self._calculate_tile_size_and_overlap(
-                dimension, max_tile_size, num_tiles
-            )
-            if tile_size is None or overlap is None:
-                logger.error(
-                    f"Failed to calculate valid tiling for {dimension}px dimension "
-                    f"with max tile size {max_tile_size}px"
-                )
-                return num_tiles, max_tile_size, 0
-            logger.warning(
-                f"Using fallback tiling: {num_tiles} tiles, {overlap}px overlap "
-                f"({overlap/tile_size*100:.1f}%)"
-            )
-            return num_tiles, tile_size or max_tile_size, overlap or 0
-        
-        return best_solution
-    
-    def _calculate_tile_size_and_overlap(
-        self, 
-        dimension: int, 
-        max_tile_size: int, 
-        num_tiles: int
-    ) -> Tuple[Optional[int], Optional[int]]:
-        """
-        Calculate tile size and overlap for a given number of tiles.
-        
-        Args:
-            dimension: Total dimension size
-            max_tile_size: Maximum allowed tile size
-            num_tiles: Number of tiles to use
-            
-        Returns:
-            Tuple of (tile_size, overlap_pixels) or (None, None) if invalid
-        """
-        if num_tiles == 1:
-            return dimension, 0
-        
-        # For n tiles with overlap: dimension = n * tile_size - (n-1) * overlap
-        # Rearranging: overlap = (n * tile_size - dimension) / (n - 1)
-        
-        # Start with maximum tile size and work down
-        for tile_size in range(max_tile_size, max_tile_size // 2, -1):
-            overlap = (num_tiles * tile_size - dimension) / (num_tiles - 1)
-            
-            if overlap < 0:
-                continue  # Need positive overlap
-            
-            if overlap > tile_size * 0.5:
-                continue  # Too much overlap
-            
-            # Check megapixel constraint (assuming worst case height)
-            if tile_size * self.max_tile_height > self.max_pixels:
-                continue
-            
-            return tile_size, int(overlap)
-        
-        return None, None
+        return overlap_display, overlap_generated
     
     def crop_tile_from_image(self, image: Image.Image, tile_spec: TileSpec) -> Image.Image:
         """
-        Crop a tile from the base image.
+        Crop a tile from the base image using display coordinates.
         
         Args:
-            image: Source panorama image
+            image: Source panorama image (should be at display resolution)
             tile_spec: Specification for the tile to crop
             
         Returns:
             Cropped tile image
         """
         return image.crop((
-            tile_spec.x,
-            tile_spec.y,
-            tile_spec.x + tile_spec.width,
-            tile_spec.y + tile_spec.height
+            tile_spec.display_x,
+            tile_spec.display_y,
+            tile_spec.display_x + tile_spec.display_width,
+            tile_spec.display_y + tile_spec.display_height
         ))
     
-    def apply_edge_blending(self, tile_image: Image.Image, tile_spec: TileSpec) -> Image.Image:
+    def apply_edge_blending(self, tile_image: Image.Image, tile_spec: TileSpec, overlap_pixels: int) -> Image.Image:
         """
         Apply edge blending to a tile for seamless composition.
         
-        Creates a transparency mask that fades out at the edges where
-        this tile will overlap with adjacent tiles.
+        Creates a transparency mask that fades out the left edge for tiles
+        that have left fade enabled (all tiles except the first).
+        The blend covers the entire overlap width.
         
         Args:
             tile_image: Tile image to blend
             tile_spec: Tile specification
+            overlap_pixels: Width of overlap region to blend (in pixels)
             
         Returns:
             Tile image with alpha channel for blending
@@ -308,26 +275,27 @@ class PanoramaTiler:
         if tile_image.mode != 'RGBA':
             tile_image = tile_image.convert('RGBA')
         
+        # Only apply left edge fading for tiles that need it
+        if not tile_spec.has_left_fade:
+            return tile_image
+        
+        if overlap_pixels <= 0:
+            raise ValueError("overlap_pixels must be greater than 0 for tiles with left fade")
+        
         # Create alpha mask
-        alpha = Image.new('L', tile_image.size, 255)
-        
-        # Apply edge fading based on tile position
         width, height = tile_image.size
-        blend_px = min(self.edge_blend_pixels, width // 4, height // 4)
+        blend_px = min(overlap_pixels, width // 2)  # Don't blend more than half the image
         
-        if tile_spec.tile_index > 0:  # Not leftmost tile
-            # Fade left edge
-            for x in range(min(blend_px, width)):
-                alpha_value = int(255 * (x / blend_px))
-                for y in range(height):
-                    alpha.putpixel((x, y), alpha_value)
+        # Use NumPy for efficient alpha mask creation
+        alpha_array = np.full((height, width), 255, dtype=np.uint8)
         
-        if tile_spec.tile_index < tile_spec.total_tiles - 1:  # Not rightmost tile
-            # Fade right edge
-            for x in range(max(0, width - blend_px), width):
-                alpha_value = int(255 * ((width - 1 - x) / blend_px))
-                for y in range(height):
-                    alpha.putpixel((x, y), alpha_value)
+        # Create linear gradient for left edge fade
+        if blend_px > 0:
+            gradient = np.linspace(0, 255, blend_px, dtype=np.uint8)
+            alpha_array[:, :blend_px] = gradient[np.newaxis, :]
+        
+        # Convert back to PIL Image
+        alpha = Image.fromarray(alpha_array, mode='L')
         
         # Apply alpha mask
         tile_image.putalpha(alpha)
@@ -347,22 +315,47 @@ class PanoramaTiler:
         if not tiles:
             return {}
         
-        total_pixels = sum(t.width * t.height for t in tiles)
-        max_pixels = max(t.width * t.height for t in tiles)
+        total_display_pixels = sum(t.display_width * t.display_height for t in tiles)
+        total_generated_pixels = sum(t.generated_width * t.generated_height for t in tiles)
+        max_generated_pixels = max(t.generated_width * t.generated_height for t in tiles)
         
         return {
             'total_tiles': len(tiles),
-            'total_pixels': total_pixels,
-            'total_megapixels': total_pixels / 1_000_000,
-            'max_tile_pixels': max_pixels,
-            'max_tile_megapixels': max_pixels / 1_000_000,
+            'total_display_pixels': total_display_pixels,
+            'total_display_megapixels': total_display_pixels / 1_000_000,
+            'total_generated_pixels': total_generated_pixels,
+            'total_generated_megapixels': total_generated_pixels / 1_000_000,
+            'max_tile_generated_pixels': max_generated_pixels,
+            'max_tile_generated_megapixels': max_generated_pixels / 1_000_000,
             'tiles': [
                 {
                     'index': t.tile_index,
-                    'position': (t.x, t.y),
-                    'size': (t.width, t.height),
-                    'megapixels': (t.width * t.height) / 1_000_000
+                    'display_position': (t.display_x, t.display_y),
+                    'display_size': (t.display_width, t.display_height),
+                    'generated_size': (t.generated_width, t.generated_height),
+                    'generated_megapixels': (t.generated_width * t.generated_height) / 1_000_000,
+                    'has_left_fade': t.has_left_fade
                 }
                 for t in tiles
             ]
         }
+
+
+def create_tiler_from_config(tile_config) -> PanoramaTiler:
+    """
+    Create a PanoramaTiler from a TileConfig object.
+    
+    Args:
+        tile_config: TileConfig instance from service configuration
+        
+    Returns:
+        Configured PanoramaTiler instance
+    """
+    return PanoramaTiler(
+        display_tile_width=tile_config.display_width,
+        display_tile_height=tile_config.display_height,
+        generated_tile_width=tile_config.generated_width,
+        generated_tile_height=tile_config.generated_height,
+        min_overlap_percent=tile_config.min_overlap_percent,
+        max_megapixels=tile_config.max_megapixels
+    )
