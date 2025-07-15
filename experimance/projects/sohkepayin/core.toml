@@ -16,7 +16,7 @@ display_width = 1920
 display_height = 1080
 generated_width = 1344
 generated_height = 758
-min_overlap_percent = 15.0  # 15% overlap for seamless blending
+min_overlap_percent = 0
 max_megapixels = 1.1  # Keep tiles around 1MP for reasonable generation time
 
 [llm]

@@ -22,12 +22,15 @@ from dataclasses import dataclass, field
 
 from experimance_common.base_service import BaseService
 from experimance_common.config import ConfigError, resolve_path
+from experimance_common.constants import IMAGE_TRANSPORT_MODES
+from experimance_common.schemas import ImageSource
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import ControllerService  
 from experimance_common.schemas import (
     StoryHeard, UpdateLocation, ImageReady, RenderRequest, DisplayMedia, 
     ContentType, MessageType
 )
+from experimance_common.zmq.zmq_utils import prepare_image_source
 
 from .config import SohkepayinCoreConfig, ImagePrompt
 from .llm import LLMProvider, get_llm_provider
@@ -384,13 +387,35 @@ class SohkepayinCoreService(BaseService):
             logger.error(f"No tile spec found for index {tile_index}")
             return
         
+        # if overlap then load and apply blending
+        if tile_spec.overlap > 0:
+            logger.debug(f"Applying overlap blending for tile {tile_index}")
+            # TODO: fix this to use the image path
+            # remove file:// prefix if present
+            file_path = response.uri.split("file://")[-1]  # Extract filename from URI
+            image = self.tiler.apply_edge_blending(
+                file_path,
+                tile_spec
+            )
+        
+            image_source = prepare_image_source(
+                image_data=image,
+                request_id=response.request_id,
+                transport_mode=IMAGE_TRANSPORT_MODES["FILE_URI"]
+            )
+        else:
+            image_source = ImageSource(
+                uri=response.uri,
+                image_data=None,  # No image data if using file URI
+            )
+        
         # Send tile to display with position
         display_message = DisplayMedia(
-            request_id=response.request_id,
             content_type=ContentType.IMAGE,
-            uri=response.uri,
             position=(tile_spec.display_x, tile_spec.display_y),  # Position in panorama space
-            fade_in=1.5  # Tile fade-in duration
+            fade_in=1.5,  # Tile fade-in duration
+            image_data=image_source.image_data,
+            uri=image_source.uri,
         )
         logger.debug(f"Sending tile {tile_index} to display at position {tile_spec.display_x}, {tile_spec.display_y}")
         

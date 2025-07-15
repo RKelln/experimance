@@ -99,7 +99,7 @@ class MockImageGenerator(ImageGenerator):
         background_color = self.config.background_color or (random.randint(0,128), random.randint(0,128), random.randint(0,128))
 
         logger.debug(f"Creating placeholder image of size {width}x{height} with background {background_color}")
-        
+
         image = Image.new("RGB", (width, height), background_color)
         draw = ImageDraw.Draw(image)
         
@@ -116,11 +116,14 @@ class MockImageGenerator(ImageGenerator):
         bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
-        x = (self.config.image_size[0] - text_width) // 2
-        y = (self.config.image_size[1] - text_height) // 2
+        x = (width - text_width) // 2
+        y = (height - text_height) // 2
         
         draw.text((x, y), text, fill=self.config.text_color, font=font)
         
+        # draw a box outline along all outside edges
+        draw.rectangle([0, 0, width - 1, height - 1], outline=self.config.text_color, width=5)
+
         # Save the image
         request_id = kwargs.get('request_id')
         output_path = self._get_output_path("png", request_id=request_id)

@@ -26,7 +26,8 @@ class TileSpec:
     display_y: int  # Y position in display panorama
     display_width: int  # Width in display panorama (without overlap)
     display_height: int  # Height in display panorama
-    
+    overlap: int # Overlap in pixels (0 if no overlap)
+
     # Generation parameters (for render requests - includes overlap)
     generated_width: int  # Width to generate (includes overlap extension)
     generated_height: int  # Height to generate 
@@ -34,7 +35,6 @@ class TileSpec:
     # Tile metadata
     tile_index: int  # Tile number (0-based)
     total_tiles: int  # Total number of tiles
-    has_left_fade: bool = False  # Whether this tile should fade its left edge
 
 
 class PanoramaTiler:
@@ -54,7 +54,7 @@ class PanoramaTiler:
         display_tile_height: int = 1080,
         generated_tile_width: int = 1344,
         generated_tile_height: int = 768,
-        min_overlap_percent: float = 15.0,
+        min_overlap_percent: float = 5.0,
         max_megapixels: float = 1.0
     ):
         """
@@ -132,11 +132,11 @@ class PanoramaTiler:
                 display_y=0,
                 display_width=panorama_display_width,
                 display_height=panorama_display_height,
+                overlap=0,
                 generated_width=self.generated_tile_width,
                 generated_height=self.generated_tile_height,
                 tile_index=0,
                 total_tiles=1,
-                has_left_fade=False
             )]
         
         # Calculate how many tiles we need horizontally
@@ -146,10 +146,22 @@ class PanoramaTiler:
         if num_tiles == 1:
             overlap_display = 0
         else:
-            # Work backwards: total_width = num_tiles * tile_width - (num_tiles-1) * overlap
+            # Calculate minimum overlap from fitting constraint
+            # total_width = num_tiles * tile_width - (num_tiles-1) * overlap
             # So: overlap = (num_tiles * tile_width - total_width) / (num_tiles - 1)
-            overlap_display = (num_tiles * self.display_tile_width - panorama_display_width) / (num_tiles - 1)
+            fitting_overlap = (num_tiles * self.display_tile_width - panorama_display_width) / (num_tiles - 1)
+            
+            # Calculate minimum overlap from percentage constraint
+            min_overlap_required = (self.min_overlap_percent / 100.0) * self.display_tile_width
+            
+            # Use the larger of the two requirements
+            overlap_display = max(fitting_overlap, min_overlap_required)
             overlap_display = int(overlap_display)
+            
+            logger.debug(
+                f"Overlap calculation: fitting={fitting_overlap:.1f}px, "
+                f"min_required={min_overlap_required:.1f}px, using={overlap_display}px"
+            )
         
         # Calculate overlap needed in generated space (scale proportionally)
         display_to_generated_ratio = self.generated_tile_width / self.display_tile_width
@@ -203,11 +215,11 @@ class PanoramaTiler:
                 display_y=0,  # Panoramas are typically single row
                 display_width=display_width,
                 display_height=panorama_display_height,
+                overlap=overlap_display if i > 0 else 0,  # No overlap for first tile
                 generated_width=generated_width,
                 generated_height=generated_height,
                 tile_index=i,
                 total_tiles=num_tiles,
-                has_left_fade=(i > 0)  # All tiles except first have left fade
             ))
         
         return tiles
@@ -255,7 +267,7 @@ class PanoramaTiler:
             tile_spec.display_y + tile_spec.display_height
         ))
     
-    def apply_edge_blending(self, tile_image: Image.Image, tile_spec: TileSpec, overlap_pixels: int) -> Image.Image:
+    def apply_edge_blending(self, tile_image: Image.Image | str, tile_spec: TileSpec) -> Image.Image:
         """
         Apply edge blending to a tile for seamless composition.
         
@@ -271,20 +283,21 @@ class PanoramaTiler:
         Returns:
             Tile image with alpha channel for blending
         """
-        # Convert to RGBA if needed
-        if tile_image.mode != 'RGBA':
-            tile_image = tile_image.convert('RGBA')
+        if isinstance(tile_image, str):
+            # Load image from file path
+            tile_image = Image.open(tile_image).convert('RGBA')
+        else:
+            # Convert to RGBA if needed
+            if tile_image.mode != 'RGBA':
+                tile_image = tile_image.convert('RGBA')
         
         # Only apply left edge fading for tiles that need it
-        if not tile_spec.has_left_fade:
+        if tile_spec.overlap <= 0:
             return tile_image
-        
-        if overlap_pixels <= 0:
-            raise ValueError("overlap_pixels must be greater than 0 for tiles with left fade")
-        
+
         # Create alpha mask
         width, height = tile_image.size
-        blend_px = min(overlap_pixels, width // 2)  # Don't blend more than half the image
+        blend_px = min(tile_spec.overlap, width // 2)  # Don't blend more than half the image
         
         # Use NumPy for efficient alpha mask creation
         alpha_array = np.full((height, width), 255, dtype=np.uint8)
@@ -299,6 +312,10 @@ class PanoramaTiler:
         
         # Apply alpha mask
         tile_image.putalpha(alpha)
+
+        logger.debug(
+            f"Applied left edge fade to tile {tile_spec.tile_index} with {blend_px}px overlap, {width}x{height}"
+        )
         
         return tile_image
     

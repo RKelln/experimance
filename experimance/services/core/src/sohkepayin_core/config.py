@@ -97,7 +97,7 @@ class TileConfig(BaseModel):
     min_overlap_percent: float = Field(
         default=10.0,
         description="Minimum overlap between tiles as percentage",
-        ge=5.0,
+        ge=0.0,
         le=50.0
     )
     
