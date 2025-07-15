@@ -13,7 +13,7 @@ This project consists of multiple services that communicate via ZeroMQ:
 - Image generation service (`image_server`) - Creates AI-generated satellite imagery
 - Transition service (`experimance_transition`) - Handles smooth transitions between images
 - Audio service (`experimance_audio`) - Provides audio feedback and soundscapes
-- Agent service (`experimance_agent`) - AI agents that interact with the installation
+- Agent service (`experimance_agent`) - AI agents with vision capabilities that interact with the installation
 
 ## Project Structure
 
@@ -114,6 +114,21 @@ sudo apt-get install libssl-dev libusb-1.0-0-dev libsdl2-dev ffmpeg libasound2-d
 
 # Create and activate virtual environment
 uv sync
+```
+
+### Vision System Setup
+
+The agent service includes vision capabilities for audience detection. To set up and test webcam functionality:
+
+```bash
+# Check available webcams
+uv run python scripts/list_webcams.py
+
+# Test vision system components
+cd services/agent && uv run python tests/test_vision_imports.py
+
+# Test CPU-based audience detection
+cd services/agent && uv run python tests/test_cpu_detection.py
 ```
 
 ## Running Services
@@ -308,6 +323,10 @@ uv run -m pytest -v utils/tests/test_zmq_utils.py -k test_name
 
 # Run tests in a specific service
 uv run -m pytest services/audio/tests
+
+# Test agent service vision capabilities
+cd services/agent && uv run python tests/test_vision_imports.py
+cd services/agent && uv run python tests/test_cpu_detection.py
 
 # Run tests with specific markers or names
 uv run -m pytest -k "ImageServer"

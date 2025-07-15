@@ -59,6 +59,7 @@ class AgentService(BaseService):
         # Vision components (will be initialized if enabled)
         self.webcam_manager = None
         self.vlm_processor = None
+        self.audience_detector = None
         
         # Transcript display handler (will be initialized if enabled)
         self.transcript_display_handler = None
@@ -111,10 +112,14 @@ class AgentService(BaseService):
         await self.zmq_service.stop()
         
         # Clean up vision components
+        if self.audience_detector:
+            await self.audience_detector.stop()
+        
+        if self.vlm_processor:
+            await self.vlm_processor.stop()
+            
         if self.webcam_manager:
-            # TODO: Implement proper webcam manager shutdown
-            # await self.webcam_manager.stop()
-            pass
+            await self.webcam_manager.stop()
         
         # Clear any displayed text
         await self._clear_all_displayed_text()
@@ -212,17 +217,48 @@ class AgentService(BaseService):
     
     async def _initialize_vision(self):
         """Initialize vision processing components."""
-        # TODO: Import and initialize webcam manager
-        # from .vision.webcam import WebcamManager
-        # self.webcam_manager = WebcamManager(self.config.vision)
-        # await self.webcam_manager.start()
-        
-        # TODO: Import and initialize VLM processor
-        # from .vision.vlm import VLMProcessor
-        # self.vlm_processor = VLMProcessor(self.config.vision)
-        # await self.vlm_processor.start()
-        
-        logger.info("Vision processing initialized (placeholder)")
+        try:
+            from .vision import WebcamManager, VLMProcessor, AudienceDetector, CPUAudienceDetector
+            
+            # Initialize webcam manager
+            self.webcam_manager = WebcamManager(self.config.vision)
+            await self.webcam_manager.start()
+            
+            # Initialize VLM processor if enabled and needed
+            if (self.config.vision.vlm_enabled and 
+                self.config.vision.detection_method in ["vlm", "hybrid"]):
+                self.vlm_processor = VLMProcessor(self.config.vision)
+                await self.vlm_processor.start()
+            
+            # Initialize appropriate audience detector based on detection method
+            detection_method = self.config.vision.detection_method
+            
+            if detection_method == "cpu":
+                # Use fast CPU-only detection
+                self.audience_detector = CPUAudienceDetector(self.config.vision)
+                await self.audience_detector.start()
+                
+                # Set performance mode
+                performance_mode = self.config.vision.cpu_performance_mode
+                self.audience_detector.set_performance_mode(performance_mode)
+                
+                logger.info(f"Using CPU-only audience detection (mode: {performance_mode})")
+                
+            elif detection_method in ["vlm", "hybrid"]:
+                # Use VLM-based detection (original detector)
+                self.audience_detector = AudienceDetector(self.config.vision)
+                await self.audience_detector.start()
+                
+                logger.info(f"Using {detection_method} audience detection with VLM")
+            
+            logger.info("Vision processing initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize vision processing: {e}")
+            # Continue without vision processing
+            self.webcam_manager = None
+            self.vlm_processor = None
+            self.audience_detector = None
     
     async def _initialize_transcript_display_handler(self):
         """Initialize transcript display handling."""
@@ -282,15 +318,31 @@ class AgentService(BaseService):
         while self.running:
             try:
                 if (self.config.vision.audience_detection_enabled and 
+                    self.audience_detector and 
                     self.webcam_manager and 
                     self.webcam_manager.is_active):
                     
-                    # TODO: Implement audience detection
-                    # new_status = await self.webcam_manager.detect_audience()
-                    # if new_status != self.audience_present:
-                    #     await self._publish_audience_status(new_status)
-                    
-                    pass  # Placeholder
+                    # Capture frame for analysis
+                    frame = await self.webcam_manager.capture_frame()
+                    if frame is not None:
+                        # Perform audience detection
+                        detection_result = await self.audience_detector.detect_audience(
+                            frame, 
+                            webcam_manager=self.webcam_manager, 
+                            vlm_processor=self.vlm_processor
+                        )
+                        
+                        if detection_result.get("success", False):
+                            new_status = detection_result["audience_detected"]
+                            confidence = detection_result.get("confidence", 0.0)
+                            
+                            # Only update if there's a significant change
+                            if (new_status != self.audience_present and 
+                                confidence > self.config.vision.audience_detection_threshold):
+                                await self._publish_audience_status(new_status)
+                                logger.info(f"Audience status changed: {new_status} (confidence: {confidence:.2f})")
+                        else:
+                            logger.warning(f"Audience detection failed: {detection_result.get('error', 'Unknown error')}")
                 
                 await self._sleep_if_running(self.config.vision.audience_detection_interval)
                 
@@ -304,20 +356,52 @@ class AgentService(BaseService):
             try:
                 if (self.config.vision.vlm_enabled and 
                     self.vlm_processor and 
-                    self.webcam_manager):
+                    self.vlm_processor.is_loaded and
+                    self.webcam_manager and
+                    self.webcam_manager.is_active):
                     
-                    # TODO: Implement VLM analysis
-                    # image = await self.webcam_manager.capture_frame()
-                    # analysis = await self.vlm_processor.analyze_scene(image)
-                    # await self._process_vision_analysis(analysis)
-                    
-                    pass  # Placeholder
+                    # Capture frame for VLM analysis
+                    frame = await self.webcam_manager.capture_frame()
+                    if frame is not None:
+                        # Preprocess frame for VLM
+                        rgb_frame = self.webcam_manager.preprocess_for_vlm(frame)
+                        
+                        # Perform scene analysis
+                        analysis = await self.vlm_processor.analyze_scene(rgb_frame, "scene_description")
+                        
+                        if analysis.get("success", False):
+                            await self._process_vision_analysis(analysis)
+                        else:
+                            logger.warning(f"VLM analysis failed: {analysis.get('error', 'Unknown error')}")
                 
                 await self._sleep_if_running(self.config.vision.vlm_analysis_interval)
                 
             except Exception as e:
                 self.record_error(e, is_fatal=False)
                 await self._sleep_if_running(30.0)  # Back off on error
+    
+    async def _process_vision_analysis(self, analysis: Dict[str, Any]):
+        """Process VLM analysis results and update agent context."""
+        try:
+            description = analysis.get("description", "")
+            analysis_type = analysis.get("analysis_type", "unknown")
+            
+            logger.debug(f"VLM Analysis ({analysis_type}): {description}")
+            
+            # Send scene context to the agent backend if conversation is active
+            if (self.current_backend and 
+                self.current_backend.is_connected and 
+                self.is_conversation_active and 
+                description.strip()):
+                
+                # Format as system message for context
+                context_msg = f"Current scene: {description}"
+                await self.current_backend.send_message(context_msg, speaker="system")
+                
+                logger.info(f"Updated agent context with scene analysis: {description[:100]}...")
+                
+        except Exception as e:
+            logger.error(f"Failed to process vision analysis: {e}")
     
     # =========================================================================
     # Event Handlers
@@ -555,6 +639,7 @@ class AgentService(BaseService):
                 "displayed_text_count": len(self.displayed_text_ids),
             },
             "backend": None,
+            "vision": {},
             "config": {
                 "agent_backend": self.config.agent_backend,
                 "vision_enabled": self.config.vision.webcam_enabled,
@@ -563,6 +648,25 @@ class AgentService(BaseService):
                 "biome_suggestions_enabled": self.config.biome_suggestions_enabled,
             }
         }
+        
+        # Add vision component status
+        if self.webcam_manager:
+            status["vision"]["webcam"] = self.webcam_manager.get_capture_info()
+        
+        if self.vlm_processor:
+            status["vision"]["vlm"] = self.vlm_processor.get_status()
+            
+        if self.audience_detector:
+            status["vision"]["audience_detection"] = self.audience_detector.get_detection_stats()
+            # Add detection method info
+            if hasattr(self.audience_detector, 'set_performance_mode'):
+                status["vision"]["detection_method"] = "cpu"
+                status["vision"]["performance_mode"] = self.config.vision.cpu_performance_mode
+            else:
+                status["vision"]["detection_method"] = self.config.vision.detection_method
+        else:
+            status["vision"]["detection_method"] = self.config.vision.detection_method
+            status["vision"]["audience_detection"] = {"enabled": False}
         
         # Add transcript manager status if available
         if self.current_backend and hasattr(self.current_backend, 'transcript_manager'):

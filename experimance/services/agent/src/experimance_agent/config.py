@@ -111,22 +111,76 @@ class VisionConfig(BaseModel):
     
     # Webcam configuration
     webcam_enabled: bool = Field(default=True, description="Enable webcam capture and processing")
-    webcam_device_id: int = Field(default=0, description="Webcam device ID (usually 0 for default camera)")
-    webcam_width: int = Field(default=640, description="Webcam capture width")
-    webcam_height: int = Field(default=480, description="Webcam capture height")
+    webcam_device_id: int = Field(default=0, description="Webcam device ID (use scripts/list_webcams.py to find available cameras)")
+    webcam_device_name: Optional[str] = Field(default=None, description="Alternative: specify webcam by partial name match (overrides device_id if set)")
+    webcam_width: int = Field(default=640, description="Webcam capture width (common: 640, 1280, 1920)")
+    webcam_height: int = Field(default=480, description="Webcam capture height (common: 480, 720, 1080)")
     webcam_fps: int = Field(default=30, description="Webcam capture framerate")
+    webcam_auto_detect: bool = Field(default=True, description="Auto-detect and use first available webcam if specified device fails")
     
     # Audience detection configuration
     audience_detection_enabled: bool = Field(default=True, description="Enable audience presence detection")
     audience_detection_interval: float = Field(default=2.0, description="Interval between audience detection checks (seconds)")
     audience_detection_threshold: float = Field(default=0.5, description="Confidence threshold for audience detection")
     
-    # Vision Language Model configuration
-    vlm_enabled: bool = Field(default=True, description="Enable Vision Language Model for scene understanding")
+    # Detection method selection
+    detection_method: Annotated[Literal["cpu", "vlm", "hybrid"], 
+                               StringConstraints(to_lower=True)] = Field(
+        default="cpu",
+        description="Detection method: 'cpu' for OpenCV-only, 'vlm' for Vision Language Model, 'hybrid' for both"
+    )
+    
+    # CPU detection performance mode
+    cpu_performance_mode: Annotated[Literal["fast", "balanced", "accurate"], 
+                                   StringConstraints(to_lower=True)] = Field(
+        default="balanced",
+        description="CPU detection performance mode: 'fast', 'balanced', or 'accurate'"
+    )
+    
+    # Vision Language Model configuration (only used if detection_method includes VLM)
+    vlm_enabled: bool = Field(default=False, description="Enable Vision Language Model for scene understanding (slow on CPU)")
     vlm_model: str = Field(default="moondream", description="VLM model to use (moondream, llama-vision, etc.)")
-    vlm_analysis_interval: float = Field(default=10.0, description="Interval between VLM scene analysis (seconds)")
-    vlm_max_image_size: int = Field(default=512, description="Maximum image size for VLM processing")
-    vlm_device: str = Field(default="cuda", description="Device for VLM processing (cpu, cuda, etc.)")
+    vlm_analysis_interval: float = Field(default=30.0, description="Interval between VLM scene analysis (seconds) - increased for CPU")
+    vlm_max_image_size: int = Field(default=256, description="Maximum image size for VLM processing - reduced for CPU performance")
+    vlm_device: str = Field(default="cpu", description="Device for VLM processing (cpu, cuda, etc.)")
+    
+    @field_validator('detection_method')
+    @classmethod
+    def validate_detection_method(cls, v: str) -> str:
+        """Validate detection method and provide warnings for performance."""
+        if v == "vlm":
+            import logging
+            logging.getLogger(__name__).warning(
+                "VLM-only detection method selected. This may be slow on CPU. Consider 'cpu' or 'hybrid' mode."
+            )
+        return v
+    
+    @field_validator('webcam_width', 'webcam_height')
+    @classmethod
+    def validate_resolution(cls, v):
+        """Validate that resolution values are reasonable."""
+        if v < 160 or v > 4096:
+            raise ValueError(f"Resolution dimension must be between 160 and 4096, got {v}")
+        return v
+    
+    @field_validator('webcam_fps')
+    @classmethod
+    def validate_fps(cls, v):
+        """Validate that FPS value is reasonable."""
+        if v < 1 or v > 120:
+            raise ValueError(f"FPS must be between 1 and 120, got {v}")
+        return v
+    
+    @field_validator('vlm_device')
+    @classmethod
+    def validate_vlm_device(cls, v):
+        """Validate VLM device string."""
+        valid_devices = ['cpu', 'cuda', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3', 'mps']
+        if v not in valid_devices:
+            # Allow cuda:N pattern
+            if not (v.startswith('cuda:') and v[5:].isdigit()):
+                raise ValueError(f"VLM device must be one of {valid_devices} or 'cuda:N', got '{v}'")
+        return v
 
 
 class TranscriptConfig(BaseModel):

@@ -54,7 +54,7 @@ cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 webcam_enabled = true
 webcam_device_id = 0
 webcam_width = 640
-webcam_height = 480
+webcam_height = 360
 webcam_fps = 30
 
 # Audience detection
@@ -63,11 +63,11 @@ audience_detection_interval = 2.0
 audience_detection_threshold = 0.5
 
 # Vision Language Model
-vlm_enabled = true
+vlm_enabled = false
 vlm_model = "moondream"
 vlm_analysis_interval = 10.0
 vlm_max_image_size = 512
-vlm_device = "cuda"
+vlm_device = "cpu"  # cuda
 
 [transcript]
 # Transcript management
