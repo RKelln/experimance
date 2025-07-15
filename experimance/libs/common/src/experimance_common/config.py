@@ -4,6 +4,7 @@ Configuration loading and management for Experimance services.
 
 import argparse
 import logging
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, TypeVar
@@ -19,6 +20,166 @@ class ConfigError(Exception):
     """Exception raised for configuration errors."""
     pass
 
+
+def resolve_path(
+    path_or_string: Union[str, Path], 
+    hint: Optional[str] = None
+) -> Path:
+    """Resolve a path from configuration, with support for relative paths based on service hints.
+    
+    This function helps resolve file paths from configuration strings, supporting:
+    - Absolute paths (returned as-is)
+    - Relative paths (resolved relative to appropriate service directory based on hint)
+    - Project-specific paths (checks project directory first)
+    
+    Args:
+        path_or_string: Path string or Path object to resolve
+        hint: Service type hint to determine base directory. Supported values:
+              - "core": Uses CORE_SERVICE_DIR
+              - "agent": Uses AGENT_SERVICE_DIR  
+              - "display": Uses DISPLAY_SERVICE_DIR
+              - "audio": Uses AUDIO_SERVICE_DIR
+              - "image_server": Uses IMAGE_SERVER_SERVICE_DIR
+              - "project": Uses current project directory
+              - "data": Uses DATA_DIR
+              - None: Uses PROJECT_ROOT
+              
+    Returns:
+        Resolved Path object
+        
+    Raises:
+        ConfigError: If the resolved path doesn't exist
+        
+    Examples:
+        # Absolute path - returned as-is
+        resolve_config_path("/etc/prompts/system.txt")
+        
+        # Relative path with service hint
+        resolve_config_path("prompts/system.txt", hint="core")
+        # -> PROJECT_ROOT/services/core/prompts/system.txt
+        
+        # Project-specific path
+        resolve_config_path("system_prompt.txt", hint="project") 
+        # -> PROJECT_ROOT/projects/sohkepayin/system_prompt.txt
+        
+        # Data directory path
+        resolve_config_path("locations.json", hint="data")
+        # -> PROJECT_ROOT/data/locations.json
+    """
+    if not is_file(path_or_string):
+        raise ConfigError(f"Invalid path: {path_or_string}. Expected a file path.")
+
+    path = Path(path_or_string)
+
+    # If it's already absolute, return as-is (but validate existence)
+    if path.is_absolute():
+        if not path.exists():
+            raise ConfigError(f"Absolute path does not exist: {path}")
+        return path
+    
+    # import here to avoid circular imports
+    from experimance_common.constants import (
+        PROJECT_ROOT, PROJECT_SPECIFIC_DIR,
+        CORE_SERVICE_DIR, AGENT_SERVICE_DIR, DISPLAY_SERVICE_DIR,
+        AUDIO_SERVICE_DIR, IMAGE_SERVER_SERVICE_DIR, DATA_DIR
+    )
+
+    # Determine base directory based on hint
+    base_dirs = []
+    
+    if hint == "core":
+        base_dirs = [CORE_SERVICE_DIR]
+    elif hint == "agent":
+        base_dirs = [AGENT_SERVICE_DIR]
+    elif hint == "display":
+        base_dirs = [DISPLAY_SERVICE_DIR]
+    elif hint == "audio":
+        base_dirs = [AUDIO_SERVICE_DIR]
+    elif hint == "image_server":
+        base_dirs = [IMAGE_SERVER_SERVICE_DIR]
+    elif hint == "project":
+        project_env = os.getenv("PROJECT_ENV", "experimance")
+        base_dirs = [PROJECT_SPECIFIC_DIR / project_env]
+    elif hint == "data":
+        base_dirs = [DATA_DIR]
+    else:
+        # Default: try project directory first, then PROJECT_ROOT
+        project_env = os.getenv("PROJECT_ENV", "experimance")
+        base_dirs = [PROJECT_SPECIFIC_DIR / project_env, PROJECT_ROOT]
+    
+    # Try each base directory in order
+    for base_dir in base_dirs:
+        resolved_path = base_dir / path
+        if resolved_path.exists():
+            return resolved_path
+    
+    # If no existing path found, return the first candidate (for creating new files)
+    if base_dirs:
+        candidate_path = base_dirs[0] / path
+        logger.warning(f"Path does not exist: {candidate_path}. Returning candidate path.")
+        return candidate_path
+    
+    # Fallback to PROJECT_ROOT
+    fallback_path = PROJECT_ROOT / path
+    logger.warning(f"No hint provided and path not found. Using PROJECT_ROOT: {fallback_path}")
+    return fallback_path
+
+
+def load_file_content(
+    path_or_string: Union[str, Path],
+    hint: Optional[str] = None,
+    encoding: str = "utf-8"
+) -> str:
+    """Load text content from a file, with path resolution support.
+    
+    This is a convenience function that combines resolve_config_path() with file reading.
+    
+    Args:
+        path_or_string: Path to the file
+        hint: Service type hint for path resolution (see resolve_config_path)
+        encoding: File encoding (default: utf-8)
+        
+    Returns:
+        File content as string
+        
+    Raises:
+        ConfigError: If file cannot be read
+        
+    Examples:
+        # Load system prompt from core service directory
+        prompt = load_file_content("prompts/system.txt", hint="core")
+        
+        # Load project-specific config
+        config_text = load_file_content("custom_config.txt", hint="project")
+    """
+    try:
+        resolved_path = resolve_path(path_or_string, hint)
+        
+        if not resolved_path.exists():
+            raise ConfigError(f"File does not exist: {resolved_path}")
+            
+        with open(resolved_path, 'r', encoding=encoding) as f:
+            content = f.read()
+            
+        logger.debug(f"Loaded file content from: {resolved_path}")
+        return content
+        
+    except Exception as e:
+        raise ConfigError(f"Failed to load file content from {path_or_string}: {e}") from e
+
+
+def is_file(path_or_string: Union[str, Path]) -> bool:
+    """Check if a Path or string is a plausible file path.
+    Just a simple check designed to allow for configuration to specific text/json or files/dirs containing them.
+    """
+    s = str(path_or_string).lower()
+    if s.startswith("/") or s.startswith("./") or s.startswith("../") or s.startswith("~"):
+        return True
+    if s.endswith("/"): # directory
+        return True
+    if s.endswith(".txt") or s.endswith(".md") or s.endswith(".json") or s.endswith(".toml"): # text file
+        return True
+    return False
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """Deep merge two dictionaries, with override values taking precedence.
@@ -211,6 +372,7 @@ class BaseConfig(BaseModel):
     def __str__(self) -> str:
         """String representation of the configuration."""
         return f"{self.__class__.__name__}:\n{self.model_dump_json(indent=2)}"
+
 # =============================================================================
 # SERVICE CONFIGURATION BASE CLASSES
 # =============================================================================
