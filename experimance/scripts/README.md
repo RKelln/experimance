@@ -4,6 +4,69 @@ This directory contains utility scripts for managing the Experimance project.
 
 ## Available Scripts
 
+### `tune_detector.py`
+
+Interactive tool for tuning audience detection parameters with live webcam feedback.
+
+**Usage:**
+```bash
+# List available detector profiles
+uv run python scripts/tune_detector.py --list-profiles
+
+# Start tuning with default profile (indoor_office)
+uv run python scripts/tune_detector.py
+
+# Start with a specific profile
+uv run python scripts/tune_detector.py --profile gallery_dim
+
+# Use a different camera (if multiple cameras available)
+uv run python scripts/tune_detector.py --camera 1
+
+# Enable verbose logging
+uv run python scripts/tune_detector.py --verbose
+```
+
+**Features:**
+- Real-time visualization of HOG person detection (green boxes)
+- Motion detection overlay (red contours)
+- Interactive parameter adjustment via trackbars
+- Live confidence and presence detection feedback
+- Save tuned parameters to new detector profiles
+
+**Controls:**
+- **q/ESC**: Quit the application
+- **s**: Save current settings to a new profile (`{profile_name}_tuned.toml`)
+- **r**: Reset to original profile values
+- **h**: Toggle HOG detection visualization
+- **m**: Toggle motion detection visualization  
+- **i**: Toggle parameter info display
+
+**Parameters you can tune:**
+- **Detection Scale Factor**: How much to downscale frames (smaller = faster, less accurate)
+- **Min Person Height**: Minimum height in pixels for person detection
+- **Motion Threshold**: Minimum contour area for motion detection
+- **Motion Intensity**: Sensitivity threshold for motion detection
+- **Stability**: Majority vote threshold for temporal smoothing
+- **HOG Threshold**: Person detection confidence threshold
+- **HOG Scale**: Pyramid scale factor for multi-scale detection
+- **Win Stride**: HOG window stride (larger = faster, less accurate)
+- **MOG2 Var Threshold**: Background subtraction variance threshold
+- **MOG2 History**: Number of frames for background model
+- **Person Base Confidence**: Base confidence score for person detection
+- **Motion Weight**: Weight of motion confidence in final score
+
+**Tips:**
+- Start with a default profile that matches your environment
+- Adjust parameters gradually and observe the effect on detection
+- Test with different lighting conditions and audience scenarios
+- Save multiple profiles for different environments
+- Use the verbose flag to see detailed detection information
+
+**Requirements:**
+- Webcam connected to the system
+- OpenCV installed (included in agent dependencies)
+- No pipecat dependencies needed (loads only core detection modules)
+
 ### `create_new_project.py`
 Interactive script to create a new project configuration.
 

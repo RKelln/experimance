@@ -9,5 +9,15 @@ from .webcam import WebcamManager
 from .vlm import VLMProcessor
 from .audience_detector import AudienceDetector
 from .cpu_audience_detector import CPUAudienceDetector
+from .detector_profile import DetectorProfile, load_profile, list_available_profiles, create_default_profile_files
 
-__all__ = ["WebcamManager", "VLMProcessor", "AudienceDetector", "CPUAudienceDetector"]
+__all__ = [
+    "WebcamManager", 
+    "VLMProcessor", 
+    "AudienceDetector", 
+    "CPUAudienceDetector",
+    "DetectorProfile",
+    "load_profile",
+    "list_available_profiles",
+    "create_default_profile_files"
+]

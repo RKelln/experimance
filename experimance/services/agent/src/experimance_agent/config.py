@@ -137,6 +137,16 @@ class VisionConfig(BaseModel):
         description="CPU detection performance mode: 'fast', 'balanced', or 'accurate'"
     )
     
+    # Detector profile configuration
+    detector_profile: str = Field(
+        default="indoor_office",
+        description="Detector profile name (indoor_office, gallery_dim, outdoor_bright, workshop_cluttered, or custom)"
+    )
+    detector_profile_dir: Optional[Path] = Field(
+        default=None,
+        description="Custom directory for detector profiles (defaults to agent/profiles/)"
+    )
+    
     # Vision Language Model configuration (only used if detection_method includes VLM)
     vlm_enabled: bool = Field(default=False, description="Enable Vision Language Model for scene understanding (slow on CPU)")
     vlm_model: str = Field(default="moondream", description="VLM model to use (moondream, llama-vision, etc.)")

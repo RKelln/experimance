@@ -1,0 +1,36 @@
+name = "Gallery Dim"
+description = "Optimized for gallery/museum with dim, controlled lighting"
+environment = "indoor"
+lighting = "dim"
+
+[hog]
+win_stride_x = 8
+win_stride_y = 8
+padding_x = 4
+padding_y = 4
+scale = 1.03
+hit_threshold = -0.2
+group_threshold = 2
+
+[mog2]
+detect_shadows = true
+var_threshold = 30.0
+history = 500
+
+[detection]
+detection_scale_factor = 0.6
+min_person_height = 50
+motion_threshold = 600
+motion_intensity_threshold = 0.005
+detection_history_size = 5
+stability_threshold = 0.6
+
+[confidence]
+person_base_confidence = 0.3
+person_count_weight = 0.2
+person_weight_factor = 0.4
+motion_confidence_weight = 0.3
+motion_only_threshold = 0.4
+motion_only_confidence_factor = 0.6
+max_combined_confidence = 0.95
+absence_confidence = 0.9

@@ -113,7 +113,64 @@ uv run python tests/test_cpu_detection.py
 
 # Test complete vision
 uv run python tests/test_vision.py
+
+# Live detection test with colorful output (great for testing from different locations)
+uv run python tests/test_cpu_live_detection.py --mode accurate
+uv run python tests/test_cpu_live_detection.py --mode fast
+uv run python tests/test_cpu_live_detection.py --mode balanced
 ```
+
+### Live Detection Testing
+
+The `test_cpu_live_detection.py` script provides a continuous detection test with large, colorful output that's visible from across the room:
+
+**Features:**
+- Large ASCII art status display (AUDIENCE DETECTED / NO AUDIENCE)
+- Color-coded confidence levels and detection bars
+- Real-time performance metrics (detection time, FPS)
+- Detailed breakdowns of person and motion detection
+- Three performance modes: `fast`, `balanced`, `accurate`
+
+**Usage:**
+```bash
+# Default accurate mode
+uv run python tests/test_cpu_live_detection.py
+
+# Fast mode for high frame rates
+uv run python tests/test_cpu_live_detection.py --mode fast
+
+# Balanced mode for good speed/accuracy
+uv run python tests/test_cpu_live_detection.py --mode balanced
+```
+
+**Testing Tips:**
+- Move around in front of the camera to test motion detection
+- Stand still to test static person detection  
+- Leave the frame to test absence detection
+- Use Ctrl+C to stop and view final statistics
+
+### Interactive Parameter Tuning
+
+For real-time parameter adjustment with visual feedback, use the interactive tuning tool:
+
+```bash
+# Run interactive tuner with default profile
+uv run python tune_detector.py
+
+# Start with specific profile and camera
+uv run python tune_detector.py --profile gallery_dim --camera 0
+
+# List available profiles
+uv run python tune_detector.py --list-profiles
+```
+
+The interactive tuner provides:
+- Live webcam feed with detection overlays
+- Real-time parameter adjustment via trackbars
+- HOG detection bounding boxes and motion contours
+- Save tuned parameters to new detector profiles
+
+See [scripts/README.md](../../scripts/README.md) for more development tools.
 
 ## Performance Considerations
 

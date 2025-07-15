@@ -3,7 +3,8 @@ Backend package for agent implementations.
 """
 
 from .base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext
-from .pipecat_backend import PipecatBackend
+
+# PipecatBackend is imported lazily to avoid pipecat dependency when not needed
 
 __all__ = [
     "AgentBackend", 
@@ -11,5 +12,5 @@ __all__ = [
     "ConversationTurn",
     "ToolCall",
     "UserContext",
-    "PipecatBackend"
+    # "PipecatBackend"  # Available via lazy import
 ]

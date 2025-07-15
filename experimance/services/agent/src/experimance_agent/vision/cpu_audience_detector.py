@@ -14,6 +14,7 @@ import numpy as np
 import cv2
 
 from ..config import VisionConfig
+from .detector_profile import DetectorProfile, load_profile
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,16 @@ class CPUAudienceDetector:
     def __init__(self, config: VisionConfig):
         self.config = config
         
+        # Load detector profile
+        try:
+            self.profile = load_profile(config.detector_profile, config.detector_profile_dir)
+            logger.info(f"Loaded detector profile: {self.profile.name} ({self.profile.description})")
+        except Exception as e:
+            logger.warning(f"Failed to load detector profile '{config.detector_profile}': {e}")
+            logger.info("Using default profile parameters")
+            from .detector_profile import create_default_profiles
+            self.profile = create_default_profiles()["indoor_office"]
+        
         # Detection state
         self.is_active = False
         self.audience_present = False
@@ -45,14 +56,13 @@ class CPUAudienceDetector:
         # Background subtractor for motion detection
         self.background_subtractor = None
         
-        # Detection parameters (optimized for performance)
-        self.detection_scale_factor = 0.5  # Scale down for faster processing
-        self.min_person_height = 60  # Minimum height for person detection (in scaled image)
-        self.motion_threshold = 1000  # Minimum contour area for significant motion
+        # Apply performance mode if specified (this will override profile settings)
+        if hasattr(config, 'cpu_performance_mode'):
+            self.profile.update_from_performance_mode(config.cpu_performance_mode)
+            logger.info(f"Applied performance mode: {config.cpu_performance_mode}")
         
         # Temporal smoothing
         self.detection_history: List[Dict[str, Any]] = []
-        self.detection_history_size = 5
         
         # Performance tracking
         self.total_detections = 0
@@ -66,15 +76,18 @@ class CPUAudienceDetector:
             return
             
         try:
-            # Initialize background subtractor
+            # Initialize background subtractor using profile parameters
+            mog2_params = self.profile.mog2
             self.background_subtractor = cv2.createBackgroundSubtractorMOG2(
-                detectShadows=True,
-                varThreshold=50,  # More sensitive for better detection
-                history=300
+                detectShadows=mog2_params.detect_shadows,
+                varThreshold=mog2_params.var_threshold,
+                history=mog2_params.history
             )
             
             self.is_active = True
-            logger.info("CPU audience detection initialized")
+            logger.info(f"CPU audience detection initialized with profile: {self.profile.name}")
+            logger.debug(f"MOG2 params - shadows: {mog2_params.detect_shadows}, "
+                        f"varThreshold: {mog2_params.var_threshold}, history: {mog2_params.history}")
             
         except Exception as e:
             logger.error(f"Failed to initialize CPU audience detection: {e}")
@@ -137,7 +150,9 @@ class CPUAudienceDetector:
                 "method_used": "cpu_hog_motion",
                 "performance": {
                     "avg_detection_time": np.mean(self.detection_times),
-                    "frame_scale": self.detection_scale_factor
+                    "frame_scale": self.profile.detection.detection_scale_factor,
+                    "profile_name": self.profile.name,
+                    "profile_environment": self.profile.environment
                 },
                 "success": True
             }
@@ -159,13 +174,14 @@ class CPUAudienceDetector:
             }
     
     def _scale_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Scale frame down for faster processing."""
-        if self.detection_scale_factor == 1.0:
+        """Scale frame down for faster processing using profile parameters."""
+        scale_factor = self.profile.detection.detection_scale_factor
+        if scale_factor == 1.0:
             return frame
         
         height, width = frame.shape[:2]
-        new_width = int(width * self.detection_scale_factor)
-        new_height = int(height * self.detection_scale_factor)
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
         
         return cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
     
@@ -183,29 +199,34 @@ class CPUAudienceDetector:
             # Convert to grayscale for HOG detection
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             
-            # Detect people using HOG
-            # detectMultiScale parameters optimized for speed vs accuracy
+            # Detect people using HOG with profile parameters
+            hog_params = self.profile.hog
             detections, weights = self.hog.detectMultiScale(
                 gray,
-                winStride=(8, 8),  # Larger stride for speed
-                padding=(4, 4),   # Smaller padding for speed
-                scale=1.05,       # Smaller scale increment for speed
-                hitThreshold=0.0, # Lower threshold for better detection
-                groupThreshold=2  # Group overlapping detections
+                winStride=(hog_params.win_stride_x, hog_params.win_stride_y),
+                padding=(hog_params.padding_x, hog_params.padding_y),
+                scale=hog_params.scale,
+                hitThreshold=hog_params.hit_threshold,
+                groupThreshold=hog_params.group_threshold
             )
             
-            # Filter detections by size
+            # Filter detections by size using profile parameters
+            min_height = self.profile.detection.min_person_height
             valid_detections = []
             for (x, y, w, h) in detections:
-                if h >= self.min_person_height:  # Minimum height filter
+                if h >= min_height:  # Minimum height filter from profile
                     valid_detections.append((x, y, w, h))
             
             person_count = len(valid_detections)
             
-            # Calculate confidence based on detection count and weights
+            # Calculate confidence based on detection count and weights using profile parameters
+            conf_params = self.profile.confidence
             if person_count > 0:
                 avg_weight = np.mean(weights[:len(valid_detections)]) if len(weights) > 0 else 0.5
-                confidence = min(0.9, 0.3 + (person_count * 0.2) + (avg_weight * 0.4))
+                confidence = min(0.9, 
+                               conf_params.person_base_confidence + 
+                               (person_count * conf_params.person_count_weight) + 
+                               (avg_weight * conf_params.person_weight_factor))
             else:
                 confidence = 0.0
             
@@ -251,16 +272,18 @@ class CPUAudienceDetector:
             # Find contours
             contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # Filter contours by size
-            significant_contours = [c for c in contours if cv2.contourArea(c) > self.motion_threshold]
+            # Filter contours by size using profile parameters
+            motion_threshold = self.profile.detection.motion_threshold
+            significant_contours = [c for c in contours if cv2.contourArea(c) > motion_threshold]
             
             # Calculate motion metrics
             total_motion_area = sum(cv2.contourArea(c) for c in significant_contours)
             frame_area = frame.shape[0] * frame.shape[1]
             motion_intensity = total_motion_area / frame_area
             
-            # Determine if significant motion detected
-            motion_detected = len(significant_contours) > 0 and motion_intensity > 0.01
+            # Determine if significant motion detected using profile parameters
+            motion_intensity_threshold = self.profile.detection.motion_intensity_threshold
+            motion_detected = len(significant_contours) > 0 and motion_intensity > motion_intensity_threshold
             
             return {
                 "motion_detected": motion_detected,
@@ -277,7 +300,7 @@ class CPUAudienceDetector:
     def _combine_cpu_results(self, person_result: Dict[str, Any], 
                            motion_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Combine HOG person detection and motion detection results.
+        Combine HOG person detection and motion detection results using profile parameters.
         
         Args:
             person_result: Results from HOG person detection
@@ -292,11 +315,14 @@ class CPUAudienceDetector:
         person_confidence = person_result.get("confidence", 0.0)
         motion_confidence = motion_result.get("confidence", 0.0)
         
+        conf_params = self.profile.confidence
+        
         if persons_detected and motion_detected:
             # Both methods agree - high confidence
             return {
                 "detected": True,
-                "confidence": min(0.95, person_confidence + motion_confidence * 0.3),
+                "confidence": min(conf_params.max_combined_confidence, 
+                                person_confidence + motion_confidence * conf_params.motion_confidence_weight),
                 "primary_method": "person+motion"
             }
         elif persons_detected:
@@ -310,21 +336,21 @@ class CPUAudienceDetector:
             # Motion without person detection (possible false positive)
             # Lower confidence, but still possible
             return {
-                "detected": motion_confidence > 0.4,  # Threshold for motion-only detection
-                "confidence": motion_confidence * 0.6,
+                "detected": motion_confidence > conf_params.motion_only_threshold,
+                "confidence": motion_confidence * conf_params.motion_only_confidence_factor,
                 "primary_method": "motion_only"
             }
         else:
             # Neither detected
             return {
                 "detected": False,
-                "confidence": 0.9,  # High confidence in absence
+                "confidence": conf_params.absence_confidence,
                 "primary_method": "none"
             }
     
     def _apply_temporal_smoothing(self, detection_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Apply temporal smoothing to reduce false positives and improve stability.
+        Apply temporal smoothing to reduce false positives and improve stability using profile parameters.
         
         Args:
             detection_result: Current detection result
@@ -334,7 +360,8 @@ class CPUAudienceDetector:
         """
         # Add current result to history
         self.detection_history.append(detection_result)
-        if len(self.detection_history) > self.detection_history_size:
+        history_size = self.profile.detection.detection_history_size
+        if len(self.detection_history) > history_size:
             self.detection_history.pop(0)
         
         if len(self.detection_history) < 2:
@@ -349,8 +376,8 @@ class CPUAudienceDetector:
         confidences = [r["confidence"] for r in self.detection_history]
         avg_confidence = np.mean(confidences)
         
-        # Determine stable result using majority vote with confidence weighting
-        stability_threshold = 0.6  # Require 60% agreement for positive detection
+        # Determine stable result using majority vote with confidence weighting using profile parameters
+        stability_threshold = self.profile.detection.stability_threshold
         stable_detected = (positive_count / total_count) >= stability_threshold
         
         # Adjust confidence based on stability
@@ -373,7 +400,11 @@ class CPUAudienceDetector:
             "max_detection_time": np.max(self.detection_times) if self.detection_times else 0.0,
             "detection_history_size": len(self.detection_history),
             "performance_optimized": True,
-            "detection_scale_factor": self.detection_scale_factor,
+            "detection_scale_factor": self.profile.detection.detection_scale_factor,
+            "profile_name": self.profile.name,
+            "profile_description": self.profile.description,
+            "profile_environment": self.profile.environment,
+            "profile_lighting": self.profile.lighting,
             "last_detection_age": time.time() - self.last_detection_time if self.last_detection_time > 0 else float('inf')
         }
     
@@ -386,24 +417,33 @@ class CPUAudienceDetector:
     
     def set_performance_mode(self, mode: str):
         """
-        Set performance optimization mode.
+        Set performance optimization mode by updating profile parameters.
         
         Args:
             mode: 'fast', 'balanced', or 'accurate'
         """
-        if mode == "fast":
-            self.detection_scale_factor = 0.3
-            self.min_person_height = 40
-            self.motion_threshold = 2000
-        elif mode == "balanced":
-            self.detection_scale_factor = 0.5
-            self.min_person_height = 60
-            self.motion_threshold = 1000
-        elif mode == "accurate":
-            self.detection_scale_factor = 0.7
-            self.min_person_height = 80
-            self.motion_threshold = 500
-        else:
-            raise ValueError(f"Unknown performance mode: {mode}")
-        
+        self.profile.update_from_performance_mode(mode)
         logger.info(f"CPU detection performance mode set to: {mode}")
+        logger.debug(f"Updated parameters - scale: {self.profile.detection.detection_scale_factor}, "
+                    f"min_height: {self.profile.detection.min_person_height}, "
+                    f"motion_threshold: {self.profile.detection.motion_threshold}")
+    
+    def update_profile(self, new_profile: DetectorProfile):
+        """
+        Update the detector profile during runtime.
+        
+        Args:
+            new_profile: New detector profile to use
+        """
+        self.profile = new_profile
+        logger.info(f"Updated detector profile to: {new_profile.name}")
+        
+        # Reinitialize background subtractor with new parameters if active
+        if self.is_active and self.background_subtractor is not None:
+            mog2_params = self.profile.mog2
+            self.background_subtractor = cv2.createBackgroundSubtractorMOG2(
+                detectShadows=mog2_params.detect_shadows,
+                varThreshold=mog2_params.var_threshold,
+                history=mog2_params.history
+            )
+            logger.info("Reinitialized background subtractor with new profile parameters")
