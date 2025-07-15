@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import tempfile
 import glob
@@ -24,6 +25,9 @@ from .constants import (
     DATA_URL_PREFIX,
     FILE_URI_PREFIX
 )
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
 
 
 class ImageLoadFormat(Enum):
@@ -646,3 +650,116 @@ def cleanup_message_temp_file(message: dict|ImageSource) -> bool:
     if temp_file_path:
         return cleanup_temp_file(temp_file_path)
     return True
+
+
+def file_path_to_base64url(file_path: str, format: str = "PNG") -> str:
+    """Convert a local file path to a base64 data URL.
+    
+    Args:
+        file_path: Local file path to an image
+        format: Output format for the base64 encoding (PNG, JPEG, etc.)
+        
+    Returns:
+        Base64 data URL string (e.g., "data:image/png;base64,...")
+        
+    Raises:
+        ValueError: If file path is invalid or empty
+        RuntimeError: If file doesn't exist or image processing fails
+    """
+    if not file_path or not isinstance(file_path, str):
+        raise ValueError("File path must be a non-empty string")
+    
+    # Handle file:// URI prefix
+    if file_path.startswith(FILE_URI_PREFIX):
+        file_path = file_path[len(FILE_URI_PREFIX):]
+    
+    # Check if file exists
+    if not os.path.exists(file_path):
+        raise RuntimeError(f"File not found: {file_path}")
+    
+    try:
+        # Load image with PIL and convert to base64
+        with Image.open(file_path) as img:
+            result = png_to_base64url(img, format=format)
+            if result is None:
+                raise RuntimeError("Failed to convert image to base64")
+            return result
+    except Exception as e:
+        raise RuntimeError(f"Failed to process image file: {e}")
+
+
+def extract_image_as_base64(image_source: Optional[Union[dict, 'ImageSource']], image_name: str = "image") -> Optional[str]:
+    """Extract image data from ImageSource and convert to base64 data URL.
+    
+    This is a utility function that handles various ImageSource formats and converts them
+    to a standardized base64 data URL format for cloud service compatibility.
+    
+    Args:
+        image_source: ImageSource object or dict containing image data
+        image_name: Name for logging purposes (e.g., "depth_map", "reference_image")
+        
+    Returns:
+        Base64 data URL string or None if no valid image data
+    """
+    if image_source is None:
+        return None
+        
+    try:
+        # Handle dict format (from deserialization)
+        if isinstance(image_source, dict):
+            # Check if already has base64 data
+            if image_source.get('image_data'):
+                image_data = image_source['image_data']
+                # Ensure it's a proper data URL
+                if image_data.startswith(DATA_URL_PREFIX):
+                    return image_data
+                elif not image_data.startswith('data:'):
+                    return f"data:image/png;base64,{image_data}"
+                else:
+                    return image_data
+            
+            # Check if has URI (file path)
+            elif image_source.get('uri'):
+                uri = image_source['uri']
+                # Convert file path to base64
+                if not uri.startswith(('http://', 'https://')):
+                    return file_path_to_base64url(uri)
+                else:
+                    # Return HTTP URLs as-is for now
+                    return uri
+        
+        # Handle ImageSource object
+        else:
+            # Check if already has base64 data
+            if hasattr(image_source, 'image_data') and image_source.image_data:
+                image_data = image_source.image_data
+                # Ensure it's a proper data URL
+                if image_data.startswith(DATA_URL_PREFIX):
+                    return image_data
+                elif not image_data.startswith('data:'):
+                    return f"data:image/png;base64,{image_data}"
+                else:
+                    return image_data
+            
+            # Check if has URI (file path)
+            elif hasattr(image_source, 'uri') and image_source.uri:
+                uri = image_source.uri
+                # Convert file path to base64
+                if not uri.startswith(('http://', 'https://')):
+                    return file_path_to_base64url(uri)
+                else:
+                    # Return HTTP URLs as-is for now
+                    return uri
+                    
+            # Try to load using the standard message format
+            else:
+                base64_data = load_image_from_message(image_source, ImageLoadFormat.ENCODED)
+                if base64_data and isinstance(base64_data, str):
+                    return base64_data
+        
+        logger.debug(f"No valid {image_name} data found in image source")
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Failed to extract {image_name} as base64: {e}")
+        return None
