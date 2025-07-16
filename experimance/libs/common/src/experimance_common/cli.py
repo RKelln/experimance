@@ -9,7 +9,7 @@ import asyncio
 import logging
 from pathlib import Path
 import sys
-from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, get_args, Literal
+from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, get_args, Literal, Union
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -40,8 +40,8 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
         field_type = field_info.annotation
         origin = get_origin(field_type)
         if origin is not None:
-            # Handle Optional[Type] -> Type
-            if origin is type(Optional[str]) or origin is type(None):  # Union type
+            # Handle Optional[Type] -> Type (Optional[T] is actually Union[T, None])
+            if origin is Union:
                 args = get_args(field_type)
                 if len(args) == 2 and type(None) in args:
                     field_type = next(arg for arg in args if arg is not type(None))
@@ -61,8 +61,8 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
             is_literal = True
             literal_choices = list(get_args(field_type))
             
-        # Only handle basic types and Literal types for CLI
-        if not is_literal and field_type not in (bool, int, float, str):
+        # Only handle basic types, Path, and Literal types for CLI
+        if not is_literal and field_type not in (bool, int, float, str, Path):
             continue
             
         # Build the argument name with prefix
@@ -129,6 +129,8 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
             arg_config['metavar'] = 'VALUE'
         elif field_type == str:
             arg_config['metavar'] = 'TEXT'
+        elif field_type == Path:
+            arg_config['metavar'] = 'PATH'
         else:
             arg_config['metavar'] = 'VALUE'
         
