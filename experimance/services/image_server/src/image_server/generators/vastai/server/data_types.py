@@ -1,11 +1,9 @@
 """
-Data types for the ControlNet image generation PyWorker.
+Data types for the ControlNet image generation server.
 
-This module defines the request and response data structures used by the
-vast.ai PyWorker framework for ControlNet-based image generation.
+This module defines the request and response data structures for ControlNet-based image generation.
 """
 
-import json
 import base64
 import dataclasses
 import random
@@ -14,13 +12,6 @@ from typing import Optional, Dict, Any, List
 from io import BytesIO
 from PIL import Image
 
-class ApiPayload:
-    """Fallback ApiPayload class for development."""
-    pass
-
-class JsonDataException(Exception):
-    """Fallback JsonDataException for development."""
-    pass
 
 # Sample prompts for testing
 SAMPLE_PROMPTS = [
@@ -35,26 +26,27 @@ SAMPLE_PROMPTS = [
 ]
 
 
-@dataclasses.dataclass
-class ControlNetGenerateData(ApiPayload):
+@dataclass
+class ControlNetGenerateData:
     """
     Request payload for ControlNet image generation.
     
-    Inherits from PyWorker's ApiPayload pattern to provide workload calculation
-    and JSON serialization for the vast.ai worker framework.
+    This class defines all the parameters needed for generating images using ControlNet models.
     """
     prompt: str
     negative_prompt: Optional[str] = None
     depth_map_b64: Optional[str] = None  # base64 encoded depth map
     mock_depth: bool = False
     model: str = "lightning"  # lightning, hyper, base
-    era: Optional[str] = None  # wilderness, pre_industrial, future
+    controlnet: str = "sdxl_small"  # sdxl_small, llite
+    era: Optional[str] = None  # drone, experimance
     steps: int = 6
     cfg: float = 2.0
     seed: Optional[int] = None
     lora_strength: float = 1.0
     controlnet_strength: float = 0.8
-    scheduler: str = "auto"  # euler, dpm_sde, auto
+    scheduler: str = "auto"  # auto, euler, euler_a, dpm_multi, dpm_single, ddim, lcm
+    use_karras_sigmas: Optional[bool] = None
     width: int = 1024
     height: int = 1024
     
@@ -62,24 +54,37 @@ class ControlNetGenerateData(ApiPayload):
     def for_test(cls) -> "ControlNetGenerateData":
         """Create a test payload for development and testing."""
         prompt = random.choice(SAMPLE_PROMPTS)
-        era = random.choice([None, "wilderness", "pre_industrial", "future"])
+        era = random.choice([None, "drone", "experimance"])
         model = random.choice(["lightning", "hyper", "base"])
+        controlnet = random.choice(["sdxl_small", "llite"])
         
         return cls(
             prompt=prompt,
             negative_prompt="blurry, low quality, artifacts, distorted",
             mock_depth=True,
             model=model,
+            controlnet=controlnet,
             era=era,
-            steps=6 if model == "lightning" else 8 if model == "hyper" else 20,
-            cfg=2.0 if model == "lightning" else 2.0 if model == "hyper" else 7.5,
+            steps=6 if model == "lightning" else 6 if model == "hyper" else 20,
+            cfg=1.0 if model == "lightning" else 2.0 if model == "hyper" else 7.5,
             width=1024,
             height=1024
         )
     
     def generate_payload_json(self) -> Dict[str, Any]:
         """Generate JSON representation of the payload for sending to model API."""
-        return dataclasses.asdict(self)
+        return asdict(self)
+    
+    def get_depth_image(self) -> Optional[Image.Image]:
+        """Decode base64 depth map to PIL Image if available."""
+        if not self.depth_map_b64:
+            return None
+        
+        try:
+            image_data = base64.b64decode(self.depth_map_b64)
+            return Image.open(BytesIO(image_data)).convert('RGB')
+        except Exception:
+            return None
     
     def validate(self) -> List[str]:
         """
@@ -95,6 +100,9 @@ class ControlNetGenerateData(ApiPayload):
         
         if self.model not in ["lightning", "hyper", "base"]:
             errors.append("Model must be one of: lightning, hyper, base")
+        
+        if self.controlnet not in ["sdxl_small", "llite"]:
+            errors.append("ControlNet must be one of: sdxl_small, llite")
         
         if self.era and self.era not in ["drone", "experimance"]:
             errors.append("Era must be one of: drone, experimance")
@@ -117,8 +125,8 @@ class ControlNetGenerateData(ApiPayload):
         if not (256 <= self.width <= 2048) or not (256 <= self.height <= 2048):
             errors.append("Width and height must be between 256 and 2048")
         
-        if self.scheduler not in ["auto", "euler", "dpm_sde"]:
-            errors.append("Scheduler must be one of: auto, euler, dpm_sde")
+        if self.scheduler not in ["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"]:
+            errors.append("Scheduler must be one of: auto, euler, euler_a, dpm_multi, dpm_single, ddim, lcm")
         
         return errors
 
@@ -194,6 +202,7 @@ class HealthCheckResponse:
 class ModelListResponse:
     """Response for model listing endpoint."""
     available_models: List[str]
+    available_controlnets: List[str]
     available_eras: List[str]
     available_schedulers: List[str]
     

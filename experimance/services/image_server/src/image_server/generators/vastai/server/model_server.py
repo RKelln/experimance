@@ -7,7 +7,6 @@ and various schedulers optimized for different use cases.
 """
 
 import argparse
-import asyncio
 import base64
 import gc
 import io
@@ -23,13 +22,13 @@ from typing import Dict, Any, Optional, List
 import numpy as np
 import requests
 import torch
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+import uvicorn # type: ignore (loaded on server not locally)
+from fastapi import FastAPI, HTTPException # type: ignore (loaded on server not locally)
+from fastapi.responses import JSONResponse # type: ignore (loaded on server not locally)
 from PIL import Image
 from pydantic import BaseModel
 
-from diffusers import (
+from diffusers import ( # type: ignore (loaded on server not locally)
     StableDiffusionXLPipeline,
     StableDiffusionXLControlNetPipeline,
     ControlNetModel,
@@ -41,7 +40,7 @@ from diffusers import (
     LCMScheduler
 )
 
-from data_types import (
+from data_types import ( # type: ignore (loaded on server not locally)
     ControlNetGenerateData,
     ControlNetGenerateResponse,
     HealthCheckResponse,
@@ -62,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Global variables for model management
 loaded_models: Dict[str, Any] = {}
-controlnet = None
+loaded_controlnets: Dict[str, ControlNetModel] = {}
 startup_time = None
 
 # Model configuration with optimized scheduler settings
@@ -158,10 +157,11 @@ async def lifespan(app: FastAPI):
     
     # Optionally preload default model
     default_model = os.getenv("PRELOAD_MODEL", "lightning")
+    default_controlnet = os.getenv("PRELOAD_CONTROLNET", "sdxl_small")
     if default_model in MODEL_CONFIG:
         try:
-            load_model(default_model)
-            logger.info(f"Preloaded {default_model} model")
+            load_model(default_model, default_controlnet)
+            logger.info(f"Preloaded {default_model} model with {default_controlnet} ControlNet")
         except Exception as e:
             logger.error(f"Failed to preload {default_model}: {e}")
     
@@ -185,7 +185,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app with lifespan handler
 app = FastAPI(
-    title="ControlNet Model Server", 
+    title="Experimance Model Server", 
     version="1.0.0",
     lifespan=lifespan
 )
@@ -198,6 +198,7 @@ class GenerateRequest(BaseModel):
     depth_map_b64: Optional[str] = None
     mock_depth: bool = False
     model: str = "lightning"
+    controlnet: str = "sdxl_small"  # Which ControlNet to use
     era: Optional[str] = None
     steps: Optional[int] = None
     cfg: Optional[float] = None
@@ -238,29 +239,59 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
 
 def load_controlnet(controlnet_id: str = "sdxl_small") -> ControlNetModel:
     """Load ControlNet model for depth conditioning."""
-    global controlnet
-    if controlnet is None:
-        logger.info(f"Loading ControlNet depth model...")
-        controlnet = ControlNetModel.from_pretrained(
-            "diffusers/controlnet-depth-sdxl-1.0-small",
+    # Check if this ControlNet is already loaded
+    if controlnet_id in loaded_controlnets:
+        logger.info(f"Using cached ControlNet: {controlnet_id}")
+        return loaded_controlnets[controlnet_id]
+    
+    logger.info(f"Loading ControlNet depth model: {controlnet_id}")
+    
+    if controlnet_id not in CONTROLNET_CONFIG:
+        logger.warning(f"Unknown ControlNet ID: {controlnet_id}, falling back to sdxl_small")
+        controlnet_id = "sdxl_small"
+    
+    config = CONTROLNET_CONFIG[controlnet_id]
+    
+    # Check if this is a Hugging Face model or a custom URL
+    if config["repo_id"].startswith("http"):
+        # Custom model - download it first
+        models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
+        controlnet_path = download_model(config["repo_id"], config["filename"], models_dir)
+        
+        # Load from local file
+        controlnet = ControlNetModel.from_single_file(
+            str(controlnet_path),
             torch_dtype=torch.float16,
             use_safetensors=True
         )
-        logger.info("ControlNet loaded successfully")
+    else:
+        # Hugging Face model
+        controlnet = ControlNetModel.from_pretrained(
+            config["repo_id"],
+            torch_dtype=torch.float16,
+            use_safetensors=True
+        )
+    
+    # Cache the loaded ControlNet
+    loaded_controlnets[controlnet_id] = controlnet
+    logger.info(f"ControlNet {controlnet_id} loaded successfully")
     return controlnet
 
 
-def load_model(model_name: str) -> StableDiffusionXLControlNetPipeline:
-    """Load and cache a specific model."""
-    if model_name in loaded_models:
-        logger.info(f"Using cached model: {model_name}")
-        return loaded_models[model_name]
+def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiffusionXLControlNetPipeline:
+    """Load and cache a specific model with specified ControlNet."""
+    # Create a cache key that includes both model and controlnet
+    cache_key = f"{model_name}_{controlnet_id}"
     
-    logger.info(f"Loading model: {model_name}")
+    if cache_key in loaded_models:
+        logger.info(f"Using cached model: {cache_key}")
+        return loaded_models[cache_key]
+    
+    logger.info(f"Loading model: {model_name} with ControlNet: {controlnet_id}")
     models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
     
     config = MODEL_CONFIG[model_name]
-    controlnet = load_controlnet()
+    controlnet = load_controlnet(controlnet_id)
     
     if model_name == "base":
         # Load base SDXL model
@@ -331,8 +362,8 @@ def load_model(model_name: str) -> StableDiffusionXLControlNetPipeline:
         pipe = pipe.to("cuda")
         logger.info("Pipeline moved to GPU for maximum performance")
     
-    loaded_models[model_name] = pipe
-    logger.info(f"Model {model_name} loaded successfully")
+    loaded_models[cache_key] = pipe
+    logger.info(f"Model {cache_key} loaded successfully")
     return pipe
 
 
@@ -502,6 +533,7 @@ async def list_models() -> Dict[str, Any]:
     """List available models and configurations."""
     response = ModelListResponse(
         available_models=list(MODEL_CONFIG.keys()),
+        available_controlnets=list(CONTROLNET_CONFIG.keys()),
         available_eras=list(LORA_CONFIG.keys()),
         available_schedulers=["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"]
     )
@@ -523,6 +555,7 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
             depth_map_b64=request.depth_map_b64,
             mock_depth=request.mock_depth,
             model=request.model,
+            controlnet=request.controlnet,
             era=request.era,
             steps=request.steps or MODEL_CONFIG[request.model]["steps"],
             cfg=request.cfg or MODEL_CONFIG[request.model]["cfg"],
@@ -530,6 +563,7 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
             lora_strength=request.lora_strength,
             controlnet_strength=request.controlnet_strength,
             scheduler=request.scheduler,
+            use_karras_sigmas=request.use_karras_sigmas,
             width=request.width,
             height=request.height
         )
@@ -540,14 +574,14 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"Validation errors: {validation_errors}")
         
         # Load the model (this applies the MODEL_CONFIG scheduler when scheduler="auto")
-        pipe = load_model(data.model)
+        pipe = load_model(data.model, data.controlnet)
         
         # Only override scheduler if user explicitly requests a different one
-        if request.scheduler != "auto":
-            setup_scheduler(pipe, request.scheduler, request.use_karras_sigmas, data.model)
-        elif request.use_karras_sigmas is not None:
+        if data.scheduler != "auto":
+            setup_scheduler(pipe, data.scheduler, data.use_karras_sigmas, data.model)
+        elif data.use_karras_sigmas is not None:
             # If user wants to override just the Karras setting, do that
-            setup_scheduler(pipe, "auto", request.use_karras_sigmas, data.model)
+            setup_scheduler(pipe, "auto", data.use_karras_sigmas, data.model)
         
         # Load era-specific LoRA if specified
         if data.era:
@@ -604,6 +638,7 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
                 "steps": data.steps,
                 "cfg": data.cfg,
                 "scheduler": pipe.scheduler.__class__.__name__,
+                "controlnet": data.controlnet,
                 "controlnet_strength": data.controlnet_strength,
                 "lora_strength": data.lora_strength if data.era else None
             }
@@ -625,17 +660,20 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
 
 
 @app.post("/preload")
-async def preload_model(model_name: str) -> Dict[str, Any]:
-    """Preload a specific model."""
+async def preload_model(model_name: str, controlnet_id: str = "sdxl_small") -> Dict[str, Any]:
+    """Preload a specific model with specified ControlNet."""
     try:
         if model_name not in MODEL_CONFIG:
             raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
         
-        load_model(model_name)
-        return {"status": "success", "message": f"Model {model_name} preloaded"}
+        if controlnet_id not in CONTROLNET_CONFIG:
+            raise HTTPException(status_code=400, detail=f"Unknown ControlNet: {controlnet_id}")
+        
+        load_model(model_name, controlnet_id)
+        return {"status": "success", "message": f"Model {model_name} with ControlNet {controlnet_id} preloaded"}
         
     except Exception as e:
-        logger.error(f"Failed to preload model {model_name}: {e}")
+        logger.error(f"Failed to preload model {model_name} with ControlNet {controlnet_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to preload model: {str(e)}")
 
 

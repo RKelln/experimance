@@ -5,6 +5,12 @@ VastAI image generator implementation.
 This generator uses VastAI instances to generate images remotely using the 
 experimance ControlNet model server. It manages a single instance lifecycle
 and handles image generation requests serially.
+
+The generator supports:
+- Multiple ControlNet models (sdxl_small, llite, etc.)
+- Era-specific LoRA selection (experimance, drone)
+- Depth map conditioning via base64 or PIL Image
+- Configurable generation parameters
 """
 
 import logging
@@ -21,6 +27,7 @@ from dotenv import load_dotenv
 from image_server.generators.generator import ImageGenerator
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.vastai.vastai_manager import VastAIManager, InstanceEndpoint
+from image_server.generators.vastai.server.data_types import ControlNetGenerateData
 
 from projects.experimance.schemas import Era
 
@@ -30,7 +37,8 @@ load_dotenv()
 
 class VastAIGenerator(ImageGenerator):
     """VastAI-based image generator using remote ControlNet model server."""
-    
+    config : VastAIGeneratorConfig
+
     def __init__(self, config: VastAIGeneratorConfig, output_dir: str = "/tmp", **kwargs):
         """Initialize VastAI generator with configuration."""
         super().__init__(config, output_dir, **kwargs)
@@ -131,6 +139,8 @@ class VastAIGenerator(ImageGenerator):
             seed: Random seed for reproducible results (optional)
             **kwargs: Additional generation parameters
                 depth_map_b64: Base64 encoded depth map (alternative to depth_image)
+                controlnet: ControlNet model to use (default: "sdxl_small")
+                era: Era for LoRA selection (influences era-specific styling)
             
         Returns:
             Path to the saved generated image
@@ -159,39 +169,33 @@ class VastAIGenerator(ImageGenerator):
         try:
             endpoint = self.current_endpoint  # Use pre-initialized endpoint
             
-            # Prepare the generation request
-            payload = {
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-                "model": self.config.model_name,
-                "era": era,
-                "steps": self.config.steps,
-                "cfg": self.config.cfg,
-                "seed": seed,
-                "scheduler": self.config.scheduler,
-                "use_karras_sigmas": self.config.use_karras_sigmas,
-                "lora_strength": self.config.lora_strength,
-                "controlnet_strength": self.config.controlnet_strength,
-                "width": self.config.width,
-                "height": self.config.height,
-            }
+            # Create the generation request using ControlNetGenerateData
+            data = ControlNetGenerateData(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                depth_map_b64=depth_map_b64,
+                mock_depth=depth_map_b64 is None,
+                model=self.config.model_name,
+                controlnet=kwargs.get("controlnet", "sdxl_small"),
+                era=era,
+                steps=self.config.steps or 6,
+                cfg=self.config.cfg or 2.0,
+                seed=seed,
+                scheduler=self.config.scheduler,
+                use_karras_sigmas=self.config.use_karras_sigmas,
+                lora_strength=self.config.lora_strength,
+                controlnet_strength=self.config.controlnet_strength,
+                width=self.config.width,
+                height=self.config.height,
+            )
             
-            # Handle depth image
-            if depth_map_b64:
-                # Debug the base64 string before sending
-                b64_len = len(depth_map_b64)
-                b64_preview = depth_map_b64[:50] + "..." if b64_len > 50 else depth_map_b64
-                padding_check = b64_len % 4
-                logger.info(f"Sending depth map: {b64_len} chars base64, padding_ok: {padding_check == 0}, preview: '{b64_preview}'")
-                
-                payload["depth_map_b64"] = depth_map_b64
-                payload["mock_depth"] = False
-            else:
-                payload["mock_depth"] = True
-                logger.info("No depth map provided, using mock depth")
+            # Validate the request
+            validation_errors = data.validate()
+            if validation_errors:
+                raise RuntimeError(f"Generation request validation failed: {validation_errors}")
             
-            # Remove None values to use model defaults
-            payload = {k: v for k, v in payload.items() if v is not None}
+            # Convert to JSON payload
+            payload = data.generate_payload_json()
             
             logger.info(f"Payload keys: {list(payload.keys())}, mock_depth: {payload.get('mock_depth')}")
             
@@ -247,133 +251,6 @@ class VastAIGenerator(ImageGenerator):
         logger.info("Stopping VastAI generator...")
         self.cleanup()
         logger.info("VastAI generator stopped")
-    
-    def generate_image_sync(
-        self,
-        prompt: str,
-        negative_prompt: Optional[str] = None,
-        depth_image: Optional[Image.Image] = None,
-        seed: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Generate an image using VastAI remote model server (synchronous version).
-        
-        This method returns the full result dictionary for testing and debugging.
-        For the main async interface, use generate_image() instead.
-        
-        Args:
-            prompt: Text prompt for image generation
-            negative_prompt: Negative prompt (optional)
-            depth_image: Depth map for ControlNet conditioning (optional)
-            seed: Random seed for reproducible results (optional)
-            **kwargs: Additional generation parameters
-            
-        Returns:
-            Dictionary containing generated image and metadata
-        """
-        self._validate_prompt(prompt)
-        logger.info(f"Generating image with VastAI: {prompt[:50]}...")
-        
-        start_time = time.time()
-
-        # set loras based on era
-        era = "experimance"
-        if kwargs.get("era"):
-            if kwargs["era"] in [Era.WILDERNESS, Era.PRE_INDUSTRIAL]:
-                era = "drone"
-        
-        try:
-            # Ensure we have a ready instance
-            endpoint = self._ensure_instance_ready()
-            
-            # Prepare the generation request
-            payload = {
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-                "model": self.config.model_name,
-                "era": era,
-                "steps": self.config.steps,
-                "cfg": self.config.cfg,
-                "seed": seed,
-                "scheduler": self.config.scheduler,
-                "use_karras_sigmas": self.config.use_karras_sigmas,
-                "lora_strength": self.config.lora_strength,
-                "controlnet_strength": self.config.controlnet_strength,
-                "width": self.config.width,
-                "height": self.config.height,
-            }
-            
-            # Handle depth image
-            if depth_image:
-                payload["depth_map_b64"] = self._encode_image_to_base64(depth_image)
-                payload["mock_depth"] = False
-            else:
-                payload["mock_depth"] = True
-            
-            # Remove None values to use model defaults
-            payload = {k: v for k, v in payload.items() if v is not None}
-            
-            # Send generation request
-            logger.info(f"Sending generation request to {endpoint.url}/generate")
-            response = requests.post(
-                f"{endpoint.url}/generate",
-                json=payload,
-                timeout=self.config.instance_timeout
-            )
-            
-            if response.status_code != 200:
-                raise RuntimeError(f"Generation request failed: {response.status_code} - {response.text}")
-            
-            result = response.json()
-            
-            if not result.get("success", True):
-                error_msg = result.get("error_message", "Unknown error")
-                raise RuntimeError(f"Generation failed on remote server: {error_msg}")
-            
-            # Decode the generated image
-            image_b64 = result.get("image_b64")
-            if not image_b64:
-                raise RuntimeError("No image data received from remote server")
-            
-            generated_image = self._decode_base64_to_image(image_b64)
-            
-            # Calculate total time (including network overhead)
-            total_time = time.time() - start_time
-            model_time = result.get("generation_time", 0)
-            
-            # Prepare result metadata
-            metadata = {
-                "generator": "vastai",
-                "instance_id": endpoint.instance_id,
-                "model_used": result.get("model_used", self.config.model_name),
-                "era_used": result.get("era_used"),
-                "seed_used": result.get("seed_used", seed),
-                "generation_time": model_time,
-                "total_time": total_time,
-                "network_overhead": total_time - model_time,
-                **result.get("metadata", {})
-            }
-            
-            logger.info(f"Image generated successfully in {total_time:.2f}s (model: {model_time:.2f}s)")
-            
-            return {
-                "image": generated_image,
-                "success": True,
-                "metadata": metadata
-            }
-            
-        except Exception as e:
-            logger.error(f"VastAI generation failed: {e}")
-            return {
-                "image": None,
-                "success": False,
-                "error": str(e),
-                "metadata": {
-                    "generator": "vastai",
-                    "error_type": type(e).__name__
-                }
-            }
     
     def test_connection(self) -> Dict[str, Any]:
         """

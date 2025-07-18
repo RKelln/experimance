@@ -19,7 +19,8 @@ import os
 import requests
 from PIL import Image
 import numpy as np
-from diffusers import (  # type: ignore=import-error (diffusers loaded on server not locally)
+
+from diffusers import (  # type: ignore (loaded on server)
     StableDiffusionXLControlNetPipeline, 
     ControlNetModel,
     DPMSolverMultistepScheduler,
@@ -255,7 +256,7 @@ def main():
                 
                 # Check if peft is available
                 try:
-                    import peft
+                    import peft # type: ignore (loaded on server)
                     pipe.load_lora_weights(local_lora_path)
                     print(f"LoRA loaded with strength: {lora_strength}")
                     
