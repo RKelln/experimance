@@ -2,26 +2,32 @@
 FastAPI model server for ControlNet image generation.
 
 This server provides REST endpoints for image generation using SDXL with ControlNet
-depth conditioning. It supports multiple base models, era-specific LoRA loading,
+depth conditioning. It supports multiple base models, LoRA loading,
 and various schedulers optimized for different use cases.
 """
 
+import argparse
 import asyncio
+import base64
+import gc
+import io
 import logging
+import os
+import psutil
 import time
 import traceback
-from typing import Dict, Any, Optional, List
-import gc
-import psutil
-import os
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 
+import numpy as np
+import requests
 import torch
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from PIL import Image
 from pydantic import BaseModel
-import uvicorn
 
 from diffusers import (
     StableDiffusionXLPipeline,
@@ -34,10 +40,6 @@ from diffusers import (
     DDIMScheduler,
     LCMScheduler
 )
-from transformers import pipeline
-import numpy as np
-from PIL import Image
-import requests
 
 from data_types import (
     ControlNetGenerateData,
@@ -49,8 +51,6 @@ from data_types import (
 
 def decode_base64_image(base64_string: str) -> Image.Image:
     """Decode base64 string to PIL Image"""
-    import base64
-    import io
     image_data = base64.b64decode(base64_string)
     image = Image.open(io.BytesIO(image_data)).convert('RGB')
     return image
@@ -64,190 +64,6 @@ logger = logging.getLogger(__name__)
 loaded_models: Dict[str, Any] = {}
 controlnet = None
 startup_time = None
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Handle startup and shutdown events using modern lifespan context manager."""
-    global startup_time
-    
-    # Startup
-    logger.info("Starting ControlNet Model Server...")
-    startup_time = time.time()
-    
-    # Preload ControlNet and depth estimator
-    load_controlnet()
-    
-    # Optionally preload default model
-    default_model = os.getenv("PRELOAD_MODEL", "lightning")
-    if default_model in MODEL_CONFIG:
-        try:
-            load_model(default_model)
-            logger.info(f"Preloaded {default_model} model")
-        except Exception as e:
-            logger.error(f"Failed to preload {default_model}: {e}")
-    
-    logger.info("Model server startup complete")
-    
-    yield  # Server is running
-    
-    # Shutdown
-    logger.info("Shutting down model server...")
-    
-    # Clear GPU memory
-    for model_name in list(loaded_models.keys()):
-        del loaded_models[model_name]
-    
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    gc.collect()
-    logger.info("Model server shutdown complete")
-
-
-# Create FastAPI app with lifespan handler
-app = FastAPI(
-    title="ControlNet Model Server", 
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-
-class ModelServer:
-    """Production-ready model server with pre-loading and state management"""
-    
-    def __init__(self):
-        self.loaded_models: Dict[str, StableDiffusionXLControlNetPipeline] = {}
-        self.controlnet = None
-        self.models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
-        self.models_dir.mkdir(exist_ok=True)
-        
-    async def preload_all_models(self):
-        """Pre-load all models for zero-delay generation"""
-        logger.info("Pre-loading all models for production...")
-        
-        # Load ControlNet and depth estimator first
-        if self.controlnet is None:
-            self.controlnet = load_controlnet()
-            
-        # Load all base models
-        for model_name in ["lightning", "hyper"]:
-            if model_name not in self.loaded_models:
-                logger.info(f"Pre-loading {model_name} model...")
-                self.loaded_models[model_name] = load_model(model_name)
-                
-        logger.info("All models pre-loaded successfully")
-        
-    async def load_model(self, model_name: str):
-        """Load a specific model if not already loaded"""
-        if model_name not in self.loaded_models:
-            logger.info(f"Loading {model_name} model...")
-            self.loaded_models[model_name] = load_model(model_name)
-            
-    def is_model_loaded(self, model_name: str) -> bool:
-        """Check if a model is loaded"""
-        return model_name in self.loaded_models
-        
-    def get_memory_usage(self) -> Dict[str, Any]:
-        """Get current memory usage statistics"""
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        
-        result = {
-            "ram_used_gb": memory_info.rss / (1024**3),
-            "ram_percent": process.memory_percent(),
-        }
-        
-        if torch.cuda.is_available():
-            result.update({
-                "gpu_memory_allocated_gb": torch.cuda.memory_allocated() / (1024**3),
-                "gpu_memory_reserved_gb": torch.cuda.memory_reserved() / (1024**3),
-                "gpu_memory_percent": (torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated()) * 100 if torch.cuda.max_memory_allocated() > 0 else 0
-            })
-            
-        return result
-        
-    async def generate_image(self, **kwargs) -> Dict[str, Any]:
-        """Generate image using the loaded models"""
-        model_name = kwargs.get('model_name', 'lightning')
-        
-        # Ensure model is loaded
-        if model_name not in self.loaded_models:
-            await self.load_model(model_name)
-            
-        # Use the existing generate function with the loaded pipeline
-        pipeline = self.loaded_models[model_name]
-        
-        # Mock the global variables for the existing function
-        global current_pipeline, controlnet
-        current_pipeline = pipeline
-        controlnet = self.controlnet
-        
-        # Call the existing generate endpoint logic
-        try:
-            if kwargs.get('depth_image_b64'):
-                depth_image = decode_base64_image(kwargs['depth_image_b64'])
-            elif kwargs.get('image_path'):
-                depth_image = Image.open(kwargs['image_path']).convert('RGB')
-            else:
-                depth_image = generate_mock_depth(kwargs.get('width', 1024), kwargs.get('height', 1024))
-                
-            # Load era LoRA if specified
-            era = kwargs.get('era', 'present')
-            if era != 'present':
-                load_loras(pipeline, era, kwargs.get('lora_strength', 1.0))
-                
-            # Generate image
-            start_time = time.time()
-            
-            # Set up generation parameters
-            steps = kwargs.get('steps')
-            if steps is None:
-                # Use steps from MODEL_CONFIG for each model
-                steps = MODEL_CONFIG.get(model_name, {}).get("steps", 20)
-                
-            result = pipeline(
-                prompt=kwargs['prompt'],
-                image=depth_image,
-                num_inference_steps=steps,
-                guidance_scale=kwargs.get('cfg', 2.0),
-                generator=torch.Generator().manual_seed(kwargs.get('seed', 42)) if kwargs.get('seed') else None,
-                width=kwargs.get('width', 1024),
-                height=kwargs.get('height', 1024)
-            )
-            
-            generation_time = time.time() - start_time
-            
-            # Encode result
-            import base64
-            import io
-            buffer = io.BytesIO()
-            result.images[0].save(buffer, format='PNG')
-            image_b64 = base64.b64encode(buffer.getvalue()).decode()
-            
-            return {
-                "image_b64": image_b64,
-                "generation_time": generation_time,
-                "steps": steps,
-                "seed": kwargs.get('seed', 42)
-            }
-            
-        except Exception as e:
-            logger.error(f"Generation failed: {e}")
-            raise e
-            
-    async def cleanup(self):
-        """Clean up resources"""
-        logger.info("Cleaning up model server resources...")
-        for model_name, pipeline in self.loaded_models.items():
-            del pipeline
-        self.loaded_models.clear()
-        
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-loaded_models: Dict[str, Any] = {}
-controlnet = None
 
 # Model configuration with optimized scheduler settings
 MODEL_CONFIG = {
@@ -317,6 +133,63 @@ LORA_CONFIG = {
     "experimance": "https://storage.googleapis.com/experimance_models/civitai_experimance_sdxl_lora_step_1000_1024x1024.safetensors"
 }
 
+CONTROLNET_CONFIG = {
+    "sdxl_small": {
+        "repo_id": "diffusers/controlnet-depth-sdxl-1.0-small",
+        "filename": "controlnet-depth-sdxl-1.0-small.safetensors"
+    },
+    "llite": {
+        "repo_id": "https://storage.googleapis.com/experimance_models/controllllite_v01032064e_sdxl_depth_500-1000.safetensors",
+        "filename": "controllllite_v01032064e_sdxl_depth_500-1000.safetensors"
+    }
+}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events using modern lifespan context manager."""
+    global startup_time
+    
+    # Startup
+    logger.info("Starting ControlNet Model Server...")
+    startup_time = time.time()
+    
+    # Preload ControlNet and depth estimator
+    load_controlnet()
+    
+    # Optionally preload default model
+    default_model = os.getenv("PRELOAD_MODEL", "lightning")
+    if default_model in MODEL_CONFIG:
+        try:
+            load_model(default_model)
+            logger.info(f"Preloaded {default_model} model")
+        except Exception as e:
+            logger.error(f"Failed to preload {default_model}: {e}")
+    
+    logger.info("Model server startup complete")
+    
+    yield  # Server is running
+    
+    # Shutdown
+    logger.info("Shutting down model server...")
+    
+    # Clear GPU memory
+    for model_name in list(loaded_models.keys()):
+        del loaded_models[model_name]
+    
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    gc.collect()
+    logger.info("Model server shutdown complete")
+
+
+# Create FastAPI app with lifespan handler
+app = FastAPI(
+    title="ControlNet Model Server", 
+    version="1.0.0",
+    lifespan=lifespan
+)
+
 
 class GenerateRequest(BaseModel):
     """Request model for the generate endpoint."""
@@ -363,11 +236,11 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
         raise
 
 
-def load_controlnet():
+def load_controlnet(controlnet_id: str = "sdxl_small") -> ControlNetModel:
     """Load ControlNet model for depth conditioning."""
     global controlnet
     if controlnet is None:
-        logger.info("Loading ControlNet depth model...")
+        logger.info(f"Loading ControlNet depth model...")
         controlnet = ControlNetModel.from_pretrained(
             "diffusers/controlnet-depth-sdxl-1.0-small",
             torch_dtype=torch.float16,
@@ -767,8 +640,6 @@ async def preload_model(model_name: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    import argparse
-    
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="ControlNet Model Server")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")

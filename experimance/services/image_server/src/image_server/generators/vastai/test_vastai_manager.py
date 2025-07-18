@@ -10,7 +10,7 @@ import time
 import json
 import os
 import requests
-from vastai_manager import VastAIManager, InstanceEndpoint
+from .vastai_manager import VastAIManager, InstanceEndpoint
 
 from experimance_common.constants import GENERATED_IMAGES_DIR
 

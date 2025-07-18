@@ -19,7 +19,7 @@ import os
 import requests
 from PIL import Image
 import numpy as np
-from diffusers import (
+from diffusers import (  # type: ignore=import-error (diffusers loaded on server not locally)
     StableDiffusionXLControlNetPipeline, 
     ControlNetModel,
     DPMSolverMultistepScheduler,

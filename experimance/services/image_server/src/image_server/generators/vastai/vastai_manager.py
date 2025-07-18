@@ -59,7 +59,7 @@ class VastAIManager:
         }
         self.disk_size = 20 # Gigabytes
         
-    def _run_vastai_command(self, cmd: List[str]) -> Dict[str, Any]:
+    def _run_vastai_command(self, cmd: List[str]) -> Any:
         """Run a vastai CLI command and return parsed JSON result."""
         try:
             command_args = ["--raw", "--api-key", self.api_key] if self.api_key else ["--raw"]
