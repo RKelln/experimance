@@ -57,13 +57,19 @@ else
     echo "⚠️  Skipping xformers installation due to unsupported CUDA version"
 fi
 
-# Clone the experimance repository
-echo "Cloning experimance repository..."
+# Clone or update the experimance repository
+echo "Setting up experimance repository..."
 cd /workspace
+
+# Use the GitHub token if provided (GITHUB_TOKEN or GITHUB_ACCESS_TOKEN)
+GITHUB_TOKEN=${GITHUB_TOKEN:-$GITHUB_ACCESS_TOKEN}
+
+# Debug: Show current directory and contents
+echo "Current directory: $(pwd)"
+echo "Contents: $(ls -la)"
+
 if [ ! -d "experimance" ]; then
-    # Use the GitHub token if provided (GITHUB_TOKEN or GITHUB_ACCESS_TOKEN)
-    GITHUB_TOKEN=${GITHUB_TOKEN:-$GITHUB_ACCESS_TOKEN}
-    
+    echo "Experimance directory not found, cloning repository..."
     if [ -n "$GITHUB_TOKEN" ]; then
         echo "Using GitHub token for private repo access..."
         git clone https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git
@@ -71,6 +77,43 @@ if [ ! -d "experimance" ]; then
         echo "No GitHub token provided, trying public access..."
         git clone https://github.com/RKelln/experimance.git
     fi
+elif [ ! -d "experimance/.git" ]; then
+    echo "Experimance directory exists but is not a git repository, removing and re-cloning..."
+    rm -rf experimance
+    if [ -n "$GITHUB_TOKEN" ]; then
+        echo "Using GitHub token for private repo access..."
+        git clone https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git
+    else
+        echo "No GitHub token provided, trying public access..."
+        git clone https://github.com/RKelln/experimance.git
+    fi
+else
+    echo "Experimance repository already exists, updating..."
+    cd experimance
+    
+    # Reset any local changes and pull latest
+    echo "Resetting local changes and cleaning untracked files..."
+    git reset --hard HEAD
+    git clean -fd
+    
+    if [ -n "$GITHUB_TOKEN" ]; then
+        echo "Using GitHub token for private repo access..."
+        git remote set-url origin https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git
+    fi
+    
+    echo "Pulling latest changes from main branch..."
+    git pull origin main || {
+        echo "⚠️  Git pull failed, trying to re-clone..."
+        cd ..
+        rm -rf experimance
+        if [ -n "$GITHUB_TOKEN" ]; then
+            git clone https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git
+        else
+            git clone https://github.com/RKelln/experimance.git
+        fi
+    }
+    echo "Repository updated to latest version"
+    cd ..
 fi
 
 # Create directories
