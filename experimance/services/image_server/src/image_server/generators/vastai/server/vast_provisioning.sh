@@ -1,10 +1,7 @@
 #!/bin/bash
 # Vast.ai Provisioning Script for Experimance Image Generation
 # This script is designed to be used with the PROVISIONING_SCRIPT environment variable
-# URL: https://raw.githubusercontent.com/RKelln/experimance/main/services/image_server/src/image_server/generators/vastai/vast_provisioning.sh
-
-#$ vastai create instance <OFFER_ID> --image vastai/pytorch:@vastai-automatic-tag --env '-p 1111:1111 -p 8000:8000 -p 72299:72299 -e OPEN_BUTTON_PORT=1111 -e OPEN_BUTTON_TOKEN=1 -e DATA_DIRECTORY=/workspace/ -e PORTAL_CONFIG="localhost:1111:11111:/:Instance Portal|localhost:8000:8000:/:WebServer"' --onstart-cmd 'entrypoint.sh' --disk 50 --ssh --direct
-
+# URL: https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw/vast_experimance_provisioning.sh
 
 set -eo pipefail
 
@@ -82,7 +79,7 @@ mkdir -p /workspace/{models,logs}
 # Set up paths and directories
 PROJECT_ROOT="/workspace/experimance/experimance"
 IMAGE_SERVER_PATH="$PROJECT_ROOT/services/image_server/src/image_server/generators/vastai"
-WORKER_DIR="$IMAGE_SERVER_PATH/workers/experimance_controlnet"
+WORKER_DIR="$IMAGE_SERVER_PATH/server"
 MODELS_DIR="/workspace/models"
 LOG_DIR="/var/log/portal"
 
@@ -129,56 +126,3 @@ chmod +x /opt/supervisor-scripts/experimance-image-server.sh
 
 # Reload Supervisor
 supervisorctl reload
-
-# Test installation
-echo "Testing installation..."
-python -c "
-try:
-    import torch
-    import diffusers
-    import transformers
-    import fastapi
-    import controlnet_aux
-    print('✅ All packages imported successfully')
-    print(f'PyTorch: {torch.__version__}')
-    print(f'CUDA: {torch.cuda.is_available()}')
-    if torch.cuda.is_available():
-        print(f'GPU: {torch.cuda.get_device_name(0)}')
-except ImportError as e:
-    print(f'❌ Import error: {e}')
-"
-
-# Reload supervisor configuration and start service
-#echo "Reloading supervisor configuration..."
-#supervisorctl reread
-#supervisorctl update
-#supervisorctl start experimance-image-server || echo "Service may already be running"
-
-echo ""
-echo "=== Experimance Image Generation Setup Complete ==="
-echo ""
-echo "🚀 Your image generation server is ready!"
-echo ""
-echo "📋 What was installed:"
-echo "   • Diffusers, Transformers, ControlNet support"
-echo "   • FastAPI image generation server"
-echo "   • Supervisor service configuration"
-echo "   • Portal.yaml integration"
-echo ""
-echo "🔧 To manage the service:"
-echo "   • Start: supervisorctl start experimance-image-server"
-echo "   • Stop: supervisorctl stop experimance-image-server"
-echo "   • Status: supervisorctl status experimance-image-server"
-echo "   • Logs: supervisorctl tail experimance-image-server"
-echo ""
-echo "🌐 Access your server:"
-echo "   • Via Instance Portal: Click 'Open' → 'Experimance Image Server'"
-echo "   • Direct: http://localhost:8000"
-echo "   • API Docs: http://localhost:8000/docs"
-echo ""
-echo "🧪 Test generation:"
-echo "   curl -X POST http://localhost:8000/generate \\"
-echo "        -H 'Content-Type: application/json' \\"
-echo "        -d '{\"prompt\": \"a serene lake at sunset\", \"mock_depth\": true}'"
-echo ""
-echo "Happy generating! 🎨"

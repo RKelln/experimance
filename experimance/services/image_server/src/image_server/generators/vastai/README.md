@@ -139,6 +139,25 @@ python vast_controlnet_test.py --prompt "Lightning striking a gothic tower" --mo
 python vast_controlnet_test.py --prompt "ancient temple ruins" --mock_depth --era wilderness --lora_strength 0.8
 ```
 
+### Test VastAI Manager
+
+```bash
+# Test searching for offers (shows what would be selected)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --offers
+
+# Test with custom parameters
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --offers --max-price 1.0 --min-gpu-ram 16
+
+# Test provisioning a new instance
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --provision
+
+# Test image generation with existing instance
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --generate
+
+# List all instances
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --list
+```
+
 ## 6. Download Generated Images
 
 ```bash

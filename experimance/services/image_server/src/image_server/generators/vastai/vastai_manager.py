@@ -55,7 +55,7 @@ class VastAIManager:
         self.experimance_template_name = "PyTorch (Vast) web accessible"  # Custom template name
         self.required_env_vars = {
             "GITHUB_ACCESS_TOKEN": os.getenv("GITHUB_ACCESS_TOKEN", ""),
-            "PROVISIONING_SCRIPT": "https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw/vast_experimance_provisioning.sh"
+            "PROVISIONING_SCRIPT": "https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw"
         }
         self.disk_size = 20 # Gigabytes
         
@@ -118,6 +118,32 @@ class VastAIManager:
         
         return experimance_instances
     
+    def get_ssh_command(self, instance_id: int) -> Optional[str]:
+        """
+        Get the SSH command to connect to an instance.
+        
+        Args:
+            instance_id: The vast.ai instance ID
+            
+        Returns:
+            SSH command string, or None if not available
+        """
+        try:
+            instance = self.show_instance(instance_id)
+            
+            ssh_host = instance.get("ssh_host")
+            ssh_port = instance.get("ssh_port")
+            
+            if not ssh_host or not ssh_port:
+                logger.warning(f"No SSH connection info found for instance {instance_id}")
+                return None
+            
+            return f"ssh -p {ssh_port} root@{ssh_host}"
+            
+        except Exception as e:
+            logger.error(f"Failed to get SSH command for instance {instance_id}: {e}")
+            return None
+
     def get_model_server_endpoint(self, instance_id: int) -> Optional[InstanceEndpoint]:
         """
         Get the external endpoint for the model server (port 8000).
@@ -164,7 +190,7 @@ class VastAIManager:
     
     def wait_for_instance_ready(self, instance_id: int, timeout: int = 600) -> bool:
         """
-        Wait for an instance to be running and the model server to be accessible.
+        Wait for an instance to be running and have port mappings available.
         
         Args:
             instance_id: The instance ID to wait for
@@ -177,28 +203,26 @@ class VastAIManager:
         
         while time.time() - start_time < timeout:
             try:
-                endpoint = self.get_model_server_endpoint(instance_id)
+                instance = self.show_instance(instance_id)
+                status = instance.get("actual_status", "unknown")
                 
-                if endpoint and endpoint.status == "running":
-                    # Test if the model server is responding
-                    try:
-                        response = requests.get(
-                            f"{endpoint.url}/healthcheck",
-                            timeout=10
-                        )
-                        if response.status_code == 200:
-                            logger.info(f"Instance {instance_id} is ready at {endpoint.url}")
-                            return True
-                    except requests.RequestException:
-                        # Server not ready yet, continue waiting
-                        pass
+                # Check if instance is running
+                if status == "running":
+                    # Check if port mappings are available
+                    ports = instance.get("ports", {})
+                    if "8000/tcp" in ports and "1111/tcp" in ports:
+                        logger.info(f"Instance {instance_id} is ready and has port mappings")
+                        return True
+                    else:
+                        logger.info(f"Instance {instance_id} is running but ports not yet mapped")
+                else:
+                    logger.info(f"Instance {instance_id} status: {status}")
                 
-                logger.info(f"Waiting for instance {instance_id} to be ready...")
-                time.sleep(30)
+                time.sleep(15)  # Check more frequently
                 
             except Exception as e:
                 logger.warning(f"Error checking instance {instance_id}: {e}")
-                time.sleep(30)
+                time.sleep(15)
         
         logger.error(f"Timeout waiting for instance {instance_id} to be ready")
         return False
@@ -212,38 +236,149 @@ class VastAIManager:
         Search for suitable GPU offers.
         
         Args:
-            min_gpu_ram: Minimum GPU RAM in MB
+            min_gpu_ram: Minimum GPU RAM in GB
             max_price: Maximum price per hour
-            gpu_name: Preferred GPU name pattern
+            dlperf: Minimum DLPerf score
             verified_only: Only show verified hosts
             
         Returns:
-            List of available offers
+            List of available offers sorted by smart selection criteria
         """
-        cmd = [
-            "search", "offers",
-            "'"
-            f"reliability>0.95",
-            f"gpu_ram>={min_gpu_ram}",
-            f"dph_total<={max_price}",
-            f"dlperf>={dlperf}",
-            f"num_gpus=1",
-            f"geolocation in [CA,US]",
-            f"inet_down>250",
-            f"cuda_vers>=12.2"
+        # Build query string
+        # Note: VastAI API is inconsistent - search query expects GB but returns MB
+        # Search uses GB units, but results come back in MB
+        # Set good minimums for other factors in the search query
+        query_parts = [
+            f"reliability>0.95",        # Minimum reliability
+            f"gpu_ram>={min_gpu_ram}",  # Search API expects GB
+            f"dph_total<={max_price}",  # Maximum price
+            f"dlperf>={dlperf}",        # Minimum DLPerf
+            f"num_gpus=1",              # Single GPU instances
+            f"geolocation in [CA,US]",  # Geographic preference
+            f"inet_down>500",           # Minimum 500 Mbps download
+            f"inet_up>100",             # Minimum 100 Mbps upload
+            f"cuda_vers>=12.2",         # Modern CUDA version
+            f"pcie_bw>=12"              # Minimum PCIe bandwidth
         ]
         
         if verified_only:
-            cmd.append("verified = true")
+            query_parts.append("verified=true")
 
-        cmd.append("'")
+        query_string = " ".join(query_parts)
         
-        cmd.extend([
-            "--order", "dph_total",  # Sort by price
-            "--limit", "10"          # Top 10 results
-        ])
+        cmd = [
+            "search", "offers",
+            query_string,
+            "--order", "dph_total",  # Sort by price initially
+            "--limit", "15"          # Get more results for smart selection
+        ]
         
-        return self._run_vastai_command(cmd)
+        offers = self._run_vastai_command(cmd)
+        
+        # Apply smart selection algorithm
+        return self._smart_select_offers(offers)
+    
+    def _smart_select_offers(self, offers: List[Dict[str, Any]], 
+                           price_tolerance: float = 0.5) -> List[Dict[str, Any]]:
+        """
+        Apply smart selection algorithm to rank offers by value, not just price.
+        
+        Args:
+            offers: List of offers from VastAI API
+            price_tolerance: Price tolerance factor (0.5 = 50% above cheapest)
+            
+        Returns:
+            List of offers sorted by smart selection score
+        """
+        if not offers:
+            return offers
+            
+        # Find the cheapest offer price
+        cheapest_price = min(offer.get('dph_total', float('inf')) for offer in offers)
+        price_threshold = cheapest_price * (1 + price_tolerance)
+        
+        # Score each offer
+        scored_offers = []
+        for offer in offers:
+            score = self._calculate_offer_score(offer, cheapest_price, price_threshold)
+            scored_offers.append((offer, score))
+        
+        # Sort by score (highest first) and return just the offers
+        scored_offers.sort(key=lambda x: x[1], reverse=True)
+        return [offer for offer, score in scored_offers]
+    
+    def _calculate_offer_score(self, offer: Dict[str, Any], 
+                              cheapest_price: float, 
+                              price_threshold: float) -> float:
+        """
+        Calculate a smart selection score for an offer.
+        
+        Args:
+            offer: Individual offer from VastAI API
+            cheapest_price: Price of the cheapest available offer
+            price_threshold: Maximum price to consider in this tier
+            
+        Returns:
+            Score (higher is better)
+        """
+        price = offer.get('dph_total', float('inf'))
+        
+        # If price is too high, give very low score
+        if price > price_threshold:
+            return 0.0
+        
+        # Base metrics
+        dlperf_per_dollar = offer.get('dlperf_per_dphtotal', 0)  # Primary value metric
+        reliability = offer.get('reliability2', 0)
+        
+        # Additional performance metrics for slight bonuses
+        cpu_cores_effective = offer.get('cpu_cores_effective', 0)
+        cpu_ghz = offer.get('cpu_ghz', 0)
+        gpu_mem_bw = offer.get('gpu_mem_bw', 0)  # GPU memory bandwidth
+        pcie_bw = offer.get('pcie_bw', 0)  # PCIe bandwidth
+        cpu_ram = offer.get('cpu_ram', 0)  # CPU RAM in MB
+        
+        # Calculate score components
+        # DLPerf per dollar is the primary factor (higher is better)
+        perf_per_dollar_score = dlperf_per_dollar * 1.0  # Main weight
+        
+        # Reliability bonus (slight bonus for more reliable hosts)
+        reliability_bonus = (reliability - 0.95) * 20.0 if reliability > 0.95 else 0.0
+        
+        # CPU performance bonus (slight bonus for better CPU)
+        cpu_score = min(cpu_cores_effective * cpu_ghz / 100, 5.0)  # Capped at 5 points
+        
+        # Memory bandwidth bonus (slight bonus for faster GPU memory)
+        gpu_mem_bonus = min(gpu_mem_bw / 1000, 3.0)  # Capped at 3 points
+        
+        # PCIe bandwidth bonus (slight bonus for faster PCIe)
+        pcie_bonus = min(pcie_bw / 16, 2.0)  # Capped at 2 points
+        
+        # CPU RAM bonus (slight bonus for more system RAM)
+        cpu_ram_gb = cpu_ram / 1024  # Convert MB to GB
+        ram_bonus = min(cpu_ram_gb / 32, 2.0)  # Capped at 2 points
+        
+        # Price preference - prefer cheaper within the tolerance
+        # Normalize price difference to 0-1 range within tolerance
+        max_price_diff = price_threshold - cheapest_price
+        if max_price_diff > 0:
+            price_factor = 1.0 - ((price - cheapest_price) / max_price_diff)
+            price_bonus = price_factor * 10.0  # Small bonus for being cheaper
+        else:
+            price_bonus = 0.0
+        
+        # Total score
+        total_score = (
+            perf_per_dollar_score +  # Primary: performance per dollar
+            reliability_bonus +      # Secondary: reliability above minimum
+            price_bonus +            # Tertiary: price preference within tolerance
+            cpu_score +              # Small bonus: CPU performance
+            gpu_mem_bonus +          # Small bonus: GPU memory bandwidth
+            pcie_bonus +             # Small bonus: PCIe bandwidth
+            ram_bonus                # Small bonus: System RAM
+        )
+        
+        return max(0.0, total_score)  # Ensure non-negative score
     
     def create_instance(self, offer_id: int) -> Dict[str, Any]:
         """
@@ -255,22 +390,26 @@ class VastAIManager:
         Returns:
             Instance creation result
         """
-        # Prepare environment variables
-        env_args = []
+        # Prepare environment variables and port mappings
+        env_vars = []
         for key, value in self.required_env_vars.items():
-            env_args.extend(["--env", f"{key}={value}"])
+            env_vars.append(f"-e {key}={value}")
         
         # Add port mappings
-        port_args = [
-            "--port", "1111:1111/tcp",   # Instance Portal
-            "--port", "8000:8000/tcp"    # Model Server
+        port_mappings = [
+            "-p 1111:1111/tcp",   # Instance Portal
+            "-p 8000:8000/tcp"    # Model Server
         ]
+        
+        # Combine all environment and port arguments
+        env_string = " ".join(env_vars + port_mappings)
         
         cmd = [
             "create", "instance", str(offer_id),
-            "--template-id", self.experimance_template_id,  # Use our custom template
-            "--disk", self.disk_size  # 40GB disk
-        ] + env_args + port_args
+            "--template_hash", self.experimance_template_id,  # Use correct parameter name
+            "--disk", str(self.disk_size),  # 20GB disk
+            "--env", env_string  # All env vars and ports in one string
+        ]
         
         return self._run_vastai_command(cmd)
     

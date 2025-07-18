@@ -9,7 +9,9 @@ and interact with the experimance model server.
 import time
 import json
 import os
+import argparse
 import requests
+from typing import Optional
 from .vastai_manager import VastAIManager, InstanceEndpoint
 
 from experimance_common.constants import GENERATED_IMAGES_DIR
@@ -188,57 +190,312 @@ def test_model_endpoints(endpoint: InstanceEndpoint):
             print(f"   ❌ {description}: {e}")
 
 
+def test_offers_search(manager: VastAIManager, min_gpu_ram: int = 20, max_price: float = 0.5, dlperf: float = 32.0):
+    """Test searching for offers and show what would be selected."""
+    print(f"\n🔍 Searching for offers...")
+    print(f"   Parameters: min_gpu_ram={min_gpu_ram}GB, max_price=${max_price:.2f}/hr, dlperf>={dlperf}")
+    
+    try:
+        offers = manager.search_offers(
+            min_gpu_ram=min_gpu_ram,
+            max_price=max_price,
+            dlperf=dlperf
+        )
+        
+        if not offers:
+            print("   ❌ No offers found matching criteria")
+            return None
+        
+        print(f"   ✅ Found {len(offers)} offer(s)")
+        print(f"\n   📊 Top offers (ranked by smart selection):")
+        
+        # Calculate scores for display
+        cheapest_price = min(offer.get('dph_total', float('inf')) for offer in offers)
+        price_threshold = cheapest_price * 1.25  # 25% tolerance
+        
+        for i, offer in enumerate(offers[:5]):  # Show top 5
+            gpu_name = offer.get('gpu_name', 'unknown')
+            price = offer.get('dph_total', 0)
+            reliability = offer.get('reliability2', 0)
+            gpu_ram = offer.get('gpu_ram', 0) / 1024  # Convert MB to GB for display
+            dlperf_val = offer.get('dlperf', 0)
+            dlperf_per_dollar = offer.get('dlperf_per_dphtotal', 0)
+            location = offer.get('geolocation', 'unknown')
+            inet_down = offer.get('inet_down', 0)
+            verified = offer.get('verified', False)
+            
+            # Calculate the score for this offer
+            score = manager._calculate_offer_score(offer, cheapest_price, price_threshold)
+            
+            selected_marker = "🏆 " if i == 0 else f"   {i+1}. "
+            print(f"{selected_marker}Offer {offer['id']}: {gpu_name} ({gpu_ram:.1f}GB)")
+            print(f"       Price: ${price:.3f}/hr | DLPerf: {dlperf_val:.1f} | DLPerf/$: {dlperf_per_dollar:.1f}")
+            print(f"       Reliability: {reliability:.3f} | Location: {location} | Verified: {verified}")
+            print(f"       Download: {inet_down:.0f}Mbps | Smart Score: {score:.1f}")
+            print()
+        
+        best_offer = offers[0]
+        print(f"   🎯 Smart selection: Offer {best_offer['id']} - {best_offer['gpu_name']} at ${best_offer['dph_total']:.3f}/hr")
+        print(f"      (DLPerf/$ ratio: {best_offer.get('dlperf_per_dphtotal', 0):.1f})")
+        
+        return best_offer
+        
+    except Exception as e:
+        print(f"   ❌ Failed to search offers: {e}")
+        return None
+
+
+def test_provision_instance(manager: VastAIManager, offer_id: Optional[int] = None, wait_for_ready: bool = True):
+    """Test provisioning a new instance."""
+    print(f"\n🚀 Provisioning new instance...")
+    
+    if offer_id is None:
+        print("   🔍 Searching for best offer...")
+        offers = manager.search_offers()
+        if not offers:
+            print("   ❌ No offers found")
+            return None
+        
+        best_offer = offers[0]
+        offer_id = best_offer['id']
+        print(f"   🎯 Selected offer {offer_id}: {best_offer['gpu_name']} at ${best_offer['dph_total']:.3f}/hr")
+    
+    if not offer_id:
+        print("   ❌ No offer ID provided or found")
+        return None
+
+    try:
+        print(f"   📝 Creating instance from offer {offer_id}...")
+        result = manager.create_instance(offer_id)
+        instance_id = result.get("new_contract")
+        
+        if not instance_id:
+            print(f"   ❌ Failed to create instance: {result}")
+            return None
+        
+        print(f"   ✅ Instance {instance_id} created successfully!")
+        
+        # Get SSH command for the new instance
+        ssh_command = manager.get_ssh_command(instance_id)
+        if ssh_command:
+            print(f"   🔗 SSH: {ssh_command}")
+        
+        if wait_for_ready:
+            print(f"   ⏳ Waiting for instance to be ready...")
+            if manager.wait_for_instance_ready(instance_id):
+                endpoint = manager.get_model_server_endpoint(instance_id)
+                if endpoint:
+                    print(f"   🎉 Instance ready at {endpoint.url}")
+                    if ssh_command:
+                        print(f"   🔗 SSH: {ssh_command}")
+                    return endpoint
+                else:
+                    print(f"   ❌ Failed to get endpoint for instance {instance_id}")
+                    return None
+            else:
+                print(f"   ❌ Instance failed to become ready")
+                return None
+        else:
+            print(f"   ℹ️  Instance is being provisioned (not waiting for ready)")
+            return manager.get_model_server_endpoint(instance_id)
+            
+    except Exception as e:
+        print(f"   ❌ Failed to provision instance: {e}")
+        return None
+
+
+def test_list_instances(manager: VastAIManager):
+    """Test listing existing instances."""
+    print(f"\n📋 Listing existing instances...")
+    
+    try:
+        # List all instances
+        all_instances = manager.show_instances()
+        print(f"   Total instances: {len(all_instances)}")
+        
+        if all_instances:
+            print(f"\n   📊 All instances:")
+            for instance in all_instances:
+                status = instance.get('actual_status', 'unknown')
+                template_name = instance.get('template_name', 'unknown')
+                price = instance.get('dph_total', 0)
+                gpu_name = instance.get('gpu_name', 'unknown')
+                
+                print(f"   - Instance {instance['id']}: {status}")
+                print(f"     Template: {template_name}")
+                print(f"     GPU: {gpu_name} | Price: ${price:.3f}/hr")
+                
+                # Add SSH command if available
+                ssh_command = manager.get_ssh_command(instance['id'])
+                if ssh_command:
+                    print(f"     SSH: {ssh_command}")
+                
+                print()
+        
+        # List experimance instances specifically
+        experimance_instances = manager.find_experimance_instances()
+        print(f"   Experimance instances: {len(experimance_instances)}")
+        
+        if experimance_instances:
+            print(f"\n   🎨 Experimance instances:")
+            for instance in experimance_instances:
+                print(f"   - Instance {instance['id']}: {instance.get('actual_status', 'unknown')}")
+                endpoint = manager.get_model_server_endpoint(instance['id'])
+                if endpoint:
+                    print(f"     URL: {endpoint.url}")
+                
+                # Add SSH command
+                ssh_command = manager.get_ssh_command(instance['id'])
+                if ssh_command:
+                    print(f"     SSH: {ssh_command}")
+                
+                print()
+        
+        return experimance_instances
+        
+    except Exception as e:
+        print(f"   ❌ Failed to list instances: {e}")
+        return []
+
+
 def main():
-    """Main test function."""
+    """Main test function with argparse support."""
+    parser = argparse.ArgumentParser(
+        description="Test VastAI Manager functionality",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Test searching for offers (shows what would be selected)
+  python -m test_vastai_manager --offers
+
+  # Test provisioning a new instance
+  python -m test_vastai_manager --provision
+
+  # Test image generation with existing instance
+  python -m test_vastai_manager --generate
+
+  # List all instances
+  python -m test_vastai_manager --list
+
+  # Full test suite (default behavior)
+  python -m test_vastai_manager --full
+
+  # Search offers with custom parameters
+  python -m test_vastai_manager --offers --max-price 0.3 --min-gpu-ram 24
+        """
+    )
+    
+    # Action selection (mutually exclusive)
+    action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument('--offers', action='store_true', 
+                             help='Test searching for offers and show selection')
+    action_group.add_argument('--provision', action='store_true',
+                             help='Test provisioning a new instance')
+    action_group.add_argument('--generate', action='store_true',
+                             help='Test image generation with existing instance')
+    action_group.add_argument('--list', action='store_true',
+                             help='List all instances')
+    action_group.add_argument('--full', action='store_true',
+                             help='Run full test suite (default)')
+    
+    # Offer search parameters
+    parser.add_argument('--min-gpu-ram', type=int, default=20,
+                       help='Minimum GPU RAM in GB (default: 20)')
+    parser.add_argument('--max-price', type=float, default=0.5,
+                       help='Maximum price per hour (default: 0.5)')
+    parser.add_argument('--dlperf', type=float, default=32.0,
+                       help='Minimum DLPerf score (default: 32.0)')
+    
+    # Provisioning parameters
+    parser.add_argument('--offer-id', type=int,
+                       help='Specific offer ID to provision (if not specified, best will be selected)')
+    parser.add_argument('--no-wait', action='store_true',
+                       help='Don\'t wait for instance to be ready when provisioning')
+    
+    # Generation parameters
+    parser.add_argument('--instance-id', type=int,
+                       help='Specific instance ID to use for generation (if not specified, will find existing)')
+    
+    args = parser.parse_args()
+    
+    # If no action specified, default to full test
+    if not any([args.offers, args.provision, args.generate, args.list]):
+        args.full = True
+    
     print("🚀 VastAI Manager Test Script")
     print("=" * 50)
     
     # Initialize manager
     manager = VastAIManager()
-
-    # test search offers
-    # offers = manager.search_offers()
-    # print(offers)
-    # exit()
     
-    # List existing instances
-    print("\n📋 Checking for existing experimance instances...")
-    existing_instances = manager.find_experimance_instances()
+    if args.offers:
+        test_offers_search(manager, args.min_gpu_ram, args.max_price, args.dlperf)
     
-    if existing_instances:
-        print(f"   Found {len(existing_instances)} existing instance(s):")
-        for instance in existing_instances:
-            print(f"   - Instance {instance['id']}: {instance.get('actual_status', 'unknown')}")
-    else:
-        print("   No existing experimance instances found")
+    elif args.provision:
+        endpoint = test_provision_instance(manager, args.offer_id, not args.no_wait)
+        if endpoint:
+            print(f"\n✅ Provisioning successful!")
+            print(f"   URL: {endpoint.url}")
+            print(f"   Instance ID: {endpoint.instance_id}")
     
-    # Find or create instance
-    print("\n🔧 Finding or creating ready instance...")
-    endpoint = manager.find_or_create_instance(
-        create_if_none=True,
-        wait_for_ready=True
-    )
+    elif args.generate:
+        # Find existing instance or use specified one
+        if args.instance_id:
+            endpoint = manager.get_model_server_endpoint(args.instance_id)
+            if not endpoint:
+                print(f"❌ Instance {args.instance_id} not found or not accessible")
+                return
+        else:
+            existing_instances = manager.find_experimance_instances()
+            if not existing_instances:
+                print("❌ No existing experimance instances found")
+                print("   Use --provision to create a new instance first")
+                return
+            
+            instance_id = existing_instances[0]['id']
+            endpoint = manager.get_model_server_endpoint(instance_id)
+            if not endpoint:
+                print(f"❌ Instance {instance_id} not accessible")
+                return
+        
+        print(f"🎨 Testing image generation with instance {endpoint.instance_id}")
+        test_model_endpoints(endpoint)
+        test_image_generation(endpoint)
     
-    if not endpoint:
-        print("❌ Failed to get a ready instance")
-        return
+    elif args.list:
+        test_list_instances(manager)
     
-    print(f"✅ Instance ready!")
-    print(f"   Instance ID: {endpoint.instance_id}")
-    print(f"   Public IP: {endpoint.public_ip}")
-    print(f"   External Port: {endpoint.external_port}")
-    print(f"   URL: {endpoint.url}")
-    print(f"   Status: {endpoint.status}")
-    
-    # Test endpoints
-    test_model_endpoints(endpoint)
-    
-    # Test image generation
-    test_image_generation(endpoint)
-    
-    print("\n🎉 Testing complete!")
-    print(f"\nYour model server is ready at: {endpoint.url}")
-    print("You can now use this endpoint for your experimance installation.")
+    elif args.full:
+        # Original full test behavior
+        test_list_instances(manager)
+        
+        # Find or create instance
+        print("\n🔧 Finding or creating ready instance...")
+        endpoint = manager.find_or_create_instance(
+            create_if_none=True,
+            wait_for_ready=True
+        )
+        
+        if not endpoint:
+            print("❌ Failed to get a ready instance")
+            return
+        
+        print(f"✅ Instance ready!")
+        print(f"   Instance ID: {endpoint.instance_id}")
+        print(f"   Public IP: {endpoint.public_ip}")
+        print(f"   External Port: {endpoint.external_port}")
+        print(f"   URL: {endpoint.url}")
+        print(f"   Status: {endpoint.status}")
+        
+        # Test endpoints
+        test_model_endpoints(endpoint)
+        
+        # Test image generation
+        test_image_generation(endpoint)
+        
+        print("\n🎉 Testing complete!")
+        print(f"\nYour model server is ready at: {endpoint.url}")
+        print("You can now use this endpoint for your experimance installation.")
 
 
 if __name__ == "__main__":

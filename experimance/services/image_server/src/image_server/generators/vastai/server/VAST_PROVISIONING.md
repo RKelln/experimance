@@ -7,7 +7,7 @@ This is the simplest way to deploy the Experimance image generation server on va
 1. **Create vast.ai instance** with PyTorch template
 2. **Set environment variables**:
    ```
-   PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw/vast_experimance_provisioning.sh
+   PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw
    GITHUB_ACCESS_TOKEN=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
    ```
 3. **Start instance** - the script will automatically install everything
@@ -23,7 +23,7 @@ This is the simplest way to deploy the Experimance image generation server on va
 
 The provisioning script is hosted as a public gist for easy access:
 - **Gist URL**: https://gist.github.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14
-- **Raw Script URL**: https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw/vast_experimance_provisioning.sh
+- **Raw Script URL**: https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw
 
 This allows vast.ai to download and execute the script without authentication while keeping your main repository private.
 
@@ -86,6 +86,12 @@ supervisorctl restart experimance-image-server
 - **Portal integrated** - Easy web access with HTTPS/auth
 
 ## Troubleshooting
+
+**Vast.ai GUI rejecting PROVISIONING_SCRIPT URL?**
+Try these alternatives:
+1. Use the shorter URL: `https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw`
+2. Use Vast.ai CLI instead: `vastai create instance OFFER_ID --env PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw`
+3. Copy the script content directly into the "On-Start Script" field instead of using PROVISIONING_SCRIPT
 
 **Service not starting?**
 ```bash
