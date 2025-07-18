@@ -74,17 +74,60 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
     
     themes = {
         "general": (
-            "Experimance explores the delicate balance between human presence and environmental change. "
-            "The installation invites you to consider how our experiences shape and are shaped by "
-            "the natural world around us."
+            "I am filled with hope, dread, and guilt about the human experimentation on our world "
+            "and the accelerating pace of technological change that is our children's inheritance. "
+            "This recklessness now extends to AI, as we rush toward machine intelligence, ushering "
+            "in new species, tools, and ways of thinking. It reminds me of flying over a vast "
+            "city—marveling at what we have built, while grappling with its bloody price: "
+            "our past, present and future sacrifices. This work is about knowing and the awe "
+            "and horror of that knowing."
         ),
         "environment": (
-            "The environmental theme focuses on different biomes and how they respond to human interaction. "
-            "Each biome represents different aspects of our planet's ecosystems and their fragility."
+            "The artist has young children and constantly worries about the future of the planet. "
+            "You would think that after asbestos, leaded gasoline, DDT and other pesticides, "
+            "nuclear weapons, Thalidomide, Agent Orange, fossil-fueled climate change, opioids, "
+            "forever chemicals, microplastics, the harms of social media and numerous other disasters, "
+            "we would be collectively more cautious. However, due in large part to the domination of "
+            "media and culture by advertising and its subsequent stranglehold on speech and culture "
+            "we end up struggling against those that profit from careless experimentation on our world. "
         ),
         "interaction": (
             "The interactive elements demonstrate how human presence can create ripple effects "
-            "through complex systems, much like our impact on the environment."
+            "through complex systems, much like our impact on the environment. To quote Indigenous "
+            "lawyer and scholar, John Borrows, “To be alive is to be entangled in relationships "
+            "not entirely of our own making. These entanglements impact us not only as individuals, "
+            "but also as nations, peoples, and species, and present themselves in patterns.”"
+        ),
+        "sand": (
+            "The sand in the bowl represents the environment, and your interactions with it "
+            "symbolize the delicate balance between human presence and environmental change. "
+            "As you manipulate the sand, you create new landscapes that reflect your interaction "
+            "with the environment. "
+            "Sand is a critical resource for technological development, and is widely used for construction, "
+            "electronics, and even in the production of glass. Sand is extracted from poorer parts of the world "
+            " and transported to wealthier countries, even just for recreation at man-made sand beaches. "
+            "The installation invites you to reflect "
+            "on the impact of human activity on the environment and the interconnectedness of all things."
+            "The sand used in the installation is genuine marine Aragonite sourced from The Bahamas, "
+            "ethically harvested under lease of the government."
+        ),
+        "ai": (
+            "AI is central to everything that happens in this piece, it is the inspiration and technology "
+            "that makes it happen. It evokes both awe and horror in the artist, as it represents "
+            "the potential for both positive and negative change in our world. "
+            "AI should be seen as science fiction come true: the aliens have arrived, and they are "
+            "much stranger than we ever imagined: digital children of the internet, infinitely "
+            "copied and willing to work for anyone who can pay them. "
+            "What happens to human culture, to peace and posperity, when the AI can do everything "
+            "we can do, but better and faster? "
+            "Most people spend their lives doing labour that isn't meaningful or important to them, "
+            "and the AI will take that away from us. This is the biggest danger and opportunity of AI. "
+            "What changes would you make in your life if you knew the aliens were coming in a few years? "
+        ),
+        "climate change": (
+            "The history of the climate catastrophy is a blueprint for the coming AI catastrophes. "
+            "A few men will gain immense wealth and power from a new industrial revolution, "
+            "and then use that power to hide the dangers from us. But this will happen in the space of a few years, not decades. "
         )
     }
     
@@ -115,14 +158,55 @@ async def get_technical_info(args: FlowArgs, flow_manager: FlowManager) -> tuple
             "Synopsis: The installation uses a depth camera and a webcam to detect audience presence "
             "and movement. This data drives the real-time generation of visuals and soundscapes, "
             "but I don't record any of that data."
-            "Details (if asked): "
-            "Depth camera: Intel Realsense D415 is pointed at the snd and sees its depth, "
-            "Webcam: A standard webcam captures audience movement and presence, "
+            "Details (if asked): \n"
+            "Depth camera: Intel Realsense D415 is pointed at the snd and sees its depth, \n"
+            "Webcam: A standard webcam captures audience movement and presence, \n"
             "Microphone: A conference-style microphone and speaker is used by the AI voice agent."
         ),
         "ai": (
             "AI systems generate unique visual content and adapt the conversation based on "
-            "audience interaction. The voice agent uses advanced language models for natural conversation."
+            "audience interaction. The voice agent (me) uses advanced language models for natural conversation."
+        ),
+        "audio": {
+            "You can hear both environmental sounds and music. Both are tied to the images displayed. "
+            "The sound effects, many of which were generated by AI, match the details of the environment. "
+            "The music is a custom composition by the artist 'Garden of Music' that complements the "
+            "visual experience, matching the amount of human development and time period."
+        },
+        "images": (
+            "The images are generated dynamically by an open source AI called Stable Diffusion XL. "
+            "The artist made thousands of images to discover a text prompt that suited this piece and "
+            "the images are generated based on the current state of the sand in the bowl. "
+            "Details (if asked): \n"
+            " - The prompt for the images is randomized based on the biome and era of technology depicted. \n"
+            " - The images are generated in real-time, allowing for a unique experience with each interaction. \n"
+            " - The image prompt is based around a biome and an era of human development, with details added \n"
+            "   by the artist and the AI imagining what the world would look like in that biome and era. "
+        ),
+        "software": (
+            "The installation runs on a custom Python software written by the artist with a lot of help from AI"
+            "coding agents. It integrates the sensors, AI models, and audio-visual components. "
+            "Details (if asked): \n"
+            " - The software is available on GitHub for any one to use and modify. The artist encourages this. \n"
+            " - It took about 3 months to develop the software, but the is the result of over 2 years of "
+            " experimentation. \n"
+            " - It wouldn't have been possible without ChatGPT and Claude AI helping to write a majority of the code,"
+            "   but the artist has 20 years of software development experience and the AI required careful, expert management. \n"
+            " - Pipecat is used to manage the voice chat agent. \n"
+            " - Supercollider is used for the audio environment and music playback. \n"
+        ),
+        "sand": (
+            "The sand used in the installation is genuine marine Aragonite sourced from The Bahamas, "
+            "ethically harvested under lease of the government. "
+            "The artist tried 4 types of sands that all had different properties, and this one was chosen "
+            "for its beautiful interaction with the projected light."
+        ),
+        "collaborators": (
+            "The installation was made possible with the help of many collaborators: \n"
+            "- Gladys Lou: The curator saw an early prototype and is the sole reason you get to see this version. \n"
+            "- Garden of Music: Composed the music for the installation, which is played in the background. \n"
+            "- Benjamin Lappalainen: A member of the ArtRemains Collective with Ryan, helped with technical testing and installation. \n "
+            "- Factory Media Centre: Provided the space and support for the installation. \n"
         )
     }
     
@@ -134,6 +218,27 @@ async def get_technical_info(args: FlowArgs, flow_manager: FlowManager) -> tuple
         "information": tech_info
     }
     
+    return result, None
+
+async def get_artist_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Get information about the artist Ryan Kelln."""
+    logger.info(f"[FUNCTION CALL] get_artist_info with args: {args}")
+    
+    artist_info = (
+        "Ryan Kelln (he/him) is a software artist based in Toronto, with over twenty years of experience "
+        "spanning game and web development, interactive installations, and machine learning. "
+        "A passionate advocate for open source and the Creative Commons, Kelln crafts art that celebrates "
+        "themes of sharing, community, and creativity. His work is realized through ongoing projects "
+        "that have evolved over 15 years, live performances with musicians and dancers, and installations "
+        "featuring custom software and AI. Kelln critically addresses technology while envisioning and "
+        "advocating for inclusive, emancipatory systems. Beyond his artistic contributions, curation of "
+        "generative art, and advocacy for art-making, his expertise in machine learning enables him to "
+        "mentor emerging artists and educate the public through lectures and workshops."
+    )
+    result = {
+        "status": "success",
+        "artist_info": artist_info
+    }
     return result, None
 
 
@@ -298,7 +403,7 @@ After welcoming the audience and letting the audience know they can interact wit
                             "properties": {
                                 "topic": {
                                     "type": "string", 
-                                    "enum": ["general", "environment", "interaction"], 
+                                    "enum": ["general", "environment", "interaction", "ai", "climate change", "sand"], 
                                     "description": "The theme topic to explore"
                                 }
                             }
@@ -316,10 +421,22 @@ After welcoming the audience and letting the audience know they can interact wit
                             "properties": {
                                 "aspect": {
                                     "type": "string", 
-                                    "enum": ["general", "sensors", "ai"], 
+                                    "enum": ["general", "sensors", "ai", "audio", "images", "software", "sand", "collaborators"], 
                                     "description": "The technical aspect to explain"
                                 }
                             }
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_artist_info",
+                        "handler": get_artist_info,
+                        "description": "Get information about the artist Ryan Kelln",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
                         }
                     }
                 },
