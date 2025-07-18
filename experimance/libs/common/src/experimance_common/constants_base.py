@@ -76,22 +76,6 @@ ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost"
 # data dir
 DATA_DIR = PROJECT_ROOT / "data"
 
-# media directories (relative paths)
-MEDIA_DIR = "media"
-IMAGES_DIR = f"{MEDIA_DIR}/images"
-GENERATED_IMAGES_DIR = f"{IMAGES_DIR}/generated"
-MOCK_IMAGES_DIR = f"{IMAGES_DIR}/mocks"
-AUDIO_DIR = f"services/audio/audio"
-VIDEOS_DIR = f"{MEDIA_DIR}/video"
-
-# media directories (absolute paths)
-MEDIA_DIR_ABS = PROJECT_ROOT / MEDIA_DIR
-IMAGES_DIR_ABS = PROJECT_ROOT / IMAGES_DIR
-GENERATED_IMAGES_DIR_ABS = PROJECT_ROOT / GENERATED_IMAGES_DIR
-MOCK_IMAGES_DIR_ABS = PROJECT_ROOT / MOCK_IMAGES_DIR
-AUDIO_DIR_ABS = PROJECT_ROOT / AUDIO_DIR
-VIDEOS_DIR_ABS = PROJECT_ROOT / VIDEOS_DIR
-
 # services directories
 SERVICES_DIR = PROJECT_ROOT / "services"
 CORE_SERVICE_DIR = SERVICES_DIR / "core"
@@ -99,6 +83,22 @@ AUDIO_SERVICE_DIR = SERVICES_DIR / "audio"
 IMAGE_SERVER_SERVICE_DIR = SERVICES_DIR / "image_server"
 AGENT_SERVICE_DIR = SERVICES_DIR / "agent"
 DISPLAY_SERVICE_DIR = SERVICES_DIR / "display"
+
+# media directories
+MEDIA_DIR = PROJECT_ROOT / "media"
+IMAGES_DIR = MEDIA_DIR / "images"
+GENERATED_IMAGES_DIR = IMAGES_DIR / "generated"
+MOCK_IMAGES_DIR = IMAGES_DIR / "mocks"
+AUDIO_DIR = AUDIO_SERVICE_DIR / "audio"
+VIDEOS_DIR = MEDIA_DIR / "video"
+
+# media directories (absolute paths)
+MEDIA_DIR_ABS = MEDIA_DIR.absolute()
+IMAGES_DIR_ABS = IMAGES_DIR.absolute()
+GENERATED_IMAGES_DIR_ABS = GENERATED_IMAGES_DIR.absolute()
+MOCK_IMAGES_DIR_ABS = MOCK_IMAGES_DIR.absolute()
+AUDIO_DIR_ABS = AUDIO_DIR.absolute()
+VIDEOS_DIR_ABS = VIDEOS_DIR.absolute()
 
 def get_project_config_path(service_name: str, fallback_dir: Path | None = None) -> Path:
     """
