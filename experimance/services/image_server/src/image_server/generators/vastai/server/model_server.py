@@ -172,14 +172,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down model server...")
     
-    # Clear GPU memory
-    for model_name in list(loaded_models.keys()):
-        del loaded_models[model_name]
+    # Clear GPU memory using our unload function
+    unload_model()  # Unload all models
     
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    gc.collect()
     logger.info("Model server shutdown complete")
 
 
@@ -278,6 +273,29 @@ def load_controlnet(controlnet_id: str = "sdxl_small") -> ControlNetModel:
     return controlnet
 
 
+def unload_model(cache_key: Optional[str] = None):
+    """
+    Unload a specific model or all models from VRAM.
+    
+    Args:
+        cache_key: Specific model to unload. If None, unloads all models.
+    """
+    if cache_key and cache_key in loaded_models:
+        logger.info(f"Unloading model: {cache_key}")
+        del loaded_models[cache_key]
+    elif cache_key is None:
+        # Unload all models
+        for model_key in list(loaded_models.keys()):
+            logger.info(f"Unloading model: {model_key}")
+            del loaded_models[model_key]
+    
+    # Force garbage collection and clear CUDA cache
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        logger.info("CUDA cache cleared")
+
+
 def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiffusionXLControlNetPipeline:
     """Load and cache a specific model with specified ControlNet."""
     # Create a cache key that includes both model and controlnet
@@ -286,6 +304,11 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
     if cache_key in loaded_models:
         logger.info(f"Using cached model: {cache_key}")
         return loaded_models[cache_key]
+    
+    # Unload all existing models to free VRAM (single-model cache)
+    if loaded_models:
+        logger.info("Unloading existing models to free VRAM")
+        unload_model()  # Unload all models
     
     logger.info(f"Loading model: {model_name} with ControlNet: {controlnet_id}")
     models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
@@ -500,10 +523,16 @@ async def healthcheck() -> Dict[str, Any]:
         # Check GPU memory if available
         gpu_memory = {}
         if torch.cuda.is_available():
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            allocated_memory = torch.cuda.memory_allocated()
+            cached_memory = torch.cuda.memory_reserved()
+            
             gpu_memory = {
-                "allocated": torch.cuda.memory_allocated(),
-                "cached": torch.cuda.memory_reserved(),
-                "total": torch.cuda.get_device_properties(0).total_memory
+                "allocated_gb": allocated_memory / (1024**3),
+                "cached_gb": cached_memory / (1024**3),
+                "total_gb": total_memory / (1024**3),
+                "free_gb": (total_memory - cached_memory) / (1024**3),
+                "usage_percent": (allocated_memory / total_memory) * 100
             }
         
         response = HealthCheckResponse(
@@ -538,6 +567,52 @@ async def list_models() -> Dict[str, Any]:
         available_schedulers=["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"]
     )
     return response.to_dict()
+
+
+@app.post("/unload")
+async def unload_models(model_key: Optional[str] = None) -> Dict[str, Any]:
+    """Unload models from VRAM."""
+    try:
+        # Get memory usage before unloading
+        gpu_memory_before = {}
+        if torch.cuda.is_available():
+            gpu_memory_before = {
+                "allocated_gb": torch.cuda.memory_allocated() / (1024**3),
+                "cached_gb": torch.cuda.memory_reserved() / (1024**3),
+                "total_gb": torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            }
+        
+        # Unload models
+        if model_key:
+            unload_model(model_key)
+            message = f"Unloaded model: {model_key}"
+        else:
+            unload_model()
+            message = "Unloaded all models"
+        
+        # Get memory usage after unloading
+        gpu_memory_after = {}
+        if torch.cuda.is_available():
+            gpu_memory_after = {
+                "allocated_gb": torch.cuda.memory_allocated() / (1024**3),
+                "cached_gb": torch.cuda.memory_reserved() / (1024**3),
+                "total_gb": torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            }
+        
+        return {
+            "status": "success",
+            "message": message,
+            "loaded_models": list(loaded_models.keys()),
+            "gpu_memory_before": gpu_memory_before,
+            "gpu_memory_after": gpu_memory_after
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to unload models: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 
 @app.post("/generate")

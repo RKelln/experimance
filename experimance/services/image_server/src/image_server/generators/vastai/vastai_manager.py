@@ -228,7 +228,7 @@ class VastAIManager:
         return False
     
     def search_offers(self, 
-                     min_gpu_ram: int = 20,  # 20GB minimum for SDXL
+                     min_gpu_ram: int = 16,  # 16GB minimum for optimized SDXL
                      max_price: float = 0.5,     # $0.50/hour max
                      dlperf: float = 32.0,       # 3090 +
                      verified_only: bool = True) -> List[Dict[str, Any]]:
@@ -411,6 +411,58 @@ class VastAIManager:
             "--env", env_string  # All env vars and ports in one string
         ]
         
+        return self._run_vastai_command(cmd)
+    
+    def stop_instance(self, instance_id: int) -> Dict[str, Any]:
+        """
+        Stop an instance (keeps it allocated but stops billing).
+        
+        Args:
+            instance_id: The instance ID to stop
+            
+        Returns:
+            Stop result
+        """
+        cmd = ["stop", "instance", str(instance_id)]
+        return self._run_vastai_command(cmd)
+    
+    def start_instance(self, instance_id: int) -> Dict[str, Any]:
+        """
+        Start a stopped instance.
+        
+        Args:
+            instance_id: The instance ID to start
+            
+        Returns:
+            Start result
+        """
+        cmd = ["start", "instance", str(instance_id)]
+        return self._run_vastai_command(cmd)
+    
+    def restart_instance(self, instance_id: int) -> Dict[str, Any]:
+        """
+        Restart an instance (stop then start).
+        
+        Args:
+            instance_id: The instance ID to restart
+            
+        Returns:
+            Restart result
+        """
+        cmd = ["restart", "instance", str(instance_id)]
+        return self._run_vastai_command(cmd)
+    
+    def destroy_instance(self, instance_id: int) -> Dict[str, Any]:
+        """
+        Destroy an instance (terminates and stops billing).
+        
+        Args:
+            instance_id: The instance ID to destroy
+            
+        Returns:
+            Destroy result
+        """
+        cmd = ["destroy", "instance", str(instance_id)]
         return self._run_vastai_command(cmd)
     
     def find_or_create_instance(self, 

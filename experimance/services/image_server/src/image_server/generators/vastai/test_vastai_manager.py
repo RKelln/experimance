@@ -358,6 +358,63 @@ def test_list_instances(manager: VastAIManager):
         return []
 
 
+def test_stop_instance(manager: VastAIManager, instance_id: int):
+    """Test stopping an instance."""
+    print(f"\n⏹️  Stopping instance {instance_id}...")
+    
+    try:
+        result = manager.stop_instance(instance_id)
+        print(f"   ✅ Stop command sent successfully")
+        print(f"   Result: {result}")
+        return True
+    except Exception as e:
+        print(f"   ❌ Failed to stop instance: {e}")
+        return False
+
+
+def test_start_instance(manager: VastAIManager, instance_id: int):
+    """Test starting an instance."""
+    print(f"\n▶️  Starting instance {instance_id}...")
+    
+    try:
+        result = manager.start_instance(instance_id)
+        print(f"   ✅ Start command sent successfully")
+        print(f"   Result: {result}")
+        return True
+    except Exception as e:
+        print(f"   ❌ Failed to start instance: {e}")
+        return False
+
+
+def test_restart_instance(manager: VastAIManager, instance_id: int):
+    """Test restarting an instance."""
+    print(f"\n🔄 Restarting instance {instance_id}...")
+    
+    try:
+        result = manager.restart_instance(instance_id)
+        print(f"   ✅ Restart command sent successfully")
+        print(f"   Result: {result}")
+        return True
+    except Exception as e:
+        print(f"   ❌ Failed to restart instance: {e}")
+        return False
+
+
+def test_destroy_instance(manager: VastAIManager, instance_id: int):
+    """Test destroying an instance."""
+    print(f"\n💥 Destroying instance {instance_id}...")
+    print(f"   ⚠️  This will permanently terminate the instance and stop billing")
+    
+    try:
+        result = manager.destroy_instance(instance_id)
+        print(f"   ✅ Destroy command sent successfully")
+        print(f"   Result: {result}")
+        return True
+    except Exception as e:
+        print(f"   ❌ Failed to destroy instance: {e}")
+        return False
+
+
 def main():
     """Main test function with argparse support."""
     parser = argparse.ArgumentParser(
@@ -395,12 +452,20 @@ Examples:
                              help='Test image generation with existing instance')
     action_group.add_argument('--list', action='store_true',
                              help='List all instances')
+    action_group.add_argument('--stop', action='store_true',
+                             help='Stop an instance (requires --instance-id)')
+    action_group.add_argument('--start', action='store_true',
+                             help='Start a stopped instance (requires --instance-id)')
+    action_group.add_argument('--restart', action='store_true',
+                             help='Restart an instance (requires --instance-id)')
+    action_group.add_argument('--destroy', action='store_true',
+                             help='Destroy an instance (requires --instance-id)')
     action_group.add_argument('--full', action='store_true',
                              help='Run full test suite (default)')
     
     # Offer search parameters
-    parser.add_argument('--min-gpu-ram', type=int, default=20,
-                       help='Minimum GPU RAM in GB (default: 20)')
+    parser.add_argument('--min-gpu-ram', type=int, default=16,
+                       help='Minimum GPU RAM in GB (default: 16)')
     parser.add_argument('--max-price', type=float, default=0.5,
                        help='Maximum price per hour (default: 0.5)')
     parser.add_argument('--dlperf', type=float, default=32.0,
@@ -418,8 +483,14 @@ Examples:
     
     args = parser.parse_args()
     
+    # Validate instance management commands
+    if args.stop or args.start or args.restart or args.destroy:
+        if not args.instance_id:
+            print("❌ --instance-id is required for stop, start, restart, and destroy operations")
+            return
+    
     # If no action specified, default to full test
-    if not any([args.offers, args.provision, args.generate, args.list]):
+    if not any([args.offers, args.provision, args.generate, args.list, args.stop, args.start, args.restart, args.destroy]):
         args.full = True
     
     print("🚀 VastAI Manager Test Script")
@@ -464,6 +535,18 @@ Examples:
     
     elif args.list:
         test_list_instances(manager)
+    
+    elif args.stop:
+        test_stop_instance(manager, args.instance_id)
+    
+    elif args.start:
+        test_start_instance(manager, args.instance_id)
+    
+    elif args.restart:
+        test_restart_instance(manager, args.instance_id)
+    
+    elif args.destroy:
+        test_destroy_instance(manager, args.instance_id)
     
     elif args.full:
         # Original full test behavior

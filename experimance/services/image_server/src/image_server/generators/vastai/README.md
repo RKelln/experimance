@@ -145,7 +145,7 @@ python vast_controlnet_test.py --prompt "ancient temple ruins" --mock_depth --er
 # Test searching for offers (shows what would be selected)
 uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --offers
 
-# Test with custom parameters
+# Test with custom parameters (optimized for 16GB VRAM)
 uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --offers --max-price 1.0 --min-gpu-ram 16
 
 # Test provisioning a new instance
@@ -156,6 +156,30 @@ uv run python -m services.image_server.src.image_server.generators.vastai.test_v
 
 # List all instances
 uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --list
+
+# Stop an instance (keeps it allocated, stops billing)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --stop --instance-id 23452949
+
+# Start a stopped instance
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --start --instance-id 23452949
+
+# Restart an instance (if it's having issues)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --restart --instance-id 23452949
+
+# Destroy an instance (terminates permanently, stops billing)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --destroy --instance-id 23452949
+
+# Stop an instance (keeps it allocated, stops billing)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --stop --instance-id 23452949
+
+# Start a stopped instance
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --start --instance-id 23452949
+
+# Restart an instance (if it's having issues)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --restart --instance-id 23452949
+
+# Destroy an instance (terminates permanently, stops billing)
+uv run python -m services.image_server.src.image_server.generators.vastai.test_vastai_manager --destroy --instance-id 23452949
 ```
 
 ## 6. Download Generated Images
