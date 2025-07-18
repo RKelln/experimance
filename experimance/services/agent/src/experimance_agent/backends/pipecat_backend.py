@@ -432,20 +432,20 @@ class PipecatBackend(AgentBackend):
             return
             
         try:
-            # For ensemble mode with flow manager, we can inject context messages
-            if self.flow_manager and hasattr(self.flow_manager, '_context_aggregator'):
+            # Use LLMMessagesAppendFrame to add messages to the context
+            if self.task and self.is_running:
+                from pipecat.frames.frames import LLMMessagesAppendFrame
+                
                 if speaker == "system":
                     # Add system message to context
-                    self.flow_manager._context_aggregator.add_message({
-                        "role": "system",
-                        "content": text
-                    })
+                    message = {"role": "system", "content": text}
                 else:
                     # Add user message to context
-                    self.flow_manager._context_aggregator.add_message({
-                        "role": "user", 
-                        "content": text
-                    })
+                    message = {"role": "user", "content": text}
+                
+                # Send the message frame to the pipeline
+                append_frame = LLMMessagesAppendFrame(messages=[message])
+                await self.task.queue_frame(append_frame)
                     
             logger.debug(f"Sent message from {speaker}: {text}")
             
@@ -470,10 +470,15 @@ class PipecatBackend(AgentBackend):
         if hasattr(self, 'transcript_manager'):
             self.transcript_manager._messages.clear()
             
-        # Reset context aggregator if in ensemble mode
-        if self.flow_manager and hasattr(self.flow_manager, '_context_aggregator'):
-            # Reset context but keep system message
-            self.flow_manager._context_aggregator.reset()
+        # Reset context using frames instead of direct access to aggregator
+        if self.task and self.is_running:
+            try:
+                from pipecat.frames.frames import LLMMessagesUpdateFrame
+                # Clear context by sending an empty messages list
+                reset_frame = LLMMessagesUpdateFrame(messages=[])
+                asyncio.create_task(self.task.queue_frame(reset_frame))
+            except Exception as e:
+                logger.warning(f"Failed to reset context: {e}")
     
     def get_connection_status(self) -> Dict[str, Any]:
         """Get connection status information."""

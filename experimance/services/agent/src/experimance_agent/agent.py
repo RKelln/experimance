@@ -89,7 +89,8 @@ class AgentService(BaseService):
         # Register background tasks
         self.add_task(self._conversation_monitor_loop())
         self.add_task(self._audience_detection_loop())
-        self.add_task(self._vision_analysis_loop())
+        if self.config.vision.vlm_enabled:
+            self.add_task(self._vision_analysis_loop())
         
         # ALWAYS call super().start() LAST
         await super().start()
@@ -395,7 +396,7 @@ class AgentService(BaseService):
                 description.strip()):
                 
                 # Format as system message for context
-                context_msg = f"Current scene: {description}"
+                context_msg = f"<System: seen by the installation camera: {description}>"
                 await self.current_backend.send_message(context_msg, speaker="system")
                 
                 logger.info(f"Updated agent context with scene analysis: {description[:100]}...")
@@ -588,7 +589,7 @@ class AgentService(BaseService):
         
         # TODO: Update agent context with current era/biome information
         if self.current_backend and self.current_backend.is_connected:
-            context_msg = f"The installation is currently showing {era} era in a {biome} biome."
+            context_msg = f"<System: the installation is currently showing {era} era in a {biome} biome.>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
     async def _handle_heartbeat(self, message_data: MessageDataType):

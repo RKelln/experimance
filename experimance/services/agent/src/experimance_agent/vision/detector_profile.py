@@ -43,6 +43,21 @@ class DetectionParams(BaseModel):
     motion_intensity_threshold: float = Field(default=0.01, description="Motion intensity threshold (0-1)")
     detection_history_size: int = Field(default=5, description="Number of frames for temporal smoothing")
     stability_threshold: float = Field(default=0.6, description="Majority vote threshold for stability")
+    
+    # Detector enable/disable flags
+    enable_hog_detection: bool = Field(default=True, description="Enable HOG person detection")
+    enable_face_detection: bool = Field(default=False, description="Enable face detection")
+    enable_motion_detection: bool = Field(default=True, description="Enable motion detection")
+
+
+class FaceDetectionParams(BaseModel):
+    """Face detection parameters for YuNet."""
+    model_path: str = Field(default="models/face_detection_yunet_2023mar.onnx", description="Path to YuNet ONNX model")
+    input_size: tuple[int, int] = Field(default=(320, 320), description="Input size for face detector")
+    score_threshold: float = Field(default=0.7, description="Face detection confidence threshold")
+    nms_threshold: float = Field(default=0.3, description="Non-maximum suppression threshold")
+    top_k: int = Field(default=5000, description="Maximum number of faces to detect")
+    min_face_size: int = Field(default=30, description="Minimum face size in pixels")
 
 
 class ConfidenceParams(BaseModel):
@@ -67,6 +82,7 @@ class DetectorProfile(BaseModel):
     hog: HOGParams = Field(default_factory=HOGParams)
     mog2: MOG2Params = Field(default_factory=MOG2Params)
     detection: DetectionParams = Field(default_factory=DetectionParams)
+    face: FaceDetectionParams = Field(default_factory=FaceDetectionParams)
     confidence: ConfidenceParams = Field(default_factory=ConfidenceParams)
     
     @classmethod
@@ -148,6 +164,71 @@ def create_default_profiles() -> Dict[str, DetectorProfile]:
         )
     )
     
+    # Face detection profile for seated audiences
+    profiles["face_detection"] = DetectorProfile(
+        name="Face Detection",
+        description="Face detection optimized for seated audiences (disable HOG)",
+        environment="indoor",
+        lighting="mixed",
+        detection=DetectionParams(
+            detection_scale_factor=0.7,
+            enable_hog_detection=False,  # Disable HOG
+            enable_face_detection=True,  # Enable face detection
+            enable_motion_detection=True,
+            motion_threshold=800,
+            motion_intensity_threshold=0.01,
+            stability_threshold=0.6
+        ),
+        face=FaceDetectionParams(
+            score_threshold=0.6,  # Slightly more sensitive
+            min_face_size=25,     # Allow smaller faces
+            input_size=(416, 416) # Larger input for better detection
+        ),
+        mog2=MOG2Params(
+            var_threshold=35.0,
+            history=300
+        ),
+        confidence=ConfidenceParams(
+            person_base_confidence=0.4,
+            motion_confidence_weight=0.4
+        )
+    )
+    
+    # Face detection optimized profile
+    profiles["face_detection"] = DetectorProfile(
+        name="Face Detection",
+        description="Optimized for face detection with motion, ideal for seated audiences",
+        environment="indoor",
+        lighting="mixed",
+        detection=DetectionParams(
+            detection_scale_factor=0.8,  # Higher quality for face detection
+            min_person_height=50,
+            motion_threshold=800,
+            motion_intensity_threshold=0.008,
+            stability_threshold=0.5,
+            enable_hog_detection=False,      # Disable HOG
+            enable_face_detection=True,      # Enable face detection
+            enable_motion_detection=True     # Keep motion for confirmation
+        ),
+        face=FaceDetectionParams(
+            score_threshold=0.5,   # More sensitive for face detection
+            min_face_size=20,      # Allow smaller faces
+            input_size=(320, 320), # Standard YuNet input size
+            nms_threshold=0.3,
+            top_k=5000
+        ),
+        mog2=MOG2Params(
+            var_threshold=40.0,
+            history=250
+        ),
+        confidence=ConfidenceParams(
+            person_base_confidence=0.0,  # No HOG, so no person confidence
+            motion_confidence_weight=0.4,
+            motion_only_threshold=0.3,
+            motion_only_confidence_factor=0.7
+        )
+    )
+    
     # Gallery/museum profile
     profiles["gallery_dim"] = DetectorProfile(
         name="Gallery Dim",
@@ -216,7 +297,7 @@ def create_default_profiles() -> Dict[str, DetectorProfile]:
         ),
         confidence=ConfidenceParams(
             motion_only_threshold=0.5,  # Higher threshold in cluttered space
-            stability_threshold=0.8
+            person_base_confidence=0.4
         )
     )
     

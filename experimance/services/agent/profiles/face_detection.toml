@@ -1,7 +1,7 @@
-name = "Indoor Office"
-description = "Optimized for indoor office/studio environments with stable lighting"
+name = "Face Detection"
+description = "Optimized for face detection with motion, ideal for seated audiences"
 environment = "indoor"
-lighting = "bright"
+lighting = "mixed"
 
 [hog]
 win_stride_x = 8
@@ -15,15 +15,18 @@ group_threshold = 2
 [mog2]
 detect_shadows = true
 var_threshold = 40.0
-history = 400
+history = 250
 
 [detection]
-detection_scale_factor = 0.5
-min_person_height = 60
+detection_scale_factor = 0.8
+min_person_height = 50
 motion_threshold = 800
 motion_intensity_threshold = 0.008
 detection_history_size = 5
-stability_threshold = 0.7
+stability_threshold = 0.5
+enable_hog_detection = false
+enable_face_detection = true
+enable_motion_detection = true
 
 [face]
 model_path = "models/face_detection_yunet_2023mar.onnx"
@@ -37,11 +40,11 @@ top_k = 5000
 min_face_size = 20
 
 [confidence]
-person_base_confidence = 0.3
+person_base_confidence = 0.0
 person_count_weight = 0.2
 person_weight_factor = 0.4
-motion_confidence_weight = 0.3
-motion_only_threshold = 0.4
-motion_only_confidence_factor = 0.6
+motion_confidence_weight = 0.4
+motion_only_threshold = 0.3
+motion_only_confidence_factor = 0.7
 max_combined_confidence = 0.95
 absence_confidence = 0.9

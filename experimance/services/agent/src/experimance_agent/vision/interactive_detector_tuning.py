@@ -43,6 +43,7 @@ class InteractiveDetectorTuner:
         self.controls_window = "Controls"
         self.running = True
         self.show_hog = True
+        self.show_faces = True
         self.show_motion = True
         self.show_info = True
         self.detector_needs_reload = False
@@ -157,6 +158,12 @@ class InteractiveDetectorTuner:
             'hog_scale': int(self.profile.hog.scale * 100),
             'win_stride': self.profile.hog.win_stride_x,
             
+            # Face detection params
+            'face_score_threshold': int(self.profile.face.score_threshold * 100),
+            'face_nms_threshold': int(self.profile.face.nms_threshold * 100),
+            'face_min_size': self.profile.face.min_face_size,
+            'face_top_k': min(100, self.profile.face.top_k),  # Limit for trackbar
+            
             # MOG2 params
             'mog2_var_threshold': int(self.profile.mog2.var_threshold),
             'mog2_history': self.profile.mog2.history,
@@ -193,6 +200,16 @@ class InteractiveDetectorTuner:
         cv2.createTrackbar('Win Stride', self.controls_window,
                           self.params['win_stride'], 20, self.on_param_change)
         
+        # Face detection parameters
+        cv2.createTrackbar('Face Score Thresh %', self.controls_window,
+                          self.params['face_score_threshold'], 100, self.on_param_change)
+        cv2.createTrackbar('Face NMS Thresh %', self.controls_window,
+                          self.params['face_nms_threshold'], 100, self.on_param_change)
+        cv2.createTrackbar('Face Min Size', self.controls_window,
+                          self.params['face_min_size'], 100, self.on_param_change)
+        cv2.createTrackbar('Face Top K', self.controls_window,
+                          self.params['face_top_k'], 100, self.on_param_change)
+        
         # MOG2 parameters  
         cv2.createTrackbar('MOG2 Var Threshold', self.controls_window,
                           self.params['mog2_var_threshold'], 100, self.on_param_change)
@@ -207,6 +224,7 @@ class InteractiveDetectorTuner:
         
         # Display toggles
         cv2.createTrackbar('Show HOG', self.controls_window, 1, 1, self.on_toggle_change)
+        cv2.createTrackbar('Show Faces', self.controls_window, 1, 1, self.on_toggle_change)
         cv2.createTrackbar('Show Motion', self.controls_window, 1, 1, self.on_toggle_change)
         cv2.createTrackbar('Show Info', self.controls_window, 1, 1, self.on_toggle_change)
         
@@ -235,6 +253,10 @@ class InteractiveDetectorTuner:
         self.params['hog_threshold'] = cv2.getTrackbarPos('HOG Threshold x100', self.controls_window)
         self.params['hog_scale'] = cv2.getTrackbarPos('HOG Scale x100', self.controls_window)
         self.params['win_stride'] = cv2.getTrackbarPos('Win Stride', self.controls_window)
+        self.params['face_score_threshold'] = cv2.getTrackbarPos('Face Score Thresh %', self.controls_window)
+        self.params['face_nms_threshold'] = cv2.getTrackbarPos('Face NMS Thresh %', self.controls_window)
+        self.params['face_min_size'] = cv2.getTrackbarPos('Face Min Size', self.controls_window)
+        self.params['face_top_k'] = cv2.getTrackbarPos('Face Top K', self.controls_window)
         self.params['mog2_var_threshold'] = cv2.getTrackbarPos('MOG2 Var Threshold', self.controls_window)
         self.params['mog2_history'] = cv2.getTrackbarPos('MOG2 History', self.controls_window)
         self.params['person_base_conf'] = cv2.getTrackbarPos('Person Base Conf %', self.controls_window)
@@ -246,6 +268,7 @@ class InteractiveDetectorTuner:
     def on_toggle_change(self, val):
         """Handle display toggle changes."""
         self.show_hog = cv2.getTrackbarPos('Show HOG', self.controls_window) == 1
+        self.show_faces = cv2.getTrackbarPos('Show Faces', self.controls_window) == 1
         self.show_motion = cv2.getTrackbarPos('Show Motion', self.controls_window) == 1
         self.show_info = cv2.getTrackbarPos('Show Info', self.controls_window) == 1
     
@@ -268,6 +291,11 @@ class InteractiveDetectorTuner:
             self.profile.hog.scale = max(1.01, self.params['hog_scale'] / 100.0)
             self.profile.hog.win_stride_x = max(1, self.params['win_stride'])
             self.profile.hog.win_stride_y = max(1, self.params['win_stride'])
+            
+            self.profile.face.score_threshold = max(0.1, self.params['face_score_threshold'] / 100.0)
+            self.profile.face.nms_threshold = max(0.1, self.params['face_nms_threshold'] / 100.0)
+            self.profile.face.min_face_size = max(10, self.params['face_min_size'])
+            self.profile.face.top_k = max(1, self.params['face_top_k'] * 50)  # Scale back up
             
             self.profile.mog2.var_threshold = max(10, float(self.params['mog2_var_threshold']))
             self.profile.mog2.history = max(50, self.params['mog2_history'])
@@ -323,6 +351,15 @@ class InteractiveDetectorTuner:
                     cv2.rectangle(vis_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                     cv2.putText(vis_frame, 'HOG', (x, y - 10), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        
+        # Draw face detections
+        if self.show_faces and 'face_detection' in result:
+            face_det = result['face_detection']
+            if 'detections' in face_det:
+                for (x, y, w, h) in face_det['detections']:
+                    cv2.rectangle(vis_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                    cv2.putText(vis_frame, 'FACE', (x, y - 10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
         
         # Draw motion areas
         if self.show_motion and 'motion_detection' in result:
@@ -400,8 +437,9 @@ class InteractiveDetectorTuner:
                 f"HOG: {self.params['hog_threshold']/100-1:.2f}",
                 f"MOG2Var: {self.params['mog2_var_threshold']}",
                 f"HOG Dets: {len(result.get('person_detection', {}).get('detections', []))}",
+                f"Face Dets: {len(result.get('face_detection', {}).get('detections', []))}",
                 f"Motion: {result.get('motion_detection', {}).get('motion_intensity', 0.0):.3f}",
-                f"Person Count: {result.get('person_detection', {}).get('count', 0)}"
+                f"Person Count: {result.get('person_detection', {}).get('person_count', 0)}"
             ]
             
             start_y = 90 if self.detector_needs_reload else 70
@@ -457,6 +495,7 @@ class InteractiveDetectorTuner:
         print(f"  r: Reset to original profile")
         print(f"  SPACEBAR: Reload detector with current parameters")
         print(f"  h: Toggle HOG detection display")
+        print(f"  f: Toggle face detection display")
         print(f"  m: Toggle motion detection display")
         print(f"  i: Toggle info display")
         print(f"  d: Toggle motion debug output")
@@ -498,6 +537,7 @@ class InteractiveDetectorTuner:
                     if frame_count % 30 == 0:
                         print(f"Detection: {detection_time:.3f}s | "
                               f"HOG: {len(result.get('person_detection', {}).get('detections', []))} | "
+                              f"Faces: {len(result.get('face_detection', {}).get('detections', []))} | "
                               f"Motion: {result.get('motion_detection', {}).get('motion_intensity', 0.0):.3f} | "
                               f"Presence: {result.get('audience_detected', False)}")
                         if 'error' in result:
@@ -533,6 +573,9 @@ class InteractiveDetectorTuner:
                 elif key == ord('h'):
                     self.show_hog = not self.show_hog
                     cv2.setTrackbarPos('Show HOG', self.controls_window, int(self.show_hog))
+                elif key == ord('f'):
+                    self.show_faces = not self.show_faces
+                    cv2.setTrackbarPos('Show Faces', self.controls_window, int(self.show_faces))
                 elif key == ord('m'):
                     self.show_motion = not self.show_motion
                     cv2.setTrackbarPos('Show Motion', self.controls_window, int(self.show_motion))
@@ -564,6 +607,10 @@ class InteractiveDetectorTuner:
             cv2.setTrackbarPos('HOG Threshold x100', self.controls_window, self.params['hog_threshold'])
             cv2.setTrackbarPos('HOG Scale x100', self.controls_window, self.params['hog_scale'])
             cv2.setTrackbarPos('Win Stride', self.controls_window, self.params['win_stride'])
+            cv2.setTrackbarPos('Face Score Thresh %', self.controls_window, self.params['face_score_threshold'])
+            cv2.setTrackbarPos('Face NMS Thresh %', self.controls_window, self.params['face_nms_threshold'])
+            cv2.setTrackbarPos('Face Min Size', self.controls_window, self.params['face_min_size'])
+            cv2.setTrackbarPos('Face Top K', self.controls_window, self.params['face_top_k'])
             cv2.setTrackbarPos('MOG2 Var Threshold', self.controls_window, self.params['mog2_var_threshold'])
             cv2.setTrackbarPos('MOG2 History', self.controls_window, self.params['mog2_history'])
             cv2.setTrackbarPos('Person Base Conf %', self.controls_window, self.params['person_base_conf'])

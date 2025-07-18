@@ -49,9 +49,33 @@ class CPUAudienceDetector:
         self.last_detection_time: float = 0.0
         self.confidence_score: float = 0.0
         
+        # Precompute scaling factors to avoid division in hot path
+        self.scale_factor = self.profile.detection.detection_scale_factor
+        self.scale_inverse = 1.0 / self.scale_factor if self.scale_factor > 0 else 1.0
+        
         # HOG person detector
-        self.hog = cv2.HOGDescriptor()
-        self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        self.hog = None
+        if self.profile.detection.enable_hog_detection:
+            self.hog = cv2.HOGDescriptor()
+            self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        
+        # Face detector (YuNet)
+        self.face_detector = None
+        if self.profile.detection.enable_face_detection:
+            try:
+                face_params = self.profile.face
+                self.face_detector = cv2.FaceDetectorYN.create(
+                    face_params.model_path,
+                    "",
+                    face_params.input_size,
+                    face_params.score_threshold,
+                    face_params.nms_threshold,
+                    face_params.top_k
+                )
+                logger.info(f"Initialized YuNet face detector with model: {face_params.model_path}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize face detector: {e}")
+                self.profile.detection.enable_face_detection = False
         
         # Background subtractor for motion detection
         self.background_subtractor = None
@@ -77,17 +101,27 @@ class CPUAudienceDetector:
             
         try:
             # Initialize background subtractor using profile parameters
-            mog2_params = self.profile.mog2
-            self.background_subtractor = cv2.createBackgroundSubtractorMOG2(
-                detectShadows=mog2_params.detect_shadows,
-                varThreshold=mog2_params.var_threshold,
-                history=mog2_params.history
-            )
+            if self.profile.detection.enable_motion_detection:
+                mog2_params = self.profile.mog2
+                self.background_subtractor = cv2.createBackgroundSubtractorMOG2(
+                    detectShadows=mog2_params.detect_shadows,
+                    varThreshold=mog2_params.var_threshold,
+                    history=mog2_params.history
+                )
+                logger.debug(f"MOG2 params - shadows: {mog2_params.detect_shadows}, "
+                            f"varThreshold: {mog2_params.var_threshold}, history: {mog2_params.history}")
+            
+            enabled_detectors = []
+            if self.profile.detection.enable_hog_detection:
+                enabled_detectors.append("HOG")
+            if self.profile.detection.enable_face_detection:
+                enabled_detectors.append("Face")
+            if self.profile.detection.enable_motion_detection:
+                enabled_detectors.append("Motion")
             
             self.is_active = True
             logger.info(f"CPU audience detection initialized with profile: {self.profile.name}")
-            logger.debug(f"MOG2 params - shadows: {mog2_params.detect_shadows}, "
-                        f"varThreshold: {mog2_params.var_threshold}, history: {mog2_params.history}")
+            logger.info(f"Enabled detectors: {', '.join(enabled_detectors) if enabled_detectors else 'None'}")
             
         except Exception as e:
             logger.error(f"Failed to initialize CPU audience detection: {e}")
@@ -124,14 +158,17 @@ class CPUAudienceDetector:
             # Scale down frame for faster processing
             small_frame = self._scale_frame(frame)
             
-            # Perform person detection using HOG
-            person_result = await self._detect_persons_hog(small_frame)
+            # Perform person detection using HOG (if enabled)
+            person_result = await self._detect_persons_hog(small_frame, self.scale_inverse)
             
-            # Perform motion detection
+            # Perform face detection (if enabled)
+            face_result = await self._detect_faces(small_frame, self.scale_inverse)
+            
+            # Perform motion detection (if enabled)
             motion_result = await self._detect_motion(small_frame, include_mask=include_motion_mask)
             
-            # Combine results
-            detection_result = self._combine_cpu_results(person_result, motion_result)
+            # Combine results with face detection
+            detection_result = self._combine_cpu_results(person_result, face_result, motion_result)
             
             # Apply temporal smoothing
             smoothed_result = self._apply_temporal_smoothing(detection_result)
@@ -150,8 +187,9 @@ class CPUAudienceDetector:
                 "detection_time": detection_time,
                 "timestamp": time.time(),
                 "person_detection": person_result,
+                "face_detection": face_result,
                 "motion_detection": motion_result,
-                "method_used": "cpu_hog_motion",
+                "method_used": "cpu_multimodal",
                 "performance": {
                     "avg_detection_time": np.mean(self.detection_times),
                     "frame_scale": self.profile.detection.detection_scale_factor,
@@ -179,26 +217,36 @@ class CPUAudienceDetector:
     
     def _scale_frame(self, frame: np.ndarray) -> np.ndarray:
         """Scale frame down for faster processing using profile parameters."""
-        scale_factor = self.profile.detection.detection_scale_factor
-        if scale_factor == 1.0:
+        if self.scale_factor == 1.0:
             return frame
         
         height, width = frame.shape[:2]
-        new_width = int(width * scale_factor)
-        new_height = int(height * scale_factor)
+        new_width = int(width * self.scale_factor)
+        new_height = int(height * self.scale_factor)
         
         return cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
     
-    async def _detect_persons_hog(self, frame: np.ndarray) -> Dict[str, Any]:
+    async def _detect_persons_hog(self, frame: np.ndarray, scale_inverse: float = 1.0) -> Dict[str, Any]:
         """
         Detect persons using HOG descriptor.
         
         Args:
             frame: BGR image frame (preferably scaled down)
+            scale_inverse: Inverse of scale factor to scale detections back to original size
             
         Returns:
             dict: Person detection results
         """
+        if not self.profile.detection.enable_hog_detection or self.hog is None:
+            return {
+                "persons_detected": False,
+                "person_count": 0,
+                "confidence": 0.0,
+                "detections": [],
+                "detection_weights": [],
+                "method": "hog_disabled"
+            }
+        
         try:
             # Convert to grayscale for HOG detection
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -214,12 +262,17 @@ class CPUAudienceDetector:
                 groupThreshold=hog_params.group_threshold
             )
             
-            # Filter detections by size using profile parameters
+            # Filter detections by size using profile parameters and scale back to original size
             min_height = self.profile.detection.min_person_height
             valid_detections = []
             for (x, y, w, h) in detections:
                 if h >= min_height:  # Minimum height filter from profile
-                    valid_detections.append((x, y, w, h))
+                    # Scale detection back to original frame size
+                    scaled_x = int(x * scale_inverse)
+                    scaled_y = int(y * scale_inverse)
+                    scaled_w = int(w * scale_inverse)
+                    scaled_h = int(h * scale_inverse)
+                    valid_detections.append((scaled_x, scaled_y, scaled_w, scaled_h))
             
             person_count = len(valid_detections)
             
@@ -239,7 +292,8 @@ class CPUAudienceDetector:
                 "person_count": person_count,
                 "confidence": confidence,
                 "detections": valid_detections,
-                "detection_weights": weights[:len(valid_detections)] if len(weights) > 0 else []
+                "detection_weights": weights[:len(valid_detections)] if len(weights) > 0 else [],
+                "method": "hog"
             }
             
         except Exception as e:
@@ -248,7 +302,88 @@ class CPUAudienceDetector:
                 "persons_detected": False,
                 "person_count": 0,
                 "confidence": 0.0,
-                "error": str(e)
+                "detections": [],
+                "detection_weights": [],
+                "error": str(e),
+                "method": "hog_error"
+            }
+    
+    async def _detect_faces(self, frame: np.ndarray, scale_inverse: float = 1.0) -> Dict[str, Any]:
+        """
+        Detect faces using YuNet face detector.
+        
+        Args:
+            frame: BGR image frame
+            scale_inverse: Inverse of scale factor to scale detections back to original size
+            
+        Returns:
+            dict: Face detection results
+        """
+        if not self.profile.detection.enable_face_detection or self.face_detector is None:
+            return {
+                "faces_detected": False,
+                "face_count": 0,
+                "confidence": 0.0,
+                "detections": [],
+                "method": "face_disabled"
+            }
+        
+        try:
+            # Set input size for current frame
+            height, width = frame.shape[:2]
+            self.face_detector.setInputSize((width, height))
+            
+            # Detect faces
+            _, faces = self.face_detector.detect(frame)
+            
+            if faces is not None:
+                # Filter faces by minimum size
+                min_face_size = self.profile.face.min_face_size
+                valid_faces = []
+                confidences = []
+                
+                for face in faces:
+                    x, y, w, h = face[:4].astype(int)
+                    confidence = face[14]  # Face score
+                    
+                    # Filter by minimum face size (before scaling)
+                    if w >= min_face_size and h >= min_face_size:
+                        # Scale detection back to original frame size
+                        scaled_x = int(x * scale_inverse)
+                        scaled_y = int(y * scale_inverse)
+                        scaled_w = int(w * scale_inverse)
+                        scaled_h = int(h * scale_inverse)
+                        valid_faces.append((scaled_x, scaled_y, scaled_w, scaled_h))
+                        confidences.append(confidence)
+                
+                face_count = len(valid_faces)
+                avg_confidence = np.mean(confidences) if confidences else 0.0
+                
+                return {
+                    "faces_detected": face_count > 0,
+                    "face_count": face_count,
+                    "confidence": min(0.9, avg_confidence * 0.8),  # Scale confidence
+                    "detections": valid_faces,
+                    "method": "yunet"
+                }
+            else:
+                return {
+                    "faces_detected": False,
+                    "face_count": 0,
+                    "confidence": 0.0,
+                    "detections": [],
+                    "method": "yunet"
+                }
+                
+        except Exception as e:
+            logger.error(f"Face detection failed: {e}")
+            return {
+                "faces_detected": False,
+                "face_count": 0,
+                "confidence": 0.0,
+                "detections": [],
+                "error": str(e),
+                "method": "face_error"
             }
     
     async def _detect_motion(self, frame: np.ndarray, include_mask: bool = False) -> Dict[str, Any]:
@@ -262,6 +397,19 @@ class CPUAudienceDetector:
         Returns:
             dict: Motion detection results
         """
+        if not self.profile.detection.enable_motion_detection or self.background_subtractor is None:
+            result = {
+                "motion_detected": False,
+                "motion_intensity": 0.0,
+                "contour_count": 0,
+                "total_motion_area": 0,
+                "confidence": 0.0,
+                "method": "motion_disabled"
+            }
+            if include_mask:
+                result["motion_mask"] = None
+            return result
+        
         try:
             if not self.background_subtractor:
                 return {"motion_detected": False, "error": "No background subtractor"}
@@ -309,50 +457,71 @@ class CPUAudienceDetector:
             return {"motion_detected": False, "error": str(e)}
     
     def _combine_cpu_results(self, person_result: Dict[str, Any], 
+                           face_result: Dict[str, Any],
                            motion_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Combine HOG person detection and motion detection results using profile parameters.
+        Combine HOG person detection, face detection, and motion detection results using profile parameters.
         
         Args:
             person_result: Results from HOG person detection
+            face_result: Results from face detection
             motion_result: Results from motion detection
             
         Returns:
             dict: Combined detection result
         """
         persons_detected = person_result.get("persons_detected", False)
+        faces_detected = face_result.get("faces_detected", False)
         motion_detected = motion_result.get("motion_detected", False)
         
         person_confidence = person_result.get("confidence", 0.0)
+        face_confidence = face_result.get("confidence", 0.0)
         motion_confidence = motion_result.get("confidence", 0.0)
         
         conf_params = self.profile.confidence
         
-        if persons_detected and motion_detected:
-            # Both methods agree - high confidence
-            return {
-                "detected": True,
-                "confidence": min(conf_params.max_combined_confidence, 
-                                person_confidence + motion_confidence * conf_params.motion_confidence_weight),
-                "primary_method": "person+motion"
-            }
+        # Prioritize face detection as it's most reliable for seated people
+        if faces_detected:
+            if motion_detected:
+                # Face + motion = very high confidence
+                return {
+                    "detected": True,
+                    "confidence": min(conf_params.max_combined_confidence, 
+                                    face_confidence + motion_confidence * conf_params.motion_confidence_weight),
+                    "primary_method": "face+motion"
+                }
+            else:
+                # Face only = high confidence (good for seated people)
+                return {
+                    "detected": True,
+                    "confidence": face_confidence,
+                    "primary_method": "face_only"
+                }
         elif persons_detected:
-            # Person detected without motion (static person)
-            return {
-                "detected": True,
-                "confidence": person_confidence,
-                "primary_method": "person_only"
-            }
+            if motion_detected:
+                # Person + motion = high confidence
+                return {
+                    "detected": True,
+                    "confidence": min(conf_params.max_combined_confidence, 
+                                    person_confidence + motion_confidence * conf_params.motion_confidence_weight),
+                    "primary_method": "person+motion"
+                }
+            else:
+                # Person only = medium confidence
+                return {
+                    "detected": True,
+                    "confidence": person_confidence,
+                    "primary_method": "person_only"
+                }
         elif motion_detected:
-            # Motion without person detection (possible false positive)
-            # Lower confidence, but still possible
+            # Motion only = lower confidence
             return {
                 "detected": motion_confidence > conf_params.motion_only_threshold,
                 "confidence": motion_confidence * conf_params.motion_only_confidence_factor,
                 "primary_method": "motion_only"
             }
         else:
-            # Neither detected
+            # No detection
             return {
                 "detected": False,
                 "confidence": conf_params.absence_confidence,
@@ -434,8 +603,13 @@ class CPUAudienceDetector:
             mode: 'fast', 'balanced', or 'accurate'
         """
         self.profile.update_from_performance_mode(mode)
+        
+        # Recalculate scaling factors
+        self.scale_factor = self.profile.detection.detection_scale_factor
+        self.scale_inverse = 1.0 / self.scale_factor if self.scale_factor > 0 else 1.0
+        
         logger.info(f"CPU detection performance mode set to: {mode}")
-        logger.debug(f"Updated parameters - scale: {self.profile.detection.detection_scale_factor}, "
+        logger.debug(f"Updated parameters - scale: {self.scale_factor}, "
                     f"min_height: {self.profile.detection.min_person_height}, "
                     f"motion_threshold: {self.profile.detection.motion_threshold}")
     
@@ -447,6 +621,11 @@ class CPUAudienceDetector:
             new_profile: New detector profile to use
         """
         self.profile = new_profile
+        
+        # Recalculate scaling factors
+        self.scale_factor = self.profile.detection.detection_scale_factor
+        self.scale_inverse = 1.0 / self.scale_factor if self.scale_factor > 0 else 1.0
+        
         logger.info(f"Updated detector profile to: {new_profile.name}")
         
         # Reinitialize background subtractor with new parameters if active
