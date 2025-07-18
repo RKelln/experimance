@@ -121,22 +121,6 @@ class ControlNetGenerateData(ApiPayload):
             errors.append("Scheduler must be one of: auto, euler, dpm_sde")
         
         return errors
-    
-    def get_depth_image(self) -> Optional[Image.Image]:
-        """
-        Decode the base64 depth map into a PIL Image.
-        
-        Returns None if no depth map is provided.
-        """
-        if not self.depth_map_b64:
-            return None
-        
-        try:
-            image_data = base64.b64decode(self.depth_map_b64)
-            image = Image.open(BytesIO(image_data))
-            return image
-        except Exception as e:
-            raise ValueError(f"Invalid depth map data: {e}")
 
 
 @dataclass

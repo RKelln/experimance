@@ -6,10 +6,10 @@ This module defines Pydantic models for validating and accessing
 image server configuration in a type-safe way using the new ZMQ architecture.
 """
 
-from typing import Dict, Literal, Optional
+from typing import Annotated, Dict, Literal, Optional
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.constants import (
@@ -25,6 +25,7 @@ from image_server.generators.config import BaseGeneratorConfig
 # Import all generator config types
 from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
+from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 
 # For future use when other generators are implemented:
 #from image_server.generators.mock.mock_generator import MockGeneratorConfig
@@ -35,7 +36,11 @@ DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVI
 
 class GeneratorConfig(BaseModel):
     """Configuration for image generator selection and common settings."""
-    strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
+    strategy: Annotated[Literal["mock", "sdxl", "falai", "openai", "vastai"],
+                        StringConstraints(to_lower=True)] = Field(
+        default="vastai",
+        description="Image generation strategy to use (mock, sdxl, falai, openai, vastai)"
+    )
     timeout: int = Field(
         default=60,
         description="Default timeout for image generation in seconds"
@@ -110,6 +115,11 @@ class ImageServerConfig(BaseServiceConfig):
     openai: Dict = Field(
         default_factory=dict,
         description="Configuration for OpenAI DALL-E generator"
+    )
+    
+    vastai: VastAIGeneratorConfig = Field(
+        default_factory=VastAIGeneratorConfig,
+        description="Configuration for VastAI generator"
     )
     
     def get_generator_config(self, strategy: Optional[str] = None) -> Dict:

@@ -1,4 +1,6 @@
-# Vast.ai Image Generation Setup
+# VastAI Image Generation
+
+This directory contains both the VastAI generator for the image server and the deployment scripts for running the experimance ControlNet model server on VastAI instances.
 
 ## 🚀 **NEW: Automatic Deployment (Recommended)**
 
@@ -8,6 +10,42 @@ The easiest way to deploy is using vast.ai's provisioning system:
 2. **Set environment variable**: `PROVISIONING_SCRIPT=https://raw.githubusercontent.com/RKelln/experimance/main/services/image_server/src/image_server/generators/vastai/vast_provisioning.sh`
 3. **Start instance** - Everything installs automatically!
 4. **Access**: Click "Open" → "Experimance Image Server" in vast.ai dashboard
+
+## VastAI Generator Integration
+
+The VastAI generator allows the image server to automatically use VastAI instances for remote image generation. This provides cost-effective, scalable image generation without requiring local GPU resources.
+
+### Generator Features
+
+- **Remote Generation**: Generate images using VastAI cloud instances
+- **Single Instance Management**: Manages one instance at a time for cost efficiency  
+- **Automatic Instance Lifecycle**: Finds existing instances or creates new ones as needed
+- **Health Monitoring**: Monitors instance health and switches to new instances if needed
+- **ControlNet Support**: Full support for depth-conditioned image generation
+- **Era-specific LoRAs**: Support for experimance and drone era models
+- **Multiple Models**: Support for lightning, hyper, and base SDXL models
+
+### Quick Start
+
+```toml
+[image_server]
+strategy = "vastai"
+
+[image_server.config]
+model_name = "hyper"
+era = "experimance" 
+steps = 6
+cfg = 2.0
+```
+
+See `config_example.toml` for full configuration options.
+
+### Testing the Integration
+
+```bash
+cd services/image_server/src/image_server/generators/vastai
+python test_integration.py
+```
 
 See [VAST_PROVISIONING.md](VAST_PROVISIONING.md) for full details.
 

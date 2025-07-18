@@ -10,6 +10,8 @@ from image_server.generators.fal.fal_comfy_generator import FalComfyGenerator
 from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 from image_server.generators.fal.fal_lightning_i2i_generator import FalLightningI2IGenerator
 from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2IConfig
+from image_server.generators.vastai.vastai_generator import VastAIGenerator
+from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 #from image_server.generators.openai.openai_generator import OpenAIGenerator, OpenAIGeneratorConfig
 #from image_server.generators.local.sdxl_generator import LocalSDXLGenerator, SDXLGeneratorConfig
 
@@ -28,6 +30,10 @@ GENERATORS = {
     "falai_lightning_i2i": {
         "config_class": FalLightningI2IConfig,
         "generator_class": FalLightningI2IGenerator
+    },
+    "vastai": {
+        "config_class": VastAIGeneratorConfig,
+        "generator_class": VastAIGenerator
     },
     # "openai": {
     #     "config_class": OpenAIGeneratorConfig,

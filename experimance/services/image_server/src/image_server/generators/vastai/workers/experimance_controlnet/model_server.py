@@ -640,6 +640,8 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
     """Generate an image using ControlNet."""
     start_time = time.time()
     
+    logger.info(f"Received generation request: {request.model} model, prompt: {request.prompt[:50]}...")
+    
     try:
         # Convert request to our data type for validation
         data = ControlNetGenerateData(
@@ -679,9 +681,12 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
             load_loras(pipe, data.era, data.lora_strength)
         
         # Get or generate depth map
+        logger.info(f"Debug - depth_map_b64: {'Present' if data.depth_map_b64 else 'None'}, mock_depth: {data.mock_depth}")
         if data.depth_map_b64:
             depth_image = data.get_depth_image()
+            logger.info("Got depth map")
         elif data.mock_depth:
+            logger.info("Generating mock depth map")
             depth_image = generate_mock_depth(data.width, data.height)
         else:
             raise HTTPException(status_code=400, detail="Either depth_map_b64 or mock_depth=true must be provided")
