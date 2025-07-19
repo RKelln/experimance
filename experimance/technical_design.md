@@ -17,7 +17,102 @@ Complete schema definitions live at `/schemas`.
 
 ### Overview
 
-The DISPLAY_MEDIA message type represents a significant architectural improvement in how media content is delivered to the display service. Instead of the display service directly handling ImageReady messages, the core `experimance` service now acts as a coordinator, receiving ImageReady messages and then intelligently deciding how to present the content to the display.
+The DISPLAY_MEDIA message type represents a significant architectural improvement in how media content is delivered to the display service. Instead of the display service directly handling ImageReady messages, the core---
+
+© 2025 Experimance — MIT‑licensed where applicable.
+
+---
+
+## 12  Infrastructure & Deployment
+
+### 12.1 Production Deployment Strategy
+
+**Primary Deployment: systemd Services**
+
+For reliability and simplicity, the production deployment uses native systemd services:
+
+| Service Type      | Deployment Method | Auto-Recovery | Monitoring | Notes                                       |
+| ----------------- | ----------------- | ------------- | ---------- | ------------------------------------------- |
+| **Core Services** | systemd units     | Automatic     | Built-in   | Native Ubuntu service management            |
+| **GPU Services**  | systemd units     | Automatic     | Built-in   | Higher resource limits for image generation |
+| **Monitoring**    | Cron + systemd    | Email alerts  | Dashboard  | Web interface + email notifications         |
+
+**Quick Deployment:**
+```bash
+# Install and start all services
+sudo ./infra/scripts/deploy.sh experimance install
+sudo ./infra/scripts/deploy.sh experimance start
+
+# Check status
+./infra/scripts/status.sh experimance
+```
+
+### 12.2 Monitoring & Remote Management
+
+**Comprehensive Monitoring System:**
+
+* **Health Checks**: Automated Python script checks services, resources, and ZMQ endpoints every 5 minutes
+* **Email Alerts**: Configurable SMTP notifications for service failures, resource exhaustion, and errors
+* **Web Dashboard**: Mobile-friendly interface at `http://installation-ip:8080` for remote monitoring
+* **Log Management**: Centralized logging with automatic rotation and error aggregation
+
+**Remote Management Features:**
+
+* **SSH Access**: Key-based authentication for secure remote access
+* **Web Interface**: Restart services, view status, and check logs from any device
+* **Update System**: Safe updates with automatic rollback on failure
+* **Project Switching**: Easy switching between different installations (experimance, sohkepayin, etc.)
+
+**Key Scripts:**
+* `infra/scripts/deploy.sh` - Service management (install, start, stop, restart, status)
+* `infra/scripts/healthcheck.py` - Comprehensive health monitoring
+* `infra/scripts/status.sh` - Quick system overview
+* `infra/scripts/update.sh` - Safe updates with rollback
+* `infra/scripts/switch-project.sh` - Project management
+
+### 12.3 Infrastructure Files
+
+**Files Structure:**
+```
+infra/
+├── systemd/                    # Service unit files
+│   ├── experimance-core@.service
+│   ├── experimance-display@.service
+│   ├── image-server@.service
+│   └── experimance@.target
+├── scripts/                    # Management scripts
+│   ├── deploy.sh              # Main deployment script
+│   ├── healthcheck.py         # Health monitoring
+│   ├── status.sh              # Quick status check
+│   ├── update.sh              # Safe updates
+│   └── switch-project.sh      # Project switching
+├── monitoring/                 # Monitoring system
+│   ├── dashboard.py           # Web dashboard
+│   ├── config.yaml            # Monitoring config
+│   └── crontab               # Cron job templates
+└── docs/                      # Documentation
+    ├── deployment.md          # Complete deployment guide
+    └── emergency-reference.md # Quick reference card
+```
+
+**Setup Time:** 2-3 hours for complete deployment with monitoring
+**Maintenance:** 15-30 minutes for emergency response, 1-2 hours monthly
+**Recovery:** Automatic for service failures, manual for system issues
+
+### 12.4 Emergency Procedures
+
+**Remote Recovery Options:**
+1. **Soft Reset**: `sudo ./infra/scripts/deploy.sh experimance restart`
+2. **Hard Reset**: Stop services, reset git repo, restart
+3. **Rollback**: `git reset --hard <previous-commit>` + restart
+4. **Remote Access**: SSH + web dashboard for diagnosis
+
+**Monitoring Levels:**
+* **Critical**: Service failures, system unresponsive → Immediate email/SMS
+* **Warning**: High resource usage, service restarts → Email with cooldown
+* **Info**: Normal operations, successful updates → Logged only
+
+This infrastructure provides enterprise-grade monitoring and management suitable for month-long remote installations with minimal maintenance requirements.xperimance` service now acts as a coordinator, receiving ImageReady messages and then intelligently deciding how to present the content to the display.
 
 ### Architecture Benefits
 

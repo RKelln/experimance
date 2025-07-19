@@ -20,6 +20,7 @@ members = [
     "experimance-common",
     "experimance-core",
     "experimance-display",
+    "experimance-health",
     "experimance-project",
     "experimance-transition",
     "image-server",
@@ -785,6 +786,30 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.6" },
     { name = "screeninfo" },
     { name = "torch" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "experimance-health"
+version = "0.1.0"
+source = { editable = "services/health" }
+dependencies = [
+    { name = "experimance-common" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-mock" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "experimance-common", editable = "libs/common" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'" },
+    { name = "pytest-mock", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev"]
 

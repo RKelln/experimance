@@ -21,31 +21,21 @@ For ZeroMQ-specific service implementations, see the experimance_common.zmq subm
 """
 
 import asyncio
+import inspect
 import logging
 import signal
 import time
 import traceback
-import inspect
-import logging
-import signal
-import traceback  # Explicitly import traceback
 from contextlib import asynccontextmanager
-from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, Coroutine
 
-from experimance_common.logger import configure_external_loggers
+from experimance_common.logger import setup_logging
 from experimance_common.service_state import ServiceState, StateManager
 from experimance_common.service_decorators import lifecycle_service
+from experimance_common.health import HealthStatus, HealthReporter, create_health_reporter
 
-# Configure logging
-logger = logging.getLogger(__name__)
-
-class ServiceStatus(str, Enum):
-    """Service health status."""
-    HEALTHY = "healthy"    # Service is operating normally
-    WARNING = "warning"    # Service encountered non-critical issues
-    ERROR = "error"        # Service encountered serious but recoverable errors
-    FATAL = "fatal"        # Service encountered unrecoverable errors
+# Configure logging with adaptive file location and console handling
+logger = setup_logging(__name__)  # Auto-detects: console in dev, file-only in production
 
 
 @lifecycle_service
@@ -74,7 +64,10 @@ class BaseService:
         
         # Initialize state management
         self._state_manager = StateManager(service_name, ServiceState.INITIALIZING)
-        self.status = ServiceStatus.HEALTHY  # Initial status
+        
+        # Initialize health reporting (replaces heartbeat system)
+        self._health_reporter = create_health_reporter(service_name)
+        
         self.tasks = []
         
         # Statistics
@@ -93,11 +86,15 @@ class BaseService:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGTSTP):
             signal.signal(sig, self._signal_handler)
             
+        # Record initial health check
+        self._health_reporter.record_health_check(
+            "service_initialization",
+            HealthStatus.HEALTHY,
+            "Service initialized successfully"
+        )
+        
         # Set state to INITIALIZED now that initialization is complete
         self._state_manager.state = ServiceState.INITIALIZED
-
-        # Trun off logging from spammy external libraries
-        configure_external_loggers(logging.WARNING)
     
     @property
     def state(self) -> ServiceState:
@@ -216,11 +213,12 @@ class BaseService:
             uptime_str = f"{hours:02}:{minutes:02}:{seconds:02}"
             
             # Prepare and log statistics
+            health_summary = self._health_reporter.get_health_summary()
             stats = {
                 "service": self.service_name,
                 "type": self.service_type,
                 "state": self.state,
-                "status": self.status,
+                "status": health_summary["overall_status"],
                 "uptime": uptime_str,
                 "messages_sent": self.messages_sent,
                 "messages_received": self.messages_received,
@@ -245,6 +243,42 @@ class BaseService:
         # Always include the stats display task
         # This registers the coroutine to be executed when run() is called
         self.add_task(self.display_stats())
+        
+        # Add health monitoring task (replaces heartbeat system)
+        self.add_task(self._health_monitoring_loop())
+        
+        # Record service start in health system
+        self._health_reporter.record_health_check(
+            "service_start",
+            HealthStatus.HEALTHY,
+            "Service started successfully"
+        )
+        
+    async def _health_monitoring_loop(self):
+        """Health monitoring loop that replaces the heartbeat system."""
+        while self.state == ServiceState.RUNNING:
+            try:
+                # Record periodic health check
+                self._health_reporter.record_health_check(
+                    "periodic_health_check",
+                    HealthStatus.HEALTHY,
+                    f"Service {self.service_name} is responsive",
+                    metadata={
+                        "uptime": time.monotonic() - self.start_time,
+                        "state": self.state.value,
+                        "tasks_count": len(self.tasks)
+                    }
+                )
+                
+                # Sleep for health check interval
+                if not await self._sleep_if_running(30):  # 30 second interval
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error in health monitoring loop for {self.service_name}: {e}")
+                self._health_reporter.record_error(e, is_fatal=False)
+                if not await self._sleep_if_running(30):
+                    break
     
     
     async def stop(self):
@@ -257,6 +291,13 @@ class BaseService:
             if self.state == ServiceState.STOPPED:
                 logger.debug(f"Service {self.service_name} is already STOPPED. Ignoring stop call.")
                 return
+
+            # Record service stop in health system
+            self._health_reporter.record_health_check(
+                "service_stop",
+                HealthStatus.HEALTHY,
+                "Service stopping gracefully"
+            )
 
             logger.debug(f"Stopping {self.service_name} (lock acquired)...")
             self.state = ServiceState.STOPPING
@@ -466,7 +507,6 @@ class BaseService:
                             if exc:
                                 logger.error(f"Task error in {task.get_name()} after cancellation: {exc}")
                                 self.record_error(exc)
-                                self.status = ServiceStatus.ERROR
                         except (asyncio.CancelledError, asyncio.InvalidStateError):
                             # Task was cancelled or not done, just skip
                             pass
@@ -531,7 +571,7 @@ class BaseService:
         except Exception as e:
             logger.error(f"Error during signal-initiated stop for {self.service_name}: {e}", exc_info=True)
             # Ensure the service is in a non-operational state even if stop fails.
-            self.status = ServiceStatus.ERROR
+            self.record_error(e, is_fatal=False)
             self.state = ServiceState.STOPPED
 
     def _task_done_callback(self, task):
@@ -572,14 +612,16 @@ class BaseService:
         else:
             log_message = f"{'Fatal error' if is_fatal else 'Error'} in service {self.service_name}: {error!r}"
         
+        # Record in unified health system
+        self._health_reporter.record_error(error, is_fatal)
+        
+        # Log the error
         if is_fatal:
-            self.status = ServiceStatus.FATAL
             logger.error(log_message, exc_info=True)
             
             # Automatically initiate shutdown for fatal errors
             self._request_stop("fatal-error")
         else:
-            self.status = ServiceStatus.ERROR
             logger.error(log_message, exc_info=True)
             
     def reset_error_status(self):
@@ -587,8 +629,46 @@ class BaseService:
         
         Call this after recovering from an error condition.
         """
-        self.status = ServiceStatus.HEALTHY
+        # Record recovery in health system
+        self._health_reporter.record_health_check(
+            "error_recovery",
+            HealthStatus.HEALTHY,
+            "Service recovered from error condition"
+        )
         logger.info(f"Service {self.service_name} error status reset to HEALTHY")
+        
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get comprehensive health status information.
+        
+        Returns:
+            Dictionary containing health status, checks, and service metrics
+        """
+        return self._health_reporter.get_health_summary()
+    
+    def get_overall_health_status(self) -> HealthStatus:
+        """Get the overall health status as a HealthStatus enum.
+        
+        This is a convenience method for quick health checks, especially useful
+        in tests and simple health monitoring scenarios.
+        
+        Returns:
+            Current overall health status as HealthStatus enum
+        """
+        health_data = self.get_health_status()
+        return HealthStatus(health_data["overall_status"])
+        
+    def record_health_check(self, name: str, status: HealthStatus, 
+                          message: Optional[str] = None, 
+                          metadata: Optional[Dict[str, Any]] = None):
+        """Record a custom health check.
+        
+        Args:
+            name: Name of the health check
+            status: Health status result
+            message: Optional message describing the check
+            metadata: Optional additional data
+        """
+        self._health_reporter.record_health_check(name, status, message, metadata)
         
     def get_task_names(self) -> List[str]:
         """Get a list of task names from the current tasks.

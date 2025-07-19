@@ -1,0 +1,7 @@
+[Unit]
+Description=Experimance Target (%i project)
+After=network.target
+Wants=network.target
+
+[Install]
+WantedBy=multi-user.target

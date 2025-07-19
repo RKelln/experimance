@@ -18,7 +18,7 @@ from unittest.mock import Mock, AsyncMock, patch
 from typing import Dict, Any
 
 from experimance_common.service_state import ServiceState
-from experimance_common.base_service import ServiceStatus
+from experimance_common.health import HealthStatus
 from experimance_common.schemas import MessageType
 from experimance_common.zmq.mocks import MockWorkerService, mock_message_bus
 

@@ -12,7 +12,8 @@ import asyncio
 import logging
 import time
 
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
+from experimance_common.health import HealthStatus
 from experimance_common.service_state import ServiceState
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.zmq.services import PubSubService

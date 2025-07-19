@@ -5,7 +5,8 @@ from experimance_common.constants import TICK
 import time
 from typing import Optional, Any, Callable, Union, TypeVar, List, Dict, AsyncIterator
 
-from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
+from experimance_common.base_service import BaseService, ServiceState
+from experimance_common.health import HealthStatus
 from experimance_common.zmq.config import ZmqTimeoutError
 from experimance_common.schemas import MessageType
 
@@ -254,7 +255,7 @@ async def wait_for_service_state(
 
 async def wait_for_service_status(
     service: BaseService, 
-    target_status: ServiceStatus = ServiceStatus.HEALTHY, 
+    target_status: HealthStatus = HealthStatus.HEALTHY, 
     timeout: float = 5.0,
     check_interval: float = 0.1
 ):
@@ -273,26 +274,33 @@ async def wait_for_service_status(
     Raises:
         asyncio.TimeoutError: If service doesn't reach target status in time
     """
-    logger.info(f"Waiting for service {service.service_name} to reach {target_status} status, current status: {service.status}")
+    # Helper function to get current health status using the new convenience method
+    def get_current_status():
+        return service.get_overall_health_status()
     
-    if service.status == target_status:
+    current_status = get_current_status()
+    logger.info(f"Waiting for service {service.service_name} to reach {target_status} status, current status: {current_status}")
+    
+    if current_status == target_status:
         logger.info(f"Service {service.service_name} is already in {target_status} status")
         return
     
     start_time = time.monotonic()
     while time.monotonic() - start_time < timeout:
-        if service.status == target_status:
+        current_status = get_current_status()
+        if current_status == target_status:
             logger.info(f"Service {service.service_name} reached {target_status} status after {time.monotonic() - start_time:.2f}s")
             return
         await asyncio.sleep(check_interval)
         
-    logger.error(f"Timeout waiting for {service.service_name} to reach {target_status} status. Current status: {service.status}")
-    assert False, f"Service {service.service_name} did not reach {target_status} status in {timeout}s (current status: {service.status})"
+    current_status = get_current_status()
+    logger.error(f"Timeout waiting for {service.service_name} to reach {target_status} status. Current status: {current_status}")
+    assert False, f"Service {service.service_name} did not reach {target_status} status in {timeout}s (current status: {current_status})"
 
 async def wait_for_service_state_and_status(
     service: BaseService, 
     target_state: Optional[ServiceState] = None,
-    target_status: Optional[ServiceStatus] = None,
+    target_status: Optional[HealthStatus] = None,
     timeout: float = 5.0,
     check_interval: float = 0.1
 ):
@@ -324,12 +332,19 @@ async def wait_for_service_state_and_status(
         conditions.append(f"status={target_status}")
     condition_desc = " and ".join(conditions)
     
+    # Helper function to get current health status using the new convenience method
+    def get_current_status():
+        if target_status is None:
+            return None
+        return service.get_overall_health_status()
+    
+    current_status = get_current_status()
     logger.info(f"Waiting for service {service.service_name} to reach {condition_desc}, "
-                f"current state={service.state}, status={service.status}")
+                f"current state={service.state}, status={current_status}")
     
     # Check if already in target state/status
     if ((target_state is None or service.state == target_state) and 
-        (target_status is None or service.status == target_status)):
+        (target_status is None or current_status == target_status)):
         logger.info(f"Service {service.service_name} is already in {condition_desc}")
         return
     
@@ -337,7 +352,8 @@ async def wait_for_service_state_and_status(
     while time.monotonic() - start_time < timeout:
         # Check if conditions are met
         state_condition_met = target_state is None or service.state == target_state
-        status_condition_met = target_status is None or service.status == target_status
+        current_status = get_current_status()
+        status_condition_met = target_status is None or current_status == target_status
         
         if state_condition_met and status_condition_met:
             elapsed = time.monotonic() - start_time
@@ -347,10 +363,11 @@ async def wait_for_service_state_and_status(
         await asyncio.sleep(check_interval)
     
     # If we get here, the timeout was reached
+    current_status = get_current_status()
     logger.error(f"Timeout waiting for {service.service_name} to reach {condition_desc}. "
-                f"Current state={service.state}, status={service.status}")
+                f"Current state={service.state}, status={current_status}")
     assert False, (f"Service {service.service_name} did not reach {condition_desc} in {timeout}s "
-                  f"(current state={service.state}, status={service.status})")
+                  f"(current state={service.state}, status={current_status})")
 
 async def wait_for_service_shutdown(
     run_task: asyncio.Task, 

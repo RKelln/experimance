@@ -12,7 +12,8 @@ import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
+from experimance_common.health import HealthStatus
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
     AgentControlEvent, SuggestBiomePayload, AudiencePresentPayload, 
@@ -70,7 +71,7 @@ class AgentService(BaseService):
         
         # Set up message handlers before starting ZMQ service
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
-        self.zmq_service.add_message_handler(MessageType.HEARTBEAT, self._handle_heartbeat)
+        # Note: Heartbeat system removed - replaced with health checks
         
         # Start ZMQ service
         await self.zmq_service.start()
@@ -94,13 +95,18 @@ class AgentService(BaseService):
         
         # ALWAYS call super().start() LAST
         await super().start()
-        self.status = ServiceStatus.HEALTHY
+        
+        # Start health monitoring (replaces heartbeat)
+        self._health_reporter.start_periodic_health_checks()
         
         logger.info(f"{self.service_name} started successfully")
     
     async def stop(self):
         """Clean up resources and stop the agent service."""
         logger.info(f"Stopping {self.service_name}")
+        
+        # Stop health monitoring
+        await self._health_reporter.stop_periodic_health_checks()
         
         # ALWAYS call super().stop() FIRST
         await super().stop()
@@ -592,17 +598,7 @@ class AgentService(BaseService):
             context_msg = f"<System: the installation is currently showing {era} era in a {biome} biome.>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
-    async def _handle_heartbeat(self, message_data: MessageDataType):
-        """Handle heartbeat messages."""
-        # Extract data from MessageDataType
-        if isinstance(message_data, dict):
-            data = message_data
-        else:
-            # It's a MessageBase object
-            data = message_data.model_dump()
-            
-        service = data.get("service", "unknown")
-        logger.debug(f"Received heartbeat from {service}")
+    # Note: Heartbeat handler removed - replaced with health check system
     
     # =========================================================================
     # Publishing Methods

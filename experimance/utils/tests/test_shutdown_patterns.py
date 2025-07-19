@@ -21,7 +21,8 @@ from typing import Dict, Any
 
 import pytest
 
-from experimance_common.base_service import BaseService, ServiceState, ServiceStatus
+from experimance_common.base_service import BaseService, ServiceState
+from experimance_common.health import HealthStatus
 from utils.tests.test_utils import wait_for_service_shutdown, wait_for_service_state
 
 # Configure test logging

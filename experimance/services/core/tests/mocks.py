@@ -51,7 +51,6 @@ def create_mock_core_service(config_overrides=None):
             "name": "test_core_zmq",
             "log_level": "DEBUG",
             "timeout": 1.0,
-            "heartbeat_interval": 1.0,
             "publisher": {
                 "address": "tcp://*",
                 "port": 5555,
@@ -230,8 +229,7 @@ def mock_core_service_for_testing(config=None):
             "zmq": {
                 "name": "test_core_zmq",
                 "log_level": "DEBUG", 
-                "timeout": 1.0,
-                "heartbeat_interval": 1.0
+                "timeout": 1.0
             },
             "visualize": False
         })

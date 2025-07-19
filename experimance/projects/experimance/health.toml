@@ -1,0 +1,39 @@
+# Health service configuration for Experimance project
+
+service_name = "experimance_health"
+check_interval = 30.0          # seconds between health checks
+startup_grace_period = 10.0    # seconds to wait after health service startup before checking other services
+service_timeout = 120.0        # seconds before considering service stale
+notification_cooldown = 300.0  # seconds between notifications for same service
+
+# Health file storage (environment-specific)
+health_dir = "/var/cache/experimance/health"          # default directory
+dev_health_dir = "logs/health"                        # development override
+production_health_dir = "/var/cache/experimance/health"  # production override
+
+# Project-specific services to monitor
+expected_services = [
+    "experimance_core",
+    "experimance_display", 
+    "experimance_agent",
+    "experimance_audio",
+    "image_server"
+]
+
+# Notification settings
+enable_notifications = true
+notification_level = "warning"            # "error" (ERROR/FATAL only), "warning" (WARNING+), "info" (all)
+notification_on_startup = true
+notification_on_shutdown = true
+
+# Fine-grained notification control
+notify_on_healthy = false                 # Don't send notifications for healthy services
+notify_on_unknown = true                  # Do notify about missing health files
+
+# Notification buffering to reduce excessive notifications
+buffer_time = 10.0                        # seconds to buffer notifications
+enable_buffering = true                   # enable/disable buffering
+
+# Cleanup settings
+max_health_file_age = 86400.0  # 24 hours in seconds
+cleanup_interval = 3600.0      # 1 hour in seconds

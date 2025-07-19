@@ -1,0 +1,30 @@
+[project]
+name = "experimance-health"
+version = "0.1.0"
+description = "Health monitoring service for the Experimance installation"
+authors = [
+    {name = "Experimance Team", email = "info@experimance.com"},
+]
+dependencies = [
+    "experimance-common",
+]
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.scripts]
+experimance-health = "experimance_health.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/experimance_health"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-mock",
+]

@@ -101,9 +101,6 @@ class ImageServerService(BaseService):
             # Call parent start (this will set state and handle lifecycle)
             await super().start()
             
-            # Set service status
-            #self.status = ServiceStatus.HEALTHY
-            
             logger.info(f"ImageServerService started, listening for {MessageType.RENDER_REQUEST} messages")
         except Exception as e:
             self.record_error(e, is_fatal=True, custom_message=f"Failed to start ImageServerService: {e}")

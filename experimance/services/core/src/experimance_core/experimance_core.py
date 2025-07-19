@@ -47,8 +47,7 @@ from experimance_core.depth_factory import create_depth_processor
 from experimance_core.prompt_generator import PromptGenerator, PromptManager, RandomStrategy
 from experimance_common.sector_sound_lookup import SECTOR_SOUND_LOOKUP
 
-
-
+# Logger is automatically configured by BaseService with adaptive logging
 logger = logging.getLogger(__name__)
 
 # Era progression mappings

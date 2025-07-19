@@ -48,8 +48,7 @@ def test_config(camera_config):
     """Create a test configuration for the core service."""
     config_overrides = {
         "experimance_core": {
-            "name": "test_depth_core",
-            "heartbeat_interval": 1.0
+            "name": "test_depth_core"
         },
         "state_machine": {
             "idle_timeout": 10.0,

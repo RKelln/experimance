@@ -23,7 +23,6 @@ if proj_env.exists():
 # Core constants
 from experimance_common.constants_base import (
     DEFAULT_PORTS,
-    HEARTBEAT_INTERVAL,
     DEFAULT_IMAGE_TRANSPORT_MODE,
 )
 

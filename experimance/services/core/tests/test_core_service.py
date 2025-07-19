@@ -71,7 +71,6 @@ def test_config():
             "name": "test_zmq",
             "log_level": "DEBUG",
             "timeout": 1.0,
-            "heartbeat_interval": 1.0,
             "publisher": {
                 "address": "tcp://*",
                 "port": 5555,

@@ -192,13 +192,6 @@ class SohkepayinCoreConfig(BaseServiceConfig):
         description="Service instance name"
     )
     
-    heartbeat_interval: float = Field(
-        default=5.0,
-        description="Heartbeat interval in seconds",
-        ge=1.0,
-        le=30.0
-    )
-    
     panorama: PanoramaConfig = Field(
         default_factory=PanoramaConfig,
         description="Panorama generation configuration"

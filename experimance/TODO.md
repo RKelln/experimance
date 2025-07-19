@@ -11,7 +11,7 @@
 - [x] add prompt generator
   - [x] convert from prototype
 - [] add sensors
-- [ ] convert renderrequest to file uri 
+- [x] convert renderrequest to file uri 
 
 ### Sand Sensors
 - [] add prototype code
@@ -28,26 +28,28 @@
 - [x] convert prototype to production code
   - [x] integrate ZMQ
 - [] write tests
-- [] all layers functional
+- [x] all layers functional
 - [x] convert cli to new ZMQ
 
 ### Audio
 - [x] create supercollider prototype 
-  - [] integrate ZMQ
-  - add surround sound (agent, environment and music)
+  - [x] integrate ZMQ
+  - [x] add surround sound (agent, environment and music)
 
 ### Image server
 - [x] convert prototype to production code
   - [x] integrate ZMQ
-- [ ] convert cli to new zmq
+- [x] convert cli to new zmq
 - [ ] write tests
 - [ ] test runware and vast.ai and other cloud options
+  - [x] vastai
 
 ### Voice Agent
 
-- [] convert prototype to production code
+- [x] convert prototype to production code
 - [] research mem0 memory integration
 
+### Infrastructure
 
 
 ## ZMQ

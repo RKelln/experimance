@@ -7,7 +7,8 @@ in services that inherit from BaseService.
 
 import asyncio
 import logging
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
+from experimance_common.health import HealthStatus
 from experimance_common.service_state import ServiceState
 
 # Configure logging for the example

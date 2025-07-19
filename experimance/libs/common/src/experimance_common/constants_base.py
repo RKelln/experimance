@@ -33,12 +33,9 @@ DEFAULT_PORTS = {
 
 # Timeout settings
 DEFAULT_TIMEOUT = 1000  # ms
-HEARTBEAT_INTERVAL = 5.0  # seconds
 DEFAULT_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_DELAY = 0.5  # seconds
 DEFAULT_RECV_TIMEOUT = 1.0  # seconds
-
-HEARTBEAT_TOPIC = "heartbeat"
 
 TICK = 0.001 # seconds, used sleeping in the main loop
 
@@ -76,6 +73,15 @@ ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost"
 # data dir
 DATA_DIR = PROJECT_ROOT / "data"
 
+SERVICES = [
+    "core",
+    "audio",
+    "image_server",
+    "agent",
+    "display",
+    "health"
+]
+
 # services directories
 SERVICES_DIR = PROJECT_ROOT / "services"
 CORE_SERVICE_DIR = SERVICES_DIR / "core"
@@ -83,6 +89,7 @@ AUDIO_SERVICE_DIR = SERVICES_DIR / "audio"
 IMAGE_SERVER_SERVICE_DIR = SERVICES_DIR / "image_server"
 AGENT_SERVICE_DIR = SERVICES_DIR / "agent"
 DISPLAY_SERVICE_DIR = SERVICES_DIR / "display"
+HEALTH_SERVICE_DIR = SERVICES_DIR / "health"
 
 # media directories
 MEDIA_DIR = PROJECT_ROOT / "media"
@@ -149,11 +156,9 @@ __all__ = [
     "PROJECT_SPECIFIC_DIR",
     "DEFAULT_PORTS", 
     "DEFAULT_TIMEOUT", 
-    "HEARTBEAT_INTERVAL", 
     "DEFAULT_RETRY_ATTEMPTS", 
     "DEFAULT_RETRY_DELAY", 
     "DEFAULT_RECV_TIMEOUT", 
-    "HEARTBEAT_TOPIC", 
     "TICK",
     # Image transport settings
     "IMAGE_TRANSPORT_MODES",
@@ -193,6 +198,7 @@ __all__ = [
     "IMAGE_SERVER_SERVICE_DIR",
     "AGENT_SERVICE_DIR",
     "DISPLAY_SERVICE_DIR",
+    "HEALTH_SERVICE_DIR",
     # Config helpers
     "get_project_config_path"
 ]

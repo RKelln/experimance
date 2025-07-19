@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 from experimance_common.config import BaseConfig
 from experimance_common.schemas import MessageBase, MessageType
 from experimance_common.constants import (
-    DEFAULT_PORTS, HEARTBEAT_TOPIC, DEFAULT_TIMEOUT, HEARTBEAT_INTERVAL,
+    DEFAULT_PORTS, DEFAULT_TIMEOUT,
+    DEFAULT_RECV_TIMEOUT, DEFAULT_RETRY_DELAY, DEFAULT_RETRY_ATTEMPTS,
     ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
 )
 
@@ -169,9 +170,6 @@ class PubSubServiceConfig(BaseConfig):
     # ZMQ configuration
     publisher: Optional[PublisherConfig] = Field(default=None, description="Publisher configuration (optional)")
     subscriber: Optional[SubscriberConfig] = Field(default=None, description="Subscriber configuration (optional)")
-    
-    # Service settings
-    heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
 
 
 class WorkerServiceConfig(PubSubServiceConfig):
@@ -219,7 +217,6 @@ class ControllerServiceConfig(BaseConfig):
     max_workers: int = Field(default=4, ge=1, description="Maximum number of concurrent workers")
     
     # Service settings
-    heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
     worker_timeout: float = Field(default=60.0, gt=0, description="Worker timeout in seconds")
     
     @field_validator('workers')
@@ -254,8 +251,8 @@ def create_local_pubsub_config(
     name: str = "pubsub",
     pub_port: Optional[int] = DEFAULT_PORTS["events"],
     sub_port: Optional[int] = DEFAULT_PORTS["events"],
-    sub_topics: List[TopicType] = [HEARTBEAT_TOPIC],
-    default_pub_topic: Optional[TopicType] = HEARTBEAT_TOPIC
+    sub_topics: List[TopicType] = ["status"],
+    default_pub_topic: Optional[TopicType] = "status"
 ) -> PubSubServiceConfig:
     """
     Create a local PubSub configuration for quick setup and convenience.
@@ -323,7 +320,7 @@ def create_local_controller_config(
     pub_port: int = DEFAULT_PORTS["events"],
     sub_port: int = DEFAULT_PORTS["events"],
     worker_configs: Dict[str, Dict[str, int]] = {},
-    default_topic: Optional[TopicType] = HEARTBEAT_TOPIC
+    default_topic: Optional[TopicType] = "status"
 ) -> ControllerServiceConfig:
     """
     Create a local Controller configuration for quick setup and convenience.
@@ -382,7 +379,7 @@ def create_local_controller_config(
         subscriber=SubscriberConfig(
             address=ZMQ_TCP_CONNECT_PREFIX,
             port=sub_port,
-            topics=[HEARTBEAT_TOPIC, "image.ready", "transition.complete"]
+            topics=["status", "image.ready", "transition.complete"]
         ),
         workers=workers
     )
@@ -395,7 +392,7 @@ def create_worker_service_config(
     pub_port: int = DEFAULT_PORTS["events"],
     sub_port: int = DEFAULT_PORTS["events"],
     sub_topics: List[str] = [],
-    default_pub_topic: Optional[TopicType] = HEARTBEAT_TOPIC
+    default_pub_topic: Optional[TopicType] = "status"
 ) -> WorkerServiceConfig:
     """
     Create a WorkerService configuration for quick setup and convenience.

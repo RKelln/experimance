@@ -25,6 +25,74 @@ This document describes the base service classes and ZMQ composition patterns pr
 5. **Handle errors properly**: Use `record_error()` with appropriate `is_fatal` flags
 6. **Use TOML for config**: Human-readable, supports comments, integrates with Pydantic
 7. **Use the common CLI system**: Create a `__main__.py` with `create_simple_main()` for consistent command line interfaces
+8. **Add infrastructure components**: Create systemd service files and update deployment scripts
+
+### Infrastructure Components for New Services
+
+**🚀 Important: After creating your service, add it to the deployment infrastructure:**
+
+1. **Create systemd service file** in `infra/systemd/`:
+   ```bash
+   # infra/systemd/experimance-my-service.service
+   [Unit]
+   Description=Experimance My Service
+   After=network.target
+   Wants=network.target
+   
+   [Service]
+   Type=simple
+   User=experimance
+   Group=experimance
+   WorkingDirectory=/home/experimance/experimance
+   Environment=PATH=/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+   Environment=EXPERIMANCE_ENV=production
+   ExecStart=/home/experimance/.local/bin/uv run -m experimance_my_service
+   Restart=always
+   RestartSec=10
+   StandardOutput=journal
+   StandardError=journal
+   
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+2. **Update service detection** - the `get_project_services.py` script should automatically detect your service if it follows the naming conventions
+
+3. **Test with deployment scripts**:
+   ```bash
+   # Test locally first
+   ./scripts/dev my_service
+   
+   # Test with deploy script
+   sudo ./infra/scripts/deploy.sh experimance status
+   sudo ./infra/scripts/deploy.sh experimance start my_service
+   ```
+
+4. **Service naming conventions**:
+   - **Module name**: `experimance_my_service` (matches your service directory)
+   - **Systemd service**: `experimance-my-service.service` (kebab-case)
+   - **Service directory**: `services/my_service/` (snake_case)
+   - **Config file**: `projects/experimance/my_service.toml`
+
+5. **Update infrastructure scripts**:
+   - The `update.sh` script will automatically handle new services during updates
+   - The `deploy.sh` script uses `get_project_services.py` to detect all services
+   - No manual updates needed to infrastructure scripts if naming conventions are followed
+   - **Note**: The `update.sh` script may need to be updated to use `uv` instead of virtual environments
+
+6. **Production deployment checklist**:
+   ```bash
+   # Copy systemd service file to system
+   sudo cp infra/systemd/experimance-my-service.service /etc/systemd/system/
+   
+   # Reload systemd and enable service
+   sudo systemctl daemon-reload
+   sudo systemctl enable experimance-my-service.service
+   
+   # Test the service
+   sudo systemctl start experimance-my-service.service
+   sudo systemctl status experimance-my-service.service
+   ```
 
 ### Essential Service Template
 
@@ -65,7 +133,7 @@ class MyServiceConfig(BaseServiceConfig):
 # src/my_service/my_service.py
 import asyncio
 import logging
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
 from experimance_common.constants import TICK
 from experimance_common.zmq.services import PubSubService
 from .config import MyServiceConfig
@@ -104,7 +172,6 @@ class MyService(BaseService):
         
         # ALWAYS call super().start() LAST
         await super().start()
-        self.status = ServiceStatus.HEALTHY
         
     async def stop(self):
         """Clean up resources after stopping."""
@@ -228,10 +295,82 @@ The `experimance_common.service` module provides a set of base classes designed 
 - **Graceful Shutdown**: Signal handlers for `SIGINT` and `SIGTERM` with multiple shutdown mechanisms.
 - **Message Handling**: Message processing patterns for ZMQ services.
 - **Statistics Tracking**: Basic statistics like messages sent/received and uptime.
-- **Configurable Logging**: Consistent logging across services.
+- **Adaptive Logging**: Automatic logging configuration with environment-aware file locations.
 - **Error Handling**: Comprehensive error handling with automatic shutdown for fatal errors.
 - **State Management**: Consistent service lifecycle state handling across inheritance hierarchies.
 - **Centralized Configuration**: Pydantic-based config system with TOML support and validation.
+
+## Logging System
+
+### Adaptive Logging with BaseService
+
+**All services automatically get properly configured logging** - no manual setup required!
+
+The `BaseService` class automatically configures logging using the adaptive logging system:
+
+```python
+# In your service class, just get the logger:
+import logging
+logger = logging.getLogger(__name__)
+
+# No setup needed - BaseService handles everything!
+```
+
+### Logging Behavior
+
+**Development Environment:**
+- Logs to `logs/service_name.log` (local directory)
+- **Includes console output** for debugging
+- Easy to access and version control
+
+**Production Environment:**
+- Logs to `/var/log/experimance/service_name.log`
+- **File-only logging** (no console output)
+- Follows Linux FHS standards
+- Automatic log rotation via system logrotate
+- Centralized monitoring friendly
+- Systemd captures any stdout/stderr separately in journald
+
+### Environment Detection
+
+The system automatically detects the environment:
+- **Production**: Running as root, `EXPERIMANCE_ENVIRONMENT=production`, or `/etc/experimance` exists
+- **Development**: All other cases
+
+### External Library Logging
+
+External libraries (httpx, PIL, etc.) are automatically configured to reduce noise:
+- Set to WARNING level by default
+- Prevents excessive debug messages
+- Keeps logs clean and focused
+
+### Manual Logging Setup (Advanced)
+
+If you need custom logging configuration:
+
+```python
+from experimance_common.logger import setup_logging
+
+# Custom logging setup
+logger = setup_logging(
+    name=__name__,
+    log_filename="custom.log",
+    level=logging.DEBUG,
+    include_console=False,  # File only
+    external_level=logging.ERROR  # Even less external noise
+)
+```
+
+### Log File Locations
+
+Check where your logs are being written:
+
+```python
+from experimance_common.logger import get_log_file_path
+
+log_path = get_log_file_path("my_service.log")
+print(f"Logs are written to: {log_path}")
+```
 
 ## Configuration System Deep Dive
 
@@ -1042,6 +1181,22 @@ except Exception as e:
     self.record_error(e, custom_message=f"Recovery failed: {e}")
 ```
 
+#### Quick Health Status Checks
+```python
+# ✅ GOOD: Use the helper method for quick health status checks
+from experimance_common.health import HealthStatus
+
+# Simple status check - returns HealthStatus enum directly
+current_status = service.get_overall_health_status()
+if current_status == HealthStatus.HEALTHY:
+    logger.info("Service is healthy")
+
+# Perfect for tests and assertions
+assert service.get_overall_health_status() == HealthStatus.ERROR
+
+# No need for verbose: HealthStatus(service.get_health_status()["overall_status"])
+```
+
 ### Common Shutdown Patterns
 
 #### From Service Tasks
@@ -1348,12 +1503,12 @@ async def test_error_handling():
     
     # Test non-fatal error
     service.record_error(ValueError("test"), is_fatal=False)
-    assert service.status == ServiceStatus.ERROR
+    assert service.get_overall_health_status() == HealthStatus.ERROR
     assert service.state == ServiceState.RUNNING  # Still running
     
     # Test fatal error
     service.record_error(RuntimeError("fatal"), is_fatal=True)
-    assert service.status == ServiceStatus.FATAL
+    assert service.get_overall_health_status() == HealthStatus.FATAL
     # Service should be stopping automatically
 ```
 
@@ -1626,7 +1781,9 @@ class MyMessagingService(BaseService):
         
         # Call BaseService start last
         await super().start()
-        self.status = ServiceStatus.HEALTHY
+        
+        # Record successful service start
+        self.record_health_check("service_start", HealthStatus.HEALTHY, "Service started successfully")
         
     async def stop(self):
         # Call BaseService stop first
@@ -1763,7 +1920,8 @@ To create a new service using the composition-based approach:
 # In your service module (e.g., my_service.py)
 import asyncio
 import logging
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
+from experimance_common.health import HealthStatus
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.zmq.services import PubSubService
 from experimance_common.constants import DEFAULT_PORTS
@@ -1805,7 +1963,9 @@ class MyModernService(BaseService):
         
         # Call BaseService start last
         await super().start()
-        self.status = ServiceStatus.HEALTHY
+        
+        # Record successful service start
+        self.record_health_check("service_start", HealthStatus.HEALTHY, "Service started successfully")
         
     async def stop(self):
         # Call BaseService stop first

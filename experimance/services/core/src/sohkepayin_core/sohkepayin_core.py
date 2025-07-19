@@ -127,7 +127,6 @@ class SohkepayinCoreService(BaseService):
         self.zmq_service.add_response_handler(self._handle_worker_response)
         
         # Add periodic tasks
-        self.add_task(self._heartbeat_task())
         self.add_task(self._state_monitor_task())
         
         # Start ZMQ service
@@ -434,12 +433,6 @@ class SohkepayinCoreService(BaseService):
         
         await self.zmq_service.publish(clear_message)
         logger.info("Sent clear display message")
-    
-    async def _heartbeat_task(self):
-        """Periodic heartbeat task."""
-        while self.running:
-            logger.debug(f"Heartbeat - State: {self.core_state.value}")
-            await self._sleep_if_running(self.config.heartbeat_interval)
     
     async def _state_monitor_task(self):
         """Monitor state transitions and timeouts."""

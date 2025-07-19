@@ -1,0 +1,75 @@
+# Experimance Monitoring Configuration
+
+# Notification settings
+notifications:
+  # ntfy (recommended - simple push notifications)
+  ntfy:
+    enabled: true
+    server: "https://ntfy.sh"
+    topic: "${NTFY_TOPIC}"
+    priority: "high"  # low, default, high, urgent
+    
+  # Email alerting (fallback)
+  email:
+    enabled: false  # Set to true if you want email alerts
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    from_email: "${ALERT_EMAIL}"
+    to_emails: 
+      - "${ALERT_EMAIL_TO}"
+    password: "${ALERT_EMAIL_PASSWORD}"
+    
+  # General settings
+  cooldown_minutes: 30  # Prevent spam alerts
+
+# Service monitoring
+services:
+  - name: "experimance-core"
+    check_interval: 60
+    restart_threshold: 3
+    memory_threshold: 1024  # MB
+    
+  - name: "experimance-display"
+    check_interval: 60
+    restart_threshold: 3
+    memory_threshold: 2048  # MB
+    
+  - name: "image-server"
+    check_interval: 120
+    restart_threshold: 2
+    memory_threshold: 8192  # MB
+    
+  - name: "experimance-agent"
+    check_interval: 60
+    restart_threshold: 3
+    memory_threshold: 2048  # MB
+    
+  - name: "experimance-audio"
+    check_interval: 60
+    restart_threshold: 3
+    memory_threshold: 512   # MB
+
+# System resource thresholds
+system:
+  cpu_threshold: 90      # %
+  memory_threshold: 90   # %
+  disk_threshold: 95     # %
+  load_threshold: 8.0    # load average
+
+# ZMQ endpoint checks
+zmq_endpoints:
+  events: "tcp://localhost:5555"
+  depth: "tcp://localhost:5556"
+  
+# Logging
+logging:
+  level: "INFO"
+  file: "/var/log/experimance/monitoring.log"
+  max_size: "10MB"
+  backup_count: 5
+
+# Backup settings
+backup:
+  enabled: true
+  retention_days: 7
+  location: "/var/backups/experimance"

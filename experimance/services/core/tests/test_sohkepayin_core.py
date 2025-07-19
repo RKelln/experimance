@@ -35,7 +35,6 @@ class TestSohkepayinCoreService:
         # Use default config and override just what we need
         return SohkepayinCoreConfig(
             service_name="test_sohkepayin_core",
-            heartbeat_interval=1.0,
             llm=LLMConfig(
                 provider="mock",
                 model="test-model"

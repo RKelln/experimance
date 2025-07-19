@@ -24,7 +24,7 @@ class TestCoreServiceImagePublishing:
         self.mock_config.service_name = "test_core"  # Required by new architecture
         self.mock_config.experimance_core = Mock()
         self.mock_config.experimance_core.name = "test_core"
-        self.mock_config.experimance_core.heartbeat_interval = 5.0
+        self.mock_config.experimance_core.render_request_cooldown = 2.0
         self.mock_config.experimance_core.change_smoothing_queue_size = 5
         self.mock_config.state_machine = Mock()
         self.mock_config.state_machine.idle_timeout = 300.0

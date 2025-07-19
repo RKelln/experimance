@@ -39,9 +39,9 @@ class ExperimanceCoreConfig(BaseModel):
         description="Service instance name"
     )
     
-    heartbeat_interval: float = Field(
-        default=3.0,
-        description="Heartbeat interval in seconds"
+    transition_timeout: float = Field(
+        default=120.0,
+        description="Maximum time allowed for transitions in seconds"
     )
     
     change_smoothing_queue_size: int = Field(

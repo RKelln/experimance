@@ -1,0 +1,32 @@
+[Unit]
+Description=Experimance Health Service (%i)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=experimance
+Group=experimance
+WorkingDirectory=/home/experimance/experimance
+Environment="PROJECT_ENV=%i"
+Environment="EXPERIMANCE_ENV=production"
+Environment=PATH=/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/experimance/.local/bin/uv run -m experimance_health
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/cache/experimance /var/log/experimance /home/experimance/experimance/logs
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=experimance-health-%i
+
+[Install]
+WantedBy=multi-user.target

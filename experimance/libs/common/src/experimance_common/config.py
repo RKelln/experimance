@@ -21,6 +21,76 @@ class ConfigError(Exception):
     pass
 
 
+def get_project_services(project_name: str) -> List[str]:
+    """
+    Get the list of services for a project.
+    
+    First checks for SERVICES environment variable, then auto-detects
+    by scanning for *.toml files in the project directory.
+    
+    Args:
+        project_name: Name of the project to get services for
+        
+    Returns:
+        List of service names that should be monitored/managed for this project
+        
+    Examples:
+        # Auto-detect services for experimance project
+        services = get_project_services("experimance")
+        # Returns: ['experimance-core', 'experimance-display', 'image-server', 'experimance-agent', 'experimance-audio']
+        
+        # With explicit SERVICES environment variable
+        os.environ["SERVICES"] = "experimance-core,experimance-display"
+        services = get_project_services("experimance")
+        # Returns: ['experimance-core', 'experimance-display']
+    """
+    # Check if services are explicitly defined in environment
+    services_env = os.environ.get("SERVICES", "").strip()
+    if services_env:
+        return [s.strip() for s in services_env.split(",") if s.strip()]
+    
+    # Auto-detect services by scanning project directory for *.toml files
+    try:
+        from experimance_common.constants import PROJECT_SPECIFIC_DIR
+        
+        project_dir = PROJECT_SPECIFIC_DIR / project_name
+        if not project_dir.exists():
+            logger.warning(f"Project directory not found: {project_dir}")
+            return []
+        
+        service_files = list(project_dir.glob("*.toml"))
+        services = []
+        
+        for service_file in service_files:
+            service_name = service_file.stem  # filename without extension
+            
+            # Map service config names to actual service names
+            service_mapping = {
+                "core": "experimance-core",
+                "display": "experimance-display",
+                "audio": "experimance-audio", 
+                "agent": "experimance-agent",
+                "image_server": "image-server"
+            }
+            
+            actual_service_name = service_mapping.get(service_name, service_name)
+            services.append(actual_service_name)
+        
+        logger.info(f"Auto-detected services for project {project_name}: {services}")
+        return services
+        
+    except Exception as e:
+        logger.error(f"Error auto-detecting services for project {project_name}: {e}")
+        # Fallback to default services
+        return [
+            "experimance-core",
+            "experimance-display", 
+            "image-server",
+            "experimance-agent",
+            "experimance-audio"
+        ]
+
+
 def resolve_path(
     path_or_string: Union[str, Path], 
     hint: Optional[str] = None
@@ -86,7 +156,8 @@ def resolve_path(
 
     # Determine base directory based on hint
     base_dirs = []
-    
+    hint = hint.lower() if hint else None
+
     if hint == "core":
         base_dirs = [CORE_SERVICE_DIR]
     elif hint == "agent":
@@ -95,9 +166,9 @@ def resolve_path(
         base_dirs = [DISPLAY_SERVICE_DIR]
     elif hint == "audio":
         base_dirs = [AUDIO_SERVICE_DIR]
-    elif hint == "image_server":
+    elif hint == "image_server" or hint == "image":
         base_dirs = [IMAGE_SERVER_SERVICE_DIR]
-    elif hint == "project":
+    elif hint == "project" or hint == "projects":
         project_env = os.getenv("PROJECT_ENV", "experimance")
         base_dirs = [PROJECT_SPECIFIC_DIR / project_env]
     elif hint == "data":
@@ -172,7 +243,13 @@ def is_file(path_or_string: Union[str, Path]) -> bool:
     """Check if a Path or string is a plausible file path.
     Just a simple check designed to allow for configuration to specific text/json or files/dirs containing them.
     """
+    if not path_or_string:
+        return False
     s = str(path_or_string).lower()
+    if s.strip() == "":
+        return False
+    if s.startswith(".env"):
+        return True
     if s.startswith("/") or s.startswith("./") or s.startswith("../") or s.startswith("~"):
         return True
     if s.endswith("/"): # directory

@@ -1,0 +1,38 @@
+[Unit]
+Description=Experimance Core Service (%i project)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=experimance
+Group=experimance
+WorkingDirectory=/home/experimance/experimance
+Environment=EXPERIMANCE_PROJECT=%i
+Environment=EXPERIMANCE_ENV=production
+Environment=PATH=/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/experimance/.local/bin/uv run -m experimance_core
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=experimance-core-%i
+
+# Resource limits
+MemoryMax=1G
+CPUQuota=50%
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/experimance/experimance/logs /home/experimance/experimance/images /var/cache/experimance
+
+[Install]
+WantedBy=experimance.target

@@ -1,7 +1,6 @@
 # Sohkepayin Core Service Configuration
 
 service_name = "sohkepayin_core"
-heartbeat_interval = 5.0
 
 [panorama]
 # Base panorama dimensions (before mirroring)

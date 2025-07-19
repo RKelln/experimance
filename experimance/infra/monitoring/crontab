@@ -1,0 +1,14 @@
+# Experimance Monitoring Cron Jobs
+# Add these to your crontab with: sudo crontab -e
+
+# Health check every 5 minutes
+*/5 * * * * /home/experimance/experimance/infra/scripts/healthcheck.py >> /var/log/experimance/healthcheck.log 2>&1
+
+# Daily backup at 3 AM
+0 3 * * * /home/experimance/experimance/infra/scripts/backup.sh >> /var/log/experimance/backup.log 2>&1
+
+# Weekly log rotation at 2 AM on Sunday
+0 2 * * 0 /usr/bin/find /var/log/experimance -name "*.log" -type f -mtime +7 -delete
+
+# Check disk space every hour
+0 * * * * /usr/bin/df -h / | /usr/bin/tail -1 | /usr/bin/awk '{if(+$5 > 90) print "Disk usage high: " $5}' | /usr/bin/mail -s "Experimance Disk Alert" ${ALERT_EMAIL}

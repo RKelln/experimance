@@ -15,7 +15,7 @@ import pytest
 import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from pathlib import Path
-from experimance_common.service_state import ServiceState, ServiceStatus
+from experimance_common.service_state import ServiceState
 from experimance_common.test_utils import active_service, wait_for_service_state
 from my_service.my_service import MyService
 from my_service.config import MyServiceConfig
@@ -374,7 +374,7 @@ class TestMyService(MockServiceTestCase):
 # tests/test_my_service.py
 import pytest
 import asyncio
-from experimance_common.service_state import ServiceState, ServiceStatus
+from experimance_common.service_state import ServiceState
 from experimance_common.test_utils import active_service, wait_for_service_state
 from my_service.my_service import MyService
 
@@ -502,7 +502,6 @@ class TestServiceErrors:
                 
                 # Service should still be running
                 assert active.state == ServiceState.STARTED
-                assert active.status == ServiceStatus.DEGRADED
                 
     @pytest.mark.asyncio
     async def test_fatal_error_handling(self, service):
@@ -515,7 +514,6 @@ class TestServiceErrors:
             await wait_for_service_state(active, ServiceState.STOPPED, timeout=5.0)
             
             assert active.state == ServiceState.STOPPED
-            assert active.status == ServiceStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_invalid_message_handling(self, service):

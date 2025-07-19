@@ -25,7 +25,7 @@ class TestCoreServiceImageReadyHandling:
         mock_config.service_name = "test_core"
         mock_config.experimance_core = Mock()
         mock_config.experimance_core.name = "test_core"
-        mock_config.experimance_core.heartbeat_interval = 1.0
+        mock_config.experimance_core.render_request_cooldown = 2.0
         mock_config.experimance_core.change_smoothing_queue_size = 5
         mock_config.state_machine = Mock()
         mock_config.state_machine.idle_timeout = 300.0

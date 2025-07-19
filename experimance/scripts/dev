@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Development script for Experimance
-# Usage: ./dev <service_name>
+# Usage: ./scripts/dev [service_name|all]
 
 # Color definitions
 RED='\033[0;31m'
@@ -10,80 +10,229 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Get script directory and repo root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Simple warn function
+warn() {
+    echo -e "${YELLOW}WARNING: $1${NC}"
+}
+
+# Export functions so they're available in subshells
+export -f warn
+
+# Map service names to module paths
+get_module_name() {
+    local service="$1"
+    case "$service" in
+        "core")
+            echo "experimance_core"
+            ;;
+        "display")
+            echo "experimance_display"
+            ;;
+        "agent")
+            echo "experimance_agent"
+            ;;
+        "audio")
+            echo "experimance_audio"
+            ;;
+        "health")
+            echo "experimance_health"
+            ;;
+        "image_server")
+            echo "image_server"
+            ;;
+        "transition")
+            echo "experimance_transition"
+            ;;
+        *)
+            # Try to find the service directory and guess module name
+            if [ -d "$REPO_DIR/services/$service" ]; then
+                echo "experimance_${service}"
+            else
+                echo "$service"  # Fallback to service name as-is
+            fi
+            ;;
+    esac
+}
+
+# Export the function so it's available in subshells
+export -f get_module_name
+
+# Get available services dynamically using the same script as deploy.sh
+get_available_services() {
+    local project="${1:-experimance}"
+    local services_script="$REPO_DIR/infra/scripts/get_project_services.py"
+    
+    if [[ -f "$services_script" ]]; then
+        cd "$REPO_DIR"
+        if command -v uv >/dev/null 2>&1; then
+            # Get services and strip the @project suffix, convert to service names
+            uv run python "$services_script" "$project" 2>/dev/null | sed 's/@.*//' | sed 's/experimance-//' | sed 's/image-server/image_server/'
+        else
+            # Fallback to scanning services directory
+            if [ -d "$REPO_DIR/services" ]; then
+                for service_dir in "$REPO_DIR/services"/*; do
+                    if [ -d "$service_dir" ]; then
+                        basename "$service_dir"
+                    fi
+                done
+            else
+                echo "core"
+                echo "display"
+                echo "agent"
+                echo "audio"
+                echo "health"
+                echo "image_server"
+            fi
+        fi
+    else
+        # Fallback to scanning services directory
+        if [ -d "$REPO_DIR/services" ]; then
+            for service_dir in "$REPO_DIR/services"/*; do
+                if [ -d "$service_dir" ]; then
+                    basename "$service_dir"
+                fi
+            done
+        else
+            echo "core"
+            echo "display"
+            echo "agent"
+            echo "audio"
+            echo "health"
+            echo "image_server"
+        fi
+    fi
+}
+
+# Get available services
+readarray -t AVAILABLE_SERVICES < <(get_available_services "${PROJECT:-experimance}")
+
 # Check if service name is provided
 if [ -z "$1" ]; then
     echo -e "${RED}Error: Service name required${NC}"
-    echo -e "Usage: ${YELLOW}./dev <service_name>${NC}"
+    echo -e "Usage: ${YELLOW}./scripts/dev <service_name|all>${NC}"
     echo "Available services:"
-    echo "  - experimance"
-    echo "  - image_server"
-    echo "  - display"
-    echo "  - agent"
-    echo "  - audio"
-    echo "  - depth_proc"
+    
+    for service in "${AVAILABLE_SERVICES[@]}"; do
+        echo "  - $service"
+    done
+    echo "  - all                          # Start all services in separate terminals"
     exit 1
 fi
 
 SERVICE=$1
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-SERVICE_PATH="${SCRIPT_DIR}/experimance/services/${SERVICE}"
 
-# Check if service exists
-if [ ! -d "$SERVICE_PATH" ]; then
+# Special case: start all services
+if [[ "$SERVICE" == "all" ]]; then
+    echo -e "${BLUE}Starting all services for development...${NC}"
+    echo -e "${YELLOW}This will start all services in the background with logging.${NC}"
+    echo -e "${YELLOW}Press Ctrl+C in this terminal to stop all services.${NC}"
+    echo ""
+    
+    # Array to store background process IDs
+    declare -a PIDS=()
+    
+    # Function to cleanup on exit
+    cleanup() {
+        echo -e "\n${YELLOW}Stopping all services...${NC}"
+        for pid in "${PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Stopping process $pid"
+                kill "$pid" 2>/dev/null || true
+            fi
+        done
+        wait
+        echo -e "${GREEN}All services stopped.${NC}"
+        exit 0
+    }
+    
+    # Set up signal handlers
+    trap cleanup SIGINT SIGTERM
+    
+    # Create log directory (with fallback)
+    if ! mkdir -p "$REPO_DIR/logs/dev" 2>/dev/null; then
+        # Fallback to current directory if we can't create in repo
+        mkdir -p "./dev-logs"
+        LOG_DIR="./dev-logs"
+        warn "Could not create logs/dev, using ./dev-logs instead"
+    else
+        LOG_DIR="$REPO_DIR/logs/dev"
+    fi
+    
+    # Change to repo directory
+    cd "$REPO_DIR"
+    export EXPERIMANCE_ENV=development
+    
+    # Start each service in background with logging
+    for service in "${AVAILABLE_SERVICES[@]}"; do
+        echo -e "${BLUE}Starting $service service...${NC}"
+        
+        # Get module name for this service (before subshell)
+        module_name=$(get_module_name "$service")
+        
+        # Start service in background, redirecting output to log file
+        (
+            echo "$(date): Starting $service ($module_name)" >> "$LOG_DIR/$service.log"
+            exec uv run -m "$module_name" 2>&1 | tee -a "$LOG_DIR/$service.log"
+        ) &
+        
+        PIDS+=($!)
+        echo -e "${GREEN}Started $service (PID: $!) - logs: $LOG_DIR/$service.log${NC}"
+        sleep 2  # Small delay between service starts to avoid port conflicts
+    done
+    
+    echo ""
+    echo -e "${GREEN}All services started!${NC}"
+    echo -e "${BLUE}Logs are being written to: $LOG_DIR/SERVICE_NAME.log${NC}"
+    echo -e "${BLUE}To view logs in another terminal:${NC}"
+    echo -e "  ${GREEN}tail -f $LOG_DIR/core.log${NC}"
+    echo -e "  ${GREEN}tail -f $LOG_DIR/health.log${NC}"
+    echo -e "${YELLOW}Press Ctrl+C to stop all services.${NC}"
+    echo ""
+    
+    # Wait for all background processes
+    wait
+    exit 0
+fi
+
+# Check if service exists in available services
+if [[ ! " ${AVAILABLE_SERVICES[@]} " =~ " ${SERVICE} " ]] && [[ "$SERVICE" != "all" ]]; then
     echo -e "${RED}Error: Service '${SERVICE}' not found${NC}"
+    echo "Available services:"
+    for service in "${AVAILABLE_SERVICES[@]}"; do
+        echo "  - $service"
+    done
+    echo "  - all                          # Start all services"
     exit 1
 fi
 
-# Activate or create virtual environment
-if [ ! -d "${SCRIPT_DIR}/.venv" ]; then
-    echo -e "${BLUE}Creating virtual environment...${NC}"
-    uv venv --python=3.11 "${SCRIPT_DIR}/.venv"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to create virtual environment${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}Virtual environment created${NC}"
-fi
+# Get module name for single service  
+SERVICE_PATH="$REPO_DIR/services/$SERVICE"
 
-source "${SCRIPT_DIR}/.venv/bin/activate"
-
-# Install dependencies
-if [ -f "${SERVICE_PATH}/requirements.txt" ]; then
-    echo -e "${BLUE}Installing dependencies for ${SERVICE}...${NC}"
-    uv pip install -r "${SERVICE_PATH}/requirements.txt"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to install dependencies${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}Dependencies installed${NC}"
-fi
-
-# Install common library in development mode
-if [ ! -d "${SCRIPT_DIR}/experimance/libs/common" ]; then
-    echo -e "${RED}Error: Common library not found${NC}"
+# Check if service directory exists (for single services)
+if [[ "$SERVICE" != "all" ]] && [ ! -d "$SERVICE_PATH" ]; then
+    echo -e "${RED}Error: Service directory '${SERVICE_PATH}' not found${NC}"
     exit 1
 fi
 
-echo -e "${BLUE}Installing common library in development mode...${NC}"
-uv pip install -e "${SCRIPT_DIR}/experimance/libs/common"
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Failed to install common library${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Common library installed${NC}"
+# Single service execution
+if [[ "$SERVICE" != "all" ]]; then
+    MODULE_NAME=$(get_module_name "$SERVICE")
+    
+    echo -e "${BLUE}Starting ${SERVICE} service in development mode...${NC}"
+    echo -e "${BLUE}Service path: ${SERVICE_PATH}${NC}"
+    echo -e "${BLUE}Module name: ${MODULE_NAME}${NC}"
 
-# Start service with auto-reload
-echo -e "${BLUE}Starting ${SERVICE} service with auto-reload...${NC}"
-cd "${SCRIPT_DIR}/experimance"
+    # Change to repo directory for uv to work properly
+    cd "$REPO_DIR"
 
-if [ -f "${SERVICE_PATH}/${SERVICE}.py" ]; then
-    python -m watchdog \
-        --patterns="*.py;*.toml;*.json" \
-        --ignore-patterns="__pycache__/*;*.pyc" \
-        --recursive \
-        --command="python -m services.${SERVICE}.${SERVICE}" \
-        services/${SERVICE}
-else
-    echo -e "${RED}Error: Main service file not found at ${SERVICE_PATH}/${SERVICE}.py${NC}"
-    exit 1
+    # Set development environment
+    export EXPERIMANCE_ENV=development
+
+    # Start service using uv run
+    echo -e "${GREEN}Running: uv run -m ${MODULE_NAME}${NC}"
+    exec uv run -m "$MODULE_NAME"
 fi

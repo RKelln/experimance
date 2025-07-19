@@ -1,0 +1,17 @@
+# Logrotate configuration for Experimance health check logs
+# Place this file in /etc/logrotate.d/experimance
+# sudo cp infra/configs/logrotate-experimance /etc/logrotate.d/experimance
+
+/var/log/experimance/*.log {
+    daily
+    missingok
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    create 0644 experimance experimance
+    postrotate
+        # Restart health check service if it's running
+        systemctl reload experimance-healthcheck.service 2>/dev/null || true
+    endscript
+}

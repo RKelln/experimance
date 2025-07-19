@@ -222,7 +222,6 @@ class MessageType(StringComparableEnum):
     AGENT_CONTROL_EVENT = "AgentControlEvent"
     TRANSITION_REQUEST = "TransitionRequest"
     LOOP_REQUEST = "LoopRequest"
-    HEARTBEAT = "Heartbeat"
     ALERT = "Alert"
     # Display service message types
     DISPLAY_MEDIA = "DisplayMedia"

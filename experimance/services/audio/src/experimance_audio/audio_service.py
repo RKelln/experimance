@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
+from experimance_common.health import HealthStatus
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
@@ -158,7 +159,12 @@ class AudioService(BaseService):
         # Call parent start method
         await super().start()
         
-        self.status = ServiceStatus.HEALTHY
+        # Record successful startup 
+        self.record_health_check(
+            "service_startup",
+            HealthStatus.HEALTHY,
+            "Audio service started successfully"
+        )
         logger.info("Audio service started")
     
     async def stop(self):

@@ -138,10 +138,10 @@ topic = HEARTBEAT_TOPIC  # "heartbeat"
 
 ## Building Your First ZMQ Service
 
-### Step 1: Create Your Service Class
+### Step 1: Create Your Service Cla
 
 ```python
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
 from experimance_common.service_state import ServiceState
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.zmq.services import PubSubService
@@ -193,11 +193,8 @@ class MyZmqService(BaseService):
             # Add background tasks to BaseService
             self.add_task(self._publishing_loop())
             
-            # Call BaseService start (this handles state transitions automatically)
+            # Call BaseService start at the end (this handles state transitions automatically)
             await super().start()
-            
-            # Only set status, not state
-            self.status = ServiceStatus.HEALTHY
             
         except Exception as e:
             self.record_error(e, is_fatal=True)
@@ -745,8 +742,8 @@ class MyZmqService(BaseService):
             # ✅ CORRECT: Call parent start (handles state transitions)
             await super().start()
             
-            # ✅ CORRECT: Only set status, not state
-            self.status = ServiceStatus.HEALTHY
+            # ✅ CORRECT: Record successful service start
+            self.record_health_check("service_start", HealthStatus.HEALTHY, "Service started successfully")
             
         except Exception as e:
             # ✅ CORRECT: Record errors properly
@@ -801,7 +798,9 @@ async def start(self):
 async def start(self):
     await self.zmq_service.start()
     await super().start()               # BaseService handles states
-    self.status = ServiceStatus.HEALTHY # Only set status
+    
+    # Record successful service start
+    self.record_health_check("service_start", HealthStatus.HEALTHY, "Service started successfully")
 ```
 
 ### Issue 2: Handler Signature Mismatches
@@ -982,7 +981,7 @@ except Exception as e:
 ### Simple Publisher Service
 
 ```python
-from experimance_common.base_service import BaseService, ServiceStatus
+from experimance_common.base_service import BaseService
 from experimance_common.service_state import ServiceState
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig
 from experimance_common.zmq.services import PubSubService
@@ -1014,8 +1013,6 @@ class SimplePublisher(BaseService):
         
         # Call BaseService start (this handles state transitions)
         await super().start()
-        
-        self.status = ServiceStatus.HEALTHY
     
     async def stop(self):
         # Stop ZMQ service first
@@ -1078,7 +1075,6 @@ class SimpleSubscriber(BaseService):
         
         await self.zmq_service.start()
         await super().start()
-        self.status = ServiceStatus.HEALTHY
     
     async def stop(self):
         await self.zmq_service.stop()

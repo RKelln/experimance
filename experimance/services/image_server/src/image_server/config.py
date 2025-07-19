@@ -78,7 +78,7 @@ class ImageServerConfig(BaseServiceConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS['events'],
-                topics=[str(MessageType.RENDER_REQUEST), str(MessageType.HEARTBEAT)]
+                topics=[str(MessageType.RENDER_REQUEST)]
             ),
             push=WorkerPushConfig(
                 port=DEFAULT_PORTS['image_results']
