@@ -19,8 +19,102 @@ warn() {
     echo -e "${YELLOW}WARNING: $1${NC}"
 }
 
+# Function to kill existing experimance services
+cleanup_existing_services() {
+    echo -e "${BLUE}Cleaning up any existing experimance services...${NC}"
+    
+    # Use the available services (stored at script start)
+    local service_suffixes=("${AVAILABLE_SERVICES[@]}")
+    
+    local killed_count=0
+    
+    # Send SIGINT to processes that match our service patterns (graceful shutdown)
+    for suffix in "${service_suffixes[@]}"; do
+        # Pattern: any process running python with module ending in our suffix
+        # This catches: python -m experimance_core, python -m sohkepayin_core, etc.
+        if pgrep -f "experimance.*python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+            echo -e "  ${YELLOW}Sending SIGINT to existing ${suffix} processes...${NC}"
+            pkill -INT -f "experimance.*python.*-m.*${suffix}(\$| )" 2>/dev/null || true
+            killed_count=$((killed_count + 1))
+        fi
+        
+        # Also check for uv run patterns (with or without -m)
+        if pgrep -f "uv run.*${suffix}(\$| )" >/dev/null 2>&1; then
+            echo -e "  ${YELLOW}Sending SIGINT to existing uv run ${suffix} processes...${NC}" 
+            pkill -INT -f "uv run.*${suffix}(\$| )" 2>/dev/null || true
+            killed_count=$((killed_count + 1))
+        fi
+        
+        # Check for our .venv python processes running our specific services
+        # This is more targeted than killing all .venv processes
+        local venv_path="$REPO_DIR/.venv/bin/python"
+        if pgrep -f "$venv_path.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+            echo -e "  ${YELLOW}Sending SIGINT to .venv ${suffix} processes...${NC}"
+            pkill -INT -f "$venv_path.*-m.*${suffix}(\$| )" 2>/dev/null || true
+            killed_count=$((killed_count + 1))
+        fi
+    done
+    
+    # Give processes time to terminate gracefully
+    if [ $killed_count -gt 0 ]; then
+        echo -e "  ${BLUE}Waiting for processes to terminate gracefully...${NC}"
+        
+        # Wait up to 15 seconds for graceful shutdown (health notifications + cleanup)
+        local wait_count=0
+        local max_wait=15
+        while [ $wait_count -lt $max_wait ]; do
+            local still_running=false
+            for suffix in "${service_suffixes[@]}"; do
+                if pgrep -f "python.*-m.*${suffix}(\$| )" >/dev/null 2>&1 || \
+                   pgrep -f "uv run.*${suffix}(\$| )" >/dev/null 2>&1 || \
+                   pgrep -f "$REPO_DIR/.venv/bin/python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+                    still_running=true
+                    break
+                fi
+            done
+            
+            if [ "$still_running" = false ]; then
+                echo -e "  ${GREEN}All processes terminated gracefully.${NC}"
+                break
+            fi
+            
+            sleep 1
+            wait_count=$((wait_count + 1))
+            if [ $((wait_count % 5)) -eq 0 ]; then
+                echo -e "  ${YELLOW}Still waiting for graceful shutdown... (${wait_count}s)${NC}"
+            fi
+        done
+        
+        # Force kill any remaining processes
+        for suffix in "${service_suffixes[@]}"; do
+            if pgrep -f "python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+                echo -e "  ${RED}Force killing stubborn ${suffix} processes...${NC}"
+                pkill -9 -f "python.*-m.*${suffix}(\$| )" 2>/dev/null || true
+            fi
+            if pgrep -f "uv run.*${suffix}(\$| )" >/dev/null 2>&1; then
+                echo -e "  ${RED}Force killing stubborn uv run ${suffix} processes...${NC}"
+                pkill -9 -f "uv run.*${suffix}(\$| )" 2>/dev/null || true
+            fi
+            # Force kill specific .venv service processes
+            local venv_path="$REPO_DIR/.venv/bin/python"
+            if pgrep -f "$venv_path.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+                echo -e "  ${RED}Force killing stubborn .venv ${suffix} processes...${NC}"
+                pkill -9 -f "$venv_path.*-m.*${suffix}(\$| )" 2>/dev/null || true
+            fi
+        done
+        
+        echo -e "  ${GREEN}Cleanup completed.${NC}"
+    else
+        echo -e "  ${GREEN}No existing services found.${NC}"
+    fi
+    echo ""
+}
+
 # Export functions so they're available in subshells
 export -f warn
+
+# Disable real notifications
+export NOTIFICATIONS_DRY_RUN=true
 
 # Map service names to module paths
 get_module_name() {
@@ -110,25 +204,93 @@ get_available_services() {
 # Get available services
 readarray -t AVAILABLE_SERVICES < <(get_available_services "${PROJECT:-experimance}")
 
-# Check if service name is provided
+# Check if service names are provided
 if [ -z "$1" ]; then
-    echo -e "${RED}Error: Service name required${NC}"
-    echo -e "Usage: ${YELLOW}./scripts/dev <service_name|all>${NC}"
+    echo -e "${RED}Error: Service name(s) required${NC}"
+    echo -e "Usage: ${YELLOW}./scripts/dev <service_name(s)|all>${NC}"
     echo "Available services:"
     
     for service in "${AVAILABLE_SERVICES[@]}"; do
         echo "  - $service"
     done
-    echo "  - all                          # Start all services in separate terminals"
+    echo "  - all                          # Start all services"
+    echo ""
+    echo "Examples:"
+    echo "  ./scripts/dev health           # Start single service"
+    echo "  ./scripts/dev health core      # Start multiple services"
+    echo "  ./scripts/dev all              # Start all services"
     exit 1
 fi
 
-SERVICE=$1
+# Parse all command line arguments as services
+REQUESTED_SERVICES=("$@")
 
-# Special case: start all services
-if [[ "$SERVICE" == "all" ]]; then
-    echo -e "${BLUE}Starting all services for development...${NC}"
-    echo -e "${YELLOW}This will start all services in the background with logging.${NC}"
+# Check if "all" is requested
+if [[ "${REQUESTED_SERVICES[0]}" == "all" ]]; then
+    if [[ ${#REQUESTED_SERVICES[@]} -gt 1 ]]; then
+        echo -e "${RED}Error: Cannot specify other services when using 'all'${NC}"
+        exit 1
+    fi
+    # Use all available services
+    SERVICES_TO_START=("${AVAILABLE_SERVICES[@]}")
+else
+    # Validate that all requested services exist
+    SERVICES_TO_START=()
+    for service in "${REQUESTED_SERVICES[@]}"; do
+        if [[ " ${AVAILABLE_SERVICES[@]} " =~ " ${service} " ]]; then
+            SERVICES_TO_START+=("$service")
+        else
+            echo -e "${RED}Error: Service '${service}' not found${NC}"
+            echo "Available services:"
+            for available_service in "${AVAILABLE_SERVICES[@]}"; do
+                echo "  - $available_service"
+            done
+            exit 1
+        fi
+    done
+fi
+
+# Cleanup any existing services before starting new ones
+cleanup_existing_services
+
+# Determine startup mode based on number of services
+if [[ ${#SERVICES_TO_START[@]} -eq 1 ]]; then
+    # Single service mode - run in foreground
+    SERVICE="${SERVICES_TO_START[0]}"
+    SERVICE_PATH="$REPO_DIR/services/$SERVICE"
+    
+    # Check if service directory exists
+    if [ ! -d "$SERVICE_PATH" ]; then
+        echo -e "${RED}Error: Service directory '${SERVICE_PATH}' not found${NC}"
+        exit 1
+    fi
+    
+    MODULE_NAME=$(get_module_name "$SERVICE")
+    
+    echo -e "${BLUE}Starting ${SERVICE} service in development mode...${NC}"
+    echo -e "${BLUE}Service path: ${SERVICE_PATH}${NC}"
+    echo -e "${BLUE}Module name: ${MODULE_NAME}${NC}"
+
+    # Change to repo directory for uv to work properly
+    cd "$REPO_DIR"
+
+    # Set development environment
+    export EXPERIMANCE_ENV=development
+
+    # Start service using uv run
+    echo -e "${GREEN}Running: uv run -m ${MODULE_NAME}${NC}"
+    exec uv run -m "$MODULE_NAME"
+    
+else
+    # Multiple services mode - run in background with logging
+    service_count=${#SERVICES_TO_START[@]}
+    if [[ "${REQUESTED_SERVICES[0]}" == "all" ]]; then
+        echo -e "${BLUE}Starting all services for development...${NC}"
+    else
+        echo -e "${BLUE}Starting $service_count services for development...${NC}"
+        echo -e "${BLUE}Services: ${SERVICES_TO_START[*]}${NC}"
+    fi
+    echo -e "${YELLOW}This will start services in the background with logging.${NC}"
     echo -e "${YELLOW}Press Ctrl+C in this terminal to stop all services.${NC}"
     echo ""
     
@@ -138,12 +300,62 @@ if [[ "$SERVICE" == "all" ]]; then
     # Function to cleanup on exit
     cleanup() {
         echo -e "\n${YELLOW}Stopping all services...${NC}"
-        for pid in "${PIDS[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                echo "Stopping process $pid"
-                kill "$pid" 2>/dev/null || true
+        
+        # Use the available services (stored at script start)
+        local service_suffixes=("${AVAILABLE_SERVICES[@]}")
+        
+        local killed_count=0
+        
+        # Send SIGINT to processes that match our service patterns (graceful shutdown)
+        for suffix in "${service_suffixes[@]}"; do
+            # Target the Python process directly (not the uv run wrapper)
+            # Pattern: python process running in experimance directory with our module
+            if pgrep -f "experimance.*python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+                echo -e "  ${YELLOW}Sending SIGINT to ${suffix} Python process...${NC}"
+                pkill -INT -f "experimance.*python.*-m.*${suffix}(\$| )" 2>/dev/null || true
+                killed_count=$((killed_count + 1))
             fi
         done
+        
+        if [ $killed_count -gt 0 ]; then
+            echo -e "${BLUE}Waiting for graceful shutdown...${NC}"
+            
+            # Wait up to 15 seconds for graceful shutdown
+            local wait_count=0
+            local max_wait=15
+            while [ $wait_count -lt $max_wait ]; do
+                local still_running=false
+                for suffix in "${service_suffixes[@]}"; do
+                    # Check if Python processes are still running
+                    if pgrep -f "experimance.*python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+                        still_running=true
+                        break
+                    fi
+                done
+                
+                if [ "$still_running" = false ]; then
+                    echo -e "${GREEN}All services terminated gracefully.${NC}"
+                    break
+                fi
+                
+                sleep 1
+                wait_count=$((wait_count + 1))
+                if [ $((wait_count % 5)) -eq 0 ]; then
+                    echo -e "${YELLOW}Still waiting for graceful shutdown... (${wait_count}s)${NC}"
+                fi
+            done
+            
+            # Force kill any remaining processes after timeout
+            for suffix in "${service_suffixes[@]}"; do
+                if pgrep -f "experimance.*python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
+                    echo -e "${RED}Force killing stubborn ${suffix} Python process...${NC}"
+                    pkill -9 -f "experimance.*python.*-m.*${suffix}(\$| )" 2>/dev/null || true
+                fi
+            done
+        else
+            echo -e "${GREEN}No services found to stop.${NC}"
+        fi
+        
         wait
         echo -e "${GREEN}All services stopped.${NC}"
         exit 0
@@ -166,18 +378,20 @@ if [[ "$SERVICE" == "all" ]]; then
     cd "$REPO_DIR"
     export EXPERIMANCE_ENV=development
     
-    # Start each service in background with logging
-    for service in "${AVAILABLE_SERVICES[@]}"; do
+    # Start each requested service in background with logging
+    for service in "${SERVICES_TO_START[@]}"; do
         echo -e "${BLUE}Starting $service service...${NC}"
         
-        # Get module name for this service (before subshell)
+        # Get module name for this service
         module_name=$(get_module_name "$service")
         
-        # Start service in background, redirecting output to log file
-        (
-            echo "$(date): Starting $service ($module_name)" >> "$LOG_DIR/$service.log"
-            exec uv run -m "$module_name" 2>&1 | tee -a "$LOG_DIR/$service.log"
-        ) &
+        # Start service in background, showing output in terminal AND logging to file
+        echo "$(date): Starting $service ($module_name)" >> "$LOG_DIR/$service.log"
+        # Use a simpler approach that preserves signal handling but shows output
+        uv run -m "$module_name" 2>&1 | while IFS= read -r line; do
+            echo "[$service] $line"
+            echo "$line" >> "$LOG_DIR/$service.log"
+        done &
         
         PIDS+=($!)
         echo -e "${GREEN}Started $service (PID: $!) - logs: $LOG_DIR/$service.log${NC}"
@@ -188,51 +402,12 @@ if [[ "$SERVICE" == "all" ]]; then
     echo -e "${GREEN}All services started!${NC}"
     echo -e "${BLUE}Logs are being written to: $LOG_DIR/SERVICE_NAME.log${NC}"
     echo -e "${BLUE}To view logs in another terminal:${NC}"
-    echo -e "  ${GREEN}tail -f $LOG_DIR/core.log${NC}"
-    echo -e "  ${GREEN}tail -f $LOG_DIR/health.log${NC}"
+    for service in "${SERVICES_TO_START[@]}"; do
+        echo -e "  ${GREEN}tail -f $LOG_DIR/$service.log${NC}"
+    done
     echo -e "${YELLOW}Press Ctrl+C to stop all services.${NC}"
     echo ""
     
     # Wait for all background processes
     wait
-    exit 0
-fi
-
-# Check if service exists in available services
-if [[ ! " ${AVAILABLE_SERVICES[@]} " =~ " ${SERVICE} " ]] && [[ "$SERVICE" != "all" ]]; then
-    echo -e "${RED}Error: Service '${SERVICE}' not found${NC}"
-    echo "Available services:"
-    for service in "${AVAILABLE_SERVICES[@]}"; do
-        echo "  - $service"
-    done
-    echo "  - all                          # Start all services"
-    exit 1
-fi
-
-# Get module name for single service  
-SERVICE_PATH="$REPO_DIR/services/$SERVICE"
-
-# Check if service directory exists (for single services)
-if [[ "$SERVICE" != "all" ]] && [ ! -d "$SERVICE_PATH" ]; then
-    echo -e "${RED}Error: Service directory '${SERVICE_PATH}' not found${NC}"
-    exit 1
-fi
-
-# Single service execution
-if [[ "$SERVICE" != "all" ]]; then
-    MODULE_NAME=$(get_module_name "$SERVICE")
-    
-    echo -e "${BLUE}Starting ${SERVICE} service in development mode...${NC}"
-    echo -e "${BLUE}Service path: ${SERVICE_PATH}${NC}"
-    echo -e "${BLUE}Module name: ${MODULE_NAME}${NC}"
-
-    # Change to repo directory for uv to work properly
-    cd "$REPO_DIR"
-
-    # Set development environment
-    export EXPERIMANCE_ENV=development
-
-    # Start service using uv run
-    echo -e "${GREEN}Running: uv run -m ${MODULE_NAME}${NC}"
-    exec uv run -m "$MODULE_NAME"
 fi

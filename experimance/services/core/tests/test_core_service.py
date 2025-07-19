@@ -43,7 +43,6 @@ def test_config():
         "service_name": "test_core",
         "experimance_core": {
             "name": "test_core",
-            "heartbeat_interval": 1.0
         },
         "state_machine": {
             "idle_timeout": 10.0,

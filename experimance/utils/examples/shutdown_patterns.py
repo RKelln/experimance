@@ -88,7 +88,7 @@ class ExampleService(BaseService):
                 logger.info(f"Service status: {self.status}, Work counter: {self.work_counter}")
                 
                 # Example of checking for error conditions
-                if self.status == ServiceStatus.ERROR and self.errors > 3:
+                if self.status == HealthStatus.ERROR and self.errors > 3:
                     logger.warning("Too many errors detected, requesting shutdown")
                     self.request_stop()
                     break

@@ -133,17 +133,40 @@ cd services/agent && uv run python tests/test_cpu_detection.py
 
 ## Running Services
 
-Each service can be run independently:
+### Development Script
+Use the development script for coordinated service management with automatic cleanup:
 
-# TODO:
 ```bash
-uv run experimance
+# Start single service (foreground)
+./scripts/dev health
+
+# Start multiple services (background with logging)
+./scripts/dev health core display
+
+# Start all services
+./scripts/dev all
 ```
 
-Or run services separately:
+The dev script automatically cleans up existing services before starting new ones.
+
+### Direct Service Execution
+For isolated testing, run services directly:
+
 ```bash
-uv run python -m experimance_[service_name] --arg
+# Run individual services
+uv run -m experimance_core
+uv run -m experimance_display
+uv run -m experimance_agent
+
+# Override configuration with args:
+uv run -m experimance_core --log-level=debug --help
+
+# Override configuration with environment variables (less preferred):
+EXPERIMANCE_ZMQ_BASE_PORT=6000 uv run -m experimance_core
+EXPERIMANCE_CORE_LOG_LEVEL=DEBUG uv run -m experimance_core
 ```
+
+Environment variables follow the pattern: `EXPERIMANCE_<SECTION>_<KEY>=value`
 
 ## Development
 

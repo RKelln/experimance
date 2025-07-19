@@ -12,7 +12,7 @@ There are multiple test files focusing on different aspects of ZMQ communication
 
 - **`test_zmq_service.py`**: Tests the high-level ZMQ service base classes found in `experimance_common.service`. This is the primary test suite for ensuring reliable service behavior.
   - Covers `ZmqPublisherService`, `ZmqSubscriberService`, `ZmqPushService`, `ZmqPullService`, and the combined services like `ZmqPublisherSubscriberService` and `ZmqControllerService`.
-  - Verifies message/task publishing and reception, handler invocation, heartbeating, lifecycle management, and error handling within these service abstractions.
+  - Verifies message/task publishing and reception, handler invocation, lifecycle management, and error handling within these service abstractions.
 
 - **`test_zmq_utils.py`**: Focuses on basic, lower-level ZMQ utilities and wrappers in `experimance_common.zmq_utils`.
   - Tests fundamental PUB/SUB and PUSH/PULL patterns using the utility functions directly.
@@ -46,7 +46,6 @@ uv run -m pytest --cov=experimance_common utils/tests/
 - **Message/Task Flow**:
     - For publishers/pushers: Verify that messages/tasks are sent correctly.
     - For subscribers/pullers: Verify that messages/tasks are received and that the appropriate handlers are called with the correct data.
-- **Heartbeating**: `ZmqPublisherService` and its derivatives are tested to ensure heartbeats are sent periodically.
 - **Error Handling**: Services should gracefully handle common ZMQ errors (e.g., connection issues, timeouts) although comprehensive error simulation is complex.
 - **Resource Management**: Ensure ZMQ sockets and contexts are properly closed, and asyncio tasks are cancelled on service stop.
 - **Configuration**: Test with various valid and potentially invalid configurations (e.g., different port numbers, topics).
@@ -66,7 +65,7 @@ Many of these points were critical when developing robust low-level ZMQ tests an
     *   Clear separation of test cases for different functionalities.
 
 3.  **Task Management in Services & Tests**:
-    *   Services manage their own asyncio tasks for operations like listening, pulling, or heartbeating.
+    *   Services manage their own asyncio tasks for operations like listening or pulling.
     *   Tests ensure these tasks are started and stopped correctly with the service lifecycle.
     *   Use of `asyncio.Event` or similar synchronization primitives for coordinating asynchronous test steps.
 

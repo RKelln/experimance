@@ -131,11 +131,6 @@ class YourProjectCoreConfig(BaseServiceConfig):
         description="Service instance name"
     )
     
-    heartbeat_interval: float = Field(
-        default=5.0,
-        description="Heartbeat interval in seconds"
-    )
-    
     # Add your project-specific config sections
     your_project: YourProjectConfig = Field(
         default_factory=YourProjectConfig,
@@ -237,7 +232,7 @@ class YourProjectCoreService(BaseService):
         self.zmq_service.add_response_handler(self._handle_worker_response)
         
         # Add periodic tasks
-        self.add_task(self._heartbeat_task())
+        self.add_task(self._periodic_task())
         
         # Start ZMQ service
         await self.zmq_service.start()
@@ -315,11 +310,11 @@ class YourProjectCoreService(BaseService):
         self.core_state = new_state
         logger.info(f"State transition: {old_state.value} → {new_state.value}")
     
-    async def _heartbeat_task(self):
-        """Periodic heartbeat task."""
+    async def _periodic_task(self):
+        """Periodic task."""
         while self.running:
-            logger.debug(f"Heartbeat - State: {self.core_state.value}")
-            await self._sleep_if_running(self.config.heartbeat_interval)
+            logger.debug(f"State: {self.core_state.value}")
+            await self._sleep_if_running(self.config.my_interval)
 
 # Entry point function
 async def run_your_project_core_service(
@@ -390,7 +385,6 @@ __all__ = ["YourProjectCoreService", "YourProjectCoreConfig", "run_your_project_
 # Your Project Core Service Configuration
 
 service_name = "your_project_core"
-heartbeat_interval = 5.0
 
 [your_project]
 param1 = "custom_value"

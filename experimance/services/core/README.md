@@ -166,7 +166,6 @@ era_min_duration = 10.0       # Minimum time in era before advancement
 name = "experimance-core"     # ZMQ service name
 log_level = "INFO"            # ZMQ logging level
 timeout = 5.0                 # Operation timeout in seconds
-heartbeat_interval = 3.0      # Service health broadcast interval
 
 [zmq.publisher]
 address = "tcp://*"           # Publisher bind address
@@ -176,7 +175,7 @@ default_topic = "core.events" # Default publishing topic
 [zmq.subscriber]
 address = "tcp://localhost"   # Subscriber connect address
 port = 5555                   # ZMQ event subscription port
-topics = ["heartbeat", "status", "AudioStatus", "AgentControlEvent"]
+topics = ["status", "AudioStatus", "AgentControlEvent"]
 
 [zmq.workers.image_server]
 name = "image_server"
@@ -485,12 +484,12 @@ uv run python tests/test_camera.py --verbose --visualize
 
 ### Health Monitoring
 
-The service publishes health information via ZMQ heartbeats:
+The service uses the unified health monitoring system via `BaseService`:
 
-- **Service Status**: Running, error, or stopped states
-- **Camera Status**: Connected, disconnected, or error states  
-- **Performance Metrics**: FPS, processing latency, error rates
-- **Interaction Metrics**: User presence, interaction frequency
+- **Automatic Health Reporting**: Health status written to JSON files for system monitoring
+- **Service Status**: Tracks running, error, and performance states automatically
+- **Camera Status**: Reports camera connection and processing health
+- **Integration Metrics**: ZMQ communication health and worker coordination status
 
 ### Troubleshooting
 

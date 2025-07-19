@@ -805,7 +805,7 @@ if __name__ == "__main__":
                 subscriber=SubscriberConfig(
                     address="tcp://localhost",
                     port=5558,
-                    topics=["heartbeat"]
+                    topics=["test"]
                 ),
                 workers={
                     "demo_worker": WorkerConfig(
@@ -826,7 +826,7 @@ if __name__ == "__main__":
                 
                 controller.set_worker_handler("demo_worker", work_handler)
                 
-                await controller.publish({"status": "alive"}, "heartbeat")
+                await controller.publish({"status": "alive"}, "test")
                 await controller.push_to_worker("demo_worker", {"action": "process"})
                 await asyncio.sleep(0.1)
                 

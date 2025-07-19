@@ -7,6 +7,7 @@ for consistent command line argument parsing, logging setup, and service executi
 import argparse
 import asyncio
 import logging
+import os
 from pathlib import Path
 import sys
 from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, get_args, Literal, Union
@@ -183,12 +184,15 @@ def create_service_parser(
     )
     
     # Standard arguments for all services - use tracked actions to track when explicitly set
+    # Check for environment variable override for log level
+    default_log_level = os.environ.get('EXPERIMANCE_LOG_LEVEL', 'INFO')
+    
     parser.add_argument(
         '--log-level', '-l',
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL', 'debug', 'info', 'warning', 'error', 'critical'],
-        default='INFO',
+        default=default_log_level,
         action=TrackedAction,
-        help='Set the logging level (default: INFO)'
+        help=f'Set the logging level (default: {default_log_level}, override with EXPERIMANCE_LOG_LEVEL)'
     )
     
     if default_config_path:

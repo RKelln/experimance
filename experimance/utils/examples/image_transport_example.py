@@ -32,7 +32,7 @@ class ImageTransportExample(ZmqPublisherSubscriberService):
             service_name="image_transport_example",
             pub_address=f"tcp://*:{DEFAULT_PORTS['events']}",
             sub_address=f"tcp://localhost:{DEFAULT_PORTS['events']}",
-            subscribe_topics=["heartbeat"],
+            subscribe_topics=["test"],
             publish_topic="image_transport"
         )
         

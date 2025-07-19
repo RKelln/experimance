@@ -106,11 +106,12 @@ class ServiceHealth:
 class HealthReporter:
     """Centralized health reporting and notification system."""
     
-    def __init__(self, service_name: str, health_dir: Optional[str] = None):
+    def __init__(self, service_name: str, service_type: str, health_dir: Optional[str] = None):
         self.service_name = service_name
+        self.service_type = service_type
         self.health = ServiceHealth(service_name, HealthStatus.HEALTHY)
         self.start_time = time.time()
-        self.notification_handlers: List[Callable[[ServiceHealth], None]] = []
+        self.notification_handlers: List[Callable[[ServiceHealth, bool], None]] = []
         self.last_notification_time = {}
         self.notification_cooldown = 300  # 5 minutes
         
@@ -124,22 +125,25 @@ class HealthReporter:
         
         self.health_dir = Path(health_dir)
         self.health_dir.mkdir(parents=True, exist_ok=True)
-        self.health_file = self.health_dir / f"{service_name}.json"
+        # FIXME: currently only 1 service per type allowed, TODO: handle names per type
+        # Use service_type for health file name for consistent monitoring
+        self.health_file = self.health_dir / f"{service_type}.json"
         
     def add_notification_handler(self, handler):
         """Add a notification handler for health status changes."""
-        # Wrap the handler to call the correct method
-        def wrapped_handler(service_health):
+        # Wrap the handler to call the correct method with flush parameter
+        def wrapped_handler(service_health, flush=False):
             if hasattr(handler, 'send_notification'):
-                handler.send_notification(service_health)
+                handler.send_notification(service_health, flush=flush)
             else:
-                handler(service_health)
+                handler(service_health, flush=flush)
         
         self.notification_handlers.append(wrapped_handler)
     
     def record_health_check(self, name: str, status: HealthStatus, 
                           message: Optional[str] = None, 
-                          metadata: Optional[Dict[str, Any]] = None):
+                          metadata: Optional[Dict[str, Any]] = None,
+                          flush: bool = False):
         """Record a health check result."""
         check = HealthCheck(
             name=name,
@@ -153,7 +157,7 @@ class HealthReporter:
         self.health.uptime = time.time() - self.start_time
         
         # Log the health check
-        level = logging.INFO
+        level = logging.DEBUG
         if status in [HealthStatus.ERROR, HealthStatus.FATAL]:
             level = logging.ERROR
         elif status == HealthStatus.WARNING:
@@ -167,7 +171,7 @@ class HealthReporter:
         # Send notifications if status changed or is critical
         if (previous_status != self.health.overall_status or 
             status in [HealthStatus.ERROR, HealthStatus.FATAL]):
-            self._send_notifications()
+            self._send_notifications(flush=flush)
     
     def record_error(self, error: Exception, is_fatal: bool = False):
         """Record an error and update health status."""
@@ -196,7 +200,21 @@ class HealthReporter:
     
     def get_health_summary(self) -> Dict[str, Any]:
         """Get a summary of current health status."""
-        return self.health.to_dict()
+        health_data = self.health.to_dict()
+        
+        # Add service statistics if available
+        if hasattr(self, '_service_stats'):
+            health_data.update(self._service_stats)
+        
+        return health_data
+    
+    def update_service_stats(self, messages_sent: int, messages_received: int, errors: int):
+        """Update service statistics for health reporting."""
+        self._service_stats = {
+            "messages_sent": messages_sent,
+            "messages_received": messages_received,
+            "error_count": errors  # This will override the health object's error_count
+        }
     
     def _write_health_file(self):
         """Write current health status to file for monitoring."""
@@ -215,7 +233,7 @@ class HealthReporter:
         except Exception as e:
             logger.error(f"Error writing health file {self.health_file}: {e}")
     
-    def _send_notifications(self):
+    def _send_notifications(self, flush: bool = False):
         """Send notifications to all registered handlers."""
         now = datetime.now()
         status_key = self.health.overall_status.value
@@ -229,16 +247,16 @@ class HealthReporter:
         # Send notifications
         for handler in self.notification_handlers:
             try:
-                handler(self.health)
+                handler(self.health, flush)
             except Exception as e:
                 logger.error(f"Error sending health notification: {e}")
         
         self.last_notification_time[status_key] = now
 
 
-def create_health_reporter(service_name: str, health_dir: Optional[str] = None) -> HealthReporter:
+def create_health_reporter(service_name: str, service_type: str, health_dir: Optional[str] = None) -> HealthReporter:
     """Create a health reporter with appropriate notification handlers."""
-    reporter = HealthReporter(service_name, health_dir)
+    reporter = HealthReporter(service_name, service_type, health_dir)
     
     # Add notification handlers based on environment
     from .notifications import create_notification_handlers

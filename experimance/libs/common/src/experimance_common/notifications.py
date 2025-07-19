@@ -3,6 +3,15 @@ Notification handlers for health status changes.
 
 This module provides notification handlers that can be used with the unified health system
 to send alerts via various channels (ntfy, email, webhooks, etc.).
+
+Design principles:
+- System notifications are always sent immediately (no buffering)
+- Individual service notifications can be buffered to reduce spam
+- Each handler manages its own buffering internally
+- Simple base class with optional buffering capability
+
+Test using:
+NOTIFICATIONS_DRY_RUN=true NTFY_TOPIC=test uv run ...
 """
 
 import asyncio
@@ -23,84 +32,92 @@ from experimance_common.health import HealthStatus, ServiceHealth
 logger = logging.getLogger(__name__)
 
 class NotificationHandler:
-    """Base class for notification handlers."""
+    """
+    Base class for notification handlers with optional built-in buffering.
     
-    def __init__(self, name: str):
+    System notifications are always sent immediately.
+    Service notifications can be buffered based on enable_buffering parameter.
+    """
+    
+    def __init__(self, name: str, enable_buffering: bool = False, buffer_time: float = 10.0):
         self.name = name
         self.enabled = True
-        
-    def send_notification(self, service_health: ServiceHealth):
-        """Send a notification for a service health change."""
-        raise NotImplementedError("Subclasses must implement send_notification")
-        
-    def send_system_notification(self, services: Dict[str, ServiceHealth]):
-        """Send a notification for system-wide health changes."""
-        raise NotImplementedError("Subclasses must implement send_system_notification")
-
-
-class BufferedNotificationHandler(NotificationHandler):
-    """
-    A wrapper that buffers notifications for a configurable time period
-    and sends aggregated summaries instead of individual notifications.
-    """
-    
-    def __init__(self, wrapped_handler: NotificationHandler, buffer_time: float = 10.0):
-        super().__init__(f"buffered_{wrapped_handler.name}")
-        self.wrapped_handler = wrapped_handler
+        self.enable_buffering = enable_buffering
         self.buffer_time = buffer_time
-        self.buffer: Dict[str, ServiceHealth] = {}
+        
+        # Buffering state
+        self.service_buffer: Dict[str, ServiceHealth] = {}
         self.buffer_timer: Optional[Timer] = None
         
-    def send_notification(self, service_health: ServiceHealth):
-        """Buffer individual service notifications."""
+    def send_notification(self, service_health: ServiceHealth, flush: bool = False):
+        """Send a notification for a service health change."""
+        if self.enable_buffering:
+            self._buffer_service_notification(service_health)
+            if flush:
+                self.flush_immediately()
+        else:
+            self._send_service_notification(service_health)
+    
+    def send_system_notification(self, services: Dict[str, ServiceHealth]):
+        """Send a notification for system-wide health changes (always immediate)."""
+        self._send_system_notification(services)
+    
+    def _buffer_service_notification(self, service_health: ServiceHealth):
+        """Buffer a service notification for later sending."""
         # Add to buffer
-        self.buffer[service_health.service_name] = service_health
+        self.service_buffer[service_health.service_name] = service_health
         
         # Reset/start timer
         if self.buffer_timer:
             self.buffer_timer.cancel()
         
-        self.buffer_timer = Timer(self.buffer_time, self._flush_buffer)
+        self.buffer_timer = Timer(self.buffer_time, self._flush_service_buffer)
         self.buffer_timer.start()
     
-    def send_system_notification(self, services: Dict[str, ServiceHealth]):
-        """Forward system notifications immediately (these are already aggregated)."""
-        self.wrapped_handler.send_system_notification(services)
-    
-    def _flush_buffer(self):
-        """Send aggregated notification for all buffered services."""
-        if not self.buffer:
+    def _flush_service_buffer(self):
+        """Send all buffered service notifications."""
+        if not self.service_buffer:
             return
         
         try:
-            # Create aggregated notification
-            if len(self.buffer) == 1:
+            if len(self.service_buffer) == 1:
                 # Single service - send as individual notification
-                service_health = next(iter(self.buffer.values()))
-                self.wrapped_handler.send_notification(service_health)
+                service_health = next(iter(self.service_buffer.values()))
+                self._send_service_notification(service_health)
             else:
-                # Multiple services - send as system notification
-                self.wrapped_handler.send_system_notification(self.buffer.copy())
+                # Multiple services - send as aggregated system notification
+                self._send_system_notification(self.service_buffer.copy())
             
             # Clear buffer
-            self.buffer.clear()
+            self.service_buffer.clear()
             
         except Exception as e:
-            logger.error(f"Error flushing notification buffer: {e}")
-            self.buffer.clear()
+            logger.error(f"Error flushing {self.name} notification buffer: {e}")
+            self.service_buffer.clear()
     
     def flush_immediately(self):
-        """Force immediate flush of the buffer."""
+        """Force immediate flush of any buffered notifications."""
         if self.buffer_timer:
             self.buffer_timer.cancel()
-        self._flush_buffer()
+        self._flush_service_buffer()
+    
+    def _send_service_notification(self, service_health: ServiceHealth):
+        """Actually send a service notification - implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement _send_service_notification")
+        
+    def _send_system_notification(self, services: Dict[str, ServiceHealth]):
+        """Actually send a system notification - implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement _send_system_notification")
+
+
 
 class NtfyHandler(NotificationHandler):
     """Send notifications via ntfy.sh service."""
     
-    def __init__(self, topic: str, server: str = "ntfy.sh", priority: str = "default", dryrun: bool = False):
-        """ Initialize the ntfy handler. """
-        super().__init__("ntfy")
+    def __init__(self, topic: str, server: str = "ntfy.sh", priority: str = "default", 
+                 dryrun: bool = False, enable_buffering: bool = False, buffer_time: float = 10.0):
+        """Initialize the ntfy handler."""
+        super().__init__("ntfy", enable_buffering, buffer_time)
         self.topic = topic
         self.server = server
         self.priority = priority
@@ -110,7 +127,7 @@ class NtfyHandler(NotificationHandler):
         self.url = f"{server}/{topic}"
         self.dryrun = dryrun
         
-    def send_notification(self, service_health: ServiceHealth):
+    def _send_service_notification(self, service_health: ServiceHealth):
         """Send ntfy notification for service health change."""
         try:
             # Map health status to ntfy priority
@@ -154,45 +171,13 @@ class NtfyHandler(NotificationHandler):
             if service_health.restart_count > 0:
                 message += f"\nRestarts: {service_health.restart_count}"
             
-            # Send notification
-            status_value = service_health.overall_status.value
-            
-            # Create comprehensive tags for filtering
-            tags = [
-                "experimance",
-                "health",
-                status_value,
-                service_health.service_name,
-                f"priority-{priority_map[service_health.overall_status]}"
-            ]
-            
-            # Add severity tags for easy filtering
-            if service_health.overall_status in [HealthStatus.ERROR, HealthStatus.FATAL]:
-                tags.append("critical")
-            elif service_health.overall_status == HealthStatus.WARNING:
-                tags.append("warning")
-            elif service_health.overall_status == HealthStatus.HEALTHY:
-                tags.append("info")
-            
-            data = {
-                "title": title,
-                "message": message,
-                "priority": priority_map[service_health.overall_status],
-                "tags": tags
-            }
-            
-            if self.dryrun:
-                logger.debug(f"[DRY RUN] Would send ntfy notification: {json.dumps(data, indent=2)}")
-            else:
-                response = requests.post(self.url, json=data, timeout=10)
-                response.raise_for_status()
-            
-            logger.info(f"Sent ntfy notification for {service_health.service_name} ({service_health.overall_status})")
+            self._send_ntfy_message(title, message, service_health.overall_status, 
+                                  service_health.service_name, priority_map)
             
         except Exception as e:
-            logger.error(f"Failed to send ntfy notification: {e}")
+            logger.error(f"Failed to send ntfy service notification: {e}")
             
-    def send_system_notification(self, services: Dict[str, ServiceHealth]):
+    def _send_system_notification(self, services: Dict[str, ServiceHealth]):
         """Send ntfy notification for system-wide health changes."""
         try:
             # Calculate overall system status
@@ -269,7 +254,34 @@ class NtfyHandler(NotificationHandler):
                 if len(warning_services) > 3:
                     message += f"\n... and {len(warning_services) - 3} more"
             
-            # Send notification
+            # Add service health timeline for all services
+            message += f"\n\n📊 Service Health Timeline:"
+            for service_name, svc in sorted(services.items()):
+                # Get recent health states from checks (last 5-10 checks)
+                health_states = []
+                if svc.checks:
+                    # Sort checks by timestamp to ensure chronological order
+                    sorted_checks = sorted(svc.checks, key=lambda x: x.timestamp)
+                    
+                    # Extract unique health states in chronological order
+                    for check in sorted_checks[-10:]:  # Last 10 checks
+                        if check.status not in health_states or check.status != health_states[-1]:
+                            health_states.append(check.status)
+                
+                # If no checks or only one state, show current status
+                if not health_states:
+                    health_states = [svc.overall_status]
+                elif len(health_states) == 1 and health_states[0] != svc.overall_status:
+                    health_states.append(svc.overall_status)
+                
+                # Format the timeline with arrows showing progression
+                timeline_str = " → ".join([state.value.upper() for state in health_states])
+                
+                # Add service line with current status emoji
+                current_emoji = status_emoji.get(svc.overall_status, "❓")
+                message += f"\n{current_emoji} {service_name}: [{timeline_str}]"
+            
+            # Send system notification with appropriate tags
             priority_map = {
                 HealthStatus.HEALTHY: "low",
                 HealthStatus.WARNING: "default",
@@ -278,52 +290,71 @@ class NtfyHandler(NotificationHandler):
                 HealthStatus.UNKNOWN: "low"
             }
             
-            # Create comprehensive tags
-            tags = [
-                "experimance",
-                "system",
-                "health",
-                overall_status.value,
-                f"priority-{priority_map[overall_status]}",
-                f"services-{len(services)}"
-            ]
-            
-            # Add severity tags
-            if critical_services:
-                tags.append("critical")
-                tags.append(f"critical-{len(critical_services)}")
-            elif status_groups.get(HealthStatus.WARNING):
-                tags.append("warning")
-                tags.append(f"warnings-{len(status_groups[HealthStatus.WARNING])}")
-            else:
-                tags.append("info")
-            
-            data = {
-                "title": title,
-                "message": message,
-                "priority": priority_map[overall_status],
-                "tags": tags
-            }
-            
-            if self.dryrun:
-                logger.info(f"[DRY RUN] Would send system ntfy notification: {json.dumps(data, indent=2)}")
-            else:
-                response = requests.post(self.url, json=data, timeout=10)
-                response.raise_for_status()
-            
-            logger.info(f"Sent system ntfy notification ({overall_status})")
+            self._send_ntfy_message(title, message, overall_status, "system", priority_map)
             
         except Exception as e:
             logger.error(f"Failed to send system ntfy notification: {e}")
+    
+    def _send_ntfy_message(self, title: str, message: str, status: HealthStatus, 
+                          source: str, priority_map: dict):
+        """Common method to send ntfy messages."""
+        # Create comprehensive tags for filtering
+        tags = [
+            "experimance",
+            "health",
+            status.value,
+            source,
+            f"priority-{priority_map[status]}"
+        ]
+        
+        # Add severity tags for easy filtering
+        if status in [HealthStatus.ERROR, HealthStatus.FATAL]:
+            tags.append("critical")
+        elif status == HealthStatus.WARNING:
+            tags.append("warning")
+        elif status == HealthStatus.HEALTHY:
+            tags.append("info")
+        
+        # Add source-specific tags
+        if source == "system":
+            tags.append("system")
+        else:
+            tags.append("service")
+        
+        data = {
+            "title": title,
+            "message": message,
+            "priority": priority_map[status],
+            "tags": tags
+        }
+        
+        if self.dryrun:
+            # Format the notification in a readable way for dry-run mode
+            logger.info("=" * 60)
+            logger.info(f"🔧 [DRY RUN] NTFY NOTIFICATION ({source.upper()})")
+            logger.info("=" * 60)
+            logger.info(f"📧 Title: {title}")
+            logger.info(f"🔸 Priority: {priority_map[status]}")
+            logger.info(f"🏷️  Tags: {', '.join(tags)}")
+            logger.info("📝 Message:")
+            # Split message into lines and indent each line
+            for line in message.split('\n'):
+                logger.info(f"   {line}")
+            logger.info("=" * 60)
+        else:
+            response = requests.post(self.url, json=data, timeout=10)
+            response.raise_for_status()
+            logger.info(f"Sent ntfy notification for {source} ({status})")
+
 
 class LogHandler(NotificationHandler):
     """Log notifications to file."""
     
-    def __init__(self, log_file: Optional[str] = None):
-        super().__init__("log")
+    def __init__(self, log_file: Optional[str] = None, enable_buffering: bool = False, buffer_time: float = 10.0):
+        super().__init__("log", enable_buffering, buffer_time)
         self.log_file = log_file
         
-    def send_notification(self, service_health: ServiceHealth):
+    def _send_service_notification(self, service_health: ServiceHealth):
         """Log service health notification."""
         message = f"[{datetime.now().isoformat()}] Service {service_health.service_name} health: {service_health.overall_status.value}"
         
@@ -333,16 +364,9 @@ class LogHandler(NotificationHandler):
             if latest_check.message:
                 message += f": {latest_check.message}"
         
-        if self.log_file:
-            try:
-                with open(self.log_file, 'a') as f:
-                    f.write(message + "\n")
-            except Exception as e:
-                logger.error(f"Failed to write health log: {e}")
+        self._write_log_message(message)
         
-        logger.info(message)
-        
-    def send_system_notification(self, services: Dict[str, ServiceHealth]):
+    def _send_system_notification(self, services: Dict[str, ServiceHealth]):
         """Log system health notification."""
         message = f"[{datetime.now().isoformat()}] System health update: {len(services)} services"
         
@@ -353,25 +377,52 @@ class LogHandler(NotificationHandler):
         for status, count in status_counts.items():
             message += f" | {status.value}: {count}"
         
+        # Add service timelines for detailed logging
+        message += "\nService Health Timelines:"
+        for service_name, svc in sorted(services.items()):
+            # Get recent health states from checks
+            health_states = []
+            if svc.checks:
+                # Sort checks by timestamp to ensure chronological order
+                sorted_checks = sorted(svc.checks, key=lambda x: x.timestamp)
+                
+                for check in sorted_checks[-10:]:  # Last 10 checks
+                    if check.status not in health_states or check.status != health_states[-1]:
+                        health_states.append(check.status)
+            
+            if not health_states:
+                health_states = [svc.overall_status]
+            elif len(health_states) == 1 and health_states[0] != svc.overall_status:
+                health_states.append(svc.overall_status)
+            
+            timeline_str = " → ".join([state.value.upper() for state in health_states])
+            message += f"\n  {service_name}: [{timeline_str}]"
+        
+        self._write_log_message(message)
+    
+    def _write_log_message(self, message: str):
+        """Write message to log file and logger."""
         if self.log_file:
             try:
                 with open(self.log_file, 'a') as f:
                     f.write(message + "\n")
             except Exception as e:
-                logger.error(f"Failed to write system health log: {e}")
+                logger.error(f"Failed to write health log: {e}")
         
         logger.info(message)
+
 
 class WebhookHandler(NotificationHandler):
     """Send notifications via webhook."""
     
-    def __init__(self, webhook_url: str, headers: Optional[Dict[str, str]] = None, dryrun: bool = False):
-        super().__init__("webhook")
+    def __init__(self, webhook_url: str, headers: Optional[Dict[str, str]] = None, 
+                 dryrun: bool = False, enable_buffering: bool = False, buffer_time: float = 10.0):
+        super().__init__("webhook", enable_buffering, buffer_time)
         self.webhook_url = webhook_url
         self.headers = headers or {"Content-Type": "application/json"}
         self.dryrun = dryrun
         
-    def send_notification(self, service_health: ServiceHealth):
+    def _send_service_notification(self, service_health: ServiceHealth):
         """Send webhook notification for service health change."""
         try:
             payload = {
@@ -380,21 +431,13 @@ class WebhookHandler(NotificationHandler):
                 "service": service_health.to_dict()
             }
             
-            if not self.dryrun:
-                response = requests.post(
-                    self.webhook_url,
-                    json=payload,
-                    headers=self.headers,
-                    timeout=10
-                )
-                response.raise_for_status()
-            
+            self._send_webhook_payload(payload, "SERVICE")
             logger.info(f"Sent webhook notification for {service_health.service_name}")
             
         except Exception as e:
-            logger.error(f"Failed to send webhook notification: {e}")
+            logger.error(f"Failed to send webhook service notification: {e}")
             
-    def send_system_notification(self, services: Dict[str, ServiceHealth]):
+    def _send_system_notification(self, services: Dict[str, ServiceHealth]):
         """Send webhook notification for system-wide health changes."""
         try:
             payload = {
@@ -403,19 +446,48 @@ class WebhookHandler(NotificationHandler):
                 "services": {name: svc.to_dict() for name, svc in services.items()}
             }
             
-            if not self.dryrun:
-                response = requests.post(
-                    self.webhook_url,
-                    json=payload,
-                    headers=self.headers,
-                    timeout=10
-                )
-                response.raise_for_status()
-            
+            self._send_webhook_payload(payload, "SYSTEM")
             logger.info("Sent system webhook notification")
             
         except Exception as e:
             logger.error(f"Failed to send system webhook notification: {e}")
+    
+    def _send_webhook_payload(self, payload: dict, notification_type: str):
+        """Send webhook payload with dry-run support."""
+        if not self.dryrun:
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                headers=self.headers,
+                timeout=10
+            )
+            response.raise_for_status()
+        else:
+            # Format the webhook payload in a readable way for dry-run mode
+            logger.info("=" * 60)
+            logger.info(f"🌐 [DRY RUN] WEBHOOK NOTIFICATION ({notification_type})")
+            logger.info("=" * 60)
+            logger.info(f"🔗 URL: {self.webhook_url}")
+            logger.info(f"📧 Type: {payload['type']}")
+            logger.info(f"⏰ Timestamp: {payload['timestamp']}")
+            
+            if notification_type == "SERVICE":
+                service = payload['service']
+                logger.info(f"🔸 Service: {service['service_name']}")
+                logger.info(f"📊 Status: {service['overall_status']}")
+                if service.get('uptime'):
+                    uptime_hours = service['uptime'] / 3600
+                    logger.info(f"⏱️  Uptime: {uptime_hours:.1f}h")
+            else:
+                logger.info(f"🔸 Services: {len(payload['services'])} total")
+                status_counts = {}
+                for svc in payload['services'].values():
+                    status = svc['overall_status']
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                for status, count in status_counts.items():
+                    logger.info(f"   📊 {status.title()}: {count}")
+            
+            logger.info("=" * 60)
 
 def create_notification_handlers() -> List[NotificationHandler]:
     """Create notification handlers based on environment configuration."""
@@ -432,19 +504,13 @@ def create_notification_handlers() -> List[NotificationHandler]:
     ntfy_topic = os.environ.get("NTFY_TOPIC")
     if ntfy_topic:
         ntfy_server = os.environ.get("NTFY_SERVER", "ntfy.sh")
-        ntfy_handler = NtfyHandler(ntfy_topic, ntfy_server, dryrun=dry_run)
-        
-        # Wrap with buffered handler if enabled
-        if enable_buffering:
-            ntfy_handler = BufferedNotificationHandler(ntfy_handler, buffer_time)
-        
+        ntfy_handler = NtfyHandler(ntfy_topic, ntfy_server, dryrun=dry_run, 
+                                  enable_buffering=enable_buffering, buffer_time=buffer_time)
         handlers.append(ntfy_handler)
     
-    # Log handler (always include, even in dry-run)
+    # Log handler (never buffered - we want immediate logging)
     log_file = os.environ.get("HEALTH_LOG_FILE")
-    log_handler = LogHandler(log_file)
-    
-    # Don't buffer log handlers - we want immediate logging
+    log_handler = LogHandler(log_file, enable_buffering=False)
     handlers.append(log_handler)
     
     # Webhook handler
@@ -453,12 +519,8 @@ def create_notification_handlers() -> List[NotificationHandler]:
         webhook_headers = {}
         if os.environ.get("HEALTH_WEBHOOK_AUTH"):
             webhook_headers["Authorization"] = os.environ.get("HEALTH_WEBHOOK_AUTH")
-        webhook_handler = WebhookHandler(webhook_url, webhook_headers, dryrun=dry_run)
-        
-        # Wrap with buffered handler if enabled
-        if enable_buffering:
-            webhook_handler = BufferedNotificationHandler(webhook_handler, buffer_time)
-        
+        webhook_handler = WebhookHandler(webhook_url, webhook_headers, dryrun=dry_run,
+                                       enable_buffering=enable_buffering, buffer_time=buffer_time)
         handlers.append(webhook_handler)
     
     if dry_run:
@@ -483,35 +545,27 @@ def create_notification_handlers_from_config(
     """Create notification handlers based on direct configuration parameters."""
     handlers = []
     
-    # Log handler (always include)
-    log_handler = LogHandler(log_file)
+    # Log handler (never buffered - we want immediate logging)
+    log_handler = LogHandler(log_file, enable_buffering=False)
     handlers.append(log_handler)
     
     # ntfy handler
     if ntfy_topic:
-        ntfy_handler = NtfyHandler(ntfy_topic, ntfy_server, dryrun=dry_run)
+        ntfy_handler = NtfyHandler(ntfy_topic, ntfy_server, dryrun=dry_run,
+                                  enable_buffering=enable_buffering, buffer_time=buffer_time)
         handlers.append(ntfy_handler)
     
     # Webhook handler
     if webhook_url:
-        webhook_handler = WebhookHandler(webhook_url, webhook_headers or {}, dryrun=dry_run)
+        webhook_handler = WebhookHandler(webhook_url, webhook_headers or {}, dryrun=dry_run,
+                                       enable_buffering=enable_buffering, buffer_time=buffer_time)
         handlers.append(webhook_handler)
     
-    # Wrap with buffered handlers if enabled
+    logger.info(f"Initialized {len(handlers)} notification handlers")
+    
     if enable_buffering:
-        buffered_handlers = []
-        for handler in handlers:
-            # Don't buffer log handlers - we want immediate logging
-            if isinstance(handler, LogHandler):
-                buffered_handlers.append(handler)
-            else:
-                buffered_handlers.append(
-                    BufferedNotificationHandler(handler, buffer_time)
-                )
-        handlers = buffered_handlers
-        logger.info(f"Initialized {len(handlers)} notification handlers with {buffer_time}s buffering")
-    else:
-        logger.info(f"Initialized {len(handlers)} notification handlers")
+        buffered_count = sum(1 for h in handlers if h.enable_buffering)
+        logger.info(f"Buffering enabled for {buffered_count}/{len(handlers)} handlers with {buffer_time}s buffer time")
     
     if dry_run:
         logger.info("Notifications in dry-run mode - only logging enabled")

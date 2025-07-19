@@ -80,7 +80,7 @@ class TestSocketSpecificConfigs:
     
     def test_subscriber_with_topics(self):
         """Test SubscriberConfig with topics."""
-        topics = ["topic1", "topic2", "heartbeat"]
+        topics = ["topic1", "topic2"]
         config = SubscriberConfig(
             address="tcp://localhost", 
             port=5555, 
@@ -257,23 +257,22 @@ class TestMessageTypes:
     
     def test_message_type_values(self):
         """Test that MessageType enum has expected values."""
-        assert MessageType.HEARTBEAT == "Heartbeat"
         assert MessageType.IMAGE_READY == "ImageReady"
         assert MessageType.SPACE_TIME_UPDATE == "EraChanged"
         
         # Test string conversion
-        assert str(MessageType.HEARTBEAT) == "Heartbeat"
+        assert str(MessageType.IMAGE_READY) == "ImageReady"
     
     def test_message_type_in_config(self):
         """Test using MessageType in configuration."""
         config = PublisherConfig(
             address="tcp://*", 
             port=5555,
-            default_topic=MessageType.HEARTBEAT
+            default_topic=MessageType.IMAGE_READY
         )
         # The validator should convert enum to string
         assert isinstance(config.default_topic, str)
-        assert config.default_topic == "Heartbeat"
+        assert config.default_topic == "ImageReady"
 
 
 class TestConfigIntegration:

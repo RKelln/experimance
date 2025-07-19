@@ -95,8 +95,7 @@ from experimance_common.logger import configure_external_loggers
 
 __all__ = [
     # Core constants
-    "DEFAULT_PORTS",
-    "HEARTBEAT_INTERVAL", 
+    "DEFAULT_PORTS", 
     "DEFAULT_IMAGE_TRANSPORT_MODE",
     
     # ZMQ configuration and utilities

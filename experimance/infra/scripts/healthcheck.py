@@ -20,10 +20,9 @@ from experimance_common.config import resolve_path, get_project_services
 from experimance_common.constants import PROJECT_SPECIFIC_DIR
 from experimance_common.logger import setup_logging
 from experimance_common.health import (
-    HealthStatus, HealthReporter, SystemHealthMonitor, 
-    create_health_reporter, system_monitor
+    HealthStatus, HealthReporter, 
+    create_health_reporter
 )
-from experimance_common.notifications import create_notification_handlers
 
 # Configure logging
 logger = setup_logging(__name__)
@@ -37,10 +36,9 @@ except ImportError:
     # dotenv not available, that's okay
     pass
 
-import aiohttp
-import requests
 import zmq
 import zmq.asyncio
+import psutil
 
 # Configuration
 CONFIG = {
@@ -55,52 +53,75 @@ CONFIG = {
         "cpu_percent": 90,
         "disk_percent": 95,
         "restart_count": 3
-    },
-    "alerting": {
-        "email_enabled": os.environ.get("ALERT_EMAIL_ENABLED", "false").lower() == "true",
-        "smtp_server": "smtp.gmail.com",
-        "smtp_port": 587,
-        "email_from": os.environ.get("ALERT_EMAIL"),
-        "email_to": os.environ.get("ALERT_EMAIL_TO", "").split(","),
-        "email_password": os.environ.get("ALERT_EMAIL_PASSWORD"),
-        "ntfy_enabled": True,
-        "ntfy_topic": os.environ.get("NTFY_TOPIC", "experimance-alerts"),
-        "ntfy_server": os.environ.get("NTFY_SERVER", "https://ntfy.sh"),
-        "ntfy_priority": os.environ.get("NTFY_PRIORITY", "high"),
-        "cooldown_minutes": 10  # Don't spam alerts
     }
 }
 
-# Setup logging using common utilities
-logger = setup_logging(__name__, log_filename="healthcheck.log")
+# Note: logger already set up above, don't duplicate
 
 class HealthChecker:
     """Unified health checker using the new health system."""
     
     def __init__(self):
-        self.last_alerts = {}
         self.zmq_context = zmq.asyncio.Context()
         
         # Create health reporter for the health check system itself
-        self.health_reporter = create_health_reporter("healthcheck")
+        self.health_reporter = create_health_reporter("healthcheck", "health")
         
-        # Setup notification handlers
-        self.notification_handlers = create_notification_handlers()
-        
-        # Register handlers with the system monitor
-        for handler in self.notification_handlers:
-            system_monitor.add_notification_handler(self._handle_system_notification)
-        
-        logger.info(f"HealthChecker initialized with {len(self.notification_handlers)} notification handlers")
+        logger.info("HealthChecker initialized")
     
-    def _handle_system_notification(self, services: Dict[str, Any]):
-        """Handle system-wide health notifications."""
-        # Send notifications via all handlers
-        for handler in self.notification_handlers:
+    async def check_running_processes(self) -> Dict[str, HealthStatus]:
+        """Check if experimance processes are running (for development)."""
+        process_health = {}
+        
+        for service in CONFIG["services"]:
             try:
-                handler.send_system_notification(services)
+                # Look for python processes running our services
+                found_process = False
+                
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    try:
+                        cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
+                        
+                        # Check for both experimance_service and image_server patterns
+                        service_patterns = [
+                            f"experimance_{service}",
+                            service if service == "image_server" else None
+                        ]
+                        
+                        for pattern in service_patterns:
+                            if pattern and pattern in cmdline and "python" in cmdline:
+                                found_process = True
+                                process_health[service] = HealthStatus.HEALTHY
+                                logger.debug(f"Found running process for {service}: PID {proc.info['pid']}")
+                                break
+                        
+                        if found_process:
+                            break
+                            
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                
+                if not found_process:
+                    process_health[service] = HealthStatus.ERROR
+                    logger.warning(f"No running process found for service: {service}")
+                
+                # Record health check
+                self.health_reporter.record_health_check(
+                    f"process_{service}",
+                    process_health[service],
+                    f"Process check for {service}"
+                )
+                
             except Exception as e:
-                logger.error(f"Failed to send notification via {handler.name}: {e}")
+                logger.error(f"Error checking running process for {service}: {e}")
+                process_health[service] = HealthStatus.ERROR
+                self.health_reporter.record_health_check(
+                    f"process_{service}",
+                    HealthStatus.ERROR,
+                    f"Failed to check process {service}: {e}"
+                )
+        
+        return process_health
     
     async def check_systemd_services(self) -> Dict[str, HealthStatus]:
         """Check systemd services and return health status."""
@@ -124,7 +145,7 @@ class HealthChecker:
                     service_health[service] = HealthStatus.FATAL
                     logger.warning(f"Service {service_name} is not active: {result.stdout.strip()}")
                 
-                # Record health check for this service
+                # Record health check using the unified system
                 self.health_reporter.record_health_check(
                     f"systemd_{service}",
                     service_health[service],
@@ -133,7 +154,7 @@ class HealthChecker:
                 
             except Exception as e:
                 logger.error(f"Error checking service {service_name}: {e}")
-                service_health[service] = HealthStatus.UNKNOWN
+                service_health[service] = HealthStatus.ERROR
                 self.health_reporter.record_health_check(
                     f"systemd_{service}",
                     HealthStatus.ERROR,
@@ -252,87 +273,26 @@ class HealthChecker:
                 
         return process_health
     
-    async def send_alert(self, subject: str, message: str) -> bool:
-        """Send an alert via ntfy and/or email."""
-        # Check cooldown
-        now = datetime.now()
-        if subject in self.last_alerts:
-            if now - self.last_alerts[subject] < timedelta(minutes=CONFIG["alerting"]["cooldown_minutes"]):
-                return False
-        
-        alert_sent = False
-        
-        # Try ntfy first (it's more reliable)
-        if CONFIG["alerting"]["ntfy_enabled"]:
-            try:
-                import aiohttp
-                
-                ntfy_url = f"{CONFIG['alerting']['ntfy_server']}/{CONFIG['alerting']['ntfy_topic']}"
-                
-                # Create detailed message for ntfy
-                full_message = f"{subject}\n\n{message}\n\nTime: {now.strftime('%Y-%m-%d %H:%M:%S')}"
-                
-                headers = {
-                    "Title": f"Experimance Alert: {subject}",
-                    "Priority": CONFIG["alerting"]["ntfy_priority"],
-                    "Tags": "warning,computer,experimance"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(ntfy_url, data=full_message, headers=headers) as response:
-                        if response.status == 200:
-                            logger.info(f"ntfy alert sent: {subject}")
-                            alert_sent = True
-                        else:
-                            logger.warning(f"ntfy alert failed: HTTP {response.status}")
-                            
-            except Exception as e:
-                logger.error(f"Error sending ntfy alert: {e}")
-        
-        # Fallback to email if configured
-        if CONFIG["alerting"]["email_enabled"] and not alert_sent:
-            try:
-                import smtplib
-                from email.mime.text import MIMEText
-                from email.mime.multipart import MIMEMultipart
-                
-                msg = MIMEMultipart()
-                msg['From'] = CONFIG["alerting"]["email_from"]
-                msg['To'] = ", ".join(CONFIG["alerting"]["email_to"])
-                msg['Subject'] = f"Experimance Alert: {subject}"
-                
-                msg.attach(MIMEText(message, 'plain'))
-                
-                server = smtplib.SMTP(CONFIG["alerting"]["smtp_server"], CONFIG["alerting"]["smtp_port"])
-                server.starttls()
-                server.login(CONFIG["alerting"]["email_from"], CONFIG["alerting"]["email_password"])
-                
-                server.send_message(msg)
-                server.quit()
-                
-                logger.info(f"Email alert sent: {subject}")
-                alert_sent = True
-                
-            except Exception as e:
-                logger.error(f"Error sending email alert: {e}")
-        
-        if alert_sent:
-            self.last_alerts[subject] = now
-            return True
-        else:
-            logger.error(f"Failed to send alert: {subject}")
-            return False
-    
     async def run_health_check(self) -> Dict:
         """Run a complete health check using the unified health system."""
         logger.info("Starting unified health check...")
         
         try:
-            # Run all checks
-            service_status = await self.check_systemd_services()
+            # Check if we're in development (processes) or production (systemd)
+            try:
+                # Try systemd first (production)
+                service_status = await self.check_systemd_services()
+                deployment_mode = "systemd"
+            except Exception as systemd_error:
+                # Fall back to process check (development)
+                logger.debug(f"Systemd check failed, using process check: {systemd_error}")
+                service_status = await self.check_running_processes()
+                deployment_mode = "processes"
+            
+            # Run other checks
             zmq_status = await self.check_zmq_endpoints()
             resources = await self.check_system_resources()
-            process_health = await self.check_process_health()
+            process_health = await self.check_process_health() if deployment_mode == "systemd" else {}
             
             # Record system resource health checks
             for resource, value in resources.items():
@@ -350,7 +310,7 @@ class HealthChecker:
                         f"{resource}: {value}%"
                     )
             
-            # Record process health checks
+            # Record process health checks (only for systemd mode)
             for process, details in process_health.items():
                 if details.get("restart_count", 0) > CONFIG["thresholds"]["restart_count"]:
                     self.health_reporter.record_health_check(
@@ -359,43 +319,47 @@ class HealthChecker:
                         f"Process {process} has {details['restart_count']} restarts"
                     )
                 else:
-                    self.health_reporter.record_health_check(
-                        f"process_{process}",
-                        HealthStatus.HEALTHY,
-                        f"Process {process} is healthy"
-                    )
+                    # Check if the process is actually active
+                    active_state = details.get("active_state", "unknown")
+                    if active_state == "active":
+                        self.health_reporter.record_health_check(
+                            f"process_{process}",
+                            HealthStatus.HEALTHY,
+                            f"Process {process} is active and healthy"
+                        )
+                    else:
+                        self.health_reporter.record_health_check(
+                            f"process_{process}",
+                            HealthStatus.ERROR,
+                            f"Process {process} is {active_state}"
+                        )
             
-            # Compile results (for backward compatibility)
+            # Get unified health data
+            health_summary = self.health_reporter.get_health_summary()
+            
+            # Compile results using the new health system as primary source
             results = {
                 "timestamp": datetime.now().isoformat(),
                 "project": CONFIG["project"],
+                "deployment_mode": deployment_mode,
+                "health_summary": health_summary,
+                # Legacy compatibility fields
                 "services": {k: v.value for k, v in service_status.items()},
                 "zmq_endpoints": {k: v.value for k, v in zmq_status.items()},
                 "resources": resources,
                 "processes": process_health,
-                "health_summary": self.health_reporter.get_health_summary(),
-                "system_health": system_monitor.get_system_health(),
-                "alerts": []  # Maintained for backward compatibility
+                "issues": []  # Extract issues from health system
             }
             
-            # Legacy alert collection for backward compatibility
-            failed_services = [svc for svc, status in service_status.items() if status != HealthStatus.HEALTHY]
-            if failed_services:
-                alert_msg = f"Services with issues: {', '.join(failed_services)}"
-                results["alerts"].append(alert_msg)
-            
-            # Resource alerts
-            for resource, value in resources.items():
-                threshold = CONFIG["thresholds"].get(resource, 100)
-                if value > threshold:
-                    alert_msg = f"{resource} is at {value:.1f}% (threshold: {threshold}%)"
-                    results["alerts"].append(alert_msg)
-            
-            # Process restart alerts
-            for service, health in process_health.items():
-                if health.get("restart_count", 0) > CONFIG["thresholds"]["restart_count"]:
-                    alert_msg = f"Service {service} has restarted {health['restart_count']} times"
-                    results["alerts"].append(alert_msg)
+            # Extract issues from the unified health system (not alerts, just status)
+            if health_summary and "checks" in health_summary:
+                for check_data in health_summary["checks"]:
+                    if check_data.get("status") in [HealthStatus.WARNING.value, HealthStatus.ERROR.value, HealthStatus.FATAL.value]:
+                        results["issues"].append({
+                            "check": check_data.get("name"),
+                            "status": check_data.get("status"),
+                            "message": check_data.get("message", "Health issue detected")
+                        })
             
             # Record overall health check completion
             self.health_reporter.record_health_check(
@@ -404,7 +368,18 @@ class HealthChecker:
                 "Health check completed successfully"
             )
             
-            logger.info(f"Unified health check complete. Found {len(results['alerts'])} legacy issues.")
+            logger.info(f"Unified health check complete. Found {len(results['issues'])} issues.")
+            
+            # Save results to file for status tracking
+            try:
+                from experimance_common.logger import get_log_file_path
+                log_file = get_log_file_path("healthcheck.log")
+                results_file = Path(log_file).parent / "health_status.json"
+                with open(results_file, "w") as f:
+                    json.dump(results, f, indent=2)
+                logger.debug(f"Health status saved to {results_file}")
+            except Exception as e:
+                logger.warning(f"Could not save health status file: {e}")
             
         except Exception as e:
             logger.error(f"Error during health check: {e}")
@@ -414,21 +389,8 @@ class HealthChecker:
                 "project": CONFIG["project"],
                 "error": str(e),
                 "health_summary": self.health_reporter.get_health_summary(),
-                "system_health": system_monitor.get_system_health(),
-                "alerts": [f"Health check error: {e}"]
+                "issues": [{"check": "health_check_error", "status": "ERROR", "message": str(e)}]
             }
-        
-        return results
-        
-        # Always save results to file for status tracking
-        try:
-            from experimance_common.logger import get_log_file_path
-            log_file = get_log_file_path("healthcheck.log")
-            results_file = Path(log_file).parent / "health_status.json"
-            with open(results_file, "w") as f:
-                json.dump(results, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Could not save health status file: {e}")
         
         return results
     
@@ -469,7 +431,7 @@ async def main():
         print(json.dumps(results, indent=2))
         
         # Exit with error code if there are issues
-        if results["alerts"]:
+        if results.get("issues"):
             sys.exit(1)
 
 if __name__ == "__main__":

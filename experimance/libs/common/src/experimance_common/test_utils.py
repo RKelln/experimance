@@ -167,7 +167,7 @@ class MockZmqSubscriber(MockZmqSocketWorking):
         self.subscription_count = 0
         
         # Add default test messages for common message types
-        self.add_test_message(MessageType.HEARTBEAT, {"timestamp": time.time()})
+        self.add_test_message(MessageType.SPACE_TIME_UPDATE, {"timestamp": time.time()})
     
     def add_test_message(self, message_type, content=None):
         """Add a test message to be received."""

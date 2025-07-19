@@ -468,9 +468,9 @@ class PromptingConfig(BaseModel):
 
 
 class CoreServiceConfig(BaseConfig):
-    """Complete configuration schema for the Core Service."""
+    """Configuration for Experimance core service."""
     
-    service_name: str = "experimance-core"
+    service_name: str = "experimance_core"
     
     # Debugging and visualization options
     visualize: bool = Field(
@@ -482,7 +482,7 @@ class CoreServiceConfig(BaseConfig):
     experimance_core: ExperimanceCoreConfig = Field(default_factory=ExperimanceCoreConfig)
     zmq: ControllerServiceConfig = Field(
         default_factory=lambda: ControllerServiceConfig(
-            name="experimance-core",
+            name="experimance_core",  # Changed from "experimance-core" to match service_name
             publisher=PublisherConfig(
                 address=ZMQ_TCP_BIND_PREFIX,
                 port=DEFAULT_PORTS["events"],

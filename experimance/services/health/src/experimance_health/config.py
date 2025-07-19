@@ -8,15 +8,21 @@ health service configuration in a type-safe way.
 
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+import logging
 from pydantic import Field
 
 from experimance_common.config import BaseConfig
 from experimance_common.constants import (
-    DEFAULT_PORTS, HEALTH_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX,
-    get_project_config_path, SERVICES
+    DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX,
+    get_project_config_path, SERVICE_TYPES
 )
 
+logger = logging.getLogger(__name__)
+
 # Define the default configuration path with project-aware fallback
+# TODO: Fix HEALTH_SERVICE_DIR import or define it locally
+from experimance_common.constants import SERVICES_DIR
+HEALTH_SERVICE_DIR = SERVICES_DIR / "health"
 DEFAULT_CONFIG_PATH = get_project_config_path("health", HEALTH_SERVICE_DIR)
 
 
@@ -56,8 +62,8 @@ class HealthServiceConfig(BaseConfig):
     )
     
     expected_services: List[str] = Field(
-        default_factory=lambda: SERVICES,
-        description="List of services expected to be monitored"
+        default_factory=lambda: SERVICE_TYPES,
+        description="List of service types expected to be monitored"
     )
     
     # Environment-specific overrides
@@ -161,7 +167,12 @@ class HealthServiceConfig(BaseConfig):
             return self.health_dir
     
     def get_expected_services_for_project(self, project_name: str) -> List[str]:
-        """Get expected services for a specific project."""
-        # This could be extended to load project-specific service lists
-        # For now, return the default list
-        return self.expected_services
+        """Get expected service types for a specific project."""
+        # Use the dynamic project-aware service detection if available
+        try:
+            from experimance_common.config import get_project_services
+            return get_project_services(project_name)
+        except Exception as e:
+            # Fallback to default configured service types
+            logger.warning(f"Failed to get project services for {project_name}, using default: {e}")
+            return self.expected_services

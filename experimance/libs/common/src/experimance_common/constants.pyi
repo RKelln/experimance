@@ -27,12 +27,13 @@ from experimance_common.constants_base import (
 
     # Timeout settings
     DEFAULT_TIMEOUT,
-    HEARTBEAT_INTERVAL,
     DEFAULT_RETRY_ATTEMPTS,
     DEFAULT_RETRY_DELAY,
     DEFAULT_RECV_TIMEOUT,
-    HEARTBEAT_TOPIC,
     TICK,
+
+    # Service types
+    SERVICE_TYPES,
 
     # Image transport configuration
     IMAGE_TRANSPORT_MODES,
@@ -108,6 +109,8 @@ if TYPE_CHECKING:
 __all__: list[str] = [
     # Dynamic project constant
     "PROJECT",
+
+    "SERVICE_TYPES",
     
     # Project structure constants
     "PROJECT_ROOT",
@@ -121,11 +124,9 @@ __all__: list[str] = [
 
     # Timeout settings
     "DEFAULT_TIMEOUT",
-    "HEARTBEAT_INTERVAL",
     "DEFAULT_RETRY_ATTEMPTS",
     "DEFAULT_RETRY_DELAY",
     "DEFAULT_RECV_TIMEOUT",
-    "HEARTBEAT_TOPIC",
     "TICK",
 
     # Image transport configuration

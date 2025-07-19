@@ -93,7 +93,7 @@ class TestCoreServiceImageReadyHandling:
                 await active._handle_image_ready(image_ready_message)
                 
                 # Verify DISPLAY_MEDIA was published directly (no transition)
-                # Service may publish multiple messages (heartbeats, etc), so check for DISPLAY_MEDIA specifically
+                # Service may publish multiple messages, so check for DISPLAY_MEDIA specifically
                 display_media_calls = [
                     call for call in service._mock_zmq_service.publish.call_args_list 
                     if call[0][0].get("type") == MessageType.DISPLAY_MEDIA.value

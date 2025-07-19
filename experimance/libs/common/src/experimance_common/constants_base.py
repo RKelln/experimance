@@ -73,7 +73,7 @@ ZMQ_TCP_CONNECT_PREFIX = "tcp://localhost"
 # data dir
 DATA_DIR = PROJECT_ROOT / "data"
 
-SERVICES = [
+SERVICE_TYPES = [
     "core",
     "audio",
     "image_server",
@@ -191,6 +191,8 @@ __all__ = [
     "MOCK_IMAGES_DIR_ABS",
     "AUDIO_DIR_ABS",
     "VIDEOS_DIR_ABS",
+    # Service types
+    "SERVICE_TYPES",
     # Services directories
     "SERVICES_DIR",
     "CORE_SERVICE_DIR",

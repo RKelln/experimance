@@ -40,7 +40,6 @@
 - [ ] Implement `IdleStateChanged` event publishing
 - [ ] Add event throttling to prevent spam
 - [ ] Create event logging for debugging
-- [ ] Add heartbeat publishing for service discovery
 
 ## Phase 6: Agent Integration
 - [ ] Subscribe to `agent_ctrl` channel (tcp://*:5559)

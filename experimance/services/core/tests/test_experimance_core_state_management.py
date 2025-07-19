@@ -22,7 +22,6 @@ class TestExperimanceCoreServiceStateManagement:
         config_overrides = {
             "experimance_core": {
                 "name": "test_experimance_core_state",
-                "heartbeat_interval": 1.0
             },
             "state_machine": {
                 "idle_timeout": 45.0,

@@ -66,7 +66,7 @@ class BaseService:
         self._state_manager = StateManager(service_name, ServiceState.INITIALIZING)
         
         # Initialize health reporting (replaces heartbeat system)
-        self._health_reporter = create_health_reporter(service_name)
+        self._health_reporter = create_health_reporter(self.service_name, self.service_type)
         
         self.tasks = []
         
@@ -106,6 +106,11 @@ class BaseService:
         """Set the service state."""
         self._state_manager.state = new_state
     
+    @property
+    def status(self) -> HealthStatus:
+        """Get the overall health status of the service."""
+        return self.get_overall_health_status()
+
     def register_state_callback(self, state: ServiceState, callback: Callable[[], None]):
         """Register a callback for state transitions."""
         self._state_manager.register_state_callback(state, callback)
@@ -193,44 +198,6 @@ class BaseService:
         await asyncio.sleep(duration)
         return self.state == ServiceState.RUNNING
 
-    async def display_stats(self):
-        """Periodically display service statistics."""
-        while self.state == ServiceState.RUNNING:
-            if not await self._sleep_if_running(10):
-                break
-            
-            now = time.monotonic()
-            elapsed = now - self.start_time
-            elapsed_since_last = now - self.last_stats_time
-            
-            # Calculate message rates
-            sent_rate = self.messages_sent / elapsed if elapsed > 0 else 0
-            received_rate = self.messages_received / elapsed if elapsed > 0 else 0
-            
-            # Format uptime as hours:minutes:seconds
-            hours, remainder = divmod(int(elapsed), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            uptime_str = f"{hours:02}:{minutes:02}:{seconds:02}"
-            
-            # Prepare and log statistics
-            health_summary = self._health_reporter.get_health_summary()
-            stats = {
-                "service": self.service_name,
-                "type": self.service_type,
-                "state": self.state,
-                "status": health_summary["overall_status"],
-                "uptime": uptime_str,
-                "messages_sent": self.messages_sent,
-                "messages_received": self.messages_received,
-                "errors": self.errors,
-                "msg_send_rate": f"{sent_rate:.2f}/s",
-                "msg_recv_rate": f"{received_rate:.2f}/s"
-            }
-            
-            logger.info(f"Stats for {self.service_name}: {stats}")
-            self.last_stats_time = now
-    
-    
     async def start(self):
         """Start the service.
         
@@ -239,10 +206,6 @@ class BaseService:
         """
         logger.debug(f"Starting {self.service_type} service: {self.service_name}")
         self.start_time = time.monotonic()
-        
-        # Always include the stats display task
-        # This registers the coroutine to be executed when run() is called
-        self.add_task(self.display_stats())
         
         # Add health monitoring task (replaces heartbeat system)
         self.add_task(self._health_monitoring_loop())
@@ -258,6 +221,13 @@ class BaseService:
         """Health monitoring loop that replaces the heartbeat system."""
         while self.state == ServiceState.RUNNING:
             try:
+                # Update service statistics in health reporter
+                self._health_reporter.update_service_stats(
+                    messages_sent=self.messages_sent,
+                    messages_received=self.messages_received,
+                    errors=self.errors
+                )
+                
                 # Record periodic health check
                 self._health_reporter.record_health_check(
                     "periodic_health_check",
@@ -328,6 +298,14 @@ class BaseService:
                 logger.debug(f"No main run task handle found for {self.service_name} to cancel.")
 
             await self._clear_tasks()  # Clear any registered tasks
+            
+            # Record final health check before stopping - flush immediately for shutdown
+            self._health_reporter.record_health_check(
+                "service_stopped",
+                HealthStatus.WARNING,  # Use WARNING to indicate service is no longer active
+                "Service stopped gracefully",
+                flush=True  # Flush immediately on shutdown
+            )
             
             self.state = ServiceState.STOPPED
             logger.debug(f"Service {self.service_name} stopped")

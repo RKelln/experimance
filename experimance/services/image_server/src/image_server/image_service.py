@@ -49,7 +49,7 @@ class ImageServerService(BaseService):
             RuntimeError: If initialization fails
         """
         try:
-            super().__init__(service_name=config.service_name)
+            super().__init__(service_name=config.service_name, service_type="image_server")
             self.config = config
 
             # Create cache directory

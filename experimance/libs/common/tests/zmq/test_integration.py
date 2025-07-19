@@ -138,12 +138,12 @@ class TestCommunicationPatterns:
             publisher=PublisherConfig(
                 address="tcp://*",
                 port=5555,
-                default_topic=MessageType.HEARTBEAT
+                default_topic=MessageType.IMAGE_READY
             ),
             subscriber=SubscriberConfig(
                 address="tcp://localhost",
                 port=5556,
-                topics=[MessageType.HEARTBEAT, MessageType.IMAGE_READY, MessageType.SPACE_TIME_UPDATE]
+                topics=[MessageType.IMAGE_READY, MessageType.SPACE_TIME_UPDATE]
             )
         )
         
@@ -157,15 +157,13 @@ class TestCommunicationPatterns:
                 service.set_message_handler(handler)
                 
                 # Publish using enum values
-                await service.publish({"timestamp": 1234567890}, MessageType.HEARTBEAT)
                 await service.publish({"image_id": "img_001"}, MessageType.IMAGE_READY)
                 await service.publish({"new_era": "digital"}, MessageType.SPACE_TIME_UPDATE)
                 
                 await asyncio.sleep(0.1)
                 
                 # Verify enum values work correctly
-                assert len(received_messages) == 3
-                assert received_messages[0][0] == "Heartbeat"
+                assert len(received_messages) == 2
                 assert received_messages[1][0] == "ImageReady"
                 assert received_messages[2][0] == "EraChanged"
 
@@ -285,90 +283,6 @@ class TestRealWorldScenarios:
                 assert "image.ready" in result_topics
                 assert "transition.ready" in result_topics
     
-    @pytest.mark.asyncio
-    async def test_heartbeat_monitoring_system(self):
-        """Test a heartbeat monitoring system."""
-        # Core service publishes heartbeats
-        core_config = PubSubServiceConfig(
-            name="core_service",
-            publisher=PublisherConfig(address="tcp://*", port=5555),
-            subscriber=SubscriberConfig(
-                address="tcp://localhost",
-                port=5556,
-                topics=["system.shutdown"]
-            )
-        )
-        
-        # Monitor service watches heartbeats
-        monitor_config = PubSubServiceConfig(
-            name="monitor_service",
-            publisher=PublisherConfig(address="tcp://*", port=5557),
-            subscriber=SubscriberConfig(
-                address="tcp://localhost",
-                port=5558,
-                topics=["heartbeat"]
-            )
-        )
-        
-        received_heartbeats = []
-        shutdown_commands = []
-        alerts = []
-        
-        async with mock_environment():
-            async with MockPubSubService(core_config) as core:
-                async with MockPubSubService(monitor_config) as monitor:
-                    # Set up handlers
-                    def heartbeat_handler(topic, message):
-                        received_heartbeats.append(message)
-                        # Monitor responds to heartbeats
-                        if message.get("status") == "unhealthy":
-                            asyncio.create_task(monitor.publish({
-                                "level": "critical",
-                                "message": f"Service {message['service']} unhealthy"
-                            }, "alerts"))
-                    
-                    def shutdown_handler(topic, message):
-                        shutdown_commands.append(message)
-                    
-                    monitor.set_message_handler(heartbeat_handler)
-                    core.set_message_handler(shutdown_handler)
-                    
-                    # Simulate heartbeat sequence
-                    await core.publish({
-                        "service": "core",
-                        "status": "healthy",
-                        "timestamp": 1000
-                    }, "heartbeat")
-                    
-                    await core.publish({
-                        "service": "core",
-                        "status": "unhealthy",
-                        "timestamp": 2000,
-                        "error": "database_connection_lost"
-                    }, "heartbeat")
-                    
-                    await asyncio.sleep(0.1)
-                    
-                    # Monitor publishes shutdown command
-                    await monitor.publish({
-                        "reason": "core_service_unhealthy",
-                        "timestamp": 3000
-                    }, "system.shutdown")
-                    
-                    await asyncio.sleep(0.1)
-                    
-                    # Verify monitoring sequence
-                    assert len(received_heartbeats) == 2
-                    assert received_heartbeats[0]["status"] == "healthy"
-                    assert received_heartbeats[1]["status"] == "unhealthy"
-                    
-                    assert len(shutdown_commands) == 1
-                    assert shutdown_commands[0]["reason"] == "core_service_unhealthy"
-                    
-                    # Check published alerts from monitor
-                    monitor_published = monitor.get_published_messages()
-                    alert_messages = [msg for msg in monitor_published if msg.topic == "alerts"]
-                    assert len(alert_messages) >= 1
 
 
 class TestErrorRecoveryAndResilience:

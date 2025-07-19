@@ -22,7 +22,6 @@ class TestConfiguration:
         
         # Test default values
         assert config.experimance_core.name == "experimance_core"
-        assert config.experimance_core.heartbeat_interval == 3.0
         assert config.state_machine.idle_timeout == 45.0
         assert config.depth_processing.change_threshold == 50
         assert config.depth_processing.resolution == (1280, 720)
@@ -32,7 +31,6 @@ class TestConfiguration:
         config_content = """
 [experimance_core]
 name = "test_core_config"
-heartbeat_interval = 2.5
 
 [state_machine]
 idle_timeout = 30.0
@@ -54,7 +52,6 @@ output_size = [2048, 2048]
             
             # Test loaded values
             assert config.experimance_core.name == "test_core_config"
-            assert config.experimance_core.heartbeat_interval == 2.5
             assert config.state_machine.idle_timeout == 30.0
             assert config.state_machine.interaction_threshold == 0.4
             assert config.depth_processing.change_threshold == 75
@@ -85,7 +82,6 @@ change_threshold = 100
             assert config.depth_processing.change_threshold == 100
             
             # Test default values are preserved
-            assert config.experimance_core.heartbeat_interval == 3.0  # Default
             assert config.state_machine.idle_timeout == 45.0  # Default
             assert config.depth_processing.resolution == (1280, 720)  # Default
         
@@ -96,7 +92,6 @@ change_threshold = 100
         """Test configuration validation."""
         # Test valid configuration
         config = CoreServiceConfig()
-        assert config.experimance_core.heartbeat_interval > 0
         assert config.state_machine.idle_timeout > 0
         assert config.depth_processing.change_threshold >= 0
         assert len(config.depth_processing.resolution) == 2

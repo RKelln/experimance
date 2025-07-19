@@ -56,7 +56,6 @@ from experimance_common.schemas import MessageType
 # MessageType.AGENT_CONTROL_EVENT
 # MessageType.TRANSITION_REQUEST
 # MessageType.LOOP_REQUEST
-# MessageType.HEARTBEAT
 ```
 
 ### Port Configuration
@@ -173,7 +172,6 @@ class MyService(ZmqPublisherService):
         super().__init__(
             service_name="my-service",
             pub_address=f"tcp://*:{DEFAULT_PORTS['example_pub']}",
-            heartbeat_topic="my-service.events"
         )
     
     async def start(self):

@@ -23,7 +23,6 @@ class TestExperimanceCoreServiceInfrastructure:
         override_config = {
             "experimance_core": {
                 "name": "test_experimance_core",
-                "heartbeat_interval": 1.0
             },
             "state_machine": {
                 "idle_timeout": 45.0,
@@ -205,21 +204,6 @@ class TestExperimanceCoreServiceInfrastructure:
             # Should have ZMQ service capabilities through composition
             assert hasattr(service, 'zmq_service')
             assert hasattr(service, '_register_message_handlers')
-
-    @pytest.mark.skip(reason="ZmqPublisher mock needs adjustment - functionality works correctly")
-    @pytest.mark.asyncio 
-    async def test_service_publishes_heartbeat(self, test_config):
-        """Test that service publishes heartbeat messages."""
-        with patch('experimance_common.zmq.zmq_utils.ZmqPublisher') as mock_publisher:
-            service = ExperimanceCoreService(config=test_config)
-            
-            await service.start()
-            
-            # Verify publisher was created with correct address
-            mock_publisher.assert_called_with(f"tcp://*:{DEFAULT_PORTS['events']}", 
-                                            "test_experimance_core.heartbeat")
-            
-            await service.stop()
 
     def test_service_has_state_persistence_attributes(self, test_config):
         """Test that service has attributes for state persistence."""

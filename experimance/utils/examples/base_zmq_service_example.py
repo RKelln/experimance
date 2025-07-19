@@ -82,15 +82,15 @@ class SimplePublisher(BaseService):
             self.counter += 1
             
             message = {
-                "type": "heartbeat",
+                "type": "test",
                 "service": self.service_name,
                 "sequence": self.counter,
                 "timestamp": time.time()
             }
             
-            await self.zmq_service.publish(message, "heartbeat")
+            await self.zmq_service.publish(message, "test")
             self.messages_sent += 1
-            logger.info(f"📤 Published heartbeat #{self.counter}")
+            logger.info(f"📤 Published test #{self.counter}")
             
             await self._sleep_if_running(2.0)
         logger.info("Publish loop ended")
@@ -122,7 +122,7 @@ class SimpleSubscriber(BaseService):
         logger.info(f"Starting {self.service_name}")
         
         # Set up handlers before starting
-        self.zmq_service.add_message_handler("heartbeat", self._handle_heartbeat)
+        self.zmq_service.add_message_handler("test", self._handle_heartbeat)
         self.zmq_service.add_message_handler("status", self._handle_status)
         self.zmq_service.set_default_handler(self._handle_general)
         
@@ -132,7 +132,6 @@ class SimpleSubscriber(BaseService):
         # Call BaseService start (this handles state transitions)
         await super().start()
         
-        self.status = ServiceStatus.HEALTHY
         logger.info(f"✅ {self.service_name} started successfully")
     
     async def stop(self):

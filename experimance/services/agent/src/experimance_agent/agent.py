@@ -40,7 +40,7 @@ class AgentService(BaseService):
     """
     
     def __init__(self, config: AgentServiceConfig):
-        super().__init__(service_name=config.service_name)
+        super().__init__(service_type="agent", service_name=config.service_name)
         
         # Store immutable config
         self.config = config
@@ -71,7 +71,6 @@ class AgentService(BaseService):
         
         # Set up message handlers before starting ZMQ service
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
-        # Note: Heartbeat system removed - replaced with health checks
         
         # Start ZMQ service
         await self.zmq_service.start()
@@ -93,11 +92,8 @@ class AgentService(BaseService):
         if self.config.vision.vlm_enabled:
             self.add_task(self._vision_analysis_loop())
         
-        # ALWAYS call super().start() LAST
+        # ALWAYS call super().start() LAST - this starts health monitoring automatically
         await super().start()
-        
-        # Start health monitoring (replaces heartbeat)
-        self._health_reporter.start_periodic_health_checks()
         
         logger.info(f"{self.service_name} started successfully")
     
@@ -105,10 +101,7 @@ class AgentService(BaseService):
         """Clean up resources and stop the agent service."""
         logger.info(f"Stopping {self.service_name}")
         
-        # Stop health monitoring
-        await self._health_reporter.stop_periodic_health_checks()
-        
-        # ALWAYS call super().stop() FIRST
+        # ALWAYS call super().stop() FIRST - this stops health monitoring automatically
         await super().stop()
         
         # Stop agent backend
@@ -598,7 +591,6 @@ class AgentService(BaseService):
             context_msg = f"<System: the installation is currently showing {era} era in a {biome} biome.>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
-    # Note: Heartbeat handler removed - replaced with health check system
     
     # =========================================================================
     # Publishing Methods

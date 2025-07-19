@@ -250,7 +250,7 @@ class TestMockControllerService:
                 controller.set_worker_handler("text_worker", text_handler)
                 
                 # Test publishing status
-                await controller.publish({"controller": "alive"}, "heartbeat")
+                await controller.publish({"event": "alive"}, "test")
                 
                 # Test worker task distribution
                 await controller.push_to_worker("image_worker", {"image": "process.jpg"})
@@ -263,7 +263,7 @@ class TestMockControllerService:
                 # Verify
                 published = controller.published_messages
                 assert len(published) == 1
-                assert published[0].topic == "heartbeat"
+                assert published[0].topic == "test"
                 
                 assert len(received_status) == 1
                 assert received_status[0] == {"worker": "ready"}

@@ -219,7 +219,7 @@ class TestBaseService:
             await wait_for_service_state_and_status(
                 service, 
                 target_state=ServiceState.STOPPED,
-                target_status=ServiceStatus.ERROR, 
+                target_status=HealthStatus.ERROR, 
                 timeout=3.0
             )
             
@@ -227,7 +227,7 @@ class TestBaseService:
             assert task_raised_exception, "The error_task did not execute or didn't raise an exception"
             
             # Verify the service has ERROR status
-            assert service.status == ServiceStatus.ERROR, f"Service should have ERROR status after task error, but has {service.status}"
+            assert service.get_overall_health_status() == HealthStatus.ERROR, f"Service should have ERROR status after task error, but has {service.get_overall_health_status()}"
             
             # Check errors
             assert service.errors >= 1, "Service should have recorded at least one error"
@@ -278,10 +278,10 @@ class TestBaseService:
                     last_state = service.state
                     
                 # Check for status changes
-                if service.status != last_status:
-                    status_history.append((time.monotonic(), service.status))
-                    logger.info(f"Service status changed: {last_status} -> {service.status}")
-                    last_status = service.status
+                if status := service.get_overall_health_status() != last_status:
+                    status_history.append((time.monotonic(), status))
+                    logger.info(f"Service status changed: {last_status} -> {status}")
+                    last_status = status
                     
                 await asyncio.sleep(TICK)  # Short interval to catch all changes
         
@@ -290,7 +290,7 @@ class TestBaseService:
         
         try:
             # Wait for the service to transition to error status
-            await wait_for_service_status(service, ServiceStatus.ERROR, timeout=2.0)
+            await wait_for_service_status(service, HealthStatus.ERROR, timeout=2.0)
             
             # Wait a bit to collect state/status changes
             await asyncio.sleep(1.0)
@@ -298,7 +298,7 @@ class TestBaseService:
             # Print diagnostics
             logger.info(f"Diagnostics for service {service.service_name}:")
             logger.info(f"  Current state: {service.state}")
-            logger.info(f"  Current status: {service.status}")
+            logger.info(f"  Current status: {service.get_overall_health_status()}")
             logger.info(f"  Exception raised: {task_raised_exception}")
             logger.info(f"  Error count: {service.errors}")
             logger.info(f"  Run task done: {run_task.done()}")
@@ -314,7 +314,7 @@ class TestBaseService:
             # Verify expectations
             assert task_raised_exception, "The error_task did not execute or didn't raise an exception"
             assert service.errors >= 1, "Service should have recorded at least one error"
-            assert service.status == ServiceStatus.ERROR, f"Service should have ERROR status, has {service.status}"
+            assert service.get_overall_health_status() == HealthStatus.ERROR, f"Service should have ERROR status, has {service.get_overall_health_status()}"
             assert service.state == ServiceState.STOPPED, f"Service should be STOPPED, is {service.state}"
             
             logger.info("Diagnostic test completed successfully!")
@@ -502,7 +502,7 @@ class TestServiceErrorHandling:
         error_service.record_error(test_error, is_fatal=False)
         
         # Service should continue running
-        assert error_service.status == ServiceStatus.ERROR
+        assert error_service.get_overall_health_status() == HealthStatus.ERROR
         assert error_service.errors == 1
         assert error_service.state == ServiceState.STARTED  # Still operational
     
@@ -523,7 +523,7 @@ class TestServiceErrorHandling:
             error_service.record_error(test_error, is_fatal=True)
             
             # Service should automatically stop
-            assert error_service.status == ServiceStatus.FATAL
+            assert error_service.get_overall_health_status() == HealthStatus.FATAL
             assert error_service.errors == 1
             
             # Wait for automatic shutdown
@@ -545,13 +545,13 @@ class TestServiceErrorHandling:
         test_error = ValueError("Recoverable error")
         error_service.record_error(test_error, is_fatal=False)
         
-        assert error_service.status == ServiceStatus.ERROR
+        assert error_service.get_overall_health_status() == HealthStatus.ERROR
         assert error_service.errors == 1
         
         # Reset error status
         error_service.reset_error_status()
         
-        assert error_service.status == ServiceStatus.HEALTHY
+        assert error_service.get_overall_health_status() == HealthStatus.HEALTHY
         assert error_service.errors == 1  # Error count remains
     
     @pytest.mark.asyncio

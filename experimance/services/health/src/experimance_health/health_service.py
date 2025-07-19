@@ -36,13 +36,14 @@ class HealthService(BaseService):
     def __init__(self, config: HealthServiceConfig):
         """Initialize the health service."""
         # Initialize BaseService first
-        super().__init__(service_name=config.service_name)
+        super().__init__(service_name=config.service_name, service_type="health")
         
         self.config = config
         self.health_dir = config.get_effective_health_dir()
         self.last_notifications = {}  # Track last notification time per service
         self.notification_handlers = []
         self.startup_time = datetime.now()
+        self.initial_system_notification_sent = False  # Track if we've sent the post-grace-period notification
         
         # Initialize notification handlers
         self._initialize_notification_handlers()
@@ -94,11 +95,14 @@ class HealthService(BaseService):
         if self.config.notification_on_startup:
             await self._send_startup_notification()
         
-        # Add health monitoring task
+        # Add main health monitoring task
         self.add_task(self._health_monitoring_loop())
         
         # Add cleanup task
         self.add_task(self._cleanup_loop())
+        
+        # Add stats collection task
+        self.add_task(self._stats_collection_loop())
         
         await super().start()
     
@@ -121,15 +125,24 @@ class HealthService(BaseService):
     def _flush_notification_buffers(self):
         """Flush all buffered notification handlers immediately."""
         for handler in self.notification_handlers:
-            # Check if this is a BufferedNotificationHandler
+            # All handlers now have built-in flush capability
             if hasattr(handler, 'flush_immediately') and callable(getattr(handler, 'flush_immediately')):
                 try:
-                    handler.flush_immediately()  # type: ignore
+                    handler.flush_immediately()
                 except Exception as e:
-                    logger.error(f"Error flushing notification buffer: {e}")
+                    logger.error(f"Error flushing notification buffer for {handler.name}: {e}")
     
     async def _send_startup_notification(self):
         """Send notification that health service is starting."""
+        # Only send startup notification if configured to do so and if we notify on healthy
+        if not self.config.notification_on_startup:
+            return
+        
+        # For healthy startup notifications, respect the notify_on_healthy setting
+        if not self.config.notify_on_healthy:
+            logger.debug("Skipping startup notification - notify_on_healthy is False")
+            return
+            
         for handler in self.notification_handlers:
             try:
                 from experimance_common.health import ServiceHealth, HealthCheck
@@ -150,35 +163,71 @@ class HealthService(BaseService):
                 logger.error(f"Error sending startup notification: {e}")
     
     async def _send_shutdown_notification(self):
-        """Send notification that health service is shutting down."""
+        """Send system notification that health service is shutting down."""
+        logger.info("Sending system shutdown notification")
+        
+        # Get current system state before shutdown
+        service_statuses = {}
+        for service_type in self.config.expected_services:
+            status = await self._collect_service_stats(service_type, datetime.now())
+            service_statuses[service_type] = {
+                "status": status.get("status", "UNKNOWN"),
+                "message": status.get("message", ""),
+                "uptime": 0,  # We don't have uptime in stats format
+                "error_count": status.get("errors", 0),
+                "restart_count": 0
+            }
+        
+        # Convert to ServiceHealth objects
+        from experimance_common.health import ServiceHealth, HealthCheck
+        
+        service_health_objects = {}
+        for service_type, status in service_statuses.items():
+            try:
+                health_status = HealthStatus(status["status"].lower())
+            except ValueError:
+                health_status = HealthStatus.UNKNOWN
+            
+            service_health = ServiceHealth(
+                service_name=service_type,  # Using service_type as service_name for consistency
+                overall_status=health_status
+            )
+            service_health.uptime = status.get("uptime", 0)
+            service_health.error_count = status.get("error_count", 0)
+            service_health.restart_count = status.get("restart_count", 0)
+            
+            service_health_objects[service_type] = service_health
+        
+        # Add the health service itself as shutting down
+        health_service_health = ServiceHealth(
+            service_name=self.config.service_name,
+            overall_status=HealthStatus.WARNING
+        )
+        
+        check = HealthCheck(
+            name="shutdown",
+            status=HealthStatus.WARNING,
+            message="Health service is shutting down"
+        )
+        health_service_health.add_check(check)
+        service_health_objects[self.config.service_name] = health_service_health
+        
+        # Send system shutdown notification to all handlers
         for handler in self.notification_handlers:
             try:
-                from experimance_common.health import ServiceHealth, HealthCheck
-                mock_health = ServiceHealth(
-                    service_name=self.config.service_name,
-                    overall_status=HealthStatus.WARNING
-                )
-                
-                check = HealthCheck(
-                    name="shutdown",
-                    status=HealthStatus.WARNING,
-                    message="Health service is shutting down"
-                )
-                mock_health.add_check(check)
-                
-                handler.send_notification(mock_health)
+                handler.send_system_notification(service_health_objects)
             except Exception as e:
-                logger.error(f"Error sending shutdown notification: {e}")
+                logger.error(f"Error sending shutdown system notification to {handler.name}: {e}")
     
     async def _cleanup_loop(self):
         """Cleanup old health files periodically."""
         while self.running:
             try:
                 await self._cleanup_old_health_files()
-                await asyncio.sleep(self.config.cleanup_interval)
+                await self._sleep_if_running(self.config.cleanup_interval)
             except Exception as e:
                 logger.error(f"Error in cleanup loop: {e}")
-                await asyncio.sleep(60)  # Short delay on error
+                await self._sleep_if_running(60)
     
     async def _cleanup_old_health_files(self):
         """Remove old health files."""
@@ -194,15 +243,156 @@ class HealthService(BaseService):
             except Exception as e:
                 logger.warning(f"Error cleaning up {health_file}: {e}")
     
+    async def _stats_collection_loop(self):
+        """Collect and display global service statistics."""
+        while self.running:
+            try:
+                await self._collect_and_display_stats()
+                await self._sleep_if_running(10)  # Display stats every 10 seconds, same as BaseService
+            except Exception as e:
+                logger.error(f"Error in stats collection loop: {e}")
+                await self._sleep_if_running(10)
+    
+    async def _collect_and_display_stats(self):
+        """Collect statistics from all services and display global summary."""
+        current_time = datetime.now()
+        overall_stats = {
+            "timestamp": current_time.isoformat(),
+            "services": {},
+            "global_summary": {
+                "total_services": len(self.config.expected_services),
+                "healthy_services": 0,
+                "warning_services": 0,
+                "error_services": 0,
+                "unknown_services": 0,
+                "total_messages_sent": 0,
+                "total_messages_received": 0,
+                "total_errors": 0
+            }
+        }
+        
+        for service_type in self.config.expected_services:
+            stats = await self._collect_service_stats(service_type, current_time)
+            overall_stats["services"][service_type] = stats
+            
+            # Update global summary
+            status = stats.get("status", "UNKNOWN").upper()
+            if status == "HEALTHY":
+                overall_stats["global_summary"]["healthy_services"] += 1
+            elif status == "WARNING":
+                overall_stats["global_summary"]["warning_services"] += 1
+            elif status == "ERROR":
+                overall_stats["global_summary"]["error_services"] += 1
+            else:
+                overall_stats["global_summary"]["unknown_services"] += 1
+            
+            # Aggregate message counts and errors
+            overall_stats["global_summary"]["total_messages_sent"] += stats.get("messages_sent", 0)
+            overall_stats["global_summary"]["total_messages_received"] += stats.get("messages_received", 0)
+            overall_stats["global_summary"]["total_errors"] += stats.get("errors", 0)
+        
+        # Log the global summary in a clean format
+        summary = overall_stats["global_summary"]
+        healthy_count = summary["healthy_services"]
+        total_count = summary["total_services"]
+        
+        logger.info(f"Global Stats: {healthy_count}/{total_count} services healthy | "
+                   f"Messages: {summary['total_messages_sent']} sent, {summary['total_messages_received']} received | "
+                   f"Total errors: {summary['total_errors']}")
+        
+        # Log individual service stats at debug level to reduce noise
+        for service_name, stats in overall_stats["services"].items():
+            if stats.get("status") != "UNKNOWN":  # Only log services that are reporting
+                logger.debug(f"{service_name}: {stats.get('status')} | "
+                           f"Uptime: {stats.get('uptime', 'N/A')} | "
+                           f"Msgs: {stats.get('messages_sent', 0)}↑/{stats.get('messages_received', 0)}↓ | "
+                           f"Errors: {stats.get('errors', 0)}")
+    
+    async def _collect_service_stats(self, service_type: str, current_time: datetime) -> dict:
+        """Collect statistics for a single service type from its health file."""
+        health_file = self.health_dir / f"{service_type}.json"
+        
+        try:
+            if not health_file.exists():
+                return {
+                    "status": "UNKNOWN",
+                    "message": "Health file not found",
+                    "uptime": "N/A",
+                    "messages_sent": 0,
+                    "messages_received": 0,
+                    "errors": 0
+                }
+            
+            with open(health_file, 'r') as f:
+                health_data = json.load(f)
+            
+            # Check if health data is fresh
+            last_check_str = health_data.get("last_check")
+            if last_check_str:
+                last_check = datetime.fromisoformat(last_check_str.replace('Z', '+00:00'))
+                time_since_check = (current_time - last_check.replace(tzinfo=None)).total_seconds()
+                
+                # During startup grace period, don't mark stale data as error
+                time_since_startup = (current_time - self.startup_time).total_seconds()
+                in_grace_period = time_since_startup < self.config.startup_grace_period
+                
+                if time_since_check > self.config.service_timeout and not in_grace_period:
+                    return {
+                        "status": "ERROR",
+                        "message": f"Service health data is stale ({time_since_check:.1f}s old)",
+                        "uptime": health_data.get("uptime", "N/A"),
+                        "messages_sent": health_data.get("messages_sent", 0),
+                        "messages_received": health_data.get("messages_received", 0),
+                        "errors": health_data.get("error_count", 0)
+                    }
+                elif time_since_check > self.config.service_timeout and in_grace_period:
+                    # During grace period, just mark as unknown instead of error
+                    return {
+                        "status": "UNKNOWN",
+                        "message": f"Stale data from previous run ({time_since_check:.1f}s old, in grace period)",
+                        "uptime": health_data.get("uptime", "N/A"),
+                        "messages_sent": health_data.get("messages_sent", 0),
+                        "messages_received": health_data.get("messages_received", 0),
+                        "errors": health_data.get("error_count", 0)
+                    }
+            
+            # Extract stats from health data
+            uptime_seconds = health_data.get("uptime", 0)
+            if isinstance(uptime_seconds, (int, float)) and uptime_seconds > 0:
+                hours, remainder = divmod(int(uptime_seconds), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                uptime_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+            else:
+                uptime_str = "N/A"
+            
+            return {
+                "status": health_data.get("overall_status", "UNKNOWN"),
+                "message": health_data.get("message", ""),
+                "uptime": uptime_str,
+                "messages_sent": health_data.get("messages_sent", 0),
+                "messages_received": health_data.get("messages_received", 0),
+                "errors": health_data.get("error_count", 0)
+            }
+            
+        except Exception as e:
+            return {
+                "status": "ERROR",
+                "message": f"Error reading stats: {e}",
+                "uptime": "N/A",
+                "messages_sent": 0,
+                "messages_received": 0,
+                "errors": 0
+            }
+    
     async def _health_monitoring_loop(self):
         """Main health monitoring loop."""
         while self.running:
             try:
                 await self._check_all_services()
-                await asyncio.sleep(self.config.check_interval)
+                await self._sleep_if_running(self.config.check_interval)
             except Exception as e:
                 logger.error(f"Error in health monitoring loop: {e}")
-                await asyncio.sleep(5)  # Short delay on error
+                await self._sleep_if_running(5)  # Short delay on error
     
     async def _check_all_services(self):
         """Check the health of all expected services."""
@@ -217,13 +407,18 @@ class HealthService(BaseService):
         overall_healthy = True
         service_statuses = {}
         
-        for service_name in self.config.expected_services:
-            status = await self._check_service_health(service_name, current_time)
-            service_statuses[service_name] = status
+        for service_type in self.config.expected_services:
+            status = await self._check_service_health(service_type, current_time)
+            service_statuses[service_type] = status
             
             # Check if service is unhealthy (case-insensitive comparison)
             if status["status"].upper() not in ["HEALTHY", "WARNING"]:
                 overall_healthy = False
+        
+        # Send initial system notification after grace period (once)
+        if not self.initial_system_notification_sent:
+            await self._send_initial_system_notification(service_statuses, overall_healthy)
+            self.initial_system_notification_sent = True
         
         # Log overall system health
         if overall_healthy:
@@ -238,9 +433,9 @@ class HealthService(BaseService):
         # Send notifications if needed
         await self._send_notifications(service_statuses, overall_healthy)
     
-    async def _check_service_health(self, service_name: str, current_time: datetime) -> Dict:
-        """Check the health of a single service."""
-        health_file = self.health_dir / f"{service_name}.json"
+    async def _check_service_health(self, service_type: str, current_time: datetime) -> Dict:
+        """Check the health of a single service type."""
+        health_file = self.health_dir / f"{service_type}.json"
         
         try:
             if not health_file.exists():
@@ -337,54 +532,96 @@ class HealthService(BaseService):
         if notifications_sent > 0:
             logger.info(f"Sent {notifications_sent} health notifications")
         
-        # If using buffered notifications, also send system summary
-        if self.config.enable_buffering and service_statuses:
-            await self._send_system_summary(service_statuses, overall_healthy)
+        # Only send system notifications for significant events, not routine health checks
+        # Individual service notifications (buffered) handle the routine monitoring
+    
+    async def _send_initial_system_notification(self, service_statuses: Dict, overall_healthy: bool):
+        """Send initial system notification after startup grace period."""
+        logger.info("Sending initial system health notification after startup grace period")
+        
+        # Convert raw status data to ServiceHealth objects
+        from experimance_common.health import ServiceHealth, HealthCheck
+        
+        service_health_objects = {}
+        for service_name, status in service_statuses.items():
+            try:
+                health_status = HealthStatus(status["status"].lower())
+            except ValueError:
+                health_status = HealthStatus.UNKNOWN
+            
+            service_health = ServiceHealth(
+                service_name=service_name,
+                overall_status=health_status
+            )
+            service_health.uptime = status.get("uptime", 0)
+            service_health.error_count = status.get("error_count", 0)
+            service_health.restart_count = status.get("restart_count", 0)
+            
+            # Add health check with message if available
+            message = status.get("message", "")
+            if message:
+                check = HealthCheck(
+                    name="initial_system_check",
+                    status=health_status,
+                    message=message
+                )
+                service_health.add_check(check)
+            
+            service_health_objects[service_name] = service_health
+        
+        # Send to all handlers - this is a significant system event
+        for handler in self.notification_handlers:
+            try:
+                handler.send_system_notification(service_health_objects)
+            except Exception as e:
+                logger.error(f"Error sending initial system notification to {handler.name}: {e}")
     
     async def _send_system_summary(self, service_statuses: Dict, overall_healthy: bool):
-        """Send a system-wide health summary for buffered notifications."""
+        """Send a system-wide health summary."""
         # Only send summary if there are issues or if configured to notify on healthy
         if overall_healthy and not self.config.notify_on_healthy:
             return
         
-        # Find any buffered notification handlers and send system summary
+        # Convert raw status data to ServiceHealth objects once
+        from experimance_common.health import ServiceHealth, HealthCheck
+        
+        service_health_objects = {}
+        for service_name, status in service_statuses.items():
+            # Convert string status to HealthStatus enum
+            try:
+                health_status = HealthStatus(status["status"].lower())
+            except ValueError:
+                health_status = HealthStatus.UNKNOWN
+            
+            service_health = ServiceHealth(
+                service_name=service_name,
+                overall_status=health_status
+            )
+            service_health.uptime = status.get("uptime", 0)
+            service_health.error_count = status.get("error_count", 0)
+            service_health.restart_count = status.get("restart_count", 0)
+            
+            # Add health check with message if available
+            message = status.get("message", "")
+            if message:
+                check = HealthCheck(
+                    name="health_service_check",
+                    status=health_status,
+                    message=message
+                )
+                service_health.add_check(check)
+            
+            service_health_objects[service_name] = service_health
+        
+        # Send system summary only to the log handler (non-buffered immediate logging)
+        # Other handlers will get system notifications when their buffers flush
         for handler in self.notification_handlers:
-            if hasattr(handler, 'send_system_notification'):
+            # Only send immediate system notifications to handlers that don't buffer
+            if not handler.enable_buffering:
                 try:
-                    # Convert raw status data to ServiceHealth objects
-                    from experimance_common.health import ServiceHealth, HealthCheck
-                    
-                    service_health_objects = {}
-                    for service_name, status in service_statuses.items():
-                        # Convert string status to HealthStatus enum
-                        try:
-                            health_status = HealthStatus(status["status"].lower())
-                        except ValueError:
-                            health_status = HealthStatus.UNKNOWN
-                        
-                        service_health = ServiceHealth(
-                            service_name=service_name,
-                            overall_status=health_status
-                        )
-                        service_health.uptime = status.get("uptime", 0)
-                        service_health.error_count = status.get("error_count", 0)
-                        service_health.restart_count = status.get("restart_count", 0)
-                        
-                        # Add health check with message if available
-                        message = status.get("message", "")
-                        if message:
-                            check = HealthCheck(
-                                name="health_service_check",
-                                status=health_status,
-                                message=message
-                            )
-                            service_health.add_check(check)
-                        
-                        service_health_objects[service_name] = service_health
-                    
                     handler.send_system_notification(service_health_objects)
                 except Exception as e:
-                    logger.error(f"Error sending system summary: {e}")
+                    logger.error(f"Error sending system summary to {handler.name}: {e}")
     
     def _should_notify(self, service_name: str, status: str) -> bool:
         """Check if we should send a notification for this service."""

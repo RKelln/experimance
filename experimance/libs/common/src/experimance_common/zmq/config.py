@@ -192,7 +192,6 @@ class WorkerServiceConfig(PubSubServiceConfig):
     pull: WorkerPullConfig = Field(..., description="Pull configuration for receiving work")
     
     # Service settings
-    # heartbeat_interval: float = Field(default=HEARTBEAT_INTERVAL, gt=0, description="Heartbeat interval in seconds")
     work_timeout: float = Field(default=60.0, gt=0, description="Work processing timeout")
     max_concurrent_tasks: int = Field(default=10, gt=0, description="Maximum concurrent work tasks")
 
@@ -513,7 +512,7 @@ if __name__ == "__main__":
         "name": "production_controller",
         "log_level": "INFO",
         "publisher": {"address": "tcp://*", "port": 5555},
-        "subscriber": {"address": "tcp://localhost", "port": 5556, "topics": ["heartbeat"]},
+        "subscriber": {"address": "tcp://localhost", "port": 5556, "topics": ["events"]},
         "workers": {}
     }
     

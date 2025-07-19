@@ -93,10 +93,12 @@ experimance/
 
 ## Project managed by `uv`
 
-- **Use `uv`!** ``uv run` for running services and scripts
+- **Use `uv run`** for running services and scripts
 - Each service should have a `pyproject.toml` file with dependencies and scripts defined
 - Use `uv run -m` to start services, e.g., `uv run -m experimance_core`
 - Use `uv run -m pytest` for running tests, e.g., `uv run -m pytest utils/tests/`
+- **Development**: Use `scripts/dev <service>` or `scripts/dev all` for coordinated development (auto-cleanup, logging). For isolated testing use `uv run -m` directly.
+- **Environment Variables**: Override any config setting with `EXPERIMANCE_<SECTION>_<KEY>=value` (e.g., `EXPERIMANCE_ZMQ_BASE_PORT=6000`)
 
 ## ZeroMQ Communication
 
