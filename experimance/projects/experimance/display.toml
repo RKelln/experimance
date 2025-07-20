@@ -10,7 +10,7 @@ vsync = true                  # Whether to use vertical sync
 debug_overlay = false          # Whether to show debug overlay
 #background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
 mask="circle"
-#debug_image = "media/images/projector_alignment.png"
+#debug_image = "media/images/display/projector_alignment.png"
 
 # ZeroMQ configuration
 #[zmq]
@@ -40,7 +40,7 @@ enabled = true                     # Whether video overlay is enabled
 default_video_path = "video_overlay.mp4"  # Path to default video (relative to media/videos/ or absolute)
 loop_video = true                  # Whether to loop the video playback
 fallback_mask_enabled = true       # Whether to create fallback mask if none provided
-start_mask_path = "images/ring_map.png"  # Path to mask file to load on startup
+start_mask_path = "media/images/display/ring_map.png"  # Path to mask file to load on startup
 
 
 # Text styles for different speakers
