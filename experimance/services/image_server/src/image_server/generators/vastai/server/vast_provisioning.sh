@@ -247,22 +247,5 @@ chmod +x /opt/supervisor-scripts/experimance-image-server.sh
 echo "Reloading supervisor configuration..."
 supervisorctl reload
 
-# Wait for supervisor to fully restart
-echo "Waiting for supervisor to restart..."
-sleep 10
-
-# Show final status
-echo "=== Provisioning Complete ==="
-echo "Supervisor status:"
-supervisorctl status 2>/dev/null || echo "Supervisor still restarting..."
-
-echo ""
-echo "Testing wrapper script manually (5 second test):"
-timeout 5 /opt/supervisor-scripts/experimance-image-server.sh 2>&1 || echo "Wrapper test completed"
-
-echo ""
-echo "Checking supervisor log for experimance-image-server:"
-tail -n 10 /var/log/portal/experimance-image-server.log 2>/dev/null || echo "No log file found yet"
-
 echo ""
 echo "=== Provisioning script completed successfully ==="
