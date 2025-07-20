@@ -15,16 +15,52 @@ a direct interface for triggering display updates.
 import asyncio
 import logging
 import argparse
+import os
 import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
+# Set up logger first before any other imports that might fail
+logger = logging.getLogger(__name__)
+
 from experimance_common.schemas import ContentType, MessageType, DisplayText, RemoveText
-from experimance_display.pyglet_test import MainWindow
 from pydantic import ValidationError
-import pyglet
-from pyglet import clock
-from pyglet.window import key
+
+# Import pyglet with basic fallback for headless environments
+try:
+    import pyglet
+    from pyglet import clock
+    from pyglet.window import key
+except Exception as e:
+    logger.warning(f"Pyglet import failed: {e}. Display service will run in headless mode only.")
+    # Create minimal mock objects to prevent import errors
+    class MockPyglet:
+        class clock:
+            @staticmethod
+            def tick(): pass
+            @staticmethod
+            def schedule_interval(*args): pass
+            @staticmethod
+            def unschedule(*args): pass
+            @staticmethod
+            def schedule_once(*args): pass
+        class window:
+            class key:
+                ESCAPE = 65307
+                Q = 113
+                F11 = 65480
+                F1 = 65470
+    
+    pyglet = MockPyglet()
+    clock = pyglet.clock
+    key = pyglet.window.key
+
+# Try to import the test window, but don't fail if it can't connect to display
+try:
+    from experimance_display.pyglet_test import MainWindow
+except Exception as e:
+    logger.warning(f"MainWindow import failed: {e}. This is expected in headless environments.")
+    MainWindow = None
 
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import PubSubService
@@ -40,9 +76,6 @@ from .renderers.video_overlay_renderer import VideoOverlayRenderer
 from .renderers.mask_renderer import MaskRenderer
 from .renderers.text_overlay_manager import TextOverlayManager
 from .renderers.debug_overlay_renderer import DebugOverlayRenderer
-from .renderers.panorama_renderer import PanoramaRenderer
-
-logger = logging.getLogger(__name__)
 
 
 class DisplayService(BaseService):
@@ -134,16 +167,6 @@ class DisplayService(BaseService):
         # Show title screen if enabled
         await self._show_title_screen()
 
-        # wait 5 sec then fade out the video
-        # if self.video_overlay_renderer is not None and self.config.video_overlay.enabled:
-            
-        #     async def fade_out_video_overlay():
-        #         logger.info("Waiting 5 seconds before fading out video overlay")
-        #         await asyncio.sleep(5)
-        #         if self.video_overlay_renderer:
-        #             self.video_overlay_renderer.hide_overlay()
-        #     self.add_task(asyncio.create_task(fade_out_video_overlay()))
-
         # Show debug text if enabled
         if self.config.display.debug_text:
             await self._show_debug_text()
@@ -151,10 +174,20 @@ class DisplayService(BaseService):
     def _initialize_window(self):
         """Initialize the pyglet window."""
         try:
+            # Check for forced headless mode from environment
+            forced_headless = os.environ.get('EXPERIMANCE_DISPLAY_HEADLESS', '').lower() in ('true', '1', 'yes')
+            
+            # Use headless mode if configured or forced
+            headless = self.config.display.headless or forced_headless
+            
+            if forced_headless:
+                logger.info("Headless mode forced via EXPERIMANCE_DISPLAY_HEADLESS environment variable")
+            elif headless:
+                logger.info("Headless mode enabled in configuration")
+            
             # Skip window creation in headless mode
-            if self.config.display.headless:
+            if headless:
                 logger.info("Running in headless mode - no window will be created")
-                # Create a mock window object for headless mode
                 self.window = self._create_headless_window()
                 return
             
@@ -179,7 +212,7 @@ class DisplayService(BaseService):
                     width=width,
                     height=height,
                     caption=f"Experimance Display - {self.config.service_name}",
-                    vsync=self.config.display.vsync  # Re-enable V-sync
+                    vsync=self.config.display.vsync
                 )
             
             # Register window event handlers

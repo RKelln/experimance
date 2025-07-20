@@ -2,6 +2,15 @@
 
 # Development script for Experimance
 # Usage: ./scripts/dev [service_name|all]
+# 
+# Automatically detects remote vs local development:
+# - Remote (SSH): Display service runs on installation monitors via desktop session
+# - Local: Display service uses normal X11/Wayland environment
+# 
+# Examples:
+#   ./scripts/dev display          # Start display service 
+#   ./scripts/dev health core      # Start multiple services
+#   ./scripts/dev all              # Start all services
 
 # Color definitions
 RED='\033[0;31m'
@@ -155,6 +164,138 @@ get_module_name() {
 # Export the function so it's available in subshells
 export -f get_module_name
 
+# Function to detect if we're in a remote session
+is_remote_session() {
+    # Check if we're connected via SSH
+    [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ] || [ -n "$SSH_CONNECTION" ] || \
+    # Check for VS Code remote session
+    [ -n "$VSCODE_IPC_HOOK_CLI" ] || [ -n "$REMOTE_CONTAINERS" ] || [ -n "$CODESPACES" ] || \
+    [ "$TERM_PROGRAM" = "vscode" ] || \
+    # Check for VS Code server process (another indicator)
+    pgrep -f "vscode-server" >/dev/null 2>&1 || \
+    # Additional SSH indicators
+    [ -n "$SSH_AUTH_SOCK" ] && [[ "$SSH_AUTH_SOCK" == *"vscode"* ]]
+}
+
+# Function to setup display environment for display service
+setup_display_environment() {
+    # If we already have a working display, use it
+    if [ -n "$DISPLAY" ] && command -v xrandr >/dev/null 2>&1 && xrandr >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ Using existing display environment: $DISPLAY${NC}"
+        return 0
+    fi
+    
+    # For remote sessions, try to find the desktop session
+    if is_remote_session; then
+        echo -e "${BLUE}Remote session detected - setting up display for installation monitors...${NC}"
+        
+        # Find active desktop session
+        DESKTOP_SESSION=$(loginctl list-sessions --no-legend | grep 'seat0.*active' | awk '{print $1}' | head -1)
+        if [ -n "$DESKTOP_SESSION" ]; then
+            echo -e "${GREEN}Found active desktop session: $DESKTOP_SESSION${NC}"
+            
+            # Get display environment from GNOME process
+            GNOME_PID=$(pgrep -u "$USER" gnome-shell | head -1)
+            if [ -n "$GNOME_PID" ] && [ -r "/proc/$GNOME_PID/environ" ]; then
+                DESKTOP_DISPLAY=$(tr '\0' '\n' < "/proc/$GNOME_PID/environ" | grep '^DISPLAY=' | cut -d= -f2)
+                DESKTOP_XDG_SESSION_TYPE=$(tr '\0' '\n' < "/proc/$GNOME_PID/environ" | grep '^XDG_SESSION_TYPE=' | cut -d= -f2)
+                DESKTOP_XAUTHORITY=$(tr '\0' '\n' < "/proc/$GNOME_PID/environ" | grep '^XAUTHORITY=' | cut -d= -f2)
+                
+                # For Wayland sessions, check for Xwayland
+                if [ "$DESKTOP_XDG_SESSION_TYPE" = "wayland" ] && pgrep -f "Xwayland.*:0" >/dev/null 2>&1; then
+                    DESKTOP_DISPLAY=":0"
+                    XWAYLAND_AUTH=$(find /run/user/$(id -u)/ -name ".mutter-Xwaylandauth.*" 2>/dev/null | head -1)
+                    [ -n "$XWAYLAND_AUTH" ] && DESKTOP_XAUTHORITY="$XWAYLAND_AUTH"
+                    echo -e "${GREEN}Found Xwayland on :0${NC}"
+                fi
+                
+                # Export the desktop environment
+                [ -n "$DESKTOP_DISPLAY" ] && export DISPLAY="$DESKTOP_DISPLAY"
+                [ -n "$DESKTOP_XAUTHORITY" ] && export XAUTHORITY="$DESKTOP_XAUTHORITY"
+            fi
+        fi
+    else
+        # Local development - try to use existing session or force headless
+        echo -e "${BLUE}Local development detected${NC}"
+        
+        # Try current user's display session
+        if [ -z "$DISPLAY" ]; then
+            # Check if we have an active X session
+            if pgrep -u "$USER" -x Xorg >/dev/null 2>&1 || pgrep -u "$USER" -x gnome-shell >/dev/null 2>&1; then
+                # Try to get display from existing session
+                GNOME_PID=$(pgrep -u "$USER" gnome-shell | head -1)
+                if [ -n "$GNOME_PID" ] && [ -r "/proc/$GNOME_PID/environ" ]; then
+                    DESKTOP_DISPLAY=$(tr '\0' '\n' < "/proc/$GNOME_PID/environ" | grep '^DISPLAY=' | cut -d= -f2)
+                    DESKTOP_XAUTHORITY=$(tr '\0' '\n' < "/proc/$GNOME_PID/environ" | grep '^XAUTHORITY=' | cut -d= -f2)
+                    
+                    # Check for Xwayland
+                    if pgrep -f "Xwayland.*:0" >/dev/null 2>&1; then
+                        DESKTOP_DISPLAY=":0"
+                        XWAYLAND_AUTH=$(find /run/user/$(id -u)/ -name ".mutter-Xwaylandauth.*" 2>/dev/null | head -1)
+                        [ -n "$XWAYLAND_AUTH" ] && DESKTOP_XAUTHORITY="$XWAYLAND_AUTH"
+                        echo -e "${GREEN}Found Xwayland for local session${NC}"
+                    fi
+                    
+                    [ -n "$DESKTOP_DISPLAY" ] && export DISPLAY="$DESKTOP_DISPLAY"
+                    [ -n "$DESKTOP_XAUTHORITY" ] && export XAUTHORITY="$DESKTOP_XAUTHORITY"
+                else
+                    echo -e "${YELLOW}Local GUI session detected but can't access environment - forcing headless mode${NC}"
+                    export EXPERIMANCE_DISPLAY_HEADLESS=true
+                fi
+            else
+                echo -e "${YELLOW}No GUI session detected - forcing headless mode${NC}"
+                export EXPERIMANCE_DISPLAY_HEADLESS=true
+            fi
+        fi
+    fi
+    
+    # Final fallback - if still no display, force headless
+    if [ -z "$DISPLAY" ] && [ "$EXPERIMANCE_DISPLAY_HEADLESS" != "true" ]; then
+        echo -e "${YELLOW}No display environment found - forcing headless mode${NC}"
+        export EXPERIMANCE_DISPLAY_HEADLESS=true
+    fi
+}
+
+# Function to run services with proper display access
+run_with_display() {
+    local service="$1"
+    local module_name="$2"
+    
+    # For display service, ensure proper display environment
+    if [ "$service" = "display" ]; then
+        setup_display_environment
+        
+        # Test display connection
+        if [ -n "$DISPLAY" ] && command -v xrandr >/dev/null 2>&1; then
+            if xrandr --listmonitors >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ Display connection successful${NC}"
+                monitor_count=$(xrandr --listmonitors | grep -c "Monitor")
+                echo -e "${BLUE}Found $monitor_count monitor(s)${NC}"
+            else
+                echo -e "${YELLOW}Display connection available but no monitors detected${NC}"
+            fi
+        fi
+        
+        # Use systemd-run for remote sessions to ensure proper session context
+        if is_remote_session && command -v systemd-run >/dev/null 2>&1; then
+            echo -e "${GREEN}Using systemd-run for desktop session context...${NC}"
+            systemd-run --user --scope --slice=app.slice \
+                --setenv=DISPLAY="$DISPLAY" \
+                --setenv=XAUTHORITY="$XAUTHORITY" \
+                --setenv=EXPERIMANCE_ENV=development \
+                --working-directory="$REPO_DIR" \
+                uv run -m "$module_name"
+            return
+        fi
+    fi
+    
+    # Run the service normally
+    uv run -m "$module_name"
+}
+
+# Export the function
+export -f run_with_display
+
 # Get available services dynamically using the same script as deploy.sh
 get_available_services() {
     local project="${1:-experimance}"
@@ -204,10 +345,17 @@ get_available_services() {
 # Get available services
 readarray -t AVAILABLE_SERVICES < <(get_available_services "${PROJECT:-experimance}")
 
+# Parse command line arguments
+REQUESTED_SERVICES=()
+
+# Parse arguments - just service names now
+REQUESTED_SERVICES=("$@")
+
 # Check if service names are provided
-if [ -z "$1" ]; then
+if [ ${#REQUESTED_SERVICES[@]} -eq 0 ]; then
     echo -e "${RED}Error: Service name(s) required${NC}"
     echo -e "Usage: ${YELLOW}./scripts/dev <service_name(s)|all>${NC}"
+    echo ""
     echo "Available services:"
     
     for service in "${AVAILABLE_SERVICES[@]}"; do
@@ -216,16 +364,14 @@ if [ -z "$1" ]; then
     echo "  - all                          # Start all services"
     echo ""
     echo "Examples:"
-    echo "  ./scripts/dev health           # Start single service"
+    echo "  ./scripts/dev display          # Start display service on monitors"
     echo "  ./scripts/dev health core      # Start multiple services"
     echo "  ./scripts/dev all              # Start all services"
     exit 1
 fi
 
 # Parse all command line arguments as services
-REQUESTED_SERVICES=("$@")
-
-# Check if "all" is requested
+SERVICES_TO_START=()
 if [[ "${REQUESTED_SERVICES[0]}" == "all" ]]; then
     if [[ ${#REQUESTED_SERVICES[@]} -gt 1 ]]; then
         echo -e "${RED}Error: Cannot specify other services when using 'all'${NC}"
@@ -277,9 +423,9 @@ if [[ ${#SERVICES_TO_START[@]} -eq 1 ]]; then
     # Set development environment
     export EXPERIMANCE_ENV=development
 
-    # Start service using uv run
+    # Start service using uv run with display handling
     echo -e "${GREEN}Running: uv run -m ${MODULE_NAME}${NC}"
-    exec uv run -m "$MODULE_NAME"
+    run_with_display "$SERVICE" "$MODULE_NAME"
     
 else
     # Multiple services mode - run in background with logging
