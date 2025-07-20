@@ -7,9 +7,11 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 ## Key Features ✅
 
 ### 1. **Easy Service Management**
-- **One-command deployment**: `sudo ./infra/scripts/deploy.sh experimance install`
+- **Development setup**: `./infra/scripts/deploy.sh experimance install dev` (no sudo needed)
+- **Production deployment**: `sudo ./infra/scripts/deploy.sh experimance install prod`
 - **Project switching**: Support for multiple installations (experimance, sohkepayin, etc.)
 - **Service lifecycle**: Start, stop, restart, status checking all automated
+- **Explicit modes**: Clear separation between development and production environments
 
 ### 2. **Auto-Recovery**
 - **systemd integration**: Native Ubuntu service management with automatic restart
@@ -70,26 +72,11 @@ libs/common/src/experimance_common/
 
 ## Quick Start Commands
 
-### Development (Individual Services)
-```bash
-# Run individual services for development/testing  
-./scripts/dev core     # Start core service
-./scripts/dev display  # Start display service
-./scripts/dev health   # Start health monitoring
-./scripts/dev          # Show available services
-
-# Each automatically:
-# - Sets EXPERIMANCE_ENV=development
-# - Uses current user (no sudo needed)
-# - Handles dependencies with uv
-# - Uses local cache directories
-```
-
 ### Production (Full Deployment)
 ```bash
-# One-time setup
+# One-time setup (creates experimance user and system services)
 sudo useradd -m -s /bin/bash experimance
-sudo ./infra/scripts/deploy.sh experimance install
+sudo ./infra/scripts/deploy.sh experimance install prod
 sudo ./infra/scripts/deploy.sh experimance start
 
 # Daily operations
@@ -98,6 +85,27 @@ sudo ./infra/scripts/deploy.sh experimance restart
 
 # View available services
 ./infra/scripts/deploy.sh experimance services
+```
+
+### Development (Testing on Any Machine)
+```bash
+# Development setup (uses current user, local directories, no systemd)
+# Automatically installs pyenv + latest Python 3.11.x + uv if needed
+./infra/scripts/deploy.sh experimance install dev
+
+# Run individual services for development/testing  
+./scripts/dev core     # Start core service
+./scripts/dev display  # Start display service
+./scripts/dev health   # Start health monitoring
+./scripts/dev          # Show available services
+
+# Development automatically:
+# - Uses current user (no sudo needed)
+# - Installs pyenv if not present
+# - Installs latest Python 3.11.x (required for pyrealsense2)
+# - Installs uv if not present
+# - Uses local cache directories (./cache/)
+# - Skips systemd service installation
 ```
 
 ## Emergency Quick Reference
@@ -119,6 +127,33 @@ sudo systemctl status "experimance-*@experimance"
 
 # Production
 sudo ./infra/scripts/deploy.sh experimance restart
+```
+
+### Install Issues
+```bash
+# If install fails, the script will show explicit error messages:
+# - Missing dependencies: Install pyenv/uv manually or check PATH
+# - Missing project: Verify project exists in projects/ directory
+# - Permission errors: Check sudo usage for production mode
+# - Service detection failed: Verify get_project_services.py exists and works
+
+# Python version issues (pyrealsense2 requires Python 3.11.x):
+# The script automatically installs latest Python 3.11.x via pyenv
+# If you get pyenv PATH issues:
+export PATH="$HOME/.pyenv/bin:$PATH"
+eval "$(pyenv init --path)"
+eval "$(pyenv init -)"
+# Then retry the install
+
+# If uv PATH issues occur during development install:
+source ~/.bashrc  # Refresh PATH to include ~/.local/bin
+# Then retry the install
+
+# Test service detection manually:
+cd /path/to/experimance
+uv run python infra/scripts/get_project_services.py experimance
+# or if uv not in PATH:
+~/.local/bin/uv run python infra/scripts/get_project_services.py experimance
 ```
 
 ### View Logs
@@ -150,7 +185,15 @@ sudo journalctl -u experimance-health@experimance -f
 ### Quick Setup
 
 ```bash
-# Configure health monitoring (automatic with deploy script)
+# Development setup (test on any machine)
+./infra/scripts/deploy.sh experimance install dev
+./scripts/dev health  # Start health monitoring in development
+
+# Production setup (deploy to exhibition machine)
+sudo ./infra/scripts/deploy.sh experimance install prod
+sudo ./infra/scripts/deploy.sh experimance start
+
+# Configure health monitoring
 # Edit projects/experimance/health.toml for notification settings
 
 # Install ntfy app on your phone and subscribe to your topic  
@@ -160,6 +203,38 @@ sudo journalctl -u experimance-health@experimance -f
 ls -la /var/cache/experimance/health/     # Production  
 ls -la cache/health/                      # Development
 ```
+
+## Install Modes
+
+### Development Mode (`dev`)
+- **Purpose**: Testing, development, or temporary setups
+- **Requirements**: No sudo needed, works on any machine
+- **User**: Current user (whoever runs the script)
+- **Python**: Automatically installs latest Python 3.11.x via pyenv (required for pyrealsense2)
+- **Dependencies**: Automatically installs pyenv and uv for current user if needed
+- **Directories**: Uses local `./cache/` directory
+- **Services**: No systemd services installed, use `./scripts/dev <service>`
+- **Command**: `./infra/scripts/deploy.sh experimance install dev`
+
+### Production Mode (`prod`)
+- **Purpose**: Exhibition deployment with systemd management
+- **Requirements**: Sudo needed, experimance user must exist
+- **User**: experimance user (created separately)
+- **Python**: Installs latest Python 3.11.x via pyenv for experimance user
+- **Dependencies**: Installs pyenv and uv for experimance user
+- **Directories**: Uses system directories `/var/cache/experimance/`
+- **Services**: Full systemd service installation and management
+- **Command**: `sudo ./infra/scripts/deploy.sh experimance install prod`
+
+## Error Handling
+
+The deploy script now fails explicitly instead of making assumptions:
+
+- **Missing dependencies**: Clear error with installation instructions
+- **Missing files**: Explicit error about what file is missing
+- **Failed operations**: No silent fallbacks, all failures are reported
+- **Service detection**: Must succeed or installation fails
+- **Mode detection**: Must be explicit for install, clear error if ambiguous
 
 ## Nice-to-Have Features
 
@@ -185,11 +260,13 @@ ls -la cache/health/                      # Development
 
 ## Success Criteria
 
-✅ **Simple**: One command to start/stop/restart all services
-✅ **Reliable**: Automatic recovery from common failures
-✅ **Monitored**: Immediate notification of serious issues
-✅ **Maintainable**: Remote SSH access for troubleshooting
-✅ **Updatable**: Safe remote updates with rollback
-✅ **Documented**: Clear procedures for common tasks
+✅ **Simple**: One command to start/stop/restart all services  
+✅ **Reliable**: Automatic recovery from common failures  
+✅ **Monitored**: Immediate notification of serious issues  
+✅ **Maintainable**: Remote SSH access for troubleshooting  
+✅ **Updatable**: Safe remote updates with rollback  
+✅ **Documented**: Clear procedures for common tasks  
+✅ **Explicit**: No hidden fallbacks, clear error messages when things fail  
+✅ **Flexible**: Separate development and production workflows  
 
 This infrastructure provides enterprise-grade reliability while maintaining the simplicity needed for art installations.
