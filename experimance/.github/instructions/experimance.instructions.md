@@ -76,9 +76,15 @@ experimance/
 │       └─ ...              # configuration files for Sohkepayin project  
 ```
 
+# Primary Development Guidelines
+- If you see something wrong that isn't related to the current request, please note it in the feedback to the user, but do not fix it without asking first
+- Update files directly, don't use temp files or scripts to write and then update files
+- Use best practices and always to to keep complexity low and clarity high
+- Use the existing code as a guide for new implementations but if its a mess suggest alternatives
+
 ## Coding Standards
 
-- Use Python 3.11+ compatible code
+- Use Python 3.11 compatible code
 - Follow PEP 8 style guidelines with 4-space indentation
 - Use type hints for function parameters and return values
 - Document all modules, classes, and functions with docstrings
@@ -86,10 +92,10 @@ experimance/
   1. Standard library imports
   2. Third-party imports
   3. Local application imports
-- Use async/await for asynchronous code
+- Use async/await for asynchronous code, aiohttp for HTTP requests
+- Pydantic for data validation, use dataclasses for simple data structures
 - Implement proper error handling with try/except blocks
 - Use logging instead of print statements
-- Update files directly, don't use temp files or scripts to write and then update files
 
 ## Project managed by `uv`
 

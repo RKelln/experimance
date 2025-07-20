@@ -117,7 +117,9 @@ Use the `vastai_cli.py` script located in the `scripts` directory to manage Vast
 Once you create an instance using `provision` it will default to that instance id for the rest of the commands 
 and `provision` with no running instance and no id will search offers, select the best and provision automatically.
 
-Until vastai fixes their provisioning, you wil need to run `fix` after `provision`.
+FIXME: Until vastai fixes their provisioning, you wil need to run `fix` after `provision`.
+
+If you make changes to the `model_server.py` or other server instance files then use `update` to up those.
 
 ```bash
 python scripts/vastai_cli.py <command> [options]

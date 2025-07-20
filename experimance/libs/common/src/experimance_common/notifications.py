@@ -329,18 +329,18 @@ class NtfyHandler(NotificationHandler):
         }
         
         if self.dryrun:
-            # Format the notification in a readable way for dry-run mode
-            logger.info("=" * 60)
-            logger.info(f"🔧 [DRY RUN] NTFY NOTIFICATION ({source.upper()})")
-            logger.info("=" * 60)
-            logger.info(f"📧 Title: {title}")
-            logger.info(f"🔸 Priority: {priority_map[status]}")
-            logger.info(f"🏷️  Tags: {', '.join(tags)}")
-            logger.info("📝 Message:")
-            # Split message into lines and indent each line
-            for line in message.split('\n'):
-                logger.info(f"   {line}")
-            logger.info("=" * 60)
+            log_text = (
+                f"{'=' * 60}\n"
+                f"🔧 [DRY RUN] NTFY NOTIFICATION ({source.upper()})\n"
+                f"{'=' * 60}\n"
+                f"📧 Title: {title}\n"
+                f"🔸 Priority: {priority_map[status]}\n"
+                f"🏷️  Tags: {', '.join(tags)}\n\n"
+                "📝 Message:\n"
+                + "\n".join(f"   {line}" for line in message.split('\n'))
+                + f"\n{'=' * 60}"
+            )
+            logger.info(log_text)
         else:
             response = requests.post(self.url, json=data, timeout=10)
             response.raise_for_status()
@@ -463,31 +463,36 @@ class WebhookHandler(NotificationHandler):
             )
             response.raise_for_status()
         else:
-            # Format the webhook payload in a readable way for dry-run mode
-            logger.info("=" * 60)
-            logger.info(f"🌐 [DRY RUN] WEBHOOK NOTIFICATION ({notification_type})")
-            logger.info("=" * 60)
-            logger.info(f"🔗 URL: {self.webhook_url}")
-            logger.info(f"📧 Type: {payload['type']}")
-            logger.info(f"⏰ Timestamp: {payload['timestamp']}")
-            
+            # Consolidated dry-run log for webhook notification
+            lines: list[str] = [
+                "=" * 60,
+                f"🌐 [DRY RUN] WEBHOOK NOTIFICATION ({notification_type})",
+                "=" * 60,
+                f"🔗 URL: {self.webhook_url}",
+                f"📧 Type: {payload['type']}",
+                f"⏰ Timestamp: {payload['timestamp']}",
+            ]
             if notification_type == "SERVICE":
                 service = payload['service']
-                logger.info(f"🔸 Service: {service['service_name']}")
-                logger.info(f"📊 Status: {service['overall_status']}")
+                lines.extend([
+                    f"🔸 Service: {service['service_name']}",
+                    f"📊 Status: {service['overall_status']}",
+                ])
                 if service.get('uptime'):
                     uptime_hours = service['uptime'] / 3600
-                    logger.info(f"⏱️  Uptime: {uptime_hours:.1f}h")
+                    lines.append(f"⏱️  Uptime: {uptime_hours:.1f}h")
             else:
-                logger.info(f"🔸 Services: {len(payload['services'])} total")
-                status_counts = {}
-                for svc in payload['services'].values():
+                services = payload['services']
+                # summary counts
+                status_counts: dict[str, int] = {}
+                for svc in services.values():
                     status = svc['overall_status']
                     status_counts[status] = status_counts.get(status, 0) + 1
+                lines.append(f"🔸 Services: {len(services)} total")
                 for status, count in status_counts.items():
-                    logger.info(f"   📊 {status.title()}: {count}")
-            
-            logger.info("=" * 60)
+                    lines.append(f"   📊 {status.title()}: {count}")
+            lines.append("=" * 60)
+            logger.info("\n".join(lines))
 
 def create_notification_handlers() -> List[NotificationHandler]:
     """Create notification handlers based on environment configuration."""
