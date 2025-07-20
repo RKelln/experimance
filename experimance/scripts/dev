@@ -28,6 +28,12 @@ warn() {
     echo -e "${YELLOW}WARNING: $1${NC}"
 }
 
+# Export functions so they're available in subshells
+export -f warn
+
+# Disable real notifications
+export NOTIFICATIONS_DRY_RUN=true
+
 # Function to kill existing experimance services
 cleanup_existing_services() {
     echo -e "${BLUE}Cleaning up any existing experimance services...${NC}"
@@ -118,12 +124,6 @@ cleanup_existing_services() {
     fi
     echo ""
 }
-
-# Export functions so they're available in subshells
-export -f warn
-
-# Disable real notifications
-export NOTIFICATIONS_DRY_RUN=true
 
 # Map service names to module paths
 get_module_name() {

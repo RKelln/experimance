@@ -253,6 +253,7 @@ check_build_dependencies() {
         "libdb-dev"
         "portaudio19-dev"  # needed for pyaudio
         "libasound2-dev"   # needed for pyaudio
+        "supercollider"    # needed for audio synthesis
     )
     
     # Check each package
@@ -269,7 +270,7 @@ check_build_dependencies() {
         done
         echo ""
         echo "The following packages need to be installed:"
-        echo "  sudo apt install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev portaudio19-dev libasound2-dev"
+        echo "  sudo apt install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev portaudio19-dev libasound2-dev supercollider"
         echo ""
         
         if [[ "$MODE" == "prod" ]]; then
@@ -302,7 +303,7 @@ install_system_dependencies() {
                 libbz2-dev libreadline-dev libsqlite3-dev curl git \
                 libncursesw5-dev xz-utils tk-dev libxml2-dev \
                 libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev \
-                portaudio19-dev libasound2-dev
+                portaudio19-dev libasound2-dev supercollider
         else
             # Use sudo in development
             sudo apt update
@@ -310,7 +311,7 @@ install_system_dependencies() {
                 libbz2-dev libreadline-dev libsqlite3-dev curl git \
                 libncursesw5-dev xz-utils tk-dev libxml2-dev \
                 libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev \
-                portaudio19-dev libasound2-dev
+                portaudio19-dev libasound2-dev supercollider
         fi
         log "System build dependencies installed"
     elif command -v yum >/dev/null 2>&1; then
@@ -343,7 +344,7 @@ install_system_dependencies() {
         log "System build dependencies installed"
     else
         warn "Unknown package manager. Please install build dependencies manually:"
-        warn "  sudo apt install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev portaudio19-dev libasound2-dev"
+        warn "  sudo apt install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev portaudio19-dev libasound2-dev supercollider"
         error "Cannot proceed without build dependencies"
     fi
 }
