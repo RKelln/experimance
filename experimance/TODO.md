@@ -12,6 +12,7 @@
   - [x] convert from prototype
 - [] add sensors
 - [x] convert renderrequest to file uri 
+- [ ] more/better blur on depth map
 
 ### Sand Sensors
 - [] add prototype code
@@ -43,6 +44,10 @@
 - [ ] write tests
 - [ ] test runware and vast.ai and other cloud options
   - [x] vastai
+    - [ ] fix provisioning or workaround
+    - [ ] allow for multiple loras
+    - [x] helper script
+- [ ] diffusers speed-ups tests
 
 ### Voice Agent
 
@@ -50,7 +55,7 @@
 - [] research mem0 memory integration
 
 ### Infrastructure
-
+- [ ] test production deploy
 
 ## ZMQ
 - [] services -> core comms
