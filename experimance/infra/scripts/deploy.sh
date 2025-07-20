@@ -211,6 +211,25 @@ setup_directories() {
     mkdir -p "$REPO_DIR/transcripts"
     chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/transcripts"
 
+    # Download video overlay file from Google Drive
+    VIDEO_ID="144JbBnjyz-GmB5RJdmafDagDRurXfB2L"
+    VIDEO_FILE="experimance_video_overlay.mp4"
+    VIDEO_URL="https://docs.google.com/uc?export=download&id=${VIDEO_ID}"
+    TARGET_DIR="$REPO_DIR/media/video"
+    TARGET_FILE="$TARGET_DIR/$VIDEO_FILE"
+    if [[ ! -f "$TARGET_FILE" ]]; then
+        log "Downloading video overlay to $TARGET_FILE"
+        if command -v gdown &>/dev/null; then
+            gdown --quiet --id "$VIDEO_ID" -O "$TARGET_FILE" || error "Failed to download video overlay via gdown"
+        else
+            # Fallback to wget
+            wget --quiet --no-check-certificate "${VIDEO_URL}" -O "$TARGET_FILE" || error "Failed to download video overlay via wget"
+        fi
+        chown "$RUNTIME_USER:$RUNTIME_USER" "$TARGET_FILE"
+    else
+        log "Video overlay already present at $TARGET_FILE"
+    fi
+
     log "Directories created and permissions set"
 }
 

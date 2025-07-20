@@ -37,7 +37,7 @@ fade_out_duration = 10.0      # Fade out duration in seconds
 # Video overlay with masking
 [video_overlay]
 enabled = true                     # Whether video overlay is enabled
-default_video_path = "video_overlay.mp4"  # Path to default video (relative to media/videos/ or absolute)
+default_video_path = "experimance_video_overlay.mp4"  # Path to default video (relative to media/videos/ or absolute)
 loop_video = true                  # Whether to loop the video playback
 fallback_mask_enabled = true       # Whether to create fallback mask if none provided
 start_mask_path = "media/images/display/ring_map.png"  # Path to mask file to load on startup
