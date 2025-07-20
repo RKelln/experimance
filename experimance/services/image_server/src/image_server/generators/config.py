@@ -6,6 +6,12 @@ from experimance_common.config import BaseConfig
 
 DEFAULT_GENERATOR_TIMEOUT = 30  # Default timeout for image generation in seconds
 
+GENERATOR_NAMES = Literal[
+    "mock",
+    "vastai",
+    "fal_comfy",
+    "fal_lightning_i2i",
+]
 
 class BaseGeneratorConfig(BaseConfig, MessageSchema):
     """Base configuration for all image generators.
@@ -18,6 +24,11 @@ class BaseGeneratorConfig(BaseConfig, MessageSchema):
 
     # Common configuration options for all generators
     timeout: int = DEFAULT_GENERATOR_TIMEOUT
+
+    pre_warm: bool = Field(
+        default=False,
+        description="Whether to pre-warm the generator. If True, the generator will be sent a test image at startup."
+    )
 
 class SDXLConfig(BaseGeneratorConfig):
     lora_strength: float = 0.8
@@ -33,10 +44,12 @@ if TYPE_CHECKING:
     from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
     from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
     from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2IConfig
+    from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
     
     # Type for all possible generator configs
     GeneratorConfigType = Union[
         MockGeneratorConfig,
         FalComfyGeneratorConfig,
         FalLightningI2IConfig,
+        VastAIGeneratorConfig
     ]

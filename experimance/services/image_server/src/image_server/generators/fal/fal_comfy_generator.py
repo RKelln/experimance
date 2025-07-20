@@ -38,6 +38,10 @@ class FalComfyGenerator(ImageGenerator):
         super().__init__(config, output_dir, **kwargs)
         
         self._stop_event = asyncio.Event()
+        
+        # Pre-warm the generator if enabled
+        if self.config.pre_warm:
+            asyncio.create_task(self._pre_warm())
 
     def _configure(self, config:BaseGeneratorConfig, **kwargs):
         """Configure FAL.AI generator settings from kwargs or create default config."""
@@ -46,6 +50,30 @@ class FalComfyGenerator(ImageGenerator):
             **kwargs
         })
         logger.info(f"FalComfyGenerator initialized with endpoint: {self.config.endpoint}")
+
+    async def _pre_warm(self):
+        """Pre-warm the generator by sending a test generation request.
+        
+        This helps reduce cold start latency for the first real generation.
+        The result is discarded and not saved.
+        """
+        try:
+            logger.info("Pre-warming FAL.AI generator...")
+            from image_server.generators.generator import mock_depth_map
+            from experimance_common.image_utils import png_to_base64url
+            
+            # Generate the test image (this will be discarded)
+            await self.generate_image(
+                prompt="test warm-up image generation",
+                depth_map_b64=png_to_base64url(mock_depth_map()),
+                request_id="prewarm_discard"
+            )
+            
+            logger.info("FAL.AI generator pre-warming completed successfully")
+            
+        except Exception as e:
+            logger.warning(f"FAL.AI generator pre-warming failed (continuing anyway): {e}")
+            # Don't raise the exception - pre-warming failure shouldn't stop initialization
 
     async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, 
                              **kwargs) -> str:

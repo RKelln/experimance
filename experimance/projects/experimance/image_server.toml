@@ -9,11 +9,11 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # Generator configuration
 [generator]
-strategy = "mock"     # Options: "falai", "openai", "sdxl", "mock"
+strategy = "vastai"     # Options: "falai", "openai", "sdxl", "mock", "vastai"
 timeout = 120
 
 # FAL.AI configuration
-[falai]
+[fal_comfy]
 #endpoint = "comfy/RKelln/experimance_hyper_depth_v5"
 endpoint = "comfy/RKelln/experimancexilightningdepth"
 model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"
@@ -33,6 +33,12 @@ model_path = "models/sdxl-base"
 device = "cuda"
 dimensions = [1024, 1024]
 num_inference_steps = 30
+
+# VastAI configuration
+[vastai]
+pre_warm = true           # Pre-warm the generator on startup
+create_if_none = true     # Create instance if none exists
+wait_for_ready = true     # Wait for instance to be ready
 
 # Fake image generator
 [mock]

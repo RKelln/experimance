@@ -23,7 +23,9 @@ from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.logger import configure_external_loggers
+from image_server.generators.config import GENERATOR_NAMES
 from pydantic import ValidationError
+from typing import get_args
 
 from .config import ImageServerConfig
 from .generators.factory import GeneratorManager
@@ -60,7 +62,7 @@ class ImageServerService(BaseService):
             
             # Collect strategy-specific configurations for the generator manager
             default_configs = {}
-            for strategy in ["mock", "falai", "falai_lightning_i2i", "openai", "local"]:
+            for strategy in get_args(GENERATOR_NAMES):
                 if hasattr(config, strategy):
                     strategy_config_obj = getattr(config, strategy)
                     if strategy_config_obj:

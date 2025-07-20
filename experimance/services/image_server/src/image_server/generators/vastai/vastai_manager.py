@@ -21,6 +21,7 @@ import subprocess
 import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+from experimance_common.constants import PROJECT_ROOT
 import requests
 from dotenv import load_dotenv
 
@@ -226,6 +227,397 @@ class VastAIManager:
         
         logger.error(f"Timeout waiting for instance {instance_id} to be ready")
         return False
+    
+    def wait_for_ssh_ready(self, instance_id: int, timeout: int = 300) -> bool:
+        """
+        Wait for SSH to be accessible on an instance.
+        
+        Args:
+            instance_id: The instance ID to wait for
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if SSH is ready, False if timeout
+        """
+        logger.info(f"Waiting for SSH to be ready on instance {instance_id}...")
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                ssh_cmd = self.get_ssh_command(instance_id)
+                if not ssh_cmd:
+                    logger.debug(f"SSH command not available for instance {instance_id}")
+                    time.sleep(10)
+                    continue
+                
+                # Parse SSH connection details
+                parts = ssh_cmd.split()
+                port = parts[2]  # After -p
+                host_and_user = parts[3]  # root@HOST
+                host = host_and_user.split('@')[1]
+                user = host_and_user.split('@')[0]
+                
+                # Test SSH connectivity with a simple command
+                test_cmd = [
+                    "ssh", "-p", port,
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "LogLevel=ERROR",
+                    "-o", "ConnectTimeout=10",
+                    "-o", "BatchMode=yes",
+                    f"{user}@{host}",
+                    "echo 'SSH ready'"
+                ]
+                
+                result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=15)
+                if result.returncode == 0:
+                    logger.info(f"SSH is ready on instance {instance_id}")
+                    return True
+                else:
+                    logger.debug(f"SSH not ready yet: {result.stderr.strip()}")
+                
+            except Exception as e:
+                logger.debug(f"SSH test failed: {e}")
+            
+            time.sleep(10)  # Wait 10 seconds between attempts
+        
+        logger.error(f"Timeout waiting for SSH to be ready on instance {instance_id}")
+        return False
+    
+    def provision_instance_via_scp(self, instance_id: int, timeout: int = 300, verbose: bool = False) -> bool:
+        """
+        Provision an instance by SCPing the provisioning script and running it.
+        This is a workaround for when the PROVISIONING_SCRIPT environment variable doesn't work.
+        
+        Args:
+            instance_id: The instance ID to provision
+            timeout: Maximum time to wait for provisioning to complete
+            verbose: If True, stream script output to console in real-time
+            
+        Returns:
+            True if provisioning succeeded, False otherwise
+        """
+        logger.info(f"Starting SCP provisioning for instance {instance_id}")
+        
+        # Wait for SSH to be ready first
+        if not self.wait_for_ssh_ready(instance_id, timeout=180):  # 3 minutes for SSH
+            logger.error(f"SSH not ready for instance {instance_id}, cannot provision")
+            return False
+        
+        # Get SSH connection info
+        ssh_command = self.get_ssh_command(instance_id)
+        if not ssh_command:
+            logger.error(f"Cannot get SSH command for instance {instance_id}")
+            return False
+        
+        # Extract SSH connection details
+        try:
+            # Parse ssh command: "ssh -p PORT root@HOST"
+            parts = ssh_command.split()
+            port = parts[2]  # After -p
+            host_and_user = parts[3]  # root@HOST
+            host = host_and_user.split('@')[1]
+            user = host_and_user.split('@')[0]
+        except (IndexError, ValueError) as e:
+            logger.error(f"Failed to parse SSH command '{ssh_command}': {e}")
+            return False
+        
+        # Get the path to the provisioning script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        provisioning_script_path = os.path.join(script_dir, "server", "vast_provisioning.sh")
+        
+        if not os.path.exists(provisioning_script_path):
+            logger.error(f"Provisioning script not found at {provisioning_script_path}")
+            return False
+        
+        logger.info(f"Found provisioning script at {provisioning_script_path}")
+        
+        remote_path = "/workspace/vast_provisioning.sh"
+
+        try:
+            # SCP the script to the instance
+            logger.info(f"Copying provisioning script to instance {instance_id}...")
+            scp_cmd = [
+                "scp", "-P", port,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR",
+                "-o", "ConnectTimeout=30",
+                "-o", "BatchMode=yes",
+                provisioning_script_path,
+                f"{user}@{host}:{remote_path}"
+            ]
+            
+            result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                logger.error(f"SCP failed: {result.stderr}")
+                return False
+            
+            logger.info("Successfully copied provisioning script")
+            
+            # Make the script executable and run it
+            logger.info("Running provisioning script on instance...")
+            
+            ssh_cmd = [
+                "ssh", "-p", port,
+                "-o", "StrictHostKeyChecking=no", 
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR",
+                "-o", "ConnectTimeout=30",
+                "-o", "BatchMode=yes",
+                f"{user}@{host}",
+                f"chmod +x {remote_path} && {remote_path}"
+            ]
+            
+            logger.info(f"Executing: {' '.join(ssh_cmd[:7])} ... [script execution]")
+            
+            if verbose:
+                # Stream output in real-time when verbose mode is enabled
+                print(f"\n🔧 Running provisioning script on instance {instance_id}...")
+                print("=" * 60)
+                
+                process = subprocess.Popen(
+                    ssh_cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                
+                output_lines = []
+                try:
+                    if process.stdout:
+                        while True:
+                            output = process.stdout.readline()
+                            if output == '' and process.poll() is not None:
+                                break
+                            if output:
+                                print(output.strip())
+                                output_lines.append(output)
+                    
+                    process.wait(timeout=timeout)
+                    print("=" * 60)
+                    
+                    if process.returncode == 0:
+                        logger.info("Provisioning script completed successfully")
+                        print("✅ Provisioning script completed successfully!")
+                        return True
+                    else:
+                        logger.error(f"Provisioning script failed with exit code {process.returncode}")
+                        print(f"❌ Provisioning script failed with exit code {process.returncode}")
+                        return False
+                        
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    logger.error(f"Provisioning script timed out after {timeout} seconds")
+                    print(f"❌ Provisioning script timed out after {timeout} seconds")
+                    return False
+            else:
+                # Original behavior - capture output and only show on error/debug
+                result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+                
+                if result.returncode == 0:
+                    logger.info("Provisioning script completed successfully")
+                    logger.debug(f"Script output: {result.stdout}")
+                    return True
+                else:
+                    logger.error(f"Provisioning script failed with exit code {result.returncode}")
+                    if result.stderr:
+                        logger.error(f"Script stderr: {result.stderr}")
+                    if result.stdout:
+                        logger.error(f"Script stdout: {result.stdout}")
+                    logger.debug(f"Full SSH command: {' '.join(ssh_cmd)}")
+                    return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"Provisioning script timed out after {timeout} seconds")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to provision instance via SCP: {e}")
+            return False
+    
+    def update_server_code(self, instance_id: int, timeout: int = 120, verbose: bool = False) -> bool:
+        """
+        Update server code on an existing instance by uploading Python files and restarting service.
+        
+        Args:
+            instance_id: The instance ID to update
+            timeout: Timeout for operations in seconds
+            verbose: Show command output in real-time
+            
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        logger.info(f"Updating server code on instance {instance_id}")
+        
+        # Get SSH connection info
+        ssh_cmd = self.get_ssh_command(instance_id)
+        if not ssh_cmd:
+            logger.error(f"Could not get SSH command for instance {instance_id}")
+            return False
+        
+        # Parse SSH command string to get connection details and convert to list
+        ssh_cmd_parts = ssh_cmd.split()
+        host, port, user = None, None, None
+        for i, part in enumerate(ssh_cmd_parts):
+            if part == "-p" and i + 1 < len(ssh_cmd_parts):
+                port = ssh_cmd_parts[i + 1]
+            elif "@" in part:
+                user, host = part.split("@", 1)
+        
+        if not all([host, port, user]):
+            logger.error(f"Could not parse SSH connection details from: {' '.join(ssh_cmd_parts)}")
+            return False
+        
+        # Get the server directory path
+        import os
+        from pathlib import Path
+        current_file = Path(__file__).resolve()
+        server_dir = current_file.parent / "server"
+        
+        if not server_dir.exists():
+            logger.error(f"Server directory not found: {server_dir}")
+            return False
+        
+        # need to remove the path before the root experimance directory and add to the remote path
+        relative_server_dir = server_dir.relative_to(PROJECT_ROOT)
+        logger.debug(f"Relative server directory: {relative_server_dir}")
+        remote_server_dir = f"/workspace/experimance/experimance/{relative_server_dir}"
+
+        logger.info(f"Found server directory at {server_dir}")
+
+        try:
+            # SCP all Python files from the server directory
+            logger.info(f"Uploading server code to instance {instance_id}...")
+            python_files = list(server_dir.glob("*.py"))
+            
+            if not python_files:
+                logger.error(f"No Python files found in {server_dir}")
+                return False
+            
+            logger.info(f"Found {len(python_files)} Python files to upload")
+            
+            for py_file in python_files:
+                if verbose:
+                    print(f"📁 Uploading {py_file.name}...")
+                
+                scp_cmd = [
+                    "scp", "-P", port,
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "LogLevel=ERROR",
+                    "-o", "ConnectTimeout=30",
+                    "-o", "BatchMode=yes",
+                    str(py_file),
+                    f"{user}@{host}:{remote_server_dir}"
+                ]
+                
+                result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    logger.error(f"Failed to upload {py_file.name}: {result.stderr}")
+                    return False
+                
+                if verbose:
+                    print(f"✅ {py_file.name} uploaded successfully")
+            
+            logger.info("All server files uploaded successfully")
+            
+            # Restart the service using supervisorctl
+            restart_cmd = ssh_cmd_parts + ["supervisorctl", "restart", "experimance-image-server"]
+            
+            if verbose:
+                print(f"\n🔄 Restarting image server service...")
+                print("=" * 40)
+            
+            logger.info("Restarting experimance-image-server service...")
+            logger.debug(f"Executing: {' '.join(restart_cmd[:7])} ... [service restart]")
+            
+            if verbose:
+                process = subprocess.Popen(
+                    restart_cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                
+                try:
+                    if process.stdout:
+                        while True:
+                            output = process.stdout.readline()
+                            if output == '' and process.poll() is not None:
+                                break
+                            if output:
+                                print(output.strip())
+                    
+                    process.wait(timeout=30)
+                    print("=" * 40)
+                    
+                    if process.returncode == 0:
+                        logger.info("Service restarted successfully")
+                        return True
+                    else:
+                        logger.error(f"Service restart failed with exit code {process.returncode}")
+                        return False
+                        
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    logger.error("Service restart timed out")
+                    return False
+            else:
+                # Non-verbose mode
+                result = subprocess.run(restart_cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    logger.info("Service restarted successfully")
+                    logger.debug(f"Restart output: {result.stdout}")
+                    return True
+                else:
+                    logger.error(f"Service restart failed with exit code {result.returncode}")
+                    if result.stderr:
+                        logger.error(f"Restart stderr: {result.stderr}")
+                    if result.stdout:
+                        logger.error(f"Restart stdout: {result.stdout}")
+                    return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"Update operation timed out after {timeout} seconds")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update server code: {e}")
+            return False
+    
+    def provision_existing_instance(self, instance_id: int) -> bool:
+        """
+        Manually provision an existing instance using SCP.
+        Useful for instances that were created without proper provisioning.
+        
+        Args:
+            instance_id: The instance ID to provision
+            
+        Returns:
+            True if provisioning succeeded, False otherwise
+        """
+        logger.info(f"Manually provisioning existing instance {instance_id}")
+        
+        # Check if instance is running
+        try:
+            instance = self.show_instance(instance_id)
+            if instance.get("actual_status") != "running":
+                logger.error(f"Instance {instance_id} is not running (status: {instance.get('actual_status')})")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to check instance status: {e}")
+            return False
+        
+        # Wait for SSH to be available
+        if not self.wait_for_instance_ready(instance_id, timeout=300):
+            logger.error(f"Instance {instance_id} is not ready for SSH connection")
+            return False
+        
+        # Run SCP provisioning
+        return self.provision_instance_via_scp(instance_id)
     
     def search_offers(self, 
                      min_gpu_ram: int = 16,  # 16GB minimum for optimized SDXL
@@ -467,13 +859,15 @@ class VastAIManager:
     
     def find_or_create_instance(self, 
                                create_if_none: bool = True,
-                               wait_for_ready: bool = True) -> Optional[InstanceEndpoint]:
+                               wait_for_ready: bool = True,
+                               provision_existing: bool = False) -> Optional[InstanceEndpoint]:
         """
         Find an existing experimance instance or create a new one.
         
         Args:
             create_if_none: Create a new instance if none found
             wait_for_ready: Wait for the instance to be fully ready
+            provision_existing: Whether to run SCP provisioning on existing instances
             
         Returns:
             InstanceEndpoint for the ready instance, or None
@@ -488,6 +882,19 @@ class VastAIManager:
             
             if wait_for_ready:
                 if self.wait_for_instance_ready(instance_id):
+                    # Optionally provision existing instances
+                    if provision_existing:
+                        logger.info(f"Provisioning existing instance {instance_id}")
+                        
+                        # Wait for SSH to be ready before provisioning
+                        if self.wait_for_ssh_ready(instance_id, timeout=180):  # 3 minutes for SSH
+                            if self.provision_instance_via_scp(instance_id):
+                                logger.info("SCP provisioning of existing instance completed successfully")
+                            else:
+                                logger.warning("SCP provisioning of existing instance failed, but continuing anyway")
+                        else:
+                            logger.warning(f"SSH not ready for existing instance {instance_id}, skipping provisioning")
+                    
                     return self.get_model_server_endpoint(instance_id)
                 else:
                     logger.error(f"Existing instance {instance_id} is not responding")
@@ -528,6 +935,18 @@ class VastAIManager:
         
         if wait_for_ready:
             if self.wait_for_instance_ready(instance_id):
+                # Try SCP provisioning as a fallback since PROVISIONING_SCRIPT env var isn't working
+                logger.info(f"Instance {instance_id} is ready, attempting SCP provisioning...")
+                
+                # Wait for SSH to be ready before provisioning
+                if self.wait_for_ssh_ready(instance_id, timeout=180):  # 3 minutes for SSH
+                    if self.provision_instance_via_scp(instance_id):
+                        logger.info("SCP provisioning completed successfully")
+                    else:
+                        logger.warning("SCP provisioning failed, but continuing anyway")
+                else:
+                    logger.warning(f"SSH not ready for new instance {instance_id}, skipping provisioning")
+                
                 return self.get_model_server_endpoint(instance_id)
             else:
                 logger.error(f"New instance {instance_id} failed to become ready")
@@ -538,13 +957,36 @@ class VastAIManager:
 
 def main():
     """Example usage of the VastAI manager."""
+    import argparse
+    
     logging.basicConfig(level=logging.DEBUG)
+    
+    parser = argparse.ArgumentParser(description="VastAI Manager for Experimance")
+    parser.add_argument("--provision-existing", action="store_true", 
+                       help="Force provisioning of existing instances")
+    parser.add_argument("--provision-instance", type=int, metavar="INSTANCE_ID",
+                       help="Manually provision a specific instance by ID")
+    parser.add_argument("--create", action="store_true",
+                       help="Create new instance if none found")
+    
+    args = parser.parse_args()
     
     manager = VastAIManager()
 
+    if args.provision_instance:
+        print(f"Manually provisioning instance {args.provision_instance}...")
+        if manager.provision_existing_instance(args.provision_instance):
+            print("✅ Provisioning completed successfully")
+        else:
+            print("❌ Provisioning failed")
+        return
+
     # Find or create an instance
     print("Finding or creating experimance instance...")
-    endpoint = manager.find_or_create_instance(create_if_none=False)
+    endpoint = manager.find_or_create_instance(
+        create_if_none=args.create, 
+        provision_existing=args.provision_existing
+    )
     
     if endpoint:
         print(f"✅ Model server ready at: {endpoint.url}")

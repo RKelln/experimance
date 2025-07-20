@@ -14,6 +14,8 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
     
     strategy: Literal["vastai"] = "vastai"
     
+    pre_warm: bool = True
+
     # VastAI specific configuration
     vastai_api_key: Optional[str] = Field(
         default=None, 
@@ -24,6 +26,12 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
         default=600, 
         description="Timeout for VastAI instance operations in seconds",
         ge=30
+    )
+    
+    pre_warm_timeout: int = Field(
+        default=30,
+        description="Timeout for pre-warming requests in seconds", 
+        ge=10
     )
     
     create_if_none: bool = Field(

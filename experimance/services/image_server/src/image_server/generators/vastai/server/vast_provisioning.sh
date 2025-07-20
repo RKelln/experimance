@@ -7,21 +7,74 @@ set -eo pipefail
 
 echo "=== Experimance Image Generation - Vast.ai Provisioning ==="
 
+# Debug environment
+echo "Environment debugging:"
+echo "PATH: $PATH"
+echo "SHELL: $SHELL"
+echo "USER: $USER"
+echo "PWD: $PWD"
+
+# Check if we're in a virtual environment and activate if needed
+if [ -n "$VIRTUAL_ENV" ]; then
+    echo "Already in virtual environment: $VIRTUAL_ENV"
+elif [ -f "/venv/main/bin/activate" ]; then
+    echo "Activating virtual environment..."
+    set +e  # Temporarily disable exit on error
+    source /venv/main/bin/activate 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo "Virtual environment activated: $VIRTUAL_ENV"
+        set -e  # Re-enable exit on error
+    else
+        echo "Failed to activate virtual environment, continuing anyway..."
+        set -e  # Re-enable exit on error
+    fi
+else
+    echo "No virtual environment found, trying to continue with system Python..."
+fi
+
 # Verify Python environment
 echo "Python environment:"
-which python
-python --version
+if which python >/dev/null 2>&1; then
+    echo "Python found: $(which python)"
+    python --version
+    PYTHON_CMD="python"
+elif which python3 >/dev/null 2>&1; then
+    echo "Python3 found: $(which python3)"
+    python3 --version
+    PYTHON_CMD="python3"
+elif [ -f "/venv/main/bin/python" ]; then
+    echo "Using venv Python: /venv/main/bin/python"
+    /venv/main/bin/python --version
+    PYTHON_CMD="/venv/main/bin/python"
+else
+    echo "ERROR: No Python found!"
+    exit 1
+fi
+
+if which pip >/dev/null 2>&1; then
+    echo "Pip found: $(which pip)"
+    PIP_CMD="pip"
+elif which pip3 >/dev/null 2>&1; then
+    echo "Pip3 found: $(which pip3)"
+    PIP_CMD="pip3"
+elif [ -f "/venv/main/bin/pip" ]; then
+    echo "Using venv pip: /venv/main/bin/pip"
+    PIP_CMD="/venv/main/bin/pip"
+else
+    echo "ERROR: No pip found!"
+    exit 1
+fi
 
 # Install dependencies for image generation (preserving existing PyTorch)
 echo "Installing image generation dependencies..."
-pip install tokenizers regex pillow requests numpy importlib_metadata
-pip install diffusers transformers accelerate safetensors --no-deps
-pip install controlnet-aux peft
-pip install fastapi uvicorn pydantic python-multipart
+$PIP_CMD install tokenizers regex pillow requests numpy importlib_metadata
+$PIP_CMD install diffusers transformers accelerate safetensors --no-deps
+$PIP_CMD install controlnet-aux peft
+$PIP_CMD install fastapi uvicorn pydantic python-multipart
 
 # Install xformers for current PyTorch version
-PYTORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
-CUDA_VERSION=$(python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown")
+PYTORCH_VERSION=$($PYTHON_CMD -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
+CUDA_VERSION=$($PYTHON_CMD -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown")
 
 echo "Detected PyTorch ${PYTORCH_VERSION} with CUDA ${CUDA_VERSION}"
 
@@ -48,10 +101,10 @@ if [ -n "$INDEX_URL" ]; then
     # Use latest xformers only for PyTorch 2.7+ with CUDA 12.6/12.8
     if [[ "$PYTORCH_VERSION" == 2.7* ]] && ([[ "$CUDA_VERSION" == *"12.6"* ]] || [[ "$CUDA_VERSION" == *"12.8"* ]]); then
         echo "Installing latest xformers for PyTorch 2.7+ with CUDA 12.6/12.8..."
-        pip install xformers --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
+        $PIP_CMD install xformers --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
     else
         echo "Installing xformers==0.0.28.post3 for PyTorch ${PYTORCH_VERSION} with CUDA ${CUDA_VERSION}..."
-        pip install xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
+        $PIP_CMD install xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
     fi
 else
     echo "⚠️  Skipping xformers installation due to unsupported CUDA version"
@@ -129,7 +182,7 @@ LOG_DIR="/var/log/portal"
 # Create supervisor configuration for the image server
 cat > /etc/supervisor/conf.d/experimance-image-server.conf << EOF
 [program:experimance-image-server]
-command=/venv/main/bin/python model_server.py --host 0.0.0.0 --port 8000
+command=/opt/supervisor-scripts/experimance-image-server.sh
 directory=$WORKER_DIR
 user=root
 autostart=true
@@ -145,10 +198,32 @@ cat > /opt/supervisor-scripts/experimance-image-server.sh << EOF
 # Experimance Image Server wrapper script for supervisor
 
 # Check if application is configured in portal.yaml
-if ! grep -q "Experimance Image Server" /etc/portal.yaml 2>/dev/null; then
-    echo "Experimance Image Server not found in portal.yaml - not starting"
+if ! grep -q "WebServer" /etc/portal.yaml 2>/dev/null; then
+    echo "WebServer not found in portal.yaml - not starting"
     exit 0
 fi
+
+# Activate virtual environment if it exists
+if [ -f "/venv/main/bin/activate" ]; then
+    echo "Activating virtual environment..."
+    source /venv/main/bin/activate
+    export PATH="/venv/main/bin:\$PATH"
+fi
+
+# Determine Python command
+if [ -f "/venv/main/bin/python" ]; then
+    PYTHON_CMD="/venv/main/bin/python"
+elif which python >/dev/null 2>&1; then
+    PYTHON_CMD="python"
+elif which python3 >/dev/null 2>&1; then
+    PYTHON_CMD="python3"
+else
+    echo "ERROR: No Python found!"
+    exit 1
+fi
+
+echo "Using Python: \$PYTHON_CMD"
+\$PYTHON_CMD --version
 
 # Set environment variables
 export MODELS_DIR=\${MODELS_DIR:-$MODELS_DIR}
@@ -161,11 +236,33 @@ mkdir -p /workspace/logs
 
 # Start the image server
 cd $WORKER_DIR
-exec python model_server.py --host 0.0.0.0 --port 8000
+echo "Starting Experimance Image Server from \$(pwd)"
+exec \$PYTHON_CMD model_server.py --host 0.0.0.0 --port 8000
 EOF
 
 # Make wrapper script executable
 chmod +x /opt/supervisor-scripts/experimance-image-server.sh
 
 # Reload Supervisor
+echo "Reloading supervisor configuration..."
 supervisorctl reload
+
+# Wait for supervisor to fully restart
+echo "Waiting for supervisor to restart..."
+sleep 10
+
+# Show final status
+echo "=== Provisioning Complete ==="
+echo "Supervisor status:"
+supervisorctl status 2>/dev/null || echo "Supervisor still restarting..."
+
+echo ""
+echo "Testing wrapper script manually (5 second test):"
+timeout 5 /opt/supervisor-scripts/experimance-image-server.sh 2>&1 || echo "Wrapper test completed"
+
+echo ""
+echo "Checking supervisor log for experimance-image-server:"
+tail -n 10 /var/log/portal/experimance-image-server.log 2>/dev/null || echo "No log file found yet"
+
+echo ""
+echo "=== Provisioning script completed successfully ==="

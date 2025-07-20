@@ -20,7 +20,7 @@ from experimance_common.zmq.config import (
     WorkerServiceConfig, PublisherConfig, SubscriberConfig, 
     WorkerPushConfig, WorkerPullConfig, MessageType
 )
-from image_server.generators.config import BaseGeneratorConfig
+from image_server.generators.config import GENERATOR_NAMES
 
 # Import all generator config types
 from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
@@ -36,7 +36,7 @@ DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVI
 
 class GeneratorConfig(BaseModel):
     """Configuration for image generator selection and common settings."""
-    strategy: Annotated[Literal["mock", "sdxl", "falai", "openai", "vastai"],
+    strategy: Annotated[GENERATOR_NAMES,
                         StringConstraints(to_lower=True)] = Field(
         default="vastai",
         description="Image generation strategy to use (mock, sdxl, falai, openai, vastai)"
@@ -107,7 +107,7 @@ class ImageServerConfig(BaseServiceConfig):
         description="Configuration for SDXL generator"
     )
     
-    falai: FalComfyGeneratorConfig = Field(
+    fal_comfy: FalComfyGeneratorConfig = Field(
         default_factory=FalComfyGeneratorConfig,
         description="Configuration for FAL.AI generator"
     )

@@ -13,27 +13,25 @@ The generator supports:
 - Configurable generation parameters
 """
 
+import asyncio
 import logging
-import os
 import time
 import base64
 import io
 from typing import Dict, Any, Optional
 from PIL import Image
-import requests
+from experimance_common.image_utils import base64url_to_png, png_to_base64url
+import aiohttp
+import requests  # Keep requests for quick health checks
 
-from dotenv import load_dotenv
-
-from image_server.generators.generator import ImageGenerator
+from image_server.generators.generator import ImageGenerator, mock_depth_map
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.vastai.vastai_manager import VastAIManager, InstanceEndpoint
 from image_server.generators.vastai.server.data_types import ControlNetGenerateData
 
-from projects.experimance.schemas import Era
+from experimance_common.schemas import Era
 
 logger = logging.getLogger(__name__)
-load_dotenv()
-
 
 class VastAIGenerator(ImageGenerator):
     """VastAI-based image generator using remote ControlNet model server."""
@@ -47,11 +45,45 @@ class VastAIGenerator(ImageGenerator):
         self._instance_ready = False
         self._initialized = False
         
+        # Pre-warm the generator if enabled
+        if self.config.pre_warm:
+            asyncio.create_task(self._pre_warm())
+        
     def _configure(self, config: VastAIGeneratorConfig, **kwargs):
         """Configure the generator with VastAI-specific settings."""
         logger.info(f"Configuring VastAI generator with model: {config.model_name}")
         logger.info(f"Steps: {config.steps}, CFG: {config.cfg}")
         logger.info(f"Scheduler: {config.scheduler}, ControlNet strength: {config.controlnet_strength}")
+    
+    async def _pre_warm(self):
+        """Pre-warm the generator by sending a test generation request.
+        
+        This helps reduce cold start latency for the first real generation.
+        The result is discarded and not saved.
+        """
+        try:
+            logger.info("Pre-warming VastAI generator...")
+
+            # Send a simple test prompt with mock depth map
+            test_prompt = "test image for warming up"
+            
+            # Use a shorter timeout for pre-warming to avoid hanging
+            original_timeout = self.config.instance_timeout
+            self.config.instance_timeout = self.config.pre_warm_timeout
+            
+            try:
+                await self.generate_image(
+                    prompt=test_prompt,
+                    mock_depth=True  # Use server's built-in mock depth generation
+                )
+                logger.info("VastAI generator pre-warming completed successfully")
+            finally:
+                # Restore original timeout
+                self.config.instance_timeout = original_timeout
+            
+        except Exception as e:
+            logger.warning(f"VastAI generator pre-warming failed (continuing anyway): {e}")
+            # Don't raise the exception - pre-warming failure shouldn't stop initialization
         
     def _ensure_instance_ready(self) -> InstanceEndpoint:
         """Ensure we have a ready VastAI instance and return its endpoint."""
@@ -101,7 +133,7 @@ class VastAIGenerator(ImageGenerator):
         try:
             response = requests.get(
                 f"{endpoint.url}/healthcheck",
-                timeout=10
+                timeout=5  # Short timeout for health checks
             )
             if response.status_code == 200:
                 data = response.json()
@@ -160,6 +192,18 @@ class VastAIGenerator(ImageGenerator):
     
         # Get depth map if provided
         depth_map_b64 = kwargs.get("depth_map_b64", None)
+        mock_depth = kwargs.get("mock_depth", depth_map_b64 is None)  # Allow explicit mock_depth override
+
+        # Log depth map information for debugging
+        if depth_map_b64:
+            logger.info(f"📷 VastAI: Using provided depth map (length: {len(depth_map_b64)} chars)")
+            # Validate the depth map format on client side
+            if not depth_map_b64.startswith(("data:image/", "iVBORw0KGgo")):  # Common base64 image prefixes
+                logger.warning(f"⚠️  VastAI: Depth map doesn't look like valid base64 image data. Prefix: {depth_map_b64[:50]}...")
+        elif mock_depth:
+            logger.info("🎭 VastAI: Using mock depth map")
+        else:
+            logger.warning("⚠️  VastAI: No depth map and mock_depth=False - server may fail")
 
         era = "experimance"
         if kwargs.get("era"):
@@ -174,7 +218,7 @@ class VastAIGenerator(ImageGenerator):
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 depth_map_b64=depth_map_b64,
-                mock_depth=depth_map_b64 is None,
+                mock_depth=mock_depth,
                 model=self.config.model_name,
                 controlnet=kwargs.get("controlnet", "sdxl_small"),
                 era=era,
@@ -201,18 +245,19 @@ class VastAIGenerator(ImageGenerator):
             
             # Send generation request (no health check for speed)
             logger.debug(f"Sending generation request to {endpoint.url}/generate")
-            response = requests.post(
-                f"{endpoint.url}/generate",
-                json=payload,
-                timeout=self.config.instance_timeout
-            )
-            
-            if response.status_code != 200:
-                # Instance might be down, mark as not ready for next request
-                self._instance_ready = False
-                raise RuntimeError(f"Generation request failed: {response.status_code} - {response.text}")
-            
-            result = response.json()
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{endpoint.url}/generate",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=self.config.instance_timeout)
+                ) as response:
+                    if response.status != 200:
+                        # Instance might be down, mark as not ready for next request
+                        self._instance_ready = False
+                        error_text = await response.text()
+                        raise RuntimeError(f"Generation request failed: {response.status} - {error_text}")
+                    
+                    result = await response.json()
             
             if not result.get("success", True):
                 error_msg = result.get("error_message", "Unknown error")
@@ -223,7 +268,11 @@ class VastAIGenerator(ImageGenerator):
             if not image_b64:
                 raise RuntimeError("No image data received from remote server")
             
-            generated_image = self._decode_base64_to_image(image_b64)
+            generated_image = base64url_to_png(image_b64)
+            if generated_image is None:
+                logger.error("🚨 Failed to decode generated image from server!")
+                logger.error(f"Image data prefix: {image_b64[:50]}..." if len(image_b64) > 50 else f"Full image data: {image_b64}")
+                raise RuntimeError("Failed to decode generated image from remote server")
             
             # Save the image and return the path
             request_id = kwargs.get('request_id')
@@ -252,7 +301,7 @@ class VastAIGenerator(ImageGenerator):
         self.cleanup()
         logger.info("VastAI generator stopped")
     
-    def test_connection(self) -> Dict[str, Any]:
+    async def test_connection(self) -> Dict[str, Any]:
         """
         Test the connection to VastAI and model server.
         
@@ -260,23 +309,26 @@ class VastAIGenerator(ImageGenerator):
             Dictionary with test results
         """
         try:
-            # Test VastAI manager
+            # Test VastAI API connection
             instances = self.manager.show_instances()
-            logger.info(f"Found {len(instances)} VastAI instances")
             
             # Try to get a ready instance
             endpoint = self._ensure_instance_ready()
             
             # Test model server endpoints
-            health_response = requests.get(f"{endpoint.url}/healthcheck", timeout=10)
-            models_response = requests.get(f"{endpoint.url}/models", timeout=10)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{endpoint.url}/healthcheck", timeout=aiohttp.ClientTimeout(total=10)) as health_response:
+                    health_ok = health_response.status == 200
+                
+                async with session.get(f"{endpoint.url}/models", timeout=aiohttp.ClientTimeout(total=10)) as models_response:
+                    models_ok = models_response.status == 200
             
             return {
                 "vastai_connection": True,
                 "instances_found": len(instances),
                 "endpoint_ready": endpoint is not None,
-                "health_check": health_response.status_code == 200,
-                "models_endpoint": models_response.status_code == 200,
+                "health_check": health_ok,
+                "models_endpoint": models_ok,
                 "endpoint_url": endpoint.url if endpoint else None,
                 "instance_id": endpoint.instance_id if endpoint else None
             }
@@ -285,10 +337,9 @@ class VastAIGenerator(ImageGenerator):
             logger.error(f"Connection test failed: {e}")
             return {
                 "vastai_connection": False,
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": str(e)
             }
-    
+
     def cleanup(self):
         """Clean up resources and optionally destroy instances."""
         logger.info("Cleaning up VastAI generator...")

@@ -18,12 +18,13 @@ from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 logger = logging.getLogger(__name__)
 
 # Map strategies to their respective config and generator classes
+# needs to match GENERATOR_NAMES
 GENERATORS = {
     "mock": {
         "config_class": MockGeneratorConfig,
         "generator_class": MockImageGenerator
     },
-    "falai": {
+    "fal_comfy": {
         "config_class": FalComfyGeneratorConfig,
         "generator_class": FalComfyGenerator
     },
@@ -148,6 +149,9 @@ class GeneratorManager:
         self._generators: Dict[str, ImageGenerator] = {}
         
         logger.info(f"GeneratorManager initialized with default strategy: {default_strategy}")
+        
+        # Pre-warm generators that have pre_warm=True in their configuration
+        self._pre_warm_generators()
     
     def get_generator(self, strategy: Optional[str] = None, 
                      config_overrides: Optional[Dict[str, Any]] = None) -> ImageGenerator:
@@ -240,3 +244,17 @@ class GeneratorManager:
         
         self._generators.clear()
         logger.info("All generators stopped and cache cleared")
+    
+    def _pre_warm_generators(self):
+        """Pre-warm generators that have pre_warm=True in their configuration."""
+        for strategy, config_data in self.default_configs.items():
+            # Check if this strategy should be pre-warmed
+            if config_data.get("pre_warm", False):
+                logger.info(f"Pre-warming generator for strategy: {strategy}")
+                try:
+                    # Create the generator immediately (this will trigger pre-warming)
+                    self.get_generator(strategy)
+                    logger.info(f"Successfully initiated pre-warming for strategy: {strategy}")
+                except Exception as e:
+                    logger.warning(f"Failed to pre-warm generator for strategy {strategy}: {e}")
+                    # Don't fail startup just because pre-warming failed

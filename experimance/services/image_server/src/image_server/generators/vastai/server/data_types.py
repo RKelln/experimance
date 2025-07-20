@@ -6,6 +6,7 @@ This module defines the request and response data structures for ControlNet-base
 
 import base64
 import dataclasses
+import logging
 import random
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, List
@@ -79,11 +80,28 @@ class ControlNetGenerateData:
         """Decode base64 depth map to PIL Image if available."""
         if not self.depth_map_b64:
             return None
+
+        # Remove any data URL prefix if present (handles any image format)
+        # Examples: "data:image/png;base64,", "data:image/jpeg;base64,", etc.
+        base64_data = self.depth_map_b64
+        if base64_data.startswith("data:image/"):
+            # Find the comma that separates the prefix from the actual base64 data
+            comma_index = base64_data.find(",")
+            if comma_index != -1:
+                base64_data = base64_data[comma_index + 1:]
         
         try:
-            image_data = base64.b64decode(self.depth_map_b64)
-            return Image.open(BytesIO(image_data)).convert('RGB')
-        except Exception:
+            image_data = base64.b64decode(base64_data)
+            depth_image = Image.open(BytesIO(image_data)).convert('RGB')
+            # Log successful decode with image info
+            logging.getLogger(__name__).debug(f"✅ Depth map decoded successfully: {depth_image.size}, mode: {depth_image.mode}")
+            return depth_image
+        except Exception as e:
+            # Log detailed error information
+            logger = logging.getLogger(__name__)
+            logger.error(f"❌ Failed to decode depth map base64 data: {e}")
+            logger.error(f"Data length: {len(self.depth_map_b64)}")
+            logger.error(f"Data prefix: {self.depth_map_b64[:100]}..." if len(self.depth_map_b64) > 100 else f"Full data: {self.depth_map_b64}")
             return None
     
     def validate(self) -> List[str]:
@@ -207,5 +225,7 @@ class ModelListResponse:
     available_schedulers: List[str]
     
     def to_dict(self) -> Dict[str, Any]:
+        """Convert response to dictionary for JSON serialization."""
+        return asdict(self)
         """Convert response to dictionary for JSON serialization."""
         return asdict(self)

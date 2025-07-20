@@ -93,15 +93,53 @@ Try these alternatives:
 2. Use Vast.ai CLI instead: `vastai create instance OFFER_ID --env PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw`
 3. Copy the script content directly into the "On-Start Script" field instead of using PROVISIONING_SCRIPT
 
-**Service not starting?**
-```bash
-supervisorctl status experimance-image-server
-supervisorctl tail experimance-image-server
+**PROVISIONING_SCRIPT environment variable not working?**
+The VastAIManager now includes an automatic SCP fallback that will:
+1. Wait for the instance to be running and accessible via SSH
+2. SCP the local `vast_provisioning.sh` script to the instance
+3. Execute it remotely with the required environment variables
+
+This happens automatically when using `VastAIManager.find_or_create_instance()` for new instances. For existing instances, you can force provisioning with:
+```python
+manager = VastAIManager()
+endpoint = manager.find_or_create_instance(provision_existing=True)
 ```
 
-**Portal not showing server?**
-Check `/etc/portal.yaml` contains "Experimance Image Server" entry
+Or manually provision a specific instance:
+```python
+manager = VastAIManager()
+success = manager.provision_existing_instance(instance_id)
+```
 
-**Models not downloading?**
-Check disk space: `df -h /workspace/models`
+### Dedicated Python CLI for Vast.ai
+
+Use the `vastai_cli.py` script located in the `scripts` directory to manage Vast.ai instances with a unified interface.
+Once you create an instance using `provision` it will default to that instance id for the rest of the commands 
+and `provision` with no running instance and no id will search offers, select the best and provision automatically.
+
+Until vastai fixes their provisioning, you wil need to run `fix` after `provision`.
+
+```bash
+python scripts/vastai_cli.py <command> [options]
+```
+
+Available commands:
+- list           List all Vast.ai instances
+- search         Search for suitable GPU offers
+- provision      Find or create an Experimance instance
+- fix            Fix an existing instance via SCP provisioning
+- update         Update server code and restart service
+- ssh            Show SSH command for an instance
+- endpoint       Show model server endpoint for an instance
+- start          Start an instance
+- stop           Stop an instance
+- restart        Restart an instance
+- destroy        Destroy an instance
+- health         Check the health of the model server
+
+Examples:
+```bash
+python scripts/vastai_cli.py list
+python scripts/vastai_cli.py update 12345 --debug --verbose
+```
 

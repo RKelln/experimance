@@ -62,16 +62,37 @@ def base64url_to_png(base64url):
     Returns:
         PIL.Image: The decoded image.
     """
-    # Remove the data URL prefix if present
-    if base64url.startswith(DATA_URL_PREFIX):
-        base64url = base64url.split(",")[1]
+    if base64url is None:
+        logger.debug("base64url_to_png: Input is None")
+        return None
+        
+    # Remove any data URL prefix if present (handles any image format)
+    # Examples: "data:image/png;base64,", "data:image/jpeg;base64,", etc.
+    original_length = len(base64url)
+    if base64url.startswith("data:image/"):
+        # Find the comma that separates the prefix from the actual base64 data
+        comma_index = base64url.find(",")
+        if comma_index != -1:
+            base64url = base64url[comma_index + 1:]
+            logger.debug(f"base64url_to_png: Removed data URL prefix, length {original_length} -> {len(base64url)}")
+        else:
+            logger.warning(f"base64url_to_png: Found data URL prefix but no comma separator in: {base64url[:100]}...")
     
-    # Decode the base64url string
-    image_data = base64.b64decode(base64url)
-    
-    # Create a BytesIO stream and open it as an image
-    image_stream = io.BytesIO(image_data)
-    return Image.open(image_stream)
+    try:
+        # Decode the base64url string
+        image_data = base64.b64decode(base64url)
+        logger.debug(f"base64url_to_png: Decoded {len(base64url)} chars -> {len(image_data)} bytes")
+        
+        # Create a BytesIO stream and open it as an image
+        image_stream = io.BytesIO(image_data)
+        image = Image.open(image_stream)
+        logger.debug(f"base64url_to_png: Successfully created PIL image: {image.size}, mode: {image.mode}")
+        return image
+    except Exception as e:
+        logger.error(f"base64url_to_png: Failed to decode base64 image data: {e}")
+        logger.error(f"base64url_to_png: Input length: {original_length}, processed length: {len(base64url)}")
+        logger.error(f"base64url_to_png: Input prefix: {base64url[:100]}..." if len(base64url) > 100 else f"base64url_to_png: Full input: {base64url}")
+        return None
 
 def ndarray_to_base64url(ndarray):
     """Convert numpy array to base64 URL string.

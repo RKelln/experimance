@@ -13,7 +13,7 @@ strategy = "mock"     # Options: "falai", "openai", "sdxl", "mock"
 timeout = 120
 
 # FAL.AI configuration
-[falai]
+[fal_comfy]
 #endpoint = "comfy/RKelln/experimance_hyper_depth_v5"
 endpoint = "comfy/RKelln/experimancexilightningdepth"
 model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"

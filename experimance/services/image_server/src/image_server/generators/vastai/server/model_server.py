@@ -666,9 +666,15 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
         logger.info(f"Debug - depth_map_b64: {'Present' if data.depth_map_b64 else 'None'}, mock_depth: {data.mock_depth}")
         if data.depth_map_b64:
             depth_image = data.get_depth_image()
-            logger.info("Got depth map")
+            if depth_image is None:
+                logger.error("🚨 DEPTH MAP DECODE FAILED! Provided depth_map_b64 could not be decoded")
+                logger.error(f"Depth map prefix: {data.depth_map_b64[:50]}..." if len(data.depth_map_b64) > 50 else f"Full depth map: {data.depth_map_b64}")
+                logger.warning("Falling back to mock depth map generation")
+                depth_image = generate_mock_depth(data.width, data.height)
+            else:
+                logger.info(f"✅ Successfully decoded depth map: {depth_image.size}")
         elif data.mock_depth:
-            logger.info("Generating mock depth map")
+            logger.info("Generating mock depth map as requested")
             depth_image = generate_mock_depth(data.width, data.height)
         else:
             raise HTTPException(status_code=400, detail="Either depth_map_b64 or mock_depth=true must be provided")
