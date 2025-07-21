@@ -30,26 +30,30 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Backup system**: Configuration and state backups before changes
 - **Git integration**: Simple `git pull` workflow with safety checks
 
-## Time Investment
+### 5. **Kiosk-Style Display Support**
+- **Wayland compatibility**: Automatic detection and configuration for Ubuntu 24.04+ Wayland sessions
+- **Desktop session waiting**: Display service waits for user login before starting
+- **Xwayland integration**: Seamless fallback to X11 applications on Wayland
+- **Auto-recovery**: Display service automatically adapts to desktop environment changes
 
-- **Initial setup**: 2-3 hours
-- **Monthly maintenance**: 1-2 hours
-- **Emergency response**: 15-30 minutes
-
-## Files Created
+## Files
 
 ```
 infra/
-├── systemd/                    # Service definitions (updated for uv)
-│   ├── experimance-core@.service
-│   ├── experimance-display@.service  
-│   ├── experimance-health@.service
-│   ├── image-server@.service
-│   └── experimance@.target
+├── systemd/                    # Service definitions (updated for standardized naming)
+│   ├── core@.service          # Core service (service_type@project format)
+│   ├── display@.service       # Display service with Wayland support
+│   ├── health@.service        # Health monitoring service
+│   ├── agent@.service         # Agent service
+│   ├── audio@.service         # Audio service
+│   ├── image_server@.service  # Image generation service
+│   └── experimance@.target    # Service group target
 ├── scripts/                    # Management automation
-│   ├── deploy.sh              # Main deployment script (environment-aware)
+│   ├── deploy.sh              # Main deployment script (simplified, no special cases)
 │   ├── get_project_services.py # Dynamic service detection
-│   └── (other utility scripts planned)
+│   ├── setup_display_env.sh   # Wayland/Xwayland display environment detection
+│   ├── wait_for_desktop_session.sh # Wait for user login before display service
+│   └── (other utility scripts)
 └── docs/                      # Documentation
     ├── deployment.md          # Complete deployment guide
     └── README.md              # This summary
@@ -83,8 +87,13 @@ sudo ./infra/scripts/deploy.sh experimance start
 sudo ./infra/scripts/deploy.sh experimance status
 sudo ./infra/scripts/deploy.sh experimance restart
 
-# View available services
+# View available services (now uses standardized naming)
 ./infra/scripts/deploy.sh experimance services
+
+# Individual service control (new format: service_type@project)
+sudo systemctl status core@experimance
+sudo systemctl status display@experimance  # Includes Wayland support
+sudo systemctl restart agent@experimance
 ```
 
 ### Development (Testing on Any Machine)
@@ -116,9 +125,10 @@ sudo ./infra/scripts/deploy.sh experimance restart
 ./scripts/dev          # Show available services
 ps aux | grep experimance  # Check running dev services
 
-# Production  
+# Production (updated service names) 
 sudo ./infra/scripts/deploy.sh experimance status
-sudo systemctl status "experimance-*@experimance"
+sudo systemctl status "*@experimance"  # All project services
+sudo systemctl status core@experimance display@experimance  # Specific services
 ```
 
 ### Restart Everything
@@ -159,10 +169,13 @@ uv run python infra/scripts/get_project_services.py experimance
 ### View Logs
 ```bash
 # Development: Logs go to console where you started ./scripts/dev
+tail logs/dev/*
 
-# Production
-sudo journalctl -u experimance-core@experimance -f
-sudo journalctl -u experimance-health@experimance -f  # Health notifications
+# Production (updated service names)
+sudo journalctl -u core@experimance -f
+sudo journalctl -u display@experimance -f    # Display service with Wayland support
+sudo journalctl -u health@experimance -f     # Health notifications
+sudo journalctl -u agent@experimance -f      # Agent service logs
 ```
 
 ### Health Monitoring
@@ -171,8 +184,11 @@ sudo journalctl -u experimance-health@experimance -f  # Health notifications
 ls -la /var/cache/experimance/health/     # Production
 ls -la cache/health/                      # Development
 
-# Check health service (production only)
-sudo journalctl -u experimance-health@experimance -f
+# Check health service (production only) - updated service name
+sudo journalctl -u health@experimance -f
+
+# Monitor display service specifically (with Wayland support)
+sudo journalctl -u display@experimance -f
 ```
 
 ## Monitoring Options
@@ -255,18 +271,5 @@ The deploy script now fails explicitly instead of making assumptions:
 ## Cost Estimate
 
 - **Infrastructure**: $0 (using existing hardware)
-- **Monitoring services**: $0-30/month (email/SMS)
+- **Monitoring services**: $0 (ntfy.sh)
 - **Time investment**: 2-3 hours initial, 1-2 hours monthly
-
-## Success Criteria
-
-✅ **Simple**: One command to start/stop/restart all services  
-✅ **Reliable**: Automatic recovery from common failures  
-✅ **Monitored**: Immediate notification of serious issues  
-✅ **Maintainable**: Remote SSH access for troubleshooting  
-✅ **Updatable**: Safe remote updates with rollback  
-✅ **Documented**: Clear procedures for common tasks  
-✅ **Explicit**: No hidden fallbacks, clear error messages when things fail  
-✅ **Flexible**: Separate development and production workflows  
-
-This infrastructure provides enterprise-grade reliability while maintaining the simplicity needed for art installations.

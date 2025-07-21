@@ -1,7 +1,9 @@
 [Unit]
 Description=Experimance Display Service (%i project)
-After=network.target
+After=network.target user-1000.slice
 Wants=network.target
+# Wait for experimance user session to be active
+Requisite=user-1000.slice
 
 [Service]
 Type=simple
@@ -11,11 +13,9 @@ WorkingDirectory=/opt/experimance
 Environment=EXPERIMANCE_PROJECT=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=DISPLAY=:0
-Environment=WAYLAND_DISPLAY=wayland-0
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=XDG_SESSION_TYPE=wayland
-ExecStart=/home/experimance/.local/bin/uv run -m experimance_display
+# Dynamic display environment detection via wrapper script
+ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
+ExecStart=/opt/experimance/infra/scripts/setup_display_env.sh /home/experimance/.local/bin/uv run -m experimance_display
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=no
 
