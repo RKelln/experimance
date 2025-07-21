@@ -22,19 +22,6 @@ uv sync --extra vision-models
 uv sync --extra vision-gpu --extra vision-models
 ```
 
-### System Dependencies
-
-On Ubuntu/Debian:
-```bash
-sudo apt update
-sudo apt install python3-opencv libopencv-dev
-```
-
-On macOS:
-```bash
-brew install opencv
-```
-
 ## Configuration
 
 Enable vision processing in your agent configuration:
@@ -47,16 +34,150 @@ webcam_device_id = 0
 webcam_width = 640
 webcam_height = 480
 
-# Audience detection
+# Audience detection with detector profiles
 audience_detection_enabled = true
 audience_detection_interval = 2.0
 audience_detection_threshold = 0.5
+detector_profile = "face_detection"  # Use optimized detector profile
 
 # VLM settings
 vlm_enabled = true
 vlm_model = "moondream"
 vlm_analysis_interval = 10.0
 vlm_device = "cuda"  # or "cpu"
+```
+
+## Camera Optimization
+
+### Camera Setup and Analysis
+
+The vision system includes comprehensive camera analysis and optimization tools. Use these to get the best performance from your webcam:
+
+```bash
+# Analyze your camera capabilities
+uv run python scripts/tune_detector.py --camera-name "EMEET" --camera-info
+
+# This will show:
+# - Device identification and supported formats
+# - Current camera settings and available controls
+# - OpenCV compatibility test
+# - WebcamManager integration test
+```
+
+### Camera Profiles
+
+Camera settings are automatically configured via detector profiles. Each profile includes optimized camera settings for different environments:
+
+#### Face Detection Profile (Recommended)
+- **Format**: YUYV 640x480 @ 30fps (optimal balance)
+- **Exposure**: Aperture Priority Mode with dynamic framerate
+- **Environment**: Mixed indoor lighting
+- **Best for**: Gallery installations, seated audiences
+
+#### Gallery Dim Profile
+- **Format**: MJPG 1280x720 @ 30fps (better low-light)
+- **Exposure**: Enhanced low-light settings
+- **Environment**: Dim gallery/museum lighting
+- **Best for**: Dark exhibition spaces
+
+#### Indoor Office Profile
+- **Format**: YUYV 640x480 @ 30fps (stable performance)
+- **Exposure**: Fixed framerate for stable lighting
+- **Environment**: Bright office/studio lighting
+- **Best for**: Development and testing
+
+### Camera Format Selection
+
+**YUYV vs MJPG**: 
+- **YUYV 640x480**: Lower CPU usage, faster processing, excellent for detection
+- **MJPG 1280x720**: Higher quality, better for low light, more CPU intensive
+- **Recommendation**: Use YUYV 640x480 for most installations
+
+### Manual Camera Settings
+
+If automatic camera profile application fails, you can manually configure camera settings:
+
+```bash
+# List your camera's available controls
+v4l2-ctl --device=/dev/video0 --list-ctrls
+
+# Apply manual settings for gallery environment
+v4l2-ctl --device=/dev/video0 --set-ctrl=auto_exposure=3
+v4l2-ctl --device=/dev/video0 --set-ctrl=backlight_compensation=50
+v4l2-ctl --device=/dev/video0 --set-ctrl=gain=15
+v4l2-ctl --device=/dev/video0 --set-ctrl=brightness=5
+v4l2-ctl --device=/dev/video0 --set-ctrl=contrast=35
+
+# Set format and resolution
+v4l2-ctl --device=/dev/video0 --set-fmt-video=width=640,height=480,pixelformat=YUYV
+```
+
+### Camera Testing and Troubleshooting
+
+```bash
+# Test with specific camera and profile
+uv run python scripts/tune_detector.py --camera-name "EMEET" --profile face_detection
+
+# Test different cameras by name pattern
+uv run python scripts/tune_detector.py --camera-name "Logitech"
+uv run python scripts/tune_detector.py --camera-name "HD.*Camera"
+
+# List available cameras
+v4l2-ctl --list-devices
+
+# Test camera formats and resolutions
+v4l2-ctl --device=/dev/video0 --list-formats-ext
+```
+
+### Environment-Specific Optimization
+
+**Gallery/Museum Settings:**
+- Use face_detection or gallery_dim profile
+- Higher backlight compensation (40-70)
+- Moderate gain (15-25)
+
+**Office/Studio Settings:**
+- Use indoor_office profile
+- Lower gain (5-15) in bright environments
+- Fixed framerate for stable conditions
+
+**Outdoor/Bright Settings:**
+- Lower gain and brightness
+- Higher contrast for sun conditions
+- Enable shadow detection
+- Consider higher resolution for distant subjects
+
+### Camera Profile Customization
+
+You can create custom camera profiles by modifying existing ones in `services/agent/profiles/`:
+
+```toml
+[camera]
+name = "Custom Gallery"
+description = "Custom camera settings for my gallery"
+environment = "gallery"
+auto_apply = true
+
+[camera.settings]
+# Format settings
+preferred_format = "YUYV"
+preferred_width = 640
+preferred_height = 480
+preferred_fps = 30
+
+# Exposure and lighting
+auto_exposure = 3
+exposure_dynamic_framerate = 1
+backlight_compensation = 50
+gain = 20
+
+# Image quality
+brightness = 10
+contrast = 40
+saturation = 45
+sharpness = 3
+gamma = 115
+power_line_frequency = 2  # 60Hz (use 1 for 50Hz regions)
 ```
 
 ## Features
@@ -73,7 +194,7 @@ vlm_device = "cuda"  # or "cpu"
 The audience detection system uses a multi-modal approach:
 
 1. **Motion Detection**: Uses background subtraction to detect movement
-2. **VLM Analysis**: Uses Moondream to identify people in the scene
+2. **VLM Analysis**: Uses Moondream to identify people in the scene (requires good/discrete GPU)
 3. **Stability Filtering**: Combines results over time to reduce false positives
 
 Detection confidence is calculated based on:
@@ -155,13 +276,13 @@ For real-time parameter adjustment with visual feedback, use the interactive tun
 
 ```bash
 # Run interactive tuner with default profile
-uv run python tune_detector.py
+uv run python scripts/tune_detector.py
 
 # Start with specific profile and camera
-uv run python tune_detector.py --profile gallery_dim --camera 0
+uv run python scripts/tune_detector.py --profile gallery_dim --camera 0
 
 # List available profiles
-uv run python tune_detector.py --list-profiles
+uv run python scripts/tune_detector.py --list-profiles
 ```
 
 The interactive tuner provides:
@@ -170,7 +291,86 @@ The interactive tuner provides:
 - HOG detection bounding boxes and motion contours
 - Save tuned parameters to new detector profiles
 
-See [scripts/README.md](../../scripts/README.md) for more development tools.
+## Camera Performance Tips
+
+### Getting the Best Detection Results
+
+1. **Lighting Conditions**:
+   - Avoid backlighting (windows behind subjects)
+   - Ensure even lighting across the detection area
+   - Use the camera profile's backlight compensation settings
+   - Consider additional lighting for dim environments
+
+2. **Camera Positioning**:
+   - Mount camera at head height or slightly above
+   - Ensure clear view of the audience area
+   - Avoid obstructions in the camera's field of view
+   - Position to minimize camera shake/vibration
+
+3. **Format and Resolution**:
+   - Use YUYV 640x480 for best detection performance
+   - Higher resolutions don't always improve detection accuracy
+   - Maintain consistent 30 FPS for smooth detection
+
+4. **Real-time Tuning**:
+   ```bash
+   # Use interactive tuner for live optimization
+   uv run python scripts/tune_detector.py --camera-name "EMEET" --profile face_detection
+   
+   # Adjust these key parameters:
+   # - Face detection threshold (0.3-0.7)
+   # - Motion sensitivity (500-2000)
+   # - Detection confidence weights
+   ```
+
+### Troubleshooting Detection Issues
+
+**Face Detection Not Working:**
+```bash
+# Check if face detection is enabled in profile
+uv run python scripts/tune_detector.py --profile face_detection
+
+# Verify YuNet model is available
+ls models/face_detection_yunet_2023mar.onnx
+
+# Test with higher sensitivity
+# Lower face_score_threshold in profile (0.3-0.5)
+```
+
+**Motion Detection Too Sensitive:**
+```bash
+# Increase motion threshold in profile
+# Typical values: 600-2000 (higher = less sensitive)
+
+# Adjust camera gain and brightness to reduce noise
+v4l2-ctl --device=/dev/video0 --set-ctrl=gain=10
+v4l2-ctl --device=/dev/video0 --set-ctrl=brightness=0
+```
+
+**Camera Not Found:**
+```bash
+# List all video devices
+v4l2-ctl --list-devices
+
+# Test different device IDs
+uv run python scripts/tune_detector.py --camera 0
+uv run python scripts/tune_detector.py --camera 1
+
+# Check camera permissions
+sudo usermod -a -G video $USER
+# (logout and login required)
+```
+
+**Poor Image Quality:**
+```bash
+# Check supported formats and choose best one
+v4l2-ctl --device=/dev/video0 --list-formats-ext
+
+# Manual quality optimization
+v4l2-ctl --device=/dev/video0 --set-ctrl=contrast=35
+v4l2-ctl --device=/dev/video0 --set-ctrl=sharpness=3
+v4l2-ctl --device=/dev/video0 --set-ctrl=saturation=45
+```
 
 ## Performance Considerations
 
@@ -187,10 +387,25 @@ See [scripts/README.md](../../scripts/README.md) for more development tools.
 
 ### Optimization Tips
 
-1. **Reduce VLM analysis frequency** for better performance
-2. **Use motion detection primarily** and VLM for verification
-3. **Resize images** before VLM processing (configured via `vlm_max_image_size`)
-4. **Adjust detection thresholds** based on your installation environment
+1. **Use appropriate detector profiles** for your environment:
+   - `face_detection`: Best for seated audiences, fast and accurate
+   - `gallery_dim`: Optimized for low-light museum/gallery settings
+   - `indoor_office`: Stable performance in bright, controlled lighting
+   
+2. **Camera format selection**:
+   - YUYV 640x480: Fastest processing, recommended for most installations
+   - MJPG 1280x720: Better quality for challenging lighting conditions
+   
+3. **Performance optimization**:
+   - Reduce VLM analysis frequency for better performance
+   - Use face detection instead of HOG for seated audiences
+   - Apply camera profiles automatically for consistent settings
+   - Monitor detection times via interactive tuner
+   
+4. **Environmental tuning**:
+   - Use interactive tuner for real-time parameter adjustment
+   - Save optimized settings as custom detector profiles
+   - Test in actual installation lighting conditions
 
 ## Troubleshooting
 

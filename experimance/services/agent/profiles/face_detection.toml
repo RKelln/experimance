@@ -26,13 +26,13 @@ detection_history_size = 5
 stability_threshold = 0.5
 enable_hog_detection = false
 enable_face_detection = true
-enable_motion_detection = true
+enable_motion_detection = false
 
 [face]
 model_path = "models/face_detection_yunet_2023mar.onnx"
 input_size = [
-    320,
-    320,
+    640,
+    480,
 ]
 score_threshold = 0.5
 nms_threshold = 0.3
@@ -48,3 +48,38 @@ motion_only_threshold = 0.3
 motion_only_confidence_factor = 0.7
 max_combined_confidence = 0.95
 absence_confidence = 0.9
+
+[camera]
+name = "Gallery Face Detection"
+description = "Camera settings optimized for face detection in mixed lighting"
+environment = "gallery"
+auto_apply = true
+
+[camera.settings]
+# Format settings
+preferred_format = "YUYV"
+preferred_width = 640
+preferred_height = 480
+preferred_fps = 30
+
+# Exposure settings for reliable face detection
+auto_exposure = 3  # Aperture Priority Mode
+exposure_dynamic_framerate = 1  # Allow frame rate to drop for longer exposure
+
+# Lighting compensation for mixed indoor lighting
+backlight_compensation = 40  # Moderate compensation for mixed lighting
+gain = 15  # Moderate gain for sensitivity
+
+# White balance for indoor lighting
+white_balance_automatic = 1  # Auto white balance
+white_balance_temperature = 3200  # Cooler for indoor fluorescent/LED
+
+# Image quality optimized for face detection
+brightness = 5  # Slightly brighter for face visibility
+contrast = 35  # Good contrast for facial features
+saturation = 45  # Moderate saturation for natural skin tones
+sharpness = 3  # Higher sharpness for facial edge detection
+gamma = 110  # Balanced gamma for face detection
+
+# Power line frequency (adjust for your region)
+power_line_frequency = 2  # 60 Hz (use 1 for 50 Hz in Europe)

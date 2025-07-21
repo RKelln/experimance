@@ -8,7 +8,8 @@ for vision analysis and audience detection.
 import asyncio
 import logging
 import time
-from typing import Optional, Tuple
+import subprocess
+from typing import Optional, Tuple, Dict, Any
 import cv2
 import numpy as np
 from pathlib import Path
@@ -32,6 +33,7 @@ class WebcamManager:
         self.is_active = False
         self.last_frame: Optional[np.ndarray] = None
         self.last_frame_time: float = 0.0
+        self.device_id: Optional[int] = None
         
         # Frame processing settings
         self.frame_width = config.webcam_width
@@ -62,6 +64,9 @@ class WebcamManager:
                 if not self.cap.isOpened():
                     raise RuntimeError(f"Failed to open webcam device {device_id}")
             
+            # Store the device ID for camera settings
+            self.device_id = device_id
+            
             # Configure capture settings
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
@@ -90,6 +95,60 @@ class WebcamManager:
             await self.stop()
             raise
     
+    def apply_camera_profile(self, camera_profile) -> bool:
+        """
+        Apply camera settings from a camera profile.
+        
+        Args:
+            camera_profile: CameraProfile instance with settings to apply
+            
+        Returns:
+            bool: True if all critical settings were applied successfully
+        """
+        if not camera_profile or not camera_profile.auto_apply:
+            return True  # Nothing to apply
+            
+        logger.info(f"Applying camera profile: {camera_profile.name}")
+        
+        # Convert settings to dictionary, filtering out None values
+        settings_dict = {}
+        for field_name, field_value in camera_profile.settings.dict().items():
+            if field_value is not None:
+                # Handle format settings separately
+                if field_name.startswith('preferred_'):
+                    continue
+                settings_dict[field_name] = field_value
+        
+        # Apply v4l2 control settings
+        results = {}
+        if settings_dict:
+            results = self.apply_camera_settings(settings_dict)
+        
+        # Apply format settings if specified
+        settings = camera_profile.settings
+        if (settings.preferred_format and 
+            settings.preferred_width and 
+            settings.preferred_height):
+            
+            format_success = self.set_camera_format(
+                settings.preferred_width,
+                settings.preferred_height,
+                settings.preferred_format
+            )
+            results['format'] = format_success
+        
+        # Consider application successful if most settings worked
+        success_count = sum(results.values())
+        total_count = len(results)
+        success_rate = success_count / total_count if total_count > 0 else 1.0
+        
+        if success_rate >= 0.7:  # 70% success rate threshold
+            logger.info(f"Camera profile '{camera_profile.name}' applied successfully ({success_count}/{total_count})")
+            return True
+        else:
+            logger.warning(f"Camera profile '{camera_profile.name}' had limited success ({success_count}/{total_count})")
+            return False
+    
     def _determine_device_id(self) -> int:
         """Determine which device ID to use based on configuration."""
         # If device name is specified, try to find it
@@ -105,22 +164,77 @@ class WebcamManager:
     
     def _find_device_by_name(self, name_pattern: str) -> Optional[int]:
         """Find a camera device by partial name match."""
-        # This is a simplified implementation - in practice, you might want to use
-        # platform-specific APIs to get actual device names
         logger.info(f"Searching for camera matching pattern: '{name_pattern}'")
         
-        # For now, just try the first few device IDs
-        for device_id in range(5):
-            cap = cv2.VideoCapture(device_id)
-            if cap.isOpened():
-                ret, _ = cap.read()
-                cap.release()
-                if ret:
-                    # In a more complete implementation, you'd check actual device names here
-                    # For now, just return the first working camera if pattern matches a common name
-                    if any(keyword in name_pattern.lower() for keyword in ['usb', 'webcam', 'camera']):
-                        logger.info(f"Found potential match at device {device_id}")
-                        return device_id
+        # Try to use v4l2-ctl for accurate device name detection
+        try:
+            import subprocess
+            result = subprocess.run(['v4l2-ctl', '--list-devices'], 
+                                   capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                return self._parse_v4l2_devices(result.stdout, name_pattern)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            logger.debug("v4l2-ctl not available or failed, falling back to basic detection")
+        
+        # Fallback: basic pattern matching with device testing
+        logger.info("Using fallback camera detection method")
+        name_lower = name_pattern.lower()
+        
+        # Check devices 0-9 for working cameras
+        for device_id in range(10):
+            try:
+                cap = cv2.VideoCapture(device_id)
+                if cap.isOpened():
+                    ret, _ = cap.read()
+                    cap.release()
+                    if ret:
+                        # Check if pattern matches common camera name patterns
+                        if any(keyword in name_lower for keyword in [
+                            'emeet', 'usb', 'webcam', 'camera', 'hd', 'c960', 'c920', 'c930'
+                        ]):
+                            logger.info(f"Found potential camera match at device {device_id}")
+                            return device_id
+            except Exception:
+                continue
+        
+        logger.warning(f"No camera found matching pattern '{name_pattern}'")
+        return None
+    
+    def _parse_v4l2_devices(self, v4l2_output: str, name_pattern: str) -> Optional[int]:
+        """Parse v4l2-ctl --list-devices output to find matching camera."""
+        lines = v4l2_output.strip().split('\n')
+        current_device_name = None
+        name_lower = name_pattern.lower()
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Device name lines don't start with /dev/ or whitespace
+            if not line.startswith('/dev/') and not line.startswith('\t') and not line.startswith(' '):
+                current_device_name = line.lower()
+                logger.debug(f"Found device: {current_device_name}")
+            
+            # Video device lines start with /dev/video
+            elif line.startswith('/dev/video') and current_device_name:
+                # Check if current device name matches our pattern
+                if name_lower in current_device_name:
+                    # Extract device number from /dev/videoN
+                    try:
+                        device_id = int(line.split('/dev/video')[1])
+                        logger.info(f"Found matching camera '{current_device_name}' at device {device_id}")
+                        
+                        # Verify the device actually works
+                        cap = cv2.VideoCapture(device_id)
+                        if cap.isOpened():
+                            ret, _ = cap.read()
+                            cap.release()
+                            if ret:
+                                return device_id
+                        logger.warning(f"Device {device_id} found but not working")
+                    except (ValueError, IndexError):
+                        continue
         
         return None
     
@@ -309,3 +423,145 @@ class WebcamManager:
         except Exception as e:
             logger.error(f"Error saving frame: {e}")
             return False
+    
+    def apply_camera_settings(self, camera_settings: Dict[str, Any]) -> Dict[str, bool]:
+        """
+        Apply camera hardware settings using v4l2-ctl.
+        
+        Args:
+            camera_settings: Dictionary of v4l2 control settings
+            
+        Returns:
+            Dict[str, bool]: Results of each setting application
+        """
+        if self.device_id is None:
+            logger.error("Cannot apply camera settings: no device ID available")
+            return {}
+        
+        device_path = f"/dev/video{self.device_id}"
+        results = {}
+        
+        logger.info(f"Applying camera settings to {device_path}")
+        
+        for setting, value in camera_settings.items():
+            if value is None:
+                continue  # Skip None values
+                
+            try:
+                cmd = ['v4l2-ctl', f'--device={device_path}', f'--set-ctrl={setting}={value}']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    logger.debug(f"Applied {setting}={value}")
+                    results[setting] = True
+                else:
+                    logger.warning(f"Failed to apply {setting}={value}: {result.stderr.strip()}")
+                    results[setting] = False
+                    
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timeout applying {setting}={value}")
+                results[setting] = False
+            except Exception as e:
+                logger.error(f"Error applying {setting}={value}: {e}")
+                results[setting] = False
+        
+        # Log summary
+        success_count = sum(results.values())
+        total_count = len(results)
+        logger.info(f"Applied {success_count}/{total_count} camera settings successfully")
+        
+        return results
+    
+    def set_camera_format(self, width: int, height: int, format_name: str = "MJPG") -> bool:
+        """
+        Set camera format and resolution using v4l2-ctl.
+        
+        Args:
+            width: Frame width
+            height: Frame height  
+            format_name: Pixel format (YUYV, MJPG, etc.)
+            
+        Returns:
+            bool: True if format was set successfully
+        """
+        if self.device_id is None:
+            logger.error("Cannot set camera format: no device ID available")
+            return False
+        
+        device_path = f"/dev/video{self.device_id}"
+        
+        try:
+            cmd = ['v4l2-ctl', f'--device={device_path}', 
+                   f'--set-fmt-video=width={width},height={height},pixelformat={format_name}']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                logger.info(f"Set camera format to {format_name} {width}x{height}")
+                
+                # Update OpenCV capture settings to match
+                if self.cap and self.cap.isOpened():
+                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                
+                return True
+            else:
+                logger.warning(f"Failed to set camera format: {result.stderr.strip()}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout setting camera format")
+            return False
+        except Exception as e:
+            logger.error(f"Error setting camera format: {e}")
+            return False
+    
+    def get_camera_controls(self) -> Dict[str, Any]:
+        """
+        Get current camera control values using v4l2-ctl.
+        
+        Returns:
+            Dict[str, Any]: Current camera control values
+        """
+        if self.device_id is None:
+            logger.error("Cannot get camera controls: no device ID available")
+            return {}
+        
+        device_path = f"/dev/video{self.device_id}"
+        controls = {}
+        
+        try:
+            # Get list of available controls
+            cmd = ['v4l2-ctl', f'--device={device_path}', '--list-ctrls']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                # Parse control names and current values
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    if ':' in line and '=' in line:
+                        # Example: "brightness 0x00980900 (int) : min=-64 max=64 step=1 default=0 value=0"
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            control_info = parts[0].strip()
+                            value_info = parts[1].strip()
+                            
+                            # Extract control name
+                            control_name = control_info.split()[0]
+                            
+                            # Extract current value
+                            if 'value=' in value_info:
+                                value_str = value_info.split('value=')[1].split()[0]
+                                try:
+                                    controls[control_name] = int(value_str)
+                                except ValueError:
+                                    controls[control_name] = value_str
+            
+            logger.debug(f"Retrieved {len(controls)} camera controls")
+            return controls
+            
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout getting camera controls")
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting camera controls: {e}")
+            return {}

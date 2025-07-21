@@ -301,35 +301,81 @@ setup_directories() {
     log "Directories created and permissions set"
 }
 
-# Check if system build dependencies are installed
-check_build_dependencies() {
-    local missing_deps=()
+# Define the complete list of required system packages
+get_required_packages() {
+    # Essential build tools that should be checked by command
+    local build_tools=("make" "gcc")
     
-    # Check for essential build tools
-    if ! command -v make >/dev/null 2>&1; then missing_deps+=("make"); fi
-    if ! command -v gcc >/dev/null 2>&1; then missing_deps+=("build-essential"); fi
-    
-    # Define list of required development packages
+    # Complete list of packages for apt/yum/dnf
     # NOTE: We use `dpkg -l package_name` instead of `dpkg -l | grep package_name`
     # because with `set -euo pipefail`, the pipeline approach can fail unexpectedly
     # when dpkg has warnings or the grep doesn't match, even with 2>/dev/null
-    local required_packages=(
+    local apt_packages=(
+        "make"
+        "build-essential"
         "libssl-dev"
         "zlib1g-dev" 
+        "libbz2-dev"
         "libreadline-dev"
+        "libsqlite3-dev"
+        "curl"
+        "git"
+        "libncursesw5-dev"
+        "xz-utils"
+        "tk-dev"
+        "libxml2-dev"
+        "libxmlsec1-dev"
+        "libffi-dev"
+        "liblzma-dev"
         "libgdbm-dev"
         "libdb-dev"
         "portaudio19-dev"  # needed for pyaudio
         "libasound2-dev"   # needed for pyaudio
         "supercollider"    # needed for audio synthesis
+        "v4l-utils"        # Video4Linux utilities for webcam support
+        "libv4l-dev"       # Video4Linux development libraries  
+        "uvcdynctrl"       # UVC (USB Video Class) control tools
+        "guvcview"         # GTK+ UVC Viewer and control tool (optional)
     )
     
-    # Check each package
-    for package in "${required_packages[@]}"; do
-        if ! dpkg -l "$package" 2>/dev/null | grep -q "^ii"; then
-            missing_deps+=("$package")
+    # Export arrays for use by calling functions
+    case "${1:-apt}" in
+        "build_tools")
+            printf '%s\n' "${build_tools[@]}"
+            ;;
+        "apt")
+            printf '%s\n' "${apt_packages[@]}"
+            ;;
+        *)
+            printf '%s\n' "${apt_packages[@]}"
+            ;;
+    esac
+}
+
+# Check if system build dependencies are installed
+check_build_dependencies() {
+    local missing_deps=()
+    
+    # Check for essential build tools
+    while IFS= read -r tool; do
+        case "$tool" in
+            "gcc")
+                if ! command -v gcc >/dev/null 2>&1; then missing_deps+=("build-essential"); fi
+                ;;
+            *)
+                if ! command -v "$tool" >/dev/null 2>&1; then missing_deps+=("$tool"); fi
+                ;;
+        esac
+    done < <(get_required_packages "build_tools")
+    
+    # Check each package (skip build tools as they're handled above)
+    while IFS= read -r package; do
+        if [[ "$package" != "make" && "$package" != "build-essential" ]]; then
+            if ! dpkg -l "$package" 2>/dev/null | grep -q "^ii"; then
+                missing_deps+=("$package")
+            fi
         fi
-    done
+    done < <(get_required_packages "apt")
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         warn "Missing system build dependencies required for Python compilation:"
@@ -338,7 +384,7 @@ check_build_dependencies() {
         done
         echo ""
         echo "The following packages need to be installed:"
-        echo "  sudo apt install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev portaudio19-dev libasound2-dev supercollider"
+        echo "  sudo apt install $(get_required_packages "apt" | tr '\n' ' ')"
         echo ""
         
         if [[ "$MODE" == "prod" ]]; then
@@ -364,55 +410,52 @@ install_system_dependencies() {
     
     if command -v apt >/dev/null 2>&1; then
         # Ubuntu/Debian/Mint
+        local packages_to_install
+        packages_to_install=$(get_required_packages "apt" | tr '\n' ' ')
+        
         if [[ "$MODE" == "prod" ]]; then
             # Already running as root in production
             apt update
-            apt install -y make build-essential libssl-dev zlib1g-dev \
-                libbz2-dev libreadline-dev libsqlite3-dev curl git \
-                libncursesw5-dev xz-utils tk-dev libxml2-dev \
-                libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev \
-                portaudio19-dev libasound2-dev supercollider
+            apt install -y $packages_to_install
         else
             # Use sudo in development
             sudo apt update
-            sudo apt install -y make build-essential libssl-dev zlib1g-dev \
-                libbz2-dev libreadline-dev libsqlite3-dev curl git \
-                libncursesw5-dev xz-utils tk-dev libxml2-dev \
-                libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev \
-                portaudio19-dev libasound2-dev supercollider
+            sudo apt install -y $packages_to_install
         fi
         log "System build dependencies installed"
     elif command -v yum >/dev/null 2>&1; then
         # CentOS/RHEL/Amazon Linux
+        local yum_packages=(
+            "gcc" "make" "patch" "zlib-devel" "bzip2" "bzip2-devel"
+            "readline-devel" "sqlite" "sqlite-devel" "openssl-devel"
+            "tk-devel" "libffi-devel" "xz-devel"
+            "portaudio-devel" "alsa-lib-devel"
+            # Note: v4l-utils equivalent packages for RHEL/CentOS would be different
+        )
         if [[ "$MODE" == "prod" ]]; then
-            yum install -y gcc make patch zlib-devel bzip2 bzip2-devel \
-                readline-devel sqlite sqlite-devel openssl-devel \
-                tk-devel libffi-devel xz-devel \
-                portaudio-devel alsa-lib-devel
+            yum install -y "${yum_packages[@]}"
         else
-            sudo yum install -y gcc make patch zlib-devel bzip2 bzip2-devel \
-                readline-devel sqlite sqlite-devel openssl-devel \
-                tk-devel libffi-devel xz-devel \
-                portaudio-devel alsa-lib-devel
+            sudo yum install -y "${yum_packages[@]}"
         fi
         log "System build dependencies installed"
     elif command -v dnf >/dev/null 2>&1; then
         # Fedora
+        local dnf_packages=(
+            "make" "gcc" "patch" "zlib-devel" "bzip2" "bzip2-devel"
+            "readline-devel" "sqlite" "sqlite-devel" "openssl-devel"
+            "tk-devel" "libffi-devel" "xz-devel" "libuuid-devel" "gdbm-libs" "libnsl2"
+            "portaudio-devel" "alsa-lib-devel"
+            # Note: v4l-utils equivalent packages for Fedora would be different
+        )
         if [[ "$MODE" == "prod" ]]; then
-            dnf install -y make gcc patch zlib-devel bzip2 bzip2-devel \
-                readline-devel sqlite sqlite-devel openssl-devel \
-                tk-devel libffi-devel xz-devel libuuid-devel gdbm-libs libnsl2 \
-                portaudio-devel alsa-lib-devel
+            dnf install -y "${dnf_packages[@]}"
         else
-            sudo dnf install -y make gcc patch zlib-devel bzip2 bzip2-devel \
-                readline-devel sqlite sqlite-devel openssl-devel \
-                tk-devel libffi-devel xz-devel libuuid-devel gdbm-libs libnsl2 \
-                portaudio-devel alsa-lib-devel
+            sudo dnf install -y "${dnf_packages[@]}"
         fi
         log "System build dependencies installed"
     else
         warn "Unknown package manager. Please install build dependencies manually:"
-        warn "  sudo apt install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev libgdbm-dev libdb-dev portaudio19-dev libasound2-dev supercollider"
+        warn "  sudo apt install $(get_required_packages "apt" | tr '\n' ' ')"
         error "Cannot proceed without build dependencies"
     fi
 }
@@ -853,6 +896,17 @@ main() {
             check_project
             install_systemd_files
             setup_directories
+            # add user to video group if not already a member
+            if ! id -nG "$RUNTIME_USER" | grep -qw "video"; then
+                log "Adding $RUNTIME_USER to video group for webcam access"
+                if [[ "$MODE" == "prod" ]]; then
+                    usermod -aG video "$RUNTIME_USER"
+                else
+                    sudo usermod -aG video "$RUNTIME_USER"
+                fi
+            else
+                log "$RUNTIME_USER is already a member of the video group"
+            fi
             
             if [[ "$MODE" == "dev" ]]; then
                 log "Development installation complete!"

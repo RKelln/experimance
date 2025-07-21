@@ -52,9 +52,9 @@ cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 [vision]
 # Vision processing configuration
 webcam_enabled = true
-webcam_device_id = 0
+webcam_device_name = "eMeet"
 webcam_width = 640
-webcam_height = 360
+webcam_height = 480
 webcam_fps = 30
 
 # Audience detection

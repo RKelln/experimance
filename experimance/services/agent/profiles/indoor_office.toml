@@ -45,3 +45,38 @@ motion_only_threshold = 0.4
 motion_only_confidence_factor = 0.6
 max_combined_confidence = 0.95
 absence_confidence = 0.9
+
+[camera]
+name = "Indoor Office"
+description = "Camera settings optimized for stable indoor office/studio lighting"
+environment = "office"
+auto_apply = true
+
+[camera.settings]
+# Format settings - balanced performance
+preferred_format = "YUYV"
+preferred_width = 640
+preferred_height = 480
+preferred_fps = 30
+
+# Exposure settings for stable lighting
+auto_exposure = 3  # Aperture Priority Mode
+exposure_dynamic_framerate = 0  # Fixed frame rate in stable lighting
+
+# Lighting compensation for office environment
+backlight_compensation = 30  # Moderate compensation for office lighting
+gain = 10  # Lower gain in bright environment
+
+# White balance for office lighting
+white_balance_automatic = 1  # Auto white balance
+white_balance_temperature = 3200  # Cool office fluorescent lighting
+
+# Image quality optimized for office detection
+brightness = 0  # Neutral brightness in bright environment
+contrast = 30  # Standard contrast
+saturation = 50  # Standard saturation
+sharpness = 2  # Moderate sharpness
+gamma = 100  # Standard gamma
+
+# Power line frequency (adjust for your region)
+power_line_frequency = 2  # 60 Hz (use 1 for 50 Hz in Europe)

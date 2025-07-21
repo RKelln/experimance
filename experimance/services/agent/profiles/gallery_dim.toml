@@ -34,3 +34,38 @@ motion_only_threshold = 0.4
 motion_only_confidence_factor = 0.6
 max_combined_confidence = 0.95
 absence_confidence = 0.9
+
+[camera]
+name = "Gallery Dim Lighting"
+description = "Camera settings optimized for dim gallery/museum lighting"
+environment = "gallery"
+auto_apply = true
+
+[camera.settings]
+# Format settings - MJPG for better low light performance
+preferred_format = "MJPG"
+preferred_width = 1280
+preferred_height = 720
+preferred_fps = 30
+
+# Exposure settings for low light
+auto_exposure = 3  # Aperture Priority Mode for low light
+exposure_dynamic_framerate = 1  # Allow frame rate to drop for longer exposure
+
+# Lighting compensation for dim environment
+backlight_compensation = 70  # Higher compensation for uneven lighting
+gain = 25  # Higher gain for sensitivity in dim light
+
+# White balance for gallery lighting
+white_balance_automatic = 1  # Auto white balance
+white_balance_temperature = 4000  # Warmer for gallery lighting
+
+# Image quality optimized for dim light detection
+brightness = 15  # Brighter for dim environments
+contrast = 45  # Higher contrast for better edge detection
+saturation = 40  # Lower saturation to reduce noise
+sharpness = 4  # Higher sharpness for detection
+gamma = 125  # Adjusted gamma for better dynamic range
+
+# Power line frequency (adjust for your region)
+power_line_frequency = 2  # 60 Hz (use 1 for 50 Hz in Europe)

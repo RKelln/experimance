@@ -9,6 +9,7 @@ controlling other services.
 import asyncio
 import json
 import logging
+import uuid
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -61,6 +62,7 @@ class AgentService(BaseService):
         self.webcam_manager = None
         self.vlm_processor = None
         self.audience_detector = None
+        self._detector_profile = None  # Store loaded detector profile
         
         # Transcript display handler (will be initialized if enabled)
         self.transcript_display_handler = None
@@ -218,11 +220,29 @@ class AgentService(BaseService):
     async def _initialize_vision(self):
         """Initialize vision processing components."""
         try:
-            from .vision import WebcamManager, VLMProcessor, AudienceDetector, CPUAudienceDetector
+            from .vision import WebcamManager, VLMProcessor, AudienceDetector, CPUAudienceDetector, load_profile
+            
+            # Load detector profile first to get camera settings
+            detector_profile = None
+            if hasattr(self.config.vision, 'detector_profile') and self.config.vision.detector_profile:
+                try:
+                    detector_profile = load_profile(self.config.vision.detector_profile)
+                    logger.info(f"Loaded detector profile: {detector_profile.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to load detector profile '{self.config.vision.detector_profile}': {e}")
             
             # Initialize webcam manager
             self.webcam_manager = WebcamManager(self.config.vision)
             await self.webcam_manager.start()
+            
+            # Apply camera profile settings if available
+            if detector_profile and detector_profile.camera:
+                logger.info(f"Applying camera profile: {detector_profile.camera.name}")
+                success = self.webcam_manager.apply_camera_profile(detector_profile.camera)
+                if success:
+                    logger.info(f"Successfully applied camera profile: {detector_profile.camera.name}")
+                else:
+                    logger.warning(f"Camera profile '{detector_profile.camera.name}' had limited success")
             
             # Initialize VLM processor if enabled and needed
             if (self.config.vision.vlm_enabled and 
@@ -250,6 +270,10 @@ class AgentService(BaseService):
                 await self.audience_detector.start()
                 
                 logger.info(f"Using {detection_method} audience detection with VLM")
+            
+            # Store the detector profile for potential use in debug info
+            if detector_profile:
+                self._detector_profile = detector_profile
             
             logger.info("Vision processing initialized successfully")
             
@@ -656,6 +680,23 @@ class AgentService(BaseService):
         else:
             status["vision"]["detection_method"] = self.config.vision.detection_method
             status["vision"]["audience_detection"] = {"enabled": False}
+        
+        # Add detector profile information if available
+        if hasattr(self, '_detector_profile') and self._detector_profile:
+            profile = self._detector_profile
+            status["vision"]["detector_profile"] = {
+                "name": profile.name,
+                "description": profile.description,
+                "environment": profile.environment,
+                "lighting": profile.lighting,
+                "camera_profile_applied": profile.camera is not None,
+                "camera_profile_name": profile.camera.name if profile.camera else None
+            }
+        elif hasattr(self.config.vision, 'detector_profile'):
+            status["vision"]["detector_profile"] = {
+                "name": self.config.vision.detector_profile,
+                "status": "not_loaded"
+            }
         
         # Add transcript manager status if available
         if self.current_backend and hasattr(self.current_backend, 'transcript_manager'):

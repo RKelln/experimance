@@ -6,7 +6,32 @@ Provides real-time visualization of detection results with adjustable parameters
 via trackbars. Allows saving tuned parameters to detector profiles.
 
 Usage:
-    python interactive_detector_tuning.py [--profile PROFILE_NAME] [--camera CAMERA_ID]
+    uv run python scripts/tune_detector.py [options]
+
+Options:
+    --profile PROFILE     Detector profile to use (default: indoor_office)
+    --camera CAMERA_ID    Camera device ID (default: 0)  
+    --camera-name NAME    Camera device name pattern (e.g. "EMEET", "HD Webcam")
+    --list-cameras        List available cameras and exit
+    --camera-info         Show detailed info about selected camera and exit
+    --list-profiles       List available profiles and exit
+    --verbose             Enable verbose logging
+
+Examples:
+    # Use specific camera device ID
+    uv run python scripts/tune_detector.py --camera 6
+    
+    # Use camera by name pattern  
+    uv run python scripts/tune_detector.py --camera-name "EMEET"
+    uv run python scripts/tune_detector.py --camera-name "HD Webcam"
+    
+    # Show detailed camera information
+    uv run python scripts/tune_detector.py --camera-name "EMEET" --camera-info
+    uv run python scripts/tune_detector.py --camera 6 --camera-info
+    
+    # List available cameras and profiles
+    uv run python scripts/tune_detector.py --list-cameras
+    uv run python scripts/tune_detector.py --list-profiles
 """
 
 import cv2
@@ -23,6 +48,7 @@ from .detector_profile import (
     DetectorProfile, load_profile, create_default_profiles,
     get_profile_directory, list_available_profiles
 )
+from .webcam import WebcamManager
 from ..config import VisionConfig
 
 logger = logging.getLogger(__name__)
@@ -31,10 +57,12 @@ logger = logging.getLogger(__name__)
 class InteractiveDetectorTuner:
     """Interactive detector parameter tuning with live visualization."""
     
-    def __init__(self, camera_id: int = 0, profile_name: str = "indoor_office"):
+    def __init__(self, camera_id: int = 0, camera_name: Optional[str] = None, profile_name: str = "indoor_office"):
         self.camera_id = camera_id
+        self.camera_name = camera_name
         self.profile_name = profile_name
         self.cap = None
+        self.webcam_manager = None
         self.detector = None
         self.profile = None
         
@@ -77,37 +105,75 @@ class InteractiveDetectorTuner:
         self.loop = None
         
     def setup_camera(self) -> bool:
-        """Initialize camera capture."""
-        self.cap = cv2.VideoCapture(self.camera_id)
-        if not self.cap.isOpened():
-            logger.error(f"Failed to open camera {self.camera_id}")
-            print(f"Error: Could not open camera {self.camera_id}")
+        """Initialize camera capture using WebcamManager."""
+        try:
+            # Create a VisionConfig for the webcam manager
+            webcam_config = VisionConfig(
+                webcam_enabled=True,
+                webcam_device_id=self.camera_id,
+                webcam_device_name=self.camera_name,
+                webcam_auto_detect=True,  # Enable auto-detection as fallback
+                webcam_width=640,
+                webcam_height=480,
+                webcam_fps=30
+            )
+            
+            # Create and start webcam manager
+            self.webcam_manager = WebcamManager(webcam_config)
+            
+            # Use asyncio to start the webcam manager
+            if self.loop is None:
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+            
+            self.loop.run_until_complete(self.webcam_manager.start())
+            
+            # Apply camera settings from profile if available
+            if hasattr(self, 'profile') and self.profile and self.profile.camera:
+                logger.info(f"Applying camera profile: {self.profile.camera.name}")
+                success = self.webcam_manager.apply_camera_profile(self.profile.camera)
+                if success:
+                    print(f"Applied camera profile: {self.profile.camera.name}")
+                else:
+                    print(f"Warning: Camera profile '{self.profile.camera.name}' had limited success")
+            
+            # Test capturing a frame
+            test_frame = self.loop.run_until_complete(self.webcam_manager.capture_frame())
+            if test_frame is None:
+                raise RuntimeError("Failed to capture test frame")
+            
+            # Get info about the webcam setup
+            info = self.webcam_manager.get_capture_info()
+            actual_device_id = info.get('device_id', 'unknown')
+            resolution = info.get('actual_resolution', 'unknown')
+            
+            print(f"Successfully opened camera {actual_device_id} ({resolution})")
+            if self.camera_name:
+                print(f"Camera name pattern: '{self.camera_name}'")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to setup camera: {e}")
+            print(f"Error: Could not open camera")
+            if self.camera_name:
+                print(f"Camera name pattern: '{self.camera_name}'")
+            print(f"Camera ID: {self.camera_id}")
             print("Make sure:")
             print("  - Camera is connected and not used by another application")
-            print("  - Try a different camera ID (0, 1, 2, etc.)")
+            print("  - Try a different camera ID (0, 1, 2, etc.) or camera name")
             print("  - Check camera permissions")
+            print("  - Use 'v4l2-ctl --list-devices' to see available cameras")
             return False
-        
-        # Set reasonable resolution for tuning
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        
-        # Test reading a frame
-        ret, test_frame = self.cap.read()
-        if not ret:
-            logger.error(f"Camera {self.camera_id} opened but cannot read frames")
-            print(f"Error: Camera {self.camera_id} opened but cannot read frames")
-            return False
-        
-        print(f"Successfully opened camera {self.camera_id} ({test_frame.shape[1]}x{test_frame.shape[0]})")
-        return True
     
     def setup_detector(self) -> bool:
         """Initialize detector with profile."""
         try:
-            # Load profile
-            self.profile = load_profile(self.profile_name)
-            logger.info(f"Loaded profile: {self.profile.name}")
+            # Profile should already be loaded by run()
+            if not self.profile:
+                raise RuntimeError("Profile not loaded - setup_detector() called before run()")
+            
+            logger.info(f"Using profile: {self.profile.name}")
             
             # Create a minimal VisionConfig for the detector
             vision_config = VisionConfig(
@@ -477,6 +543,15 @@ class InteractiveDetectorTuner:
     
     def run(self):
         """Main tuning loop."""
+        # Load profile first to get camera settings
+        try:
+            self.profile = load_profile(self.profile_name)
+            logger.info(f"Loaded profile: {self.profile.name}")
+        except Exception as e:
+            logger.error(f"Failed to load profile '{self.profile_name}': {e}")
+            print(f"Error: Failed to load detector profile '{self.profile_name}': {e}")
+            return False
+        
         if not self.setup_camera():
             return False
         
@@ -510,11 +585,17 @@ class InteractiveDetectorTuner:
         
         try:
             while self.running:
-                if self.cap is None or self.detector is None:
+                if self.webcam_manager is None or self.detector is None:
                     break
+                
+                # Ensure loop is available
+                if self.loop is None:
+                    self.loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(self.loop)
                     
-                ret, frame = self.cap.read()
-                if not ret:
+                # Capture frame using WebcamManager
+                frame = self.loop.run_until_complete(self.webcam_manager.capture_frame())
+                if frame is None:
                     break
                 
                 # Run detection (handle async)
@@ -525,17 +606,17 @@ class InteractiveDetectorTuner:
                     
                     # Add timing debug
                     import time
-                    start_time = time.time()
+                    start_time = time.perf_counter()
                     result = self.loop.run_until_complete(
                         self.detector.detect_audience(frame, include_motion_mask=True)
                     )
-                    detection_time = time.time() - start_time
+                    detection_time = (time.perf_counter() - start_time) * 1000.0  # Convert to milliseconds
                     
                     # Debug output every 30 frames (roughly once per second)
                     frame_count = getattr(self, '_frame_count', 0)
                     self._frame_count = frame_count + 1
                     if frame_count % 30 == 0:
-                        print(f"Detection: {detection_time:.3f}s | "
+                        print(f"Detection: {detection_time:.1f}ms | "
                               f"HOG: {len(result.get('person_detection', {}).get('detections', []))} | "
                               f"Faces: {len(result.get('face_detection', {}).get('detections', []))} | "
                               f"Motion: {result.get('motion_detection', {}).get('motion_intensity', 0.0):.3f} | "
@@ -628,8 +709,13 @@ class InteractiveDetectorTuner:
     
     def cleanup(self):
         """Clean up resources."""
-        if self.cap:
-            self.cap.release()
+        if self.webcam_manager:
+            if self.loop and not self.loop.is_closed():
+                try:
+                    self.loop.run_until_complete(self.webcam_manager.stop())
+                except:
+                    pass
+            self.webcam_manager = None
         cv2.destroyAllWindows()
         
         # Clean up event loop
@@ -648,14 +734,378 @@ class InteractiveDetectorTuner:
             logger.warning(f"Failed to clean up temporary profile: {e}")
 
 
+def get_camera_detailed_info(camera_id: Optional[int] = None, camera_name: Optional[str] = None) -> None:
+    """Display detailed information about a camera."""
+    import subprocess
+    from .webcam import WebcamManager
+    from ..config import VisionConfig
+    
+    print("=" * 60)
+    print("CAMERA DETAILED INFORMATION")
+    print("=" * 60)
+    
+    # Determine device ID
+    device_id = camera_id
+    if camera_name:
+        # Use WebcamManager to find device by name
+        config = VisionConfig(webcam_device_name=camera_name, webcam_device_id=camera_id or 0)
+        manager = WebcamManager(config)
+        device_id = manager._find_device_by_name(camera_name)
+        if device_id is None:
+            print(f"Camera '{camera_name}' not found")
+            return
+        print(f"Camera name pattern: '{camera_name}' → Device ID: {device_id}")
+    else:
+        device_id = camera_id or 0
+        print(f"Using device ID: {device_id}")
+    
+    device_path = f"/dev/video{device_id}"
+    
+    try:
+        # Check if device exists
+        import os
+        if not os.path.exists(device_path):
+            print(f"Error: Device {device_path} does not exist")
+            return
+        
+        print(f"Device: {device_path}")
+        print()
+        
+        # Get device name from v4l2-ctl --list-devices
+        print("1. DEVICE IDENTIFICATION")
+        print("-" * 30)
+        try:
+            result = subprocess.run(['v4l2-ctl', '--list-devices'], capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                current_device_name = None
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if not line.startswith('/dev/') and not line.startswith('\t') and not line.startswith(' '):
+                        current_device_name = line
+                    elif line.startswith(f'/dev/video{device_id}') and current_device_name:
+                        print(f"Name: {current_device_name}")
+                        break
+        except:
+            print("Could not get device name")
+        
+        # Get supported formats and resolutions
+        print("\n2. SUPPORTED FORMATS & RESOLUTIONS")
+        print("-" * 40)
+        try:
+            result = subprocess.run(['v4l2-ctl', f'--device={device_path}', '--list-formats-ext'], 
+                                   capture_output=True, text=True)
+            if result.returncode == 0:
+                print(result.stdout)
+            else:
+                print("Could not get format information")
+        except Exception as e:
+            print(f"Error getting formats: {e}")
+        
+        # Get current camera settings
+        print("\n3. CURRENT CAMERA SETTINGS")
+        print("-" * 30)
+        try:
+            result = subprocess.run(['v4l2-ctl', f'--device={device_path}', '--get-fmt-video'], 
+                                   capture_output=True, text=True)
+            if result.returncode == 0:
+                print(result.stdout)
+            else:
+                print("Could not get current settings")
+        except Exception as e:
+            print(f"Error getting current settings: {e}")
+        
+        # Get camera controls
+        print("\n4. AVAILABLE CAMERA CONTROLS")
+        print("-" * 35)
+        try:
+            result = subprocess.run(['v4l2-ctl', f'--device={device_path}', '--list-ctrls'], 
+                                   capture_output=True, text=True)
+            if result.returncode == 0:
+                print(result.stdout)
+            else:
+                print("Could not get camera controls")
+        except Exception as e:
+            print(f"Error getting camera controls: {e}")
+        
+        # Test with OpenCV
+        print("\n5. OPENCV COMPATIBILITY TEST")
+        print("-" * 35)
+        try:
+            import cv2
+            cap = cv2.VideoCapture(device_id)
+            if cap.isOpened():
+                # Get OpenCV reported properties
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+                fourcc_str = chr(fourcc & 0xFF) + chr((fourcc >> 8) & 0xFF) + chr((fourcc >> 16) & 0xFF) + chr((fourcc >> 24) & 0xFF)
+                
+                print(f"OpenCV can open device: YES")
+                print(f"Current resolution: {width}x{height}")
+                print(f"Current FPS: {fps}")
+                print(f"Current format: {fourcc_str}")
+                
+                # Test frame capture
+                ret, frame = cap.read()
+                if ret:
+                    print(f"Frame capture: SUCCESS")
+                    print(f"Actual frame shape: {frame.shape}")
+                else:
+                    print(f"Frame capture: FAILED")
+                
+                cap.release()
+            else:
+                print(f"OpenCV can open device: NO")
+        except Exception as e:
+            print(f"OpenCV test failed: {e}")
+        
+        # WebcamManager compatibility test
+        print("\n6. WEBCAM MANAGER TEST")
+        print("-" * 28)
+        try:
+            import asyncio
+            
+            async def test_webcam_manager():
+                config = VisionConfig(
+                    webcam_enabled=True,
+                    webcam_device_id=device_id,
+                    webcam_device_name=camera_name,
+                    webcam_width=640,
+                    webcam_height=480,
+                    webcam_fps=30
+                )
+                
+                manager = WebcamManager(config)
+                await manager.start()
+                
+                info = manager.get_capture_info()
+                print("WebcamManager compatibility: SUCCESS")
+                print(f"Configuration:")
+                for key, value in info.items():
+                    print(f"  {key}: {value}")
+                
+                # Test frame capture
+                frame = await manager.capture_frame()
+                if frame is not None:
+                    print(f"Frame capture via WebcamManager: SUCCESS")
+                    print(f"Frame shape: {frame.shape}")
+                else:
+                    print(f"Frame capture via WebcamManager: FAILED")
+                
+                await manager.stop()
+            
+            asyncio.run(test_webcam_manager())
+            
+        except Exception as e:
+            print(f"WebcamManager test failed: {e}")
+        
+        print("\n" + "=" * 60)
+        
+    except Exception as e:
+        print(f"Error getting camera information: {e}")
+
+
+def setup_camera_for_gallery(camera_id: Optional[int] = None, camera_name: Optional[str] = None) -> None:
+    """Configure camera settings optimized for gallery/dim lighting environment."""
+    import subprocess
+    from .webcam import WebcamManager
+    from ..config import VisionConfig
+    
+    print("=" * 60)
+    print("CAMERA SETUP FOR GALLERY ENVIRONMENT")
+    print("=" * 60)
+    
+    # Determine device ID
+    device_id = camera_id
+    if camera_name:
+        # Use WebcamManager to find device by name
+        config = VisionConfig(webcam_device_name=camera_name, webcam_device_id=camera_id or 0)
+        manager = WebcamManager(config)
+        device_id = manager._find_device_by_name(camera_name)
+        if device_id is None:
+            print(f"Camera '{camera_name}' not found")
+            return
+        print(f"Camera name pattern: '{camera_name}' → Device ID: {device_id}")
+    else:
+        device_id = camera_id or 0
+        print(f"Using device ID: {device_id}")
+    
+    device_path = f"/dev/video{device_id}"
+    
+    try:
+        # Check if device exists
+        import os
+        if not os.path.exists(device_path):
+            print(f"Error: Device {device_path} does not exist")
+            return
+        
+        print(f"Device: {device_path}")
+        print()
+        
+        # Gallery-optimized camera settings
+        gallery_settings = {
+            # Exposure settings for low light
+            'auto_exposure': 3,  # Aperture Priority Mode (best for low light)
+            'exposure_dynamic_framerate': 1,  # Allow frame rate to drop for longer exposure
+            
+            # Lighting compensation
+            'backlight_compensation': 60,  # Higher value for uneven gallery lighting
+            'gain': 20,  # Moderate gain boost for sensitivity
+            
+            # White balance for gallery lighting
+            'white_balance_automatic': 1,  # Auto white balance
+            'white_balance_temperature': 4000,  # Slightly warmer for gallery lights
+            
+            # Image quality for detection
+            'brightness': 10,  # Slightly brighter for detection
+            'contrast': 40,  # Higher contrast for better edges
+            'saturation': 50,  # Reduce saturation to avoid color bleeding
+            'sharpness': 4,  # Higher sharpness for detection
+            'gamma': 120,  # Adjust gamma for better dynamic range
+            
+            # Power line frequency (adjust for your region)
+            'power_line_frequency': 2,  # 60 Hz (use 1 for 50 Hz in Europe)
+        }
+        
+        print("1. CURRENT CAMERA SETTINGS")
+        print("-" * 30)
+        
+        # Get current settings
+        try:
+            result = subprocess.run(['v4l2-ctl', f'--device={device_path}', '--get-ctrl=auto_exposure,exposure_dynamic_framerate,backlight_compensation,gain,brightness,contrast'], 
+                                   capture_output=True, text=True)
+            if result.returncode == 0:
+                print("Current settings:")
+                print(result.stdout)
+            else:
+                print("Could not get current settings")
+        except Exception as e:
+            print(f"Error getting current settings: {e}")
+        
+        print("\n2. APPLYING GALLERY-OPTIMIZED SETTINGS")
+        print("-" * 45)
+        
+        success_count = 0
+        total_count = len(gallery_settings)
+        
+        for setting, value in gallery_settings.items():
+            try:
+                print(f"Setting {setting} = {value}... ", end="")
+                result = subprocess.run(['v4l2-ctl', f'--device={device_path}', f'--set-ctrl={setting}={value}'], 
+                                       capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("✓ SUCCESS")
+                    success_count += 1
+                else:
+                    print(f"✗ FAILED: {result.stderr.strip()}")
+            except Exception as e:
+                print(f"✗ ERROR: {e}")
+        
+        print(f"\nApplied {success_count}/{total_count} settings successfully")
+        
+        print("\n3. RECOMMENDED FORMAT SETTINGS")
+        print("-" * 35)
+        print("For gallery environments, consider using:")
+        print("  Format: MJPG (better compression, higher resolutions)")
+        print("  Resolution options:")
+        print("    - 1280x720 (balanced performance/quality)")
+        print("    - 1920x1080 (best quality for face detection)")
+        print("    - 640x480 (fastest performance)")
+        print()
+        print("To set format and resolution:")
+        print(f"  v4l2-ctl --device={device_path} --set-fmt-video=width=1280,height=720,pixelformat=MJPG")
+        
+        # Apply recommended format
+        print("\n4. APPLYING RECOMMENDED FORMAT")
+        print("-" * 35)
+        try:
+            print("Setting format to MJPG 1280x720... ", end="")
+            result = subprocess.run(['v4l2-ctl', f'--device={device_path}', '--set-fmt-video=width=1280,height=720,pixelformat=MJPG'], 
+                                   capture_output=True, text=True)
+            if result.returncode == 0:
+                print("✓ SUCCESS")
+                
+                # Verify the setting
+                result = subprocess.run(['v4l2-ctl', f'--device={device_path}', '--get-fmt-video'], 
+                                       capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("New format:")
+                    print(result.stdout)
+            else:
+                print(f"✗ FAILED: {result.stderr.strip()}")
+                print("Keeping current format")
+        except Exception as e:
+            print(f"✗ ERROR: {e}")
+        
+        print("\n5. VERIFICATION")
+        print("-" * 15)
+        
+        # Test with OpenCV
+        try:
+            import cv2
+            cap = cv2.VideoCapture(device_id)
+            if cap.isOpened():
+                # Get properties
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                
+                print(f"OpenCV reports: {width}x{height} @ {fps} FPS")
+                
+                # Test frame capture
+                ret, frame = cap.read()
+                if ret:
+                    print(f"Frame capture: ✓ SUCCESS")
+                    print(f"Frame shape: {frame.shape}")
+                    
+                    # Check brightness/quality
+                    mean_brightness = frame.mean()
+                    print(f"Mean brightness: {mean_brightness:.1f} (good range: 80-150)")
+                else:
+                    print(f"Frame capture: ✗ FAILED")
+                
+                cap.release()
+            else:
+                print(f"✗ OpenCV cannot open device")
+        except Exception as e:
+            print(f"Verification failed: {e}")
+        
+        print("\n6. USAGE RECOMMENDATIONS")
+        print("-" * 28)
+        print("For gallery use:")
+        print("  • Use face_detection profile for seated audiences")
+        print("  • Monitor detection performance in actual lighting")
+        print("  • Adjust exposure settings if needed:")
+        print(f"    v4l2-ctl --device={device_path} --set-ctrl=backlight_compensation=80")
+        print(f"    v4l2-ctl --device={device_path} --set-ctrl=gain=30")
+        print("  • Test with: uv run python scripts/tune_detector.py --profile face_detection --camera-name 'EMEET'")
+        
+        print("\n" + "=" * 60)
+        
+    except Exception as e:
+        print(f"Error setting up camera: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Interactive detector parameter tuning")
     parser.add_argument('--profile', '-p', default='indoor_office',
                        help='Detector profile to start with')
     parser.add_argument('--camera', '-c', type=int, default=0,
                        help='Camera device ID')
+    parser.add_argument('--camera-name', '-n', type=str, default=None,
+                       help='Camera device name pattern (e.g. "EMEET", "webcam", "USB")')
     parser.add_argument('--list-profiles', action='store_true',
                        help='List available profiles and exit')
+    parser.add_argument('--list-cameras', action='store_true',
+                       help='List available cameras and exit')
+    parser.add_argument('--camera-info', action='store_true',
+                       help='Show detailed info about selected camera and exit')
+    parser.add_argument('--setup-camera', action='store_true',
+                       help='Configure camera settings for gallery environment and exit')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
     
@@ -664,6 +1114,27 @@ def main():
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
+    
+    # List cameras if requested
+    if args.list_cameras:
+        try:
+            print("Listing available cameras using v4l2-ctl...")
+            import subprocess
+            result = subprocess.run(['v4l2-ctl', '--list-devices'], capture_output=True, text=True)
+            if result.returncode == 0:
+                print(result.stdout)
+            else:
+                print("v4l2-ctl not available. Try:")
+                print("  sudo apt install v4l-utils")
+                print("Then use: v4l2-ctl --list-devices")
+        except Exception as e:
+            print(f"Error listing cameras: {e}")
+        return
+    
+    # Show camera info if requested
+    if args.camera_info:
+        get_camera_detailed_info(args.camera, args.camera_name)
+        return
     
     # List profiles if requested
     if args.list_profiles:
@@ -687,8 +1158,18 @@ def main():
         print(f"Error loading profiles: {e}")
         return
     
+    # Show camera setup info
+    if args.camera_name:
+        print(f"Using camera name pattern: '{args.camera_name}' (fallback device ID: {args.camera})")
+    else:
+        print(f"Using camera device ID: {args.camera}")
+    
     # Run tuner
-    tuner = InteractiveDetectorTuner(camera_id=args.camera, profile_name=args.profile)
+    tuner = InteractiveDetectorTuner(
+        camera_id=args.camera, 
+        camera_name=args.camera_name,
+        profile_name=args.profile
+    )
     success = tuner.run()
     
     if not success:

@@ -72,6 +72,51 @@ class ConfidenceParams(BaseModel):
     absence_confidence: float = Field(default=0.9, description="Confidence when no detection")
 
 
+class CameraSettings(BaseModel):
+    """Camera hardware settings for v4l2 control."""
+    # Exposure settings
+    auto_exposure: Optional[int] = Field(default=None, description="Auto exposure mode (1=manual, 3=aperture priority)")
+    exposure_dynamic_framerate: Optional[int] = Field(default=None, description="Allow dynamic framerate for exposure (0/1)")
+    exposure_absolute: Optional[int] = Field(default=None, description="Manual exposure value (when auto_exposure=1)")
+    
+    # Lighting compensation
+    backlight_compensation: Optional[int] = Field(default=None, description="Backlight compensation (0-100)")
+    gain: Optional[int] = Field(default=None, description="Gain control (0-100)")
+    
+    # White balance
+    white_balance_automatic: Optional[int] = Field(default=None, description="Auto white balance (0/1)")
+    white_balance_temperature: Optional[int] = Field(default=None, description="Color temperature (2800-6500K)")
+    
+    # Image quality
+    brightness: Optional[int] = Field(default=None, description="Brightness (-64 to 64)")
+    contrast: Optional[int] = Field(default=None, description="Contrast (0-100)")
+    saturation: Optional[int] = Field(default=None, description="Saturation (0-100)")
+    sharpness: Optional[int] = Field(default=None, description="Sharpness (0-100)")
+    gamma: Optional[int] = Field(default=None, description="Gamma correction (100-300)")
+    
+    # Power line frequency (flicker reduction)
+    power_line_frequency: Optional[int] = Field(default=None, description="Power line frequency (0=disabled, 1=50Hz, 2=60Hz)")
+    
+    # Format settings
+    preferred_format: Optional[str] = Field(default=None, description="Preferred pixel format (YUYV, MJPG)")
+    preferred_width: Optional[int] = Field(default=None, description="Preferred frame width")
+    preferred_height: Optional[int] = Field(default=None, description="Preferred frame height")
+    preferred_fps: Optional[int] = Field(default=None, description="Preferred frame rate")
+
+
+class CameraProfile(BaseModel):
+    """Camera configuration profile for different environments."""
+    name: str = Field(description="Camera profile name")
+    description: str = Field(description="Camera profile description") 
+    environment: str = Field(description="Target environment")
+    
+    # Camera settings
+    settings: CameraSettings = Field(default_factory=CameraSettings)
+    
+    # Auto-apply settings
+    auto_apply: bool = Field(default=True, description="Automatically apply settings when profile is loaded")
+
+
 class DetectorProfile(BaseModel):
     """Complete detector profile configuration."""
     name: str = Field(description="Profile name")
@@ -84,6 +129,7 @@ class DetectorProfile(BaseModel):
     detection: DetectionParams = Field(default_factory=DetectionParams)
     face: FaceDetectionParams = Field(default_factory=FaceDetectionParams)
     confidence: ConfidenceParams = Field(default_factory=ConfidenceParams)
+    camera: Optional[CameraProfile] = Field(default=None, description="Optional camera settings profile")
     
     @classmethod
     def load_from_file(cls, profile_path: Path) -> "DetectorProfile":
@@ -194,10 +240,10 @@ def create_default_profiles() -> Dict[str, DetectorProfile]:
         )
     )
     
-    # Face detection optimized profile
+    # Face detection optimized profile with camera settings
     profiles["face_detection"] = DetectorProfile(
         name="Face Detection",
-        description="Optimized for face detection with motion, ideal for seated audiences",
+        description="Optimized for face detection with motion, ideal for seated audiences with gallery camera settings",
         environment="indoor",
         lighting="mixed",
         detection=DetectionParams(
@@ -226,6 +272,41 @@ def create_default_profiles() -> Dict[str, DetectorProfile]:
             motion_confidence_weight=0.4,
             motion_only_threshold=0.3,
             motion_only_confidence_factor=0.7
+        ),
+        camera=CameraProfile(
+            name="Gallery Optimized",
+            description="Camera settings optimized for gallery/museum environment",
+            environment="gallery",
+            settings=CameraSettings(
+                # Exposure settings for controlled lighting
+                auto_exposure=3,  # Aperture Priority Mode
+                exposure_dynamic_framerate=1,  # Allow frame rate adjustment
+                
+                # Lighting compensation
+                backlight_compensation=50,  # Moderate compensation
+                gain=15,  # Conservative gain for quality
+                
+                # White balance for gallery lighting
+                white_balance_automatic=1,
+                white_balance_temperature=4000,  # Warm gallery lighting
+                
+                # Image quality optimized for detection
+                brightness=5,   # Slightly brighter
+                contrast=35,    # Good edge definition
+                saturation=45,  # Reduced saturation
+                sharpness=3,    # Moderate sharpness
+                gamma=110,      # Slightly adjusted gamma
+                
+                # Format settings
+                preferred_format="YUYV",    # Good for detection
+                preferred_width=640,        # Balanced performance
+                preferred_height=480,
+                preferred_fps=30,
+                
+                # Power line frequency
+                power_line_frequency=2  # 60 Hz (adjust for region)
+            ),
+            auto_apply=True
         )
     )
     
