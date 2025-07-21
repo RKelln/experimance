@@ -354,7 +354,7 @@ REQUESTED_SERVICES=("$@")
 # Check if service names are provided
 if [ ${#REQUESTED_SERVICES[@]} -eq 0 ]; then
     echo -e "${RED}Error: Service name(s) required${NC}"
-    echo -e "Usage: ${YELLOW}./scripts/dev <service_name(s)|all>${NC}"
+    echo -e "Usage: ${YELLOW}./scripts/dev <service_name(s)|all|no_agent>${NC}"
     echo ""
     echo "Available services:"
     
@@ -362,6 +362,7 @@ if [ ${#REQUESTED_SERVICES[@]} -eq 0 ]; then
         echo "  - $service"
     done
     echo "  - all                          # Start all services"
+    echo "  - no_agent                     # Start all services except agent service"
     echo ""
     echo "Examples:"
     echo "  ./scripts/dev display          # Start display service on monitors"
@@ -379,9 +380,19 @@ if [[ "${REQUESTED_SERVICES[0]}" == "all" ]]; then
     fi
     # Use all available services
     SERVICES_TO_START=("${AVAILABLE_SERVICES[@]}")
+elif [[ "${REQUESTED_SERVICES[0]}" == "no_agent" ]]; then
+    if [[ ${#REQUESTED_SERVICES[@]} -gt 1 ]]; then
+        echo -e "${RED}Error: Cannot specify other services when using 'no_agent'${NC}"
+        exit 1
+    fi
+    # Use all services except agent
+    for svc in "${AVAILABLE_SERVICES[@]}"; do
+        if [[ "$svc" != "agent" ]]; then
+            SERVICES_TO_START+=("$svc")
+        fi
+    done
 else
     # Validate that all requested services exist
-    SERVICES_TO_START=()
     for service in "${REQUESTED_SERVICES[@]}"; do
         if [[ " ${AVAILABLE_SERVICES[@]} " =~ " ${service} " ]]; then
             SERVICES_TO_START+=("$service")
