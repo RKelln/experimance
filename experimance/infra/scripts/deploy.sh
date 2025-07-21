@@ -178,6 +178,29 @@ install_systemd_files() {
     log "Reloaded systemd configuration"
 }
 
+# Download file from Google Drive using uvx gdown
+download_google_drive_file() {
+    local file_id="$1"
+    local output_file="$2"
+    
+    log "Using uvx gdown to download from Google Drive"
+    if uvx gdown "$file_id" -O "$output_file" --quiet; then
+        # Verify the downloaded file is actually a zip file
+        if file "$output_file" | grep -q -i zip; then
+            return 0
+        else
+            warn "Downloaded file is not a valid zip file"
+            log "File type: $(file "$output_file")"
+            rm -f "$output_file"
+            return 1
+        fi
+    else
+        warn "uvx gdown failed to download the file"
+        log "Manual download required: https://drive.google.com/file/d/${file_id}/view"
+        return 1
+    fi
+}
+
 setup_directories() {
     log "Setting up directories..."
     
@@ -213,6 +236,7 @@ setup_directories() {
 
     # Download and extract media bundle from Google drive
     # https://drive.google.com/file/d/1JPf4biReYj1qwWXsb0R_ZVcVrzM94XeE/view?usp=drive_link
+    # Note: This function will automatically install gdown if needed
 
     MEDIA_ZIP_ID="${MEDIA_ZIP_ID:-1JPf4biReYj1qwWXsb0R_ZVcVrzM94XeE}"
     if [[ -n "${MEDIA_ZIP_ID:-}" ]]; then
@@ -224,24 +248,51 @@ setup_directories() {
             MEDIA_URL="https://docs.google.com/uc?export=download&id=${MEDIA_ZIP_ID}"
             if [[ ! -f "$ZIP_FILE" ]]; then
                 log "Downloading media bundle to $ZIP_FILE"
-                if command -v gdown &>/dev/null; then
-                    gdown --quiet --id "$MEDIA_ZIP_ID" -O "$ZIP_FILE" || error "Failed to download media bundle via gdown"
-                else
-                    wget --quiet --no-check-certificate "$MEDIA_URL" -O "$ZIP_FILE" || error "Failed to download media bundle via wget"
+                if ! download_google_drive_file "$MEDIA_ZIP_ID" "$ZIP_FILE"; then
+                    warn "Failed to download media bundle automatically"
+                    log "You can download manually from: https://drive.google.com/file/d/${MEDIA_ZIP_ID}/view"
+                    log "Save as: $ZIP_FILE"
+                    log "Continuing installation without media files..."
+                    return
                 fi
                 chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
             else
                 log "Media bundle zip already present at $ZIP_FILE"
+                
+                # Verify existing file is actually a zip file
+                if ! file "$ZIP_FILE" | grep -q -i zip; then
+                    warn "Existing media bundle file is not a valid zip file, re-downloading..."
+                    rm -f "$ZIP_FILE"
+                    
+                    log "Downloading media bundle to $ZIP_FILE"
+                    if ! download_google_drive_file "$MEDIA_ZIP_ID" "$ZIP_FILE"; then
+                        warn "Failed to download media bundle automatically"
+                        log "You can download manually from: https://drive.google.com/file/d/${MEDIA_ZIP_ID}/view"
+                        log "Save as: $ZIP_FILE"
+                        log "Continuing installation without media files..."
+                        return
+                    fi
+                    chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
+                fi
             fi
 
             log "Extracting media bundle into $REPO_DIR/media"
             if command -v unzip &>/dev/null; then
                 # Update existing files only if archive files are newer, extract media/* into REPO_DIR to avoid nested media/media
-                unzip -qu "$ZIP_FILE" "media/*" -d "$REPO_DIR" || error "Failed to extract media bundle"
+                if ! unzip -qu "$ZIP_FILE" "media/*" -d "$REPO_DIR"; then
+                    warn "Failed to extract media bundle automatically"
+                    log "You can extract manually with: unzip '$ZIP_FILE' -d '$REPO_DIR'"
+                    log "Or download the media bundle manually from: https://drive.google.com/file/d/${MEDIA_ZIP_ID}/view"
+                    log "Continuing installation without media files..."
+                else
+                    log "Media bundle extracted successfully"
+                    chown -R "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media"
+                fi
             else
-                error "Cannot extract media bundle: 'unzip' not found. Please install 'unzip'."
+                warn "Cannot extract media bundle: 'unzip' not found"
+                log "Please install 'unzip' or extract manually: unzip '$ZIP_FILE' -d '$REPO_DIR'"
+                log "Or download the media bundle manually from: https://drive.google.com/file/d/${MEDIA_ZIP_ID}/view"
             fi
-            chown -R "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media"
         else
             log "Skipping media bundle download and extraction."
         fi
@@ -401,12 +452,6 @@ install_dependencies() {
         install_system_dependencies
     fi
     
-    # Ask about Python optimization (only for new installations)
-    local use_optimization=false
-    if ask_python_optimization; then
-        use_optimization=true
-    fi
-    
     if [[ "$MODE" == "prod" ]]; then
         # Production mode: install uv and dependencies as the experimance user
         log "Installing uv and Python 3.11 for experimance user..."
@@ -443,14 +488,12 @@ install_dependencies() {
                 echo 'Installing latest Python 3.11...'
                 LATEST_311=\$(pyenv install --list | grep -E '^  3\.11\.[0-9]+$' | tail -1 | xargs)
                 echo \"Installing Python \$LATEST_311\"
-                if [ '$use_optimization' = true ]; then
-                    echo 'Building with optimization flags for better performance...'
-                    PYTHON_CONFIGURE_OPTS='--enable-optimizations --with-lto' PYTHON_CFLAGS='-march=native -mtune=native' pyenv install \$LATEST_311
-                else
-                    pyenv install \$LATEST_311
-                fi
+                
+                # Ask about optimization in production mode (default yes)
+                echo 'Production mode: Building Python with optimization flags for better performance'
+                PYTHON_CONFIGURE_OPTS='--enable-optimizations --with-lto' PYTHON_CFLAGS='-march=native -mtune=native' pyenv install \$LATEST_311
             else
-                LATEST_311=\$(pyenv versions | grep '3.11' | tail -1 | sed 's/[* ]//g')
+                LATEST_311=\$(pyenv versions | grep '3.11' | tail -1 | sed 's/[* ]//g' | sed 's/(.*$//')
             fi
             
             # Set latest Python 3.11 for this project
@@ -482,7 +525,18 @@ install_dependencies() {
             fi
         " || error "Failed to install dependencies for production"
     else
-        # Development mode: install for current user        
+        # Development mode: install for current user
+        
+        # First, try to initialize pyenv if it exists but isn't in PATH
+        if [[ -d "$HOME/.pyenv" ]] && ! command -v pyenv >/dev/null 2>&1; then
+            log "pyenv directory exists, initializing..."
+            export PYENV_ROOT="$HOME/.pyenv"
+            export PATH="$PYENV_ROOT/bin:$PATH"
+            eval "$(pyenv init --path)" 2>/dev/null || true
+            eval "$(pyenv init -)" 2>/dev/null || true
+        fi
+        
+        # Now check if both pyenv and uv are available
         if command -v pyenv >/dev/null 2>&1 && command -v uv >/dev/null 2>&1; then
             log "pyenv and uv already installed, checking Python version..."
             cd "$REPO_DIR"
@@ -491,14 +545,50 @@ install_dependencies() {
             if ! pyenv local 2>/dev/null | grep -q "3.11"; then
                 if pyenv versions | grep -q "3.11"; then
                     log "Setting latest Python 3.11 for this project..."
-                    LATEST_311=$(pyenv versions | grep '3.11' | tail -1 | sed 's/[* ]//g')
-                    pyenv local $LATEST_311
+                    LATEST_311=$(pyenv versions | grep '3.11' | tail -1 | sed 's/[* ]//g' | sed 's/(.*$//' | xargs)
+                    
+                    # Verify the version is actually installed and usable
+                    if pyenv local "$LATEST_311" 2>/dev/null && uv run python --version >/dev/null 2>&1; then
+                        log "Successfully set Python $LATEST_311 for this project"
+                    else
+                        warn "Python $LATEST_311 appears to be corrupted or not properly installed"
+                        log "Will install a fresh Python 3.11..."
+                        # Fall through to install a new Python
+                        pyenv local --unset 2>/dev/null || true
+                        
+                        # Ask about optimization for new Python installation
+                        local use_optimization=false
+                        if ask_python_optimization; then
+                            use_optimization=true
+                        fi
+                        
+                        log "Installing latest Python 3.11..."
+                        LATEST_311=$(pyenv install --list | grep -E '^  3\.11\.[0-9]+$' | tail -1 | xargs)
+                        log "Installing Python $LATEST_311"
+                        if [[ "$use_optimization" == true ]]; then
+                            log "Building with optimization flags for better performance (this will take longer)..."
+                            if ! PYTHON_CONFIGURE_OPTS='--enable-optimizations --with-lto' PYTHON_CFLAGS='-march=native -mtune=native' pyenv install $LATEST_311; then
+                                error "Failed to install optimized Python $LATEST_311"
+                            fi
+                        else
+                            if ! pyenv install $LATEST_311; then
+                                error "Failed to install Python $LATEST_311"
+                            fi
+                        fi
+                        pyenv local $LATEST_311
+                    fi
                     
                     # Check if current Python was built with optimizations
                     if python -c "import sys; print('Optimized build detected' if hasattr(sys, 'flags') and any('optimiz' in str(sys.version).lower() for _ in [1]) else 'Standard build detected')"; then
                         log "Current Python build status checked"
                     fi
                 else
+                    # Ask about optimization for new Python installation
+                    local use_optimization=false
+                    if ask_python_optimization; then
+                        use_optimization=true
+                    fi
+                    
                     log "Installing latest Python 3.11..."
                     LATEST_311=$(pyenv install --list | grep -E '^  3\.11\.[0-9]+$' | tail -1 | xargs)
                     log "Installing Python $LATEST_311"
@@ -573,6 +663,12 @@ else:
             
             # Install Python 3.11
             if ! pyenv versions | grep -q "3.11"; then
+                # Ask about optimization for new Python installation
+                local use_optimization=false
+                if ask_python_optimization; then
+                    use_optimization=true
+                fi
+                
                 log "Installing latest Python 3.11..."
                 LATEST_311=$(pyenv install --list | grep -E '^  3\.11\.[0-9]+$' | tail -1 | xargs)
                 log "Installing Python $LATEST_311"
@@ -587,28 +683,39 @@ else:
                     fi
                 fi
             else
-                # Check if we need to rebuild for optimization
-                LATEST_311=$(pyenv versions | grep '3.11' | tail -1 | sed 's/[* ]//g')
-                if [[ "$use_optimization" == true ]]; then
-                    # Check if current version was built with optimizations
-                    log "Checking if current Python 3.11 was built with optimizations..."
-                    cd "$REPO_DIR"
+                # Check if we have a working Python 3.11 installation
+                LATEST_311=$(pyenv versions | grep '3.11' | tail -1 | sed 's/[* ]//g' | sed 's/(.*$//' | xargs)
+                log "Found Python 3.11: $LATEST_311"
+                
+                # Verify the version is actually installed and usable
+                cd "$REPO_DIR"
+                if pyenv local "$LATEST_311" 2>/dev/null && uv run python --version >/dev/null 2>&1; then
+                    log "Python 3.11 already available and working: $LATEST_311"
+                else
+                    warn "Found Python $LATEST_311 but it appears corrupted or not properly installed"
+                    log "Will install a fresh Python 3.11..."
+                    pyenv local --unset 2>/dev/null || true
                     
-                    # Temporarily set the version to check build flags
-                    if pyenv local $LATEST_311 2>/dev/null && python -c "
-import sysconfig
-config = sysconfig.get_config_vars()
-opts = config.get('CONFIG_ARGS', '')
-exit(0 if '--enable-optimizations' in opts else 1)
-" 2>/dev/null; then
-                        log "Current Python $LATEST_311 already built with optimizations"
-                    else
-                        log "Current Python $LATEST_311 not optimized, rebuilding with optimization flags..."
-                        pyenv uninstall -f $LATEST_311
+                    # Ask about optimization for new Python installation
+                    local use_optimization=false
+                    if ask_python_optimization; then
+                        use_optimization=true
+                    fi
+                    
+                    log "Installing latest Python 3.11..."
+                    LATEST_311=$(pyenv install --list | grep -E '^  3\.11\.[0-9]+$' | tail -1 | xargs)
+                    log "Installing Python $LATEST_311"
+                    if [[ "$use_optimization" == true ]]; then
+                        log "Building with optimization flags for better performance (this will take longer)..."
                         if ! PYTHON_CONFIGURE_OPTS='--enable-optimizations --with-lto' PYTHON_CFLAGS='-march=native -mtune=native' pyenv install $LATEST_311; then
                             error "Failed to install optimized Python $LATEST_311"
                         fi
+                    else
+                        if ! pyenv install $LATEST_311; then
+                            error "Failed to install Python $LATEST_311"
+                        fi
                     fi
+                    pyenv local $LATEST_311
                 fi
             fi
             
