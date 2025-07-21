@@ -12,7 +12,12 @@ import argparse
 import json
 import logging
 import os
+import signal
+import subprocess
 import sys
+import time
+import pyaudio
+import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
@@ -71,6 +76,7 @@ class AudioService(BaseService):
         
         # file tracking
         self.tmp_script_path = None  # Temporary script path for SuperCollider
+        self.jack_process = None     # JACK process handle
 
         # State tracking
         self.current_biome = None
@@ -82,6 +88,323 @@ class AudioService(BaseService):
         self.environment_volume = self.config.audio.environment_volume
         self.music_volume = self.config.audio.music_volume
         self.sfx_volume = self.config.audio.sfx_volume
+    
+    def _resolve_audio_device(self, device_identifier: str) -> Optional[str]:
+        """Resolve a device identifier to a hardware address.
+        
+        Args:
+            device_identifier: Either a full hw:X,Y address or a partial device name
+            
+        Returns:
+            Hardware address (e.g., "hw:4,0") or None if not found
+        """
+        # If it's already a hw:X,Y format, return as-is
+        if re.match(r'^hw:\d+,\d+$', device_identifier):
+            self.record_health_check(
+                "device_resolution",
+                HealthStatus.HEALTHY,
+                f"Device already in hardware format: {device_identifier}"
+            )
+            return device_identifier
+            
+        # If it starts with plughw:, convert to hw:
+        if device_identifier.startswith('plughw:'):
+            hw_addr = device_identifier.replace('plughw:', 'hw:')
+            self.record_health_check(
+                "device_resolution",
+                HealthStatus.HEALTHY,
+                f"Converted plughw to hw format: {device_identifier} -> {hw_addr}"
+            )
+            return hw_addr
+        
+        # Otherwise, try to find by partial name match
+        try:
+            p = pyaudio.PyAudio()
+            
+            for i in range(p.get_device_count()):
+                try:
+                    device_info = p.get_device_info_by_index(i)
+                    device_name = device_info['name']
+                    
+                    # Check if the identifier matches part of the device name
+                    if device_identifier.lower() in device_name.lower():
+                        # Extract hardware address from device name
+                        # Look for patterns like "(hw:4,0)" in the name
+                        hw_match = re.search(r'\(hw:(\d+),(\d+)\)', device_name)
+                        if hw_match:
+                            hw_addr = f"hw:{hw_match.group(1)},{hw_match.group(2)}"
+                            logger.info(f"Resolved device '{device_identifier}' to '{hw_addr}' (device: {device_name})")
+                            self.record_health_check(
+                                "device_resolution",
+                                HealthStatus.HEALTHY,
+                                f"Successfully resolved device '{device_identifier}' to '{hw_addr}'",
+                                metadata={
+                                    "device_identifier": device_identifier,
+                                    "resolved_address": hw_addr,
+                                    "device_name": device_name,
+                                    "device_index": i
+                                }
+                            )
+                            p.terminate()
+                            return hw_addr
+                            
+                except Exception as e:
+                    logger.debug(f"Error checking device {i}: {e}")
+                    continue
+                    
+            p.terminate()
+            
+            # Device not found
+            error_msg = f"Could not resolve device identifier '{device_identifier}' to hardware address"
+            logger.warning(error_msg)
+            self.record_health_check(
+                "device_resolution",
+                HealthStatus.WARNING,
+                error_msg,
+                metadata={"device_identifier": device_identifier}
+            )
+            return None
+            
+        except Exception as e:
+            error_msg = f"Error resolving audio device: {e}"
+            logger.error(error_msg)
+            self.record_health_check(
+                "device_resolution",
+                HealthStatus.ERROR,
+                error_msg,
+                metadata={
+                    "device_identifier": device_identifier,
+                    "error_type": type(e).__name__
+                }
+            )
+            return None
+    
+    def _is_jack_running(self) -> bool:
+        """Check if JACK is currently running.
+        
+        Returns:
+            True if JACK is running, False otherwise
+        """
+        try:
+            result = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
+            return result.returncode == 0
+        except Exception as e:
+            logger.debug(f"Error checking JACK status: {e}")
+            return False
+    
+    async def _start_jack(self, device: str) -> bool:
+        """Start JACK with the specified device.
+        
+        Args:
+            device: Hardware device address (e.g., "hw:4,0")
+            
+        Returns:
+            True if JACK started successfully, False otherwise
+        """
+        if self._is_jack_running():
+            logger.info("JACK is already running")
+            self.record_health_check(
+                "jack_status",
+                HealthStatus.HEALTHY,
+                "JACK already running and available"
+            )
+            return True
+            
+        try:
+            # Build JACK command
+            jack_cmd = [
+                'jackd',
+                '-d', 'alsa',
+                '-d', device,
+                '-r', str(self.config.supercollider.jack_sample_rate),
+                '-p', str(self.config.supercollider.jack_buffer_size),
+                '-n', str(self.config.supercollider.jack_periods)
+            ]
+            
+            logger.info(f"Starting JACK with command: {' '.join(jack_cmd)}")
+            self.record_health_check(
+                "jack_startup",
+                HealthStatus.HEALTHY,
+                f"Initiating JACK startup for device {device}",
+                metadata={
+                    "device": device,
+                    "sample_rate": self.config.supercollider.jack_sample_rate,
+                    "buffer_size": self.config.supercollider.jack_buffer_size,
+                    "periods": self.config.supercollider.jack_periods
+                }
+            )
+            
+            # Start JACK in background
+            self.jack_process = subprocess.Popen(
+                jack_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Wait for JACK to initialize with timeout
+            start_time = time.time()
+            timeout = 5.0
+            
+            while time.time() - start_time < timeout:
+                if self._is_jack_running():
+                    logger.info(f"JACK started successfully with PID: {self.jack_process.pid}")
+                    self.record_health_check(
+                        "jack_startup",
+                        HealthStatus.HEALTHY,
+                        f"JACK started successfully with PID {self.jack_process.pid}",
+                        metadata={
+                            "pid": self.jack_process.pid,
+                            "startup_time": time.time() - start_time,
+                            "device": device
+                        }
+                    )
+                    # Give JACK a bit more time to fully initialize
+                    await asyncio.sleep(1.0)
+                    return True
+                await asyncio.sleep(0.1)
+                
+            # Timeout reached
+            logger.error("JACK failed to start within timeout")
+            self.record_health_check(
+                "jack_startup",
+                HealthStatus.ERROR,
+                f"JACK failed to start within {timeout}s timeout",
+                metadata={"timeout": timeout, "device": device}
+            )
+            return False
+            
+        except FileNotFoundError:
+            error_msg = "JACK not found - please install jackd"
+            logger.error(error_msg)
+            self.record_health_check(
+                "jack_startup",
+                HealthStatus.ERROR,
+                error_msg
+            )
+            return False
+        except Exception as e:
+            error_msg = f"Error starting JACK: {e}"
+            logger.error(error_msg)
+            self.record_health_check(
+                "jack_startup",
+                HealthStatus.ERROR,
+                error_msg,
+                metadata={"device": device, "error_type": type(e).__name__}
+            )
+            return False
+    
+    def _stop_jack(self) -> bool:
+        """Stop JACK if we started it.
+        
+        Returns:
+            True if JACK was stopped successfully, False otherwise
+        """
+        if self.jack_process is None:
+            logger.debug("No JACK process to stop (wasn't started by us)")
+            return True
+            
+        try:
+            logger.info("Stopping JACK...")
+            self.record_health_check(
+                "jack_shutdown",
+                HealthStatus.HEALTHY,
+                f"Initiating JACK shutdown (PID: {self.jack_process.pid})"
+            )
+            
+            # Try graceful termination first
+            self.jack_process.terminate()
+            
+            try:
+                self.jack_process.wait(timeout=3.0)
+                logger.info("JACK terminated gracefully")
+                self.record_health_check(
+                    "jack_shutdown",
+                    HealthStatus.HEALTHY,
+                    "JACK terminated gracefully"
+                )
+                self.jack_process = None
+                return True
+            except subprocess.TimeoutExpired:
+                # Force kill if graceful termination failed
+                logger.warning("JACK did not terminate gracefully, forcing kill")
+                self.jack_process.kill()
+                self.jack_process.wait(timeout=1.0)
+                logger.info("JACK killed")
+                self.record_health_check(
+                    "jack_shutdown",
+                    HealthStatus.WARNING,
+                    "JACK had to be force-killed (did not terminate gracefully)"
+                )
+                self.jack_process = None
+                return True
+                
+        except Exception as e:
+            error_msg = f"Error stopping JACK: {e}"
+            logger.error(error_msg)
+            self.record_health_check(
+                "jack_shutdown",
+                HealthStatus.ERROR,
+                error_msg,
+                metadata={"error_type": type(e).__name__}
+            )
+            self.jack_process = None  # Clear reference anyway
+            return False
+    
+    def _check_audio_system_health(self) -> Dict[str, Any]:
+        """Comprehensive health check of the audio system.
+        
+        Returns:
+            Dict containing status, message, and metadata about audio system health
+        """
+        metadata = {
+            "jack_running": self._is_jack_running(),
+            "supercollider_started": self.config.supercollider.auto_start,
+            "device_configured": bool(self.config.supercollider.device),
+            "surround_enabled": self.config.supercollider.enable_surround,
+            "output_channels": self.config.supercollider.output_channels
+        }
+        
+        # Check if JACK is running when expected
+        if self.config.supercollider.auto_start_jack and self.config.supercollider.device:
+            if not metadata["jack_running"]:
+                return {
+                    "status": HealthStatus.ERROR,
+                    "message": "JACK should be running but is not available",
+                    "metadata": metadata
+                }
+                
+        # Check if SuperCollider process is running when expected
+        if self.config.supercollider.auto_start:
+            if not hasattr(self, 'osc') or not hasattr(self.osc, 'sc_process') or self.osc.sc_process is None:
+                return {
+                    "status": HealthStatus.ERROR,
+                    "message": "SuperCollider should be running but process not found",
+                    "metadata": metadata
+                }
+            elif self.osc.sc_process.poll() is not None:
+                return {
+                    "status": HealthStatus.ERROR,
+                    "message": "SuperCollider process has exited unexpectedly",
+                    "metadata": {**metadata, "exit_code": self.osc.sc_process.poll()}
+                }
+        
+        # All checks passed
+        status_parts = []
+        if metadata["jack_running"]:
+            status_parts.append("JACK active")
+        if metadata["supercollider_started"]:
+            status_parts.append("SuperCollider running")
+        if metadata["surround_enabled"]:
+            status_parts.append(f"{metadata['output_channels']} channel surround")
+            
+        message = "Audio system healthy: " + ", ".join(status_parts) if status_parts else "Audio system configured"
+        
+        return {
+            "status": HealthStatus.HEALTHY,
+            "message": message,
+            "metadata": metadata
+        }
     
     @property
     def auto_start_sc(self) -> bool:
@@ -145,19 +468,82 @@ class AudioService(BaseService):
 
             # Start SuperCollider if we have a script path
             if self.config.supercollider.auto_start and script_path is not None:
-                self.tmp_script_path = self._modify_sclang_script(script_path, temp_path=script_path.with_suffix('.tmp.scd'))
-                if self.osc.start_supercollider(
-                    str(self.tmp_script_path), 
-                    self.config.supercollider.sclang_path
-                ):
-                    logger.info("SuperCollider started successfully")
-                    # Give SuperCollider a moment to initialize
-                    await asyncio.sleep(2)
-                else:
-                    logger.error("Failed to start SuperCollider")
+                # Resolve device name to hardware address before starting JACK
+                resolved_device = None
+                jack_started = True
+                if self.config.supercollider.auto_start_jack and self.config.supercollider.device:
+                    # Resolve device name to hardware address first
+                    resolved_device = self._resolve_audio_device(self.config.supercollider.device)
+                    if resolved_device:
+                        logger.info(f"Starting JACK for device: {resolved_device}")
+                        jack_started = await self._start_jack(resolved_device)
+                        if not jack_started:
+                            logger.error("Failed to start JACK, continuing without it")
+                            self.record_health_check(
+                                "audio_system_startup",
+                                HealthStatus.WARNING,
+                                "JACK startup failed, SuperCollider may use default audio"
+                            )
+                    else:
+                        logger.warning(f"Could not resolve device '{self.config.supercollider.device}', skipping JACK startup")
+                        self.record_health_check(
+                            "audio_system_startup",
+                            HealthStatus.WARNING,
+                            f"Device resolution failed for '{self.config.supercollider.device}', skipping JACK startup"
+                        )
+                
+                # Now start SuperCollider
+                try:
+                    self.tmp_script_path = self._modify_sclang_script(
+                        script_path, 
+                        temp_path=script_path.with_suffix('.tmp.scd'),
+                        resolved_device=resolved_device
+                    )
+                    if self.osc.start_supercollider(
+                        str(self.tmp_script_path), 
+                        self.config.supercollider.sclang_path
+                    ):
+                        logger.info("SuperCollider started successfully")
+                        self.record_health_check(
+                            "supercollider_startup",
+                            HealthStatus.HEALTHY,
+                            "SuperCollider started successfully",
+                            metadata={
+                                "script_path": str(self.tmp_script_path),
+                                "jack_enabled": jack_started,
+                                "device": self.config.supercollider.device
+                            }
+                        )
+                        # Give SuperCollider a moment to initialize
+                        await asyncio.sleep(2)
+                    else:
+                        logger.error("Failed to start SuperCollider")
+                        self.record_health_check(
+                            "supercollider_startup",
+                            HealthStatus.ERROR,
+                            "SuperCollider startup failed"
+                        )
+                except Exception as e:
+                    error_msg = f"Error during SuperCollider startup: {e}"
+                    logger.error(error_msg)
+                    self.record_health_check(
+                        "supercollider_startup",
+                        HealthStatus.ERROR,
+                        error_msg,
+                        metadata={"error_type": type(e).__name__}
+                    )
         
         # Call parent start method
         await super().start()
+        
+        # Record comprehensive audio system health check
+        audio_system_status = self._check_audio_system_health()
+        self.record_health_check(
+            "audio_system_status",
+            audio_system_status["status"],
+            audio_system_status["message"],
+            metadata=audio_system_status["metadata"]
+        )
         
         # Record successful startup 
         self.record_health_check(
@@ -178,6 +564,10 @@ class AudioService(BaseService):
         # Stop SuperCollider if we started it
         if self.auto_start_sc and hasattr(self, 'osc'):
             self.osc.stop_supercollider()
+        
+        # Stop JACK if we started it
+        if hasattr(self, 'jack_process') and self.jack_process is not None:
+            self._stop_jack()
         
         # Clean up temporary script file if it exists
         if self.tmp_script_path and self.tmp_script_path.exists():
@@ -438,12 +828,14 @@ class AudioService(BaseService):
         else:
             logger.error("Failed to reload audio configurations")
     
-    def _modify_sclang_script(self, script_path: Path, temp_path: Optional[Path] = None) -> Optional[Path]:
+    def _modify_sclang_script(self, script_path: Path, temp_path: Optional[Path] = None, resolved_device: Optional[str] = None) -> Optional[Path]:
         """
         Modify the SuperCollider script to set specific settings.
         Replaces lines in options and oscRecvPort
         Args:
             script_path: Path to the SuperCollider script file
+            temp_path: Optional path for the temporary script file
+            resolved_device: Pre-resolved hardware device address (e.g., "hw:4,0")
         """
         if not script_path.exists():
             logger.error(f"SuperCollider script not found at: {script_path}")
@@ -457,10 +849,31 @@ class AudioService(BaseService):
         output_channels = self.config.supercollider.output_channels or 2
         enable_surround = self.config.supercollider.enable_surround or output_channels > 2
         
+        # Track what device we actually use for logging
+        device_used_in_script = self.config.supercollider.device
+        
         for line in lines:
             stripped = line.strip()
             if stripped.startswith('s.options.device') and self.config.supercollider.device:
-                new_lines.append(f's.options.device = "{self.config.supercollider.device}";\n')
+                # If JACK is already running, don't set a device - let SC connect to existing JACK
+                if self._is_jack_running():
+                    logger.info("JACK is already running, configuring SuperCollider to connect to existing server")
+                    new_lines.append('s.options.device = nil;  // Connect to existing JACK server\n')
+                    device_used_in_script = "existing_jack_server"
+                else:
+                    # Use pre-resolved device if available, otherwise resolve now
+                    device_to_use = resolved_device if resolved_device else self._resolve_audio_device(self.config.supercollider.device)
+                    if device_to_use:
+                        device_used_in_script = device_to_use  # Update for logging
+                        new_lines.append(f's.options.device = "{device_to_use}";\n')
+                        # Set input and output devices explicitly
+                        new_lines.append(f's.options.inDevice = "{device_to_use}";\n')
+                        new_lines.append(f's.options.outDevice = "{device_to_use}";\n')
+                        # Add buffer size for better audio performance
+                        new_lines.append(f's.options.hardwareBufferSize = 1024;\n')
+                    else:
+                        logger.error(f"Could not resolve device '{self.config.supercollider.device}', using original value")
+                        new_lines.append(f's.options.device = "{self.config.supercollider.device}";\n')
             elif stripped.startswith('s.options.numOutputBusChannels'):
                 new_lines.append(f's.options.numOutputBusChannels = {self.config.supercollider.output_channels};\n')
             elif stripped.startswith('s.options.numInputBusChannels'):
@@ -505,7 +918,7 @@ class AudioService(BaseService):
         
         logger.debug(f"Modified SuperCollider script saved to: {temp_path}")
         logger.info(f"Set values:"
-                     f" device={self.config.supercollider.device}, "
+                     f" device={device_used_in_script}, "
                      f"output_channels={output_channels}, "
                      f"input_channels={self.config.supercollider.input_channels}, "
                      f"osc_port={self.config.osc.send_port}, "
@@ -521,6 +934,14 @@ class AudioService(BaseService):
         )           
 
         return temp_path
+    
+    def check_health(self) -> Dict[str, Any]:
+        """Override base class health check to use comprehensive audio system health check.
+        
+        Returns:
+            Dict containing comprehensive audio system health status
+        """
+        return self._check_audio_system_health()
         
 async def run_audio_service(
     config_path: str|Path = DEFAULT_CONFIG_PATH, 

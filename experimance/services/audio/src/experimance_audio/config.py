@@ -86,6 +86,27 @@ class SuperColliderConfig(BaseModel):
         description="Audio device to use for SuperCollider. If None, uses default device."
     )
 
+    # JACK configuration
+    auto_start_jack: bool = Field(
+        default=True,
+        description="Automatically start JACK if not running"
+    )
+    
+    jack_sample_rate: int = Field(
+        default=48000,
+        description="JACK sample rate"
+    )
+    
+    jack_buffer_size: int = Field(
+        default=1024,
+        description="JACK buffer size (frames per period)"
+    )
+    
+    jack_periods: int = Field(
+        default=2,
+        description="Number of periods in JACK buffer"
+    )
+
     # Surround sound configuration
     enable_surround: bool = Field(
         default=False,

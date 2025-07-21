@@ -295,15 +295,30 @@ class OscBridge:
                 logger.error(f"SuperCollider script not found: {script_path}")
                 return None
 
+            # Prepare command with headless option - force no GUI
+            cmd = [sclang_path, "-D", str(script_path)]  # -D flag runs without GUI
+            
+            # Set up environment for headless operation
+            env = os.environ.copy()
+            
+            # Force headless mode - no GUI components at all
+            env['QT_QPA_PLATFORM'] = 'offscreen'
+            # Remove any display to ensure truly headless operation
+            if 'DISPLAY' in env:
+                del env['DISPLAY']
+            
             # Start SuperCollider in a non-blocking subprocess
-            logger.info(f"Starting SuperCollider with script: {script_path}")
+            logger.info(f"Starting SuperCollider headless with script: {script_path}")
+            logger.debug(f"SuperCollider command: {' '.join(cmd)}")
+            
             self.sc_process = subprocess.Popen(
-                [sclang_path, str(script_path)],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
+                env=env,
             )
             
             # Log the process ID for debugging/cleanup

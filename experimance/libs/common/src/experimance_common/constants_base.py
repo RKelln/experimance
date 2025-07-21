@@ -96,7 +96,7 @@ MEDIA_DIR = PROJECT_ROOT / "media"
 IMAGES_DIR = MEDIA_DIR / "images"
 GENERATED_IMAGES_DIR = IMAGES_DIR / "generated"
 MOCK_IMAGES_DIR = IMAGES_DIR / "mocks"
-AUDIO_DIR = AUDIO_SERVICE_DIR / "audio"
+AUDIO_DIR = MEDIA_DIR / "audio"
 VIDEOS_DIR = MEDIA_DIR / "video"
 
 # media directories (absolute paths)

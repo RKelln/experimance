@@ -56,3 +56,6 @@ audio/
 *.mp3
 *.ogg
 *.flac
+
+# Temp scd files
+*.tmp.scd
