@@ -320,7 +320,7 @@ get_required_packages() {
         "libsqlite3-dev"
         "curl"
         "git"
-        "libncursesw5-dev"
+        "libncurses-dev"
         "xz-utils"
         "tk-dev"
         "libxml2-dev"
@@ -896,6 +896,9 @@ main() {
             check_project
             install_systemd_files
             setup_directories
+
+            # add user to groups as needed
+            local group_added=false
             # add user to video group if not already a member
             if ! id -nG "$RUNTIME_USER" | grep -qw "video"; then
                 log "Adding $RUNTIME_USER to video group for webcam access"
@@ -904,8 +907,32 @@ main() {
                 else
                     sudo usermod -aG video "$RUNTIME_USER"
                 fi
+                group_added=true
             else
                 log "$RUNTIME_USER is already a member of the video group"
+            fi
+            
+            # add user to audio group if not already a member
+            if ! id -nG "$RUNTIME_USER" | grep -qw "audio"; then
+                log "Adding $RUNTIME_USER to audio group for audio device access"
+                if [[ "$MODE" == "prod" ]]; then
+                    usermod -aG audio "$RUNTIME_USER"
+                else
+                    sudo usermod -aG audio "$RUNTIME_USER"
+                fi
+                group_added=true
+            else
+                log "$RUNTIME_USER is already a member of the audio group"
+            fi
+            
+            # Inform user about group membership activation if groups were added
+            if [[ "$group_added" == true ]] && [[ "$MODE" == "dev" ]]; then
+                echo ""
+                warn "New group membership added. To activate group access:"
+                warn "  Option 1: Log out and log back in (recommended)"
+                warn "  Option 2: Run 'newgrp video' and/or 'newgrp audio' to start a new shell with audio group active"
+                warn "  Option 3: Restart your terminal session"
+                echo ""
             fi
             
             if [[ "$MODE" == "dev" ]]; then

@@ -132,6 +132,11 @@ For development and manual testing, use the CLI tool:
 uv run -m experimance_audio.cli
 ```
 
+You will need your user to be part of the audio group (done in deploy script)
+```bash
+sudo usermod -a -G audio $USER
+```
+
 This provides an interactive interface for sending OSC commands to SuperCollider.
 
 ### Testing OSC Communication

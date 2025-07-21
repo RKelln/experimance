@@ -154,6 +154,12 @@ class AudioService(BaseService):
                     
             p.terminate()
             
+            # PyAudio didn't find the device, try ALSA card fallback
+            logger.debug(f"Device '{device_identifier}' not found in PyAudio, trying ALSA card fallback")
+            hw_addr = self._resolve_device_via_alsa_cards(device_identifier)
+            if hw_addr:
+                return hw_addr
+            
             # Device not found
             error_msg = f"Could not resolve device identifier '{device_identifier}' to hardware address"
             logger.warning(error_msg)
@@ -178,6 +184,46 @@ class AudioService(BaseService):
                 }
             )
             return None
+    
+    def _resolve_device_via_alsa_cards(self, device_identifier: str) -> Optional[str]:
+        """Fallback method to resolve device via ALSA /proc/asound/cards.
+        
+        Args:
+            device_identifier: Device name to search for
+            
+        Returns:
+            Hardware address (e.g., "hw:4,0") or None if not found
+        """
+        try:
+            with open('/proc/asound/cards', 'r') as f:
+                cards_content = f.read()
+                
+            # Look for lines like: " 4 [ICUSBAUDIO7D   ]: USB-Audio - ICUSBAUDIO7D"
+            for line in cards_content.split('\n'):
+                if device_identifier in line:
+                    # Extract card number from line like " 4 [ICUSBAUDIO7D   ]:"
+                    card_match = re.match(r'\s*(\d+)\s*\[', line)
+                    if card_match:
+                        card_number = card_match.group(1)
+                        hw_addr = f"hw:{card_number},0"
+                        logger.info(f"Resolved device '{device_identifier}' to '{hw_addr}' via ALSA cards fallback")
+                        self.record_health_check(
+                            "device_resolution",
+                            HealthStatus.HEALTHY,
+                            f"Successfully resolved device '{device_identifier}' to '{hw_addr}' via ALSA fallback",
+                            metadata={
+                                "device_identifier": device_identifier,
+                                "resolved_address": hw_addr,
+                                "card_number": card_number,
+                                "method": "alsa_cards_fallback"
+                            }
+                        )
+                        return hw_addr
+                        
+        except Exception as e:
+            logger.debug(f"Error reading ALSA cards: {e}")
+            
+        return None
     
     def _is_jack_running(self) -> bool:
         """Check if JACK is currently running.
@@ -507,12 +553,7 @@ class AudioService(BaseService):
             
         try:
             logger.info("Stopping JACK...")
-            self.record_health_check(
-                "jack_shutdown",
-                HealthStatus.HEALTHY,
-                f"Initiating JACK shutdown (PID: {self.jack_process.pid})"
-            )
-            
+        
             # Try graceful termination first
             self.jack_process.terminate()
             
@@ -669,11 +710,19 @@ class AudioService(BaseService):
 
             # Start SuperCollider if we have a script path
             if self.config.supercollider.auto_start and script_path is not None:
-                # Resolve device name to hardware address before starting JACK
+                # Check if JACK is already running first
                 resolved_device = None
                 jack_started = True
-                if self.config.supercollider.auto_start_jack and self.config.supercollider.device:
-                    # Resolve device name to hardware address first
+                
+                if self._is_jack_running():
+                    logger.info("JACK is already running, configuring SuperCollider to connect to existing server")
+                    self.record_health_check(
+                        "audio_system_startup", 
+                        HealthStatus.HEALTHY,
+                        "JACK already running, SuperCollider will connect to existing server"
+                    )
+                elif self.config.supercollider.auto_start_jack and self.config.supercollider.device:
+                    # Only resolve device if we need to start JACK ourselves
                     resolved_device = self._resolve_audio_device(self.config.supercollider.device)
                     if resolved_device:
                         logger.info(f"Starting JACK for device: {resolved_device}")
