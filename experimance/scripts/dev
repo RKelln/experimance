@@ -533,8 +533,10 @@ else
         
         # Start service in background, showing output in terminal AND logging to file
         echo "$(date): Starting $service ($module_name)" >> "$LOG_DIR/$service.log"
-        # Use a simpler approach that preserves signal handling but shows output
-        uv run -m "$module_name" 2>&1 | while IFS= read -r line; do
+        
+        # Use run_with_display function to handle display environment for all services
+        # This ensures display service gets proper display setup even in multi-service mode
+        (run_with_display "$service" "$module_name") 2>&1 | while IFS= read -r line; do
             echo "[$service] $line"
             echo "$line" >> "$LOG_DIR/$service.log"
         done &
