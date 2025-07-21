@@ -36,6 +36,9 @@
 - [x] create supercollider prototype 
   - [x] integrate ZMQ
   - [x] add surround sound (agent, environment and music)
+- [ ] fix scd script 
+  - [ ] so it works without USB audio device 
+  - [ ] works in scide (audio paths)
 
 ### Image server
 - [x] convert prototype to production code
