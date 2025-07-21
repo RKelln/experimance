@@ -3,6 +3,8 @@ Command-line interface for testing the Experimance audio system.
 
 This module provides a command-line interface for manually sending OSC commands
 to SuperCollider, allowing for interactive testing and development.
+
+$ uv run -m experimance_audio.cli
 """
 
 import argparse
@@ -485,6 +487,7 @@ class AudioCli(cmd.Cmd):
 
 
 if __name__ == "__main__":
+    # uv run -m experimance_audio.cli
     parser = argparse.ArgumentParser(description="Experimance Audio CLI")
     parser.add_argument("--osc-host", type=str, default="localhost", help="SuperCollider host address")
     parser.add_argument("--osc-port", type=int, default=DEFAULT_PORTS['audio_osc_send_port'], help="SuperCollider OSC port")

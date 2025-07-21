@@ -106,6 +106,11 @@ class SuperColliderConfig(BaseModel):
         default=2,
         description="Number of periods in JACK buffer"
     )
+    
+    jack_output_channels: Optional[int] = Field(
+        default=None,
+        description="Number of output channels for JACK (if None, uses output_channels)"
+    )
 
     # Surround sound configuration
     enable_surround: bool = Field(

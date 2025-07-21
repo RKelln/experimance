@@ -308,12 +308,14 @@ class AudioService(BaseService):
             logger.info(f"Configuring jackdbus to use device: {device}")
             
             # Configure jackdbus with our settings
+            output_channels = self.config.supercollider.jack_output_channels or self.config.supercollider.output_channels
             commands = [
                 ['jack_control', 'ds', 'alsa'],  # Set driver to alsa
                 ['jack_control', 'dps', 'device', device],  # Set device
                 ['jack_control', 'dps', 'rate', str(self.config.supercollider.jack_sample_rate)],  # Set sample rate
                 ['jack_control', 'dps', 'period', str(self.config.supercollider.jack_buffer_size)],  # Set buffer size
                 ['jack_control', 'dps', 'nperiods', str(self.config.supercollider.jack_periods)],  # Set periods
+                ['jack_control', 'dps', 'outchannels', str(output_channels)],  # Set output channels
             ]
             
             for cmd in commands:
@@ -409,13 +411,15 @@ class AudioService(BaseService):
         # Fall back to starting our own jackd process
         try:
             # Build JACK command
+            output_channels = self.config.supercollider.jack_output_channels or self.config.supercollider.output_channels
             jack_cmd = [
                 'jackd',
                 '-d', 'alsa',
                 '-d', device,
                 '-r', str(self.config.supercollider.jack_sample_rate),
                 '-p', str(self.config.supercollider.jack_buffer_size),
-                '-n', str(self.config.supercollider.jack_periods)
+                '-n', str(self.config.supercollider.jack_periods),
+                '-P', str(output_channels)  # Set playback (output) channels
             ]
             
             logger.info(f"Starting jackd with command: {' '.join(jack_cmd)}")

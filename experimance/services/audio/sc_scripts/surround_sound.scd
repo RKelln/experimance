@@ -21,7 +21,8 @@ s.options.memSize = 8192 * 4;
 s.options.numOutputBusChannels = 6;  // 5.1 surround: L, R, C, LFE, LS, RS
 s.options.numInputBusChannels = 2;
 //s.options.device = nil;  // Use default device - change if needed
-s.options.device = "plughw:1,0";
+~usbAudioDevice = "plughw:4,0";
+s.options.device = ~usbAudioDevice;
 
 // List all available audio devices BEFORE booting (if primitive works)
 "=== Checking Available Audio Devices ===".postln;
@@ -69,13 +70,13 @@ s.waitForBoot {
     // SynthDefs for different channel tests
     // -----------------------------------------------------
 
-    // Simple sine wave test tone  
+    // Simple sine wave test tone
     SynthDef(\sine_test, {
         arg freq = 440, amp = 0.3, channel = 0, gate = 1;
         var sig, env;
         env = EnvGen.kr(Env.asr(0.1, 1, 0.5), gate, doneAction: 2);
         sig = SinOsc.ar(freq) * amp * env;
-        
+
         // Use explicit Out.ar for the specific channel
         Out.ar(channel, sig);
     }).add;
@@ -86,7 +87,7 @@ s.waitForBoot {
         var sig, env;
         env = EnvGen.kr(Env.asr(0.1, 1, 0.5), gate, doneAction: 2);
         sig = PinkNoise.ar(amp) * env;
-        
+
         // Use explicit Out.ar for the specific channel
         Out.ar(channel, sig);
     }).add;
@@ -99,7 +100,7 @@ s.waitForBoot {
         sig = Saw.ar(freq);
         sig = LPF.ar(sig, cutoff);
         sig = sig * amp * env;
-        
+
         // Use explicit Out.ar for the specific channel
         Out.ar(channel, sig);
     }).add;
@@ -112,7 +113,7 @@ s.waitForBoot {
         sig = SinOsc.ar(freq) + (SinOsc.ar(freq * 2) * 0.3);
         sig = LPF.ar(sig, 120);  // Low-pass for subwoofer
         sig = sig * amp * env;
-        
+
         // Use explicit Out.ar for the specific channel
         Out.ar(channel, sig);
     }).add;
@@ -123,7 +124,7 @@ s.waitForBoot {
         var sig, env;
         env = EnvGen.kr(Env.perc(0.01, 0.3), doneAction: 2);
         sig = SinOsc.ar(freq) * env * amp;
-        
+
         // Use explicit Out.ar for the specific channel
         Out.ar(channel, sig);
     }).add;
@@ -135,7 +136,7 @@ s.waitForBoot {
         env = EnvGen.kr(Env.linen(0.1, duration - 0.2, 0.1), doneAction: 2);
         freq = XLine.kr(startFreq, endFreq, duration);
         sig = SinOsc.ar(freq) * amp * env;
-        
+
         // Use explicit Out.ar for the specific channel
         Out.ar(channel, sig);
     }).add;
@@ -149,11 +150,11 @@ s.waitForBoot {
         arg freq = 440, amp = 0.3, startChan = 0, gate = 1;
         var sigL, sigR, env;
         env = EnvGen.kr(Env.asr(0.1, 1, 0.5), gate, doneAction: 2);
-        
+
         // Create slightly different signals for left and right
         sigL = SinOsc.ar(freq) * amp * env;
         sigR = SinOsc.ar(freq * 1.01) * amp * env;  // Slightly detuned for stereo effect
-        
+
         // Output to two adjacent channels using separate Out.ar calls
         Out.ar(startChan, sigL);       // Left channel
         Out.ar(startChan + 1, sigR);   // Right channel
@@ -165,7 +166,7 @@ s.waitForBoot {
         var sig, env;
         env = EnvGen.kr(Env.asr(0.1, 1, 0.5), gate, doneAction: 2);
         sig = SinOsc.ar(freq) * amp * env;
-        
+
         // Output same mono signal to two channels using separate Out.ar calls
         Out.ar(startChan, sig);       // Left channel
         Out.ar(startChan + 1, sig);   // Right channel (same signal)
@@ -176,14 +177,14 @@ s.waitForBoot {
         arg freq = 440, amp = 0.3, channel = 0, gate = 1;
         var sigL, sigR, mono, env;
         env = EnvGen.kr(Env.asr(0.1, 1, 0.5), gate, doneAction: 2);
-        
+
         // Create stereo source
         sigL = SinOsc.ar(freq) * amp * env;
         sigR = SinOsc.ar(freq * 1.01) * amp * env;
-        
+
         // Downmix to mono (average L+R)
         mono = (sigL + sigR) * 0.5;
-        
+
         // Output to single channel
         Out.ar(channel, mono);
     }).add;
@@ -312,16 +313,16 @@ s.waitForBoot {
     ~testStereoRouting = {
         "=== TESTING STEREO AUDIO ROUTING ===".postln;
         "".postln;
-        
+
         "Testing stereo pair on front channels (0,1)...".postln;
         synths[\stereo] = Synth(\stereo_test, [\startChan, 0, \freq, 440]);
-        
+
         SystemClock.sched(3, {
             synths[\stereo].set(\gate, 0);
             "Testing stereo pair on rear channels (4,5)...".postln;
             synths[\stereo] = Synth(\stereo_test, [\startChan, 4, \freq, 660]);
         });
-        
+
         SystemClock.sched(6, {
             synths[\stereo].set(\gate, 0);
             "Testing complete.".postln;
@@ -331,16 +332,16 @@ s.waitForBoot {
     ~testMonoToStereo = {
         "=== TESTING MONO TO STEREO EXPANSION ===".postln;
         "".postln;
-        
+
         "Playing mono signal as stereo on front channels...".postln;
         synths[\mono] = Synth(\mono_to_stereo_test, [\startChan, 0, \freq, 330]);
-        
+
         SystemClock.sched(3, {
             synths[\mono].set(\gate, 0);
             "Playing mono signal as stereo on rear channels...".postln;
             synths[\mono] = Synth(\mono_to_stereo_test, [\startChan, 4, \freq, 550]);
         });
-        
+
         SystemClock.sched(6, {
             synths[\mono].set(\gate, 0);
             "Testing complete.".postln;
@@ -350,16 +351,16 @@ s.waitForBoot {
     ~testStereoToMono = {
         "=== TESTING STEREO TO MONO DOWNMIX ===".postln;
         "".postln;
-        
+
         "Playing stereo source downmixed to center channel...".postln;
         synths[\downmix] = Synth(\stereo_to_mono_test, [\channel, 2, \freq, 440]);
-        
+
         SystemClock.sched(3, {
             synths[\downmix].set(\gate, 0);
             "Playing stereo source downmixed to LFE channel...".postln;
             synths[\downmix] = Synth(\stereo_to_mono_test, [\channel, 3, \freq, 220]);
         });
-        
+
         SystemClock.sched(6, {
             synths[\downmix].set(\gate, 0);
             "Testing complete.".postln;
@@ -369,17 +370,17 @@ s.waitForBoot {
     ~testAudioBuses = {
         "=== TESTING AUDIO BUS ROUTING ===".postln;
         "".postln;
-        
+
         "Creating audio source on bus 10, routing to front channels...".postln;
         synths[\source] = Synth(\bus_source, [\busnum, 10, \freq, 440]);
         synths[\router] = Synth(\bus_router, [\inBus, 10, \outChan, 0], synths[\source], \addAfter);
-        
+
         SystemClock.sched(3, {
             synths[\router].set(\gate, 0);
             "Routing same bus to rear channels...".postln;
             synths[\router] = Synth(\bus_router, [\inBus, 10, \outChan, 4], synths[\source], \addAfter);
         });
-        
+
         SystemClock.sched(6, {
             synths[\router].set(\gate, 0);
             synths[\source].free;
@@ -391,12 +392,12 @@ s.waitForBoot {
         "=== COMPREHENSIVE STEREO ROUTING TEST ===".postln;
         "This will test various methods of handling stereo audio in multi-channel setups.".postln;
         "".postln;
-        
+
         SystemClock.sched(1, { ~testStereoRouting.(); });
         SystemClock.sched(8, { ~testMonoToStereo.(); });
         SystemClock.sched(16, { ~testStereoToMono.(); });
         SystemClock.sched(24, { ~testAudioBuses.(); });
-        
+
         SystemClock.sched(32, {
             "".postln;
             "=== ALL STEREO TESTS COMPLETE ===".postln;
@@ -724,9 +725,9 @@ s.waitForBoot {
 
 // Force switch to plughw (often more compatible)
 ~switchToPlughw = {
-    "Switching to plughw:1,0 (ALSA plugin layer)...".postln;
+	"Switching to %s (ALSA plugin layer)...".format(~usbAudioDevice).postln;
     "This is often more compatible than direct hw: access".postln;
-    ~setAudioDevice.("plughw:1,0");
+    ~setAudioDevice.(~usbAudioDevice);
 };
 
 // Check if PulseAudio is interfering

@@ -10,6 +10,27 @@ Usage:
 
 This will list all audio devices with their indices, which can be used in the
 audio_input_device_index and audio_output_device_index configuration options.
+
+Other sound debugging tools:
+    - `pactl list short sources` for PulseAudio input devices
+    - `pactl list short sinks` for PulseAudio output devices
+    - `jack_lsp` for JACK audio connections
+    - `arecord -l` for ALSA input devices
+    - `aplay -l` for ALSA output devices
+    - `cat /proc/asound/cards` for a list of ALSA sound cards
+    - `cat /proc/asound/card4/stream0` for detailed ALSA device info
+    - `jack_control dp` for JACK device info
+    - `jack_control status` for JACK server status
+    - `jack_control list` for all JACK connections
+
+For example if jackdbus is running then you can set the device index and ALSA use:
+```bash
+jack_control stop
+jack_control ds alsa
+jack_control dps device hw:4,0
+jack_control dps outchannels 6
+jack_control start
+```
 """
 
 import pyaudio

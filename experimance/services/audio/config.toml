@@ -22,6 +22,14 @@ environment_channels=[0,1]
 sfx_channels=[0,1]
 music_channels=[4,5]
 
+# JACK configuration
+auto_start_jack = true       # Automatically start JACK if not running
+jack_sample_rate = 48000     # JACK sample rate
+jack_buffer_size = 1024      # JACK buffer size (frames per period)
+jack_periods = 2             # Number of periods in JACK buffer
+jack_output_channels = 6     # Match device capability (5.1 surround)
+
+
 # Audio playback settings
 [audio]
 master_volume = 0.2          # Master volume level (0.0 to 1.0)
