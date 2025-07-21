@@ -65,10 +65,12 @@ elif [[ "$MODE" == "prod" ]]; then
 else
     # For non-install actions, auto-detect based on environment
     if [[ "${EXPERIMANCE_ENV:-}" == "development" ]]; then
+        MODE="dev"
         RUNTIME_USER="$(whoami)"
         USE_SYSTEMD=false
         warn "Running in development mode with user: $RUNTIME_USER"
     elif id experimance &>/dev/null; then
+        MODE="prod"
         RUNTIME_USER="experimance"
         USE_SYSTEMD=true
         log "Auto-detected production mode with experimance user"
@@ -86,28 +88,64 @@ get_project_services() {
         error "Service detection script not found: $services_script"
     fi
     
-    # Initialize pyenv if available
-    if command -v pyenv >/dev/null 2>&1; then
-        export PYENV_ROOT="$HOME/.pyenv"
-        export PATH="$PYENV_ROOT/bin:$PATH"
-        eval "$(pyenv init --path)" 2>/dev/null || true
-        eval "$(pyenv init -)" 2>/dev/null || true
-    fi
-    
-    # Try to find uv (check PATH first, then common locations)
-    local uv_cmd=""
-    if command -v uv >/dev/null 2>&1; then
-        uv_cmd="uv"
-    elif [[ -x "$HOME/.local/bin/uv" ]]; then
-        uv_cmd="$HOME/.local/bin/uv"
+    # In production mode, we need to run as the experimance user to access their environment
+    if [[ "$MODE" == "prod" && "$RUNTIME_USER" == "experimance" && "$EUID" -eq 0 ]]; then
+        # Running as root in production mode, delegate to experimance user
+        sudo -u experimance bash -c "
+            # Initialize pyenv for experimance user
+            if [[ -d \"/home/experimance/.pyenv\" ]]; then
+                export PYENV_ROOT=\"/home/experimance/.pyenv\"
+                export PATH=\"\$PYENV_ROOT/bin:\$PATH\"
+                eval \"\$(pyenv init --path)\" 2>/dev/null || true
+                eval \"\$(pyenv init -)\" 2>/dev/null || true
+            fi
+            
+            # Add uv to PATH
+            export PATH=\"/home/experimance/.local/bin:\$PATH\"
+            
+            # Try to find uv
+            uv_cmd=\"\"
+            if command -v uv >/dev/null 2>&1; then
+                uv_cmd=\"uv\"
+            elif [[ -x \"/home/experimance/.local/bin/uv\" ]]; then
+                uv_cmd=\"/home/experimance/.local/bin/uv\"
+            else
+                echo 'ERROR: uv is not installed or not found. Install dependencies first.' >&2
+                exit 1
+            fi
+            
+            # Use uv run to execute the Python script in the proper environment
+            cd '$REPO_DIR'
+            if ! \"\$uv_cmd\" run python '$services_script' '$project'; then
+                echo 'ERROR: Failed to detect services for project $project' >&2
+                exit 1
+            fi
+        "
     else
-        error "uv is not installed or not found. Install dependencies first."
-    fi
-    
-    # Use uv run to execute the Python script in the proper environment
-    cd "$REPO_DIR"
-    if ! "$uv_cmd" run python "$services_script" "$project"; then
-        error "Failed to detect services for project '$project'. Check that the project exists and is properly configured."
+        # Development mode or already running as the correct user
+        # Initialize pyenv if available
+        if command -v pyenv >/dev/null 2>&1; then
+            export PYENV_ROOT="$HOME/.pyenv"
+            export PATH="$PYENV_ROOT/bin:$PATH"
+            eval "$(pyenv init --path)" 2>/dev/null || true
+            eval "$(pyenv init -)" 2>/dev/null || true
+        fi
+        
+        # Try to find uv (check PATH first, then common locations)
+        local uv_cmd=""
+        if command -v uv >/dev/null 2>&1; then
+            uv_cmd="uv"
+        elif [[ -x "$HOME/.local/bin/uv" ]]; then
+            uv_cmd="$HOME/.local/bin/uv"
+        else
+            error "uv is not installed or not found. Install dependencies first."
+        fi
+        
+        # Use uv run to execute the Python script in the proper environment
+        cd "$REPO_DIR"
+        if ! "$uv_cmd" run python "$services_script" "$project"; then
+            error "Failed to detect services for project '$project'. Check that the project exists and is properly configured."
+        fi
     fi
 }
 
@@ -543,13 +581,18 @@ install_dependencies() {
             cd '$REPO_DIR'
             pyenv local \$LATEST_311
             
-            # Install uv if not already installed
-            if ! command -v uv >/dev/null 2>&1; then
-                curl -LsSf https://astral.sh/uv/install.sh | sh
-            fi
-            
-            # Add uv to PATH for this session
+            # Add uv to PATH first
             export PATH=\"\$HOME/.local/bin:\$PATH\"
+            
+            # Install uv if not already installed
+            if ! command -v uv >/dev/null 2>&1 && ! [[ -x \"\$HOME/.local/bin/uv\" ]]; then
+                echo 'Installing uv...'
+                curl -LsSf https://astral.sh/uv/install.sh | sh
+                # Re-export PATH after installation
+                export PATH=\"\$HOME/.local/bin:\$PATH\"
+            else
+                echo 'uv is already installed'
+            fi
             
             # Verify uv is available
             if ! command -v uv >/dev/null 2>&1 && ! [[ -x \"\$HOME/.local/bin/uv\" ]]; then
@@ -866,9 +909,9 @@ status_services() {
     echo -e "\n${BLUE}=== Target Status ===${NC}"
     target="experimance@${PROJECT}.target"
     if systemctl is-active "$target" &>/dev/null; then
-        echo -e "${GREEN}✓${NC} $target: $(systemctl is_active "$target")"
+        echo -e "${GREEN}✓${NC} $target: $(systemctl is-active "$target")"
     else
-        echo -e "${RED}✗${NC} $target: $(systemctl is_active "$target")"
+        echo -e "${RED}✗${NC} $target: $(systemctl is-active "$target")"
     fi
     
     echo -e "\n${BLUE}=== Recent Logs ===${NC}"
