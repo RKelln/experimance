@@ -1,18 +1,14 @@
 [Unit]
 Description=Experimance Display Service (%i project)
-After=network.target experimance-core@%i.service
-Wants=network.target
-Requires=experimance-core@%i.service
+After=graphical-session.target
+Wants=graphical-session.target
 
 [Service]
 Type=simple
-User=experimance
-Group=experimance
-WorkingDirectory=/home/experimance/experimance
+WorkingDirectory=/opt/experimance
 Environment=EXPERIMANCE_PROJECT=%i
 Environment=EXPERIMANCE_ENV=production
-Environment=DISPLAY=:0
-Environment=PATH=/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_display
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
@@ -29,12 +25,8 @@ SyslogIdentifier=experimance-display-%i
 MemoryMax=2G
 CPUQuota=100%
 
-# Security
+# Security - User services don't need as strict security
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/home/experimance/experimance/logs /home/experimance/experimance/images /var/cache/experimance
 
 [Install]
-WantedBy=experimance.target
+WantedBy=default.target

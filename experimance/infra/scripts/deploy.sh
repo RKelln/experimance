@@ -189,6 +189,34 @@ check_project() {
     done
 }
 
+# Create symlink for standard installation directory
+create_symlink() {
+    local install_dir="$1"
+    local symlink_target="/opt/experimance"
+    
+    log "Creating symlink for standard directory layout..."
+    
+    # Create /opt directory if it doesn't exist
+    if [[ ! -d "/opt" ]]; then
+        mkdir -p /opt
+        log "Created /opt directory"
+    fi
+    
+    # Remove existing symlink or directory
+    if [[ -L "$symlink_target" ]]; then
+        rm "$symlink_target"
+        log "Removed existing symlink $symlink_target"
+    elif [[ -d "$symlink_target" ]]; then
+        log "Warning: $symlink_target exists as directory, not creating symlink"
+        return 1
+    fi
+    
+    # Create symlink
+    ln -s "$install_dir" "$symlink_target"
+    chown -h experimance:experimance "$symlink_target"
+    log "Created symlink: $symlink_target -> $install_dir"
+}
+
 install_systemd_files() {
     if [[ "$USE_SYSTEMD" != true ]]; then
         log "Skipping systemd installation in development mode"
@@ -197,7 +225,7 @@ install_systemd_files() {
     
     log "Installing systemd service files..."
     
-    # Copy service files
+    # Copy all system service files
     for service_file in "$SCRIPT_DIR"/../systemd/*.service; do
         if [[ -f "$service_file" ]]; then
             cp "$service_file" "$SYSTEMD_DIR/"
@@ -848,14 +876,16 @@ start_services() {
     
     log "Starting services for project $PROJECT..."
     
+    # Handle all services as system services
     for service in "${SERVICES[@]}"; do
-        if systemctl is-enabled "$service" &>/dev/null; then
-            systemctl start "$service"
-            log "Started $service"
+        # Use service names directly as returned from get_project_services.py
+        if systemctl is-enabled "$service.service" &>/dev/null; then
+            systemctl start "$service.service"
+            log "Started $service.service"
         else
-            systemctl enable "$service"
-            systemctl start "$service"
-            log "Enabled and started $service"
+            systemctl enable "$service.service"
+            systemctl start "$service.service"
+            log "Enabled and started $service.service"
         fi
     done
     
@@ -879,10 +909,12 @@ stop_services() {
         log "Stopped experimance@${PROJECT}.target"
     fi
     
+    # Stop all services
     for service in "${SERVICES[@]}"; do
-        if systemctl is-active "$service" &>/dev/null; then
-            systemctl stop "$service"
-            log "Stopped $service"
+        # Use service names directly as returned from get_project_services.py
+        if systemctl is-active "$service.service" &>/dev/null; then
+            systemctl stop "$service.service"
+            log "Stopped $service.service"
         fi
     done
 }
@@ -899,10 +931,11 @@ status_services() {
     
     echo -e "\n${BLUE}=== Service Status ===${NC}"
     for service in "${SERVICES[@]}"; do
-        if systemctl is-active "$service" &>/dev/null; then
-            echo -e "${GREEN}✓${NC} $service: $(systemctl is-active "$service")"
+        # Use service names directly as returned from get_project_services.py
+        if systemctl is-active "$service.service" &>/dev/null; then
+            echo -e "${GREEN}✓${NC} $service: $(systemctl is-active "$service.service")"
         else
-            echo -e "${RED}✗${NC} $service: $(systemctl is-active "$service")"
+            echo -e "${RED}✗${NC} $service: $(systemctl is-active "$service.service")"
         fi
     done
     
@@ -938,6 +971,7 @@ main() {
             readarray -t SERVICES < <(get_project_services "$PROJECT")
             check_project
             install_systemd_files
+            create_symlink "$(pwd)"
             setup_directories
 
             # add user to groups as needed

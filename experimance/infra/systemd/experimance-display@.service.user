@@ -1,0 +1,28 @@
+[Unit]
+Description=Experimance Display Service (%i project) - User Session
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/experimance
+Environment=EXPERIMANCE_PROJECT=%i
+Environment=EXPERIMANCE_ENV=production
+Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/experimance/.local/bin/uv run -m experimance_display
+Restart=no
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=experimance-display-%i
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=100%
+
+# Security (more relaxed for user services)
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

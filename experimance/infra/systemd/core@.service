@@ -7,16 +7,13 @@ Wants=network.target
 Type=simple
 User=experimance
 Group=experimance
-WorkingDirectory=/home/experimance/experimance
+WorkingDirectory=/opt/experimance
 Environment=EXPERIMANCE_PROJECT=%i
 Environment=EXPERIMANCE_ENV=production
-Environment=PATH=/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_core
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
-RestartSec=10
-StartLimitInterval=60
-StartLimitBurst=3
+Restart=no
 
 # Logging
 StandardOutput=journal
@@ -31,8 +28,8 @@ CPUQuota=50%
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/home/experimance/experimance/logs /home/experimance/experimance/images /var/cache/experimance
+ProtectHome=false
+ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
 
 [Install]
 WantedBy=experimance.target

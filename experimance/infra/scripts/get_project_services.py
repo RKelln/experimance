@@ -22,30 +22,14 @@ def main():
         from experimance_common.config import get_project_services
         
         services = get_project_services(project_name)
-        # Convert to systemd service names with @project suffix
+        # Convert to standardized service_type@project format
         systemd_services = []
         for service in services:
-            # Map service names to their systemd service file names
-            if service == "image-server" or service == "image_server":
-                systemd_services.append(f"image-server@{project_name}")
-            elif service == "health":
-                systemd_services.append(f"experimance-health@{project_name}")
-            elif service == "core":
-                systemd_services.append(f"experimance-core@{project_name}")
-            elif service == "display":
-                systemd_services.append(f"experimance-display@{project_name}")
-            elif service == "audio":
-                systemd_services.append(f"experimance-audio@{project_name}")
-            elif service == "agent":
-                systemd_services.append(f"experimance-agent@{project_name}")
-            elif service.startswith("experimance-"):
-                systemd_services.append(f"{service}@{project_name}")
-            else:
-                # Handle any other service naming patterns - prefix with experimance-
-                systemd_services.append(f"experimance-{service}@{project_name}")
+            # Use service type directly with @project suffix
+            systemd_services.append(f"{service}@{project_name}")
         
         # Always include health service if not already present
-        health_service = f"experimance-health@{project_name}"
+        health_service = f"health@{project_name}"
         if health_service not in systemd_services:
             systemd_services.append(health_service)
         

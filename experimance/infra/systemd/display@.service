@@ -1,0 +1,39 @@
+[Unit]
+Description=Experimance Display Service (%i project)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=experimance
+Group=experimance
+WorkingDirectory=/opt/experimance
+Environment=EXPERIMANCE_PROJECT=%i
+Environment=EXPERIMANCE_ENV=production
+Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=XDG_SESSION_TYPE=wayland
+ExecStart=/home/experimance/.local/bin/uv run -m experimance_display
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=no
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=experimance-display-%i
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=100%
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
+
+[Install]
+WantedBy=experimance.target

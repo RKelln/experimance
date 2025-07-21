@@ -1,0 +1,33 @@
+[Unit]
+Description=Experimance Display Service (%i project) - User Session
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/experimance
+Environment=EXPERIMANCE_PROJECT=%i
+Environment=EXPERIMANCE_ENV=production
+Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Wayland/X11 display will be inherited from user session
+ExecStart=/home/experimance/.local/bin/uv run -m experimance_display
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=experimance-display-%i
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=100%
+
+# Security (less restrictive for user services)
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

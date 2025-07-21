@@ -7,21 +7,20 @@ Wants=network.target
 Type=simple
 User=experimance
 Group=experimance
-WorkingDirectory=/home/experimance/experimance
+WorkingDirectory=/opt/experimance
 Environment="PROJECT_ENV=%i"
 Environment="EXPERIMANCE_ENV=production"
-Environment=PATH=/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_health
-Restart=always
-RestartSec=10
+Restart=no
 TimeoutStopSec=30
 
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/cache/experimance /var/log/experimance /home/experimance/experimance/logs
+ProtectHome=false
+ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
 
 # Logging
 StandardOutput=journal
