@@ -186,12 +186,178 @@ class AudioService(BaseService):
             True if JACK is running, False otherwise
         """
         try:
-            result = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
-            return result.returncode == 0
+            # Check for both jackd and jackdbus processes
+            jackd_result = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
+            jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+            
+            jackd_running = jackd_result.returncode == 0
+            jackdbus_running = jackdbus_result.returncode == 0
+            
+            if jackd_running or jackdbus_running:
+                logger.debug(f"JACK status: jackd={jackd_running}, jackdbus={jackdbus_running}")
+                return True
+            return False
         except Exception as e:
             logger.debug(f"Error checking JACK status: {e}")
             return False
     
+    def _stop_existing_jack(self) -> bool:
+        """Stop any existing JACK processes before starting our own.
+        
+        Returns:
+            True if all JACK processes were stopped successfully, False otherwise
+        """
+        try:
+            # Stop jackdbus first if running
+            jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+            if jackdbus_result.returncode == 0:
+                logger.info("Stopping existing jackdbus process")
+                try:
+                    # Try to stop jackdbus gracefully using jack_control
+                    subprocess.run(['jack_control', 'stop'], capture_output=True, text=True, timeout=3.0)
+                    subprocess.run(['jack_control', 'exit'], capture_output=True, text=True, timeout=3.0)
+                    time.sleep(2.0)  # Give it more time to stop
+                    
+                    # Check if jackdbus is still running after graceful stop
+                    check_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+                    if check_result.returncode == 0:
+                        logger.warning("jackdbus did not stop gracefully, force killing")
+                        subprocess.run(['pkill', '-TERM', 'jackdbus'], capture_output=True, text=True)
+                        time.sleep(1.0)
+                        
+                        # Final check and force kill if still running
+                        final_check = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+                        if final_check.returncode == 0:
+                            logger.warning("Force killing jackdbus with SIGKILL")
+                            subprocess.run(['pkill', '-KILL', 'jackdbus'], capture_output=True, text=True)
+                            time.sleep(1.0)
+                    
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    # Fallback to pkill if jack_control is not available or times out
+                    logger.warning("jack_control not available or timed out, using pkill")
+                    subprocess.run(['pkill', '-TERM', 'jackdbus'], capture_output=True, text=True)
+                    time.sleep(1.0)
+                    subprocess.run(['pkill', '-KILL', 'jackdbus'], capture_output=True, text=True)
+                    time.sleep(1.0)
+            
+            # Stop any jackd processes
+            jackd_result = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
+            if jackd_result.returncode == 0:
+                logger.info("Stopping existing jackd process")
+                subprocess.run(['pkill', '-TERM', 'jackd'], capture_output=True, text=True)
+                time.sleep(1.0)
+                # Force kill if still running
+                final_jackd_check = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
+                if final_jackd_check.returncode == 0:
+                    subprocess.run(['pkill', '-KILL', 'jackd'], capture_output=True, text=True)
+                    time.sleep(1.0)
+            
+            # Verify they're stopped
+            final_check = self._is_jack_running()
+            if not final_check:
+                logger.info("All existing JACK processes stopped successfully")
+                self.record_health_check(
+                    "jack_cleanup",
+                    HealthStatus.HEALTHY,
+                    "Successfully stopped existing JACK processes"
+                )
+                return True
+            else:
+                logger.warning("Some JACK processes may still be running")
+                # Get details about what's still running
+                remaining_processes = []
+                try:
+                    jackd_check = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
+                    if jackd_check.returncode == 0:
+                        remaining_processes.append("jackd")
+                    jackdbus_check = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+                    if jackdbus_check.returncode == 0:
+                        remaining_processes.append("jackdbus")
+                except Exception:
+                    pass
+                    
+                self.record_health_check(
+                    "jack_cleanup",
+                    HealthStatus.WARNING,
+                    f"Some JACK processes still running: {', '.join(remaining_processes)}",
+                    metadata={"remaining_processes": remaining_processes}
+                )
+                return False
+                
+        except Exception as e:
+            error_msg = f"Error stopping existing JACK processes: {e}"
+            logger.error(error_msg)
+            self.record_health_check(
+                "jack_cleanup",
+                HealthStatus.ERROR,
+                error_msg,
+                metadata={"error_type": type(e).__name__}
+            )
+            return False
+
+    def _configure_jackdbus(self, device: str) -> bool:
+        """Configure jackdbus to use the specified device.
+        
+        Args:
+            device: Hardware device address (e.g., "hw:4,0")
+            
+        Returns:
+            True if jackdbus was configured successfully, False otherwise
+        """
+        try:
+            logger.info(f"Configuring jackdbus to use device: {device}")
+            
+            # Configure jackdbus with our settings
+            commands = [
+                ['jack_control', 'ds', 'alsa'],  # Set driver to alsa
+                ['jack_control', 'dps', 'device', device],  # Set device
+                ['jack_control', 'dps', 'rate', str(self.config.supercollider.jack_sample_rate)],  # Set sample rate
+                ['jack_control', 'dps', 'period', str(self.config.supercollider.jack_buffer_size)],  # Set buffer size
+                ['jack_control', 'dps', 'nperiods', str(self.config.supercollider.jack_periods)],  # Set periods
+            ]
+            
+            for cmd in commands:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0)
+                if result.returncode != 0:
+                    logger.warning(f"Command {' '.join(cmd)} failed: {result.stderr}")
+                    return False
+            
+            # Start jackdbus
+            result = subprocess.run(['jack_control', 'start'], capture_output=True, text=True, timeout=10.0)
+            if result.returncode != 0:
+                logger.error(f"Failed to start jackdbus: {result.stderr}")
+                return False
+            
+            # Wait for it to start
+            start_time = time.time()
+            timeout = 5.0
+            while time.time() - start_time < timeout:
+                status_result = subprocess.run(['jack_control', 'status'], capture_output=True, text=True)
+                if status_result.returncode == 0 and 'started' in status_result.stdout.lower():
+                    logger.info("jackdbus started successfully")
+                    self.record_health_check(
+                        "jackdbus_config",
+                        HealthStatus.HEALTHY,
+                        f"jackdbus configured and started with device {device}",
+                        metadata={
+                            "device": device,
+                            "sample_rate": self.config.supercollider.jack_sample_rate,
+                            "buffer_size": self.config.supercollider.jack_buffer_size
+                        }
+                    )
+                    return True
+                time.sleep(0.2)
+            
+            logger.error("jackdbus failed to start within timeout")
+            return False
+            
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.warning(f"Error configuring jackdbus: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error configuring jackdbus: {e}")
+            return False
+
     async def _start_jack(self, device: str) -> bool:
         """Start JACK with the specified device.
         
@@ -201,15 +367,46 @@ class AudioService(BaseService):
         Returns:
             True if JACK started successfully, False otherwise
         """
+        # First check if JACK is already running and properly configured
         if self._is_jack_running():
             logger.info("JACK is already running")
-            self.record_health_check(
-                "jack_status",
-                HealthStatus.HEALTHY,
-                "JACK already running and available"
-            )
-            return True
-            
+            # Check if it's jackdbus and try to verify it's using the right device
+            jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+            if jackdbus_result.returncode == 0:
+                # jackdbus is running, check its status
+                try:
+                    status_result = subprocess.run(['jack_control', 'status'], capture_output=True, text=True, timeout=3.0)
+                    if status_result.returncode == 0 and 'started' in status_result.stdout.lower():
+                        logger.info("jackdbus is already running and started, will use existing server")
+                        self.record_health_check(
+                            "jack_status",
+                            HealthStatus.HEALTHY,
+                            "Using existing jackdbus server"
+                        )
+                        return True
+                    else:
+                        logger.info("jackdbus is running but not started, will configure it")
+                        return self._configure_jackdbus(device)
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    logger.warning("Cannot communicate with jackdbus, stopping it and starting our own")
+                    if not self._stop_existing_jack():
+                        logger.warning("Could not cleanly stop existing JACK, attempting to start anyway")
+            else:
+                logger.info("jackd is running, will stop and restart with correct device")
+                if not self._stop_existing_jack():
+                    logger.warning("Could not cleanly stop existing JACK, attempting to start anyway")
+        
+        # Try to configure jackdbus first (preferred method for Ubuntu)
+        jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+        if jackdbus_result.returncode == 0:
+            logger.info("Attempting to configure existing jackdbus")
+            if self._configure_jackdbus(device):
+                return True
+            else:
+                logger.warning("jackdbus configuration failed, stopping it and using jackd")
+                self._stop_existing_jack()
+        
+        # Fall back to starting our own jackd process
         try:
             # Build JACK command
             jack_cmd = [
@@ -221,11 +418,11 @@ class AudioService(BaseService):
                 '-n', str(self.config.supercollider.jack_periods)
             ]
             
-            logger.info(f"Starting JACK with command: {' '.join(jack_cmd)}")
+            logger.info(f"Starting jackd with command: {' '.join(jack_cmd)}")
             self.record_health_check(
                 "jack_startup",
                 HealthStatus.HEALTHY,
-                f"Initiating JACK startup for device {device}",
+                f"Initiating jackd startup for device {device}",
                 metadata={
                     "device": device,
                     "sample_rate": self.config.supercollider.jack_sample_rate,
