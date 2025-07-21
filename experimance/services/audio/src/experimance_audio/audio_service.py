@@ -490,6 +490,10 @@ class AudioService(BaseService):
             elif stripped.startswith('~sfxChannels'):
                 channels_str = str(self.config.supercollider.sfx_channels).replace("'", "")
                 new_lines.append(f'~sfxChannels = {channels_str};\n')
+            elif stripped.startswith('~audioDir'):
+                new_lines.append(f'~audioDir = "{self.config.audio.audio_dir}";\n')
+            elif stripped.startswith('~configDir'):
+                new_lines.append(f'~configDir = "{self.config.audio.config_dir}";\n')
             else:
                 new_lines.append(line)
 
@@ -519,7 +523,7 @@ class AudioService(BaseService):
         return temp_path
         
 async def run_audio_service(
-    config_path: str = DEFAULT_CONFIG_PATH, 
+    config_path: str|Path = DEFAULT_CONFIG_PATH, 
     args:Optional[argparse.Namespace] = None
 ):
     """

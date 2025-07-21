@@ -211,23 +211,40 @@ setup_directories() {
     mkdir -p "$REPO_DIR/transcripts"
     chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/transcripts"
 
-    # Download video overlay file from Google Drive
-    VIDEO_ID="144JbBnjyz-GmB5RJdmafDagDRurXfB2L"
-    VIDEO_FILE="experimance_video_overlay.mp4"
-    VIDEO_URL="https://docs.google.com/uc?export=download&id=${VIDEO_ID}"
-    TARGET_DIR="$REPO_DIR/media/video"
-    TARGET_FILE="$TARGET_DIR/$VIDEO_FILE"
-    if [[ ! -f "$TARGET_FILE" ]]; then
-        log "Downloading video overlay to $TARGET_FILE"
-        if command -v gdown &>/dev/null; then
-            gdown --quiet --id "$VIDEO_ID" -O "$TARGET_FILE" || error "Failed to download video overlay via gdown"
+    # Download and extract media bundle from Google drive
+    # https://drive.google.com/file/d/1JPf4biReYj1qwWXsb0R_ZVcVrzM94XeE/view?usp=drive_link
+
+    MEDIA_ZIP_ID="${MEDIA_ZIP_ID:-1JPf4biReYj1qwWXsb0R_ZVcVrzM94XeE}"
+    if [[ -n "${MEDIA_ZIP_ID:-}" ]]; then
+        ZIP_FILE="$REPO_DIR/media/experimance_installation_media_bundle.zip"
+        # Ask user if they want to download media files (default Yes)
+        read -p "Download and extract media files? (Y/n): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            MEDIA_URL="https://docs.google.com/uc?export=download&id=${MEDIA_ZIP_ID}"
+            if [[ ! -f "$ZIP_FILE" ]]; then
+                log "Downloading media bundle to $ZIP_FILE"
+                if command -v gdown &>/dev/null; then
+                    gdown --quiet --id "$MEDIA_ZIP_ID" -O "$ZIP_FILE" || error "Failed to download media bundle via gdown"
+                else
+                    wget --quiet --no-check-certificate "$MEDIA_URL" -O "$ZIP_FILE" || error "Failed to download media bundle via wget"
+                fi
+                chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
+            else
+                log "Media bundle zip already present at $ZIP_FILE"
+            fi
+
+            log "Extracting media bundle into $REPO_DIR/media"
+            if command -v unzip &>/dev/null; then
+                # Update existing files only if archive files are newer, extract media/* into REPO_DIR to avoid nested media/media
+                unzip -qu "$ZIP_FILE" "media/*" -d "$REPO_DIR" || error "Failed to extract media bundle"
+            else
+                error "Cannot extract media bundle: 'unzip' not found. Please install 'unzip'."
+            fi
+            chown -R "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media"
         else
-            # Fallback to wget
-            wget --quiet --no-check-certificate "${VIDEO_URL}" -O "$TARGET_FILE" || error "Failed to download video overlay via wget"
+            log "Skipping media bundle download and extraction."
         fi
-        chown "$RUNTIME_USER:$RUNTIME_USER" "$TARGET_FILE"
-    else
-        log "Video overlay already present at $TARGET_FILE"
     fi
 
     log "Directories created and permissions set"
@@ -699,9 +716,9 @@ status_services() {
     echo -e "\n${BLUE}=== Target Status ===${NC}"
     target="experimance@${PROJECT}.target"
     if systemctl is-active "$target" &>/dev/null; then
-        echo -e "${GREEN}✓${NC} $target: $(systemctl is-active "$target")"
+        echo -e "${GREEN}✓${NC} $target: $(systemctl is_active "$target")"
     else
-        echo -e "${RED}✗${NC} $target: $(systemctl is-active "$target")"
+        echo -e "${RED}✗${NC} $target: $(systemctl is_active "$target")"
     fi
     
     echo -e "\n${BLUE}=== Recent Logs ===${NC}"

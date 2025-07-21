@@ -15,7 +15,7 @@ from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.schemas import MessageType
 from experimance_common.zmq.config import SubscriberConfig, PubSubServiceConfig
 from experimance_common.constants import (
-    DEFAULT_PORTS, AUDIO_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX,
+    DEFAULT_PORTS, AUDIO_SERVICE_DIR, AUDIO_DIR, ZMQ_TCP_CONNECT_PREFIX,
     get_project_config_path
 )
 
@@ -167,9 +167,14 @@ class AudioConfig(BaseModel):
         description="Sound effects volume level (0.0 to 1.0)"
     )
     
-    config_dir: Optional[str] = Field(
+    config_dir: Optional[str|Path] = Field(
         default=None,
         description="Directory containing audio configuration JSON files"
+    )
+
+    audio_dir: Optional[str|Path] = Field(
+        default=AUDIO_DIR,
+        description="Directory containing audio files"
     )
 
     music_fade_time: float = Field(

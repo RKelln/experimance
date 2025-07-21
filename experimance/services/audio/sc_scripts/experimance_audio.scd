@@ -21,6 +21,8 @@ s.options.device = nil;  // "plughw:1,0" // USB audio interface
 ~initMusicVolume = 1.0;
 ~initSfxVolume = 1.0;
 ~musicFadeTime = 10.0;  // Default fade time for music transitions
+~audioDir = "../audio";  // Default audio directory
+~configDir = "../config";  // Default config directory
 
 // Surround sound configuration (set by audio_service.py)
 ~enableSurround = false;
@@ -74,18 +76,18 @@ s.waitForBoot {
 
     // Setup directories
     // Check if we have a valid script path (might be nil if running in IDE)
-    if(scriptDir.notNil) {
-        "Script directory: %".format(scriptDir).postln;
-        configDir = scriptDir +/+ "../config";  // Config dir relative to script location
-        audioDir = scriptDir +/+ "../audio";    // Audio dir relative to script location
-    } {
-        "Script directory not found, using default paths.".postln;
-        configDir = "../config";  // Default config directory
-        audioDir = "../audio";    // Default audio directory
-    };
+    // if(scriptDir.notNil) {
+    //     "Script directory: %".format(scriptDir).postln;
+    //     configDir = scriptDir +/+ "../config";  // Config dir relative to script location
+    //     audioDir = scriptDir +/+ "../audio";    // Audio dir relative to script location
+    // } {
+    //     "Script directory not found, using default paths.".postln;
+    //     configDir = "../config";  // Default config directory
+    //     audioDir = "../audio";    // Default audio directory
+    // };
 
-    "Config directory: %".format(configDir).postln;
-    "Audio directory: %".format(audioDir).postln;
+    "Config directory: %".format(~configDir).postln;
+    "Audio directory: %".format(~audioDir).postln;
 
     // -----------------------------------------------------
     // Surround Sound Helper Functions
@@ -202,7 +204,7 @@ s.waitForBoot {
 
     // Load JSON config file
     ~loadJsonConfig = { |filename|
-        var path = configDir +/+ filename;
+        var path = ~configDir +/+ filename;
         var file, data, result = nil;
 
         // Check if file exists
@@ -258,7 +260,7 @@ s.waitForBoot {
             configurations[\layers].do { |layer, i|
                 path = layer[\path];
                 if(path.notNil) {
-                    layer[\exists] = File.exists(audioDir +/+ path);
+                    layer[\exists] = File.exists(~audioDir +/+ path);
                     if(layer[\exists].not) {
                         "Environmental audio file not found: %".format(path).warn;
                     } {
@@ -277,7 +279,7 @@ s.waitForBoot {
             configurations[\triggers].do { |trigger, i|
                 path = trigger[\path];
                 if(path.notNil) {
-                    trigger[\exists] = File.exists(audioDir +/+ path);
+                    trigger[\exists] = File.exists(~audioDir +/+ path);
                     if(trigger[\exists].not) {
                         "Trigger audio file not found: %".format(path).warn;
                     } {
@@ -308,7 +310,7 @@ s.waitForBoot {
                     loops.do { |loop, i|
                         path = loop[\path];
                         if(path.notNil) {
-                            loop[\exists] = File.exists(audioDir +/+ path);
+                            loop[\exists] = File.exists(~audioDir +/+ path);
                             if(loop[\exists].not) {
                                 "Music loop file not found: % for era: %".format(path, era).warn;
                             } {
@@ -378,7 +380,7 @@ s.waitForBoot {
 
         if(fileExists) {
             // Load audio file if it exists
-            buffer = Buffer.read(s, audioDir +/+ path);
+            buffer = Buffer.read(s, ~audioDir +/+ path);
 
             // Handle different interval types
             case { interval == "loop" } {
@@ -577,7 +579,7 @@ s.waitForBoot {
 
         if(fileExists) {
             // Load audio file if it exists
-            buffer = Buffer.read(s, audioDir +/+ path);
+            buffer = Buffer.read(s, ~audioDir +/+ path);
 
             // Create synth for one-shot playback
             synth = Synth(\triggerPlayer, [
@@ -1680,7 +1682,7 @@ s.waitForBoot {
                             if(path.notNil && (fileExists == true)) {
                                 // Load audio file into buffer
                                 "Preloading buffer for era % slot %: %".format(era, slotIndex, path).postln;
-                                buffer = Buffer.read(s, audioDir +/+ path);
+                                buffer = Buffer.read(s, ~audioDir +/+ path);
 
                                 // Wait for buffer info to be available
                                 s.sync;
