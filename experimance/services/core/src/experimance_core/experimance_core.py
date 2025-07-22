@@ -26,7 +26,7 @@ from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
 from experimance_common.schemas import (
-    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType
+    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, IdleStatus
 )
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
@@ -63,21 +63,6 @@ ERA_PROGRESSION = {
     Era.RUINS: [Era.WILDERNESS]  # Cycle back to beginning
 }
 
-# Biome availability by era
-ERA_BIOMES = {
-    Era.WILDERNESS: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.BOREAL_FOREST, Biome.DECIDUOUS_FOREST, 
-                     Biome.DESERT, Biome.MOUNTAIN, Biome.TUNDRA, Biome.PLAINS, Biome.RIVER, Biome.COASTAL],
-    Era.PRE_INDUSTRIAL: [Biome.TEMPERATE_FOREST, Biome.DECIDUOUS_FOREST, Biome.PLAINS, Biome.RIVER, Biome.MOUNTAIN],
-    Era.EARLY_INDUSTRIAL: [Biome.TEMPERATE_FOREST, Biome.DECIDUOUS_FOREST, Biome.PLAINS, Biome.RIVER, Biome.MOUNTAIN],
-    Era.LATE_INDUSTRIAL: [Biome.TEMPERATE_FOREST, Biome.DESERT, Biome.PLAINS, Biome.MOUNTAIN, Biome.COASTAL],
-    Era.MODERN: [Biome.TEMPERATE_FOREST, Biome.DESERT, Biome.MOUNTAIN, Biome.COASTAL, Biome.TROPICAL_ISLAND],
-    Era.CURRENT: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.DESERT, Biome.MOUNTAIN, Biome.TUNDRA, 
-                  Biome.COASTAL, Biome.TROPICAL_ISLAND, Biome.ARCTIC],
-    Era.FUTURE: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.DESERT, Biome.MOUNTAIN, Biome.TUNDRA, 
-                 Biome.COASTAL, Biome.TROPICAL_ISLAND, Biome.ARCTIC],
-    Era.DYSTOPIA: [Biome.DESERT, Biome.TUNDRA, Biome.ARCTIC],  # Limited biomes after dystopia
-    Era.RUINS: [Biome.RAINFOREST, Biome.TEMPERATE_FOREST, Biome.SWAMP, Biome.PLAINS]  # Nature reclaiming
-}
 
 class ExperimanceCoreService(BaseService):
     """
@@ -106,10 +91,16 @@ class ExperimanceCoreService(BaseService):
         
         # Initialize ZMQ controller service using composition
         self.zmq_service = ControllerService(config=config.zmq)
-        
+
+        # State management constants
+        self.AVAILABLE_ERAS = list(Era)
+        self.AVAILABLE_BIOMES = list(Biome)
+        self.Era = Era  # Expose enum class
+        self.Biome = Biome  # Expose enum class
+
         # State machine variables
         self.current_era: Era = Era.WILDERNESS
-        self.current_biome: Biome = Biome.TEMPERATE_FOREST
+        self.current_biome: Biome = random.choice(self.AVAILABLE_BIOMES)
         self.user_interaction_score: float = 0.0
         self.idle_timer: float = 0.0
         self.audience_present: bool = False
@@ -143,12 +134,6 @@ class ExperimanceCoreService(BaseService):
         self.max_depth_retry_delay = 30.0  # Cap at 30 seconds
         self.last_depth_warning_time = 0
         self._camera_state = CameraState.DISCONNECTED
-        
-        # State management constants
-        self.AVAILABLE_ERAS = list(Era)
-        self.AVAILABLE_BIOMES = list(Biome)
-        self.Era = Era  # Expose enum class
-        self.Biome = Biome  # Expose enum class
         
         # Render request throttling
         self.last_render_request_time: float = 0.0
@@ -507,7 +492,7 @@ class ExperimanceCoreService(BaseService):
             )
             
             await self.zmq_service.publish(message)
-            logger.debug(f"Published change map: score={change_score:.4f}")
+            logger.info(f"Published change map: score={change_score:.4f}")
 
         except Exception as e:
             logger.error(f"Error publishing change map: {e}")
@@ -621,9 +606,6 @@ class ExperimanceCoreService(BaseService):
         if era_changed:
             self.era_progression_timer = 0.0
             
-            # Select appropriate biome for new era
-            self.select_biome_for_era(self.current_era)
-            
             # Publish EraChanged event
             await self._publish_space_time_update_event()
 
@@ -676,29 +658,7 @@ class ExperimanceCoreService(BaseService):
             return random.choices(possible_next_eras, weights=[0.7, 0.3])[0].value
         else:
             return possible_next_eras[0].value
-    
-    def select_biome_for_era(self, era: str | Era) -> str:
-        """Select an appropriate biome for the given era."""
-        if isinstance(era, str):
-            era_enum = Era(era)
-        elif isinstance(era, Era):
-            era_enum = era
-        else:
-            self.record_error(Exception(f"Invalid era type: {type(era)}"))
 
-        available_biomes = ERA_BIOMES.get(era_enum, [Biome.TEMPERATE_FOREST])
-        
-        # If current biome is available in new era, keep it
-        current_biome_enum = Biome(self.current_biome)
-        if current_biome_enum in available_biomes:
-            return self.current_biome
-            
-        # Otherwise, select randomly from available biomes
-        new_biome = random.choice(available_biomes)
-        # Use switch_biome method which handles prompt manager updates
-        self.switch_biome(new_biome)
-        logger.info(f"Selected biome {self.current_biome} for era {era_enum}")
-        return self.current_biome
     
     def update_idle_timer(self, delta_time: float):
         """Update the idle timer."""
@@ -805,17 +765,9 @@ class ExperimanceCoreService(BaseService):
         
         # Validate biome
         if not self.is_valid_biome(self.current_biome):
-            logger.warning(f"Invalid biome {self.current_biome}, resetting to temperate forest")
-            self.switch_biome(Biome.TEMPERATE_FOREST)
-        
-        # Validate biome is available for current era
-        era_enum = Era(self.current_era) if isinstance(self.current_era, str) else self.current_era
-        biome_enum = Biome(self.current_biome)
-        available_biomes = ERA_BIOMES.get(era_enum, [Biome.TEMPERATE_FOREST])
-        
-        if biome_enum not in available_biomes:
-            logger.warning(f"Biome {self.current_biome} not available for era {self.current_era}")
-            self.select_biome_for_era(self.current_era)
+            random_biome = random.choice(self.AVAILABLE_BIOMES)
+            logger.warning(f"Invalid biome {self.current_biome}, resetting to {random_biome}")
+            self.switch_biome(random_biome)
         
         # Validate numeric ranges
         self.user_interaction_score = max(0.0, min(1.0, self.user_interaction_score))
@@ -1197,7 +1149,7 @@ class ExperimanceCoreService(BaseService):
 
         if blur and self.config.camera.blur_depth:
             # Apply Gaussian blur to reduce noise
-            image = cv2.GaussianBlur(image, (5, 5), 0)
+            image = cv2.GaussianBlur(image, (11, 11), 0)
         
         return image
 
@@ -1292,34 +1244,19 @@ class ExperimanceCoreService(BaseService):
             True if biome changed, False otherwise
         """
         old_biome = self.current_biome
-        
-        if new_biome is not None:
-            # Set specific biome
-            if new_biome != self.current_biome:
-                self.current_biome = new_biome
-                
-                # Update prompt manager
-                if self.prompt_manager is not None:
-                    self.prompt_manager.switch_biome(new_biome)
-                
-                logger.info(f"Biome switched from {old_biome.value} to {new_biome.value}")
-                return True
-        else:
-            # Random selection from era-appropriate biomes
-            available_biomes = ERA_BIOMES.get(self.current_era, list(Biome))
-            if available_biomes:
-                # Remove current biome from choices to ensure change
-                choices = [b for b in available_biomes if b != self.current_biome]
-                if choices:
-                    new_biome = random.choice(choices)
-                    self.current_biome = new_biome
-                    
-                    # Update prompt manager
-                    if self.prompt_manager is not None:
-                        self.prompt_manager.switch_biome(new_biome)
-                    
-                    logger.info(f"Biome switched from {old_biome.value} to {new_biome.value}")
-                    return True
+        if new_biome is None:
+            new_biome = random.choice(self.AVAILABLE_BIOMES)
+
+        # Set specific biome
+        if new_biome != self.current_biome:
+            self.current_biome = new_biome
+            
+            # Update prompt manager
+            if self.prompt_manager is not None:
+                self.prompt_manager.switch_biome(new_biome)
+            
+            logger.info(f"Biome switched from {old_biome.value} to {new_biome.value}")
+            return True
         
         return False
     
