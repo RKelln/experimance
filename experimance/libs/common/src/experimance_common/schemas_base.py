@@ -267,9 +267,10 @@ class RenderRequest(MessageBase):
 
 class IdleStatus(MessageBase):
     """Event published when the idle status changes."""
-    type: str = "Idle"
+    type: str = MessageType.IDLE_STATUS
     status: bool  # True = now idle, False = exiting idle
-
+    idle_duration: float
+    timestamp: str
 
 class ImageReady(MessageBase):
     """Event published when a new image is ready.

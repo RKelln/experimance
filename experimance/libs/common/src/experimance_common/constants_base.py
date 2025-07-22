@@ -59,7 +59,13 @@ TEMP_FILE_PREFIX = "experimance_img_"
 TEMP_FILE_SUFFIX = ".png"
 TEMP_FILE_CLEANUP_AGE = 300  # seconds (5 minutes)
 TEMP_FILE_CLEANUP_INTERVAL = 60  # seconds (1 minute)
-DEFAULT_TEMP_DIR = "/tmp"  # Default directory for temporary files
+
+# Default directory for temporary files - use cache dir in production
+import os
+if os.path.exists("/var/cache/experimance") and os.access("/var/cache/experimance", os.W_OK):
+    DEFAULT_TEMP_DIR = "/var/cache/experimance"
+else:
+    DEFAULT_TEMP_DIR = "/tmp"  # Fallback to /tmp
 
 # URI and URL constants
 FILE_URI_PREFIX = "file://"

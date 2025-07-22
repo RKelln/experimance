@@ -24,10 +24,10 @@ SyslogIdentifier=experimance-agent-%i
 
 # Security
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
+ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv /tmp
 
 # Audio and video access for microphone and camera
 SupplementaryGroups=audio video

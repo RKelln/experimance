@@ -29,10 +29,10 @@ SyslogIdentifier=experimance-audio-%i
 
 # Security
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv /run/user/1000
+ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv /tmp /run/user/1000
 
 # Audio access
 SupplementaryGroups=audio
