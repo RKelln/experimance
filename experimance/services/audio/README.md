@@ -4,6 +4,7 @@ The Experimance Audio Service integrates SuperCollider with the main Experimance
 - Environmental audio layers based on the current biome and era
 - Sound effects for transitions and interactions 
 - Background music tailored to each era
+- 6-channel surround sound support via jackdbus
 
 ## Features
 
@@ -15,6 +16,11 @@ The Experimance Audio Service integrates SuperCollider with the main Experimance
   - Automatic startup with configurable script path
   - Graceful shutdown when service stops
   - Clean process termination
+- **JACK Audio Integration**:
+  - Pure jackdbus architecture with automatic configuration
+  - 6-channel surround sound support for environmental audio and music
+  - USB audio device detection and configuration
+  - Real-time parameter verification and reconfiguration
 - Placeholder music generation for missing audio files:
   - Era-specific musical keys (circle of fifths progression)
   - Unique synthesizer timbres for each era
@@ -40,15 +46,23 @@ uv add -e .
 
 ```bash
 # Basic usage
-uv run -m experimance_audio.audio_service
+uv run -m experimance_audio
 
 # With custom configuration directory
-uv run  -m experimance_audio.audio_service --config-dir /path/to/config
+uv run  -m experimance_audio --config /path/to/config
 
 # SuperCollider control options
-uv run  -m experimance_audio.audio_service --no-sc  # Don't auto-start SuperCollider
-uv run  -m experimance_audio.audio_service --sc-script /path/to/custom_script.scd  # Use custom script
-uv run  -m experimance_audio.audio_service --sclang-path /path/to/sclang  # Custom SuperCollider executable
+uv run  -m experimance_audio --supercollider-script-path /path/to/custom_script.scd  # Use custom script
+```
+
+Use the dev script:
+```bash
+scripts/dev audio
+```
+
+In production:
+```bash
+sudo systemctl erstart audio@experimance.service
 ```
 
 ### Command Line Arguments
@@ -70,6 +84,22 @@ Audio configuration is loaded from JSON files in the `config` directory:
 - `music_loops.json`: Era-based music loops
 
 See the technical design document for configuration schema details.
+
+## JACK Audio Architecture
+
+The audio service uses a pure jackdbus architecture:
+
+- **Automatic Configuration**: Service configures jackdbus parameters on startup
+- **6-Channel Surround**: Environmental audio and music routed to front/rear speaker pairs
+- **USB Device Support**: Automatic detection and configuration of USB audio interfaces
+- **SuperCollider Integration**: Connects to existing JACK server with `device = nil`
+- **No Manual JACK Management**: All JACK operations handled via `jack_control` commands
+
+### Audio Routing
+- **Environmental Audio**: Front channels (0,1) - Left/Right Front
+- **Music**: Rear channels (4,5) - Left/Right Rear  
+- **Center/LFE**: Channels 2,3 - Available for special effects
+- **AI Agent Voice**: Separate USB speakerphone device (not routed through JACK)
 
 ## Architecture
 
@@ -114,15 +144,6 @@ The audio service follows a simplified star topology with the core service as th
 ```
 
 All events, including agent events, are relayed through the core service, eliminating the need for multiple ZMQ connections and simplifying shutdown procedures.
-
-## ZeroMQ Architecture
-
-The audio service now follows a simplified star topology. 
-
-- **Core Service**: Central coordinator that publishes all system events including agent events
-- **Audio Service**: Subscribes to a single channel (coordinator's PUB socket) for ALL events
-- **Agent Events**: Relayed through core service rather than requiring separate connections
-
 
 ## Development and Testing
 

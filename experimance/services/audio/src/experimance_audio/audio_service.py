@@ -9,7 +9,6 @@ This service:
 
 import asyncio
 import argparse
-import json
 import logging
 import os
 import signal
@@ -76,7 +75,6 @@ class AudioService(BaseService):
         
         # file tracking
         self.tmp_script_path = None  # Temporary script path for SuperCollider
-        self.jack_process = None     # JACK process handle
 
         # State tracking
         self.current_biome = None
@@ -88,6 +86,35 @@ class AudioService(BaseService):
         self.environment_volume = self.config.audio.environment_volume
         self.music_volume = self.config.audio.music_volume
         self.sfx_volume = self.config.audio.sfx_volume
+    
+    def _get_runtime_dir(self) -> str:
+        """Get the XDG_RUNTIME_DIR for the current user.
+        
+        This is needed because:
+        1. jackdbus (JACK D-Bus service) communicates via D-Bus
+        2. D-Bus requires XDG_RUNTIME_DIR to find the user's session bus
+        3. When running as a systemd service, this environment variable may not be set
+        4. Without it, jack_control commands fail with "Cannot connect to server socket" errors
+        5. The directory contains per-user runtime files like D-Bus sockets
+        
+        Returns:
+            Runtime directory path for the current user (typically /run/user/UID)
+        """
+        # First check if it's already set in environment
+        runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+        if runtime_dir:
+            return runtime_dir
+        
+        # Fallback: dynamically determine based on current user
+        # This is safer than hardcoding /run/user/1000 since user IDs can vary
+        try:
+            import pwd
+            current_user = pwd.getpwuid(os.getuid())
+            return f'/run/user/{current_user.pw_uid}'
+        except Exception as e:
+            logger.warning(f"Could not determine runtime directory: {e}")
+            # Last resort fallback - but this should rarely be used
+            return f'/run/user/{os.getuid()}'
     
     def _resolve_audio_device(self, device_identifier: str) -> Optional[str]:
         """Resolve a device identifier to a hardware address.
@@ -225,116 +252,109 @@ class AudioService(BaseService):
             
         return None
     
+    def _verify_audio_device_exists(self, device: str) -> bool:
+        """Verify that an audio device exists and is accessible.
+        
+        Args:
+            device: Hardware device address (e.g., "hw:4,0")
+            
+        Returns:
+            True if device exists and is accessible, False otherwise
+        """
+        try:
+            # Extract card number from device string like "hw:4,0"
+            if device.startswith('hw:'):
+                card_part = device.split(':')[1].split(',')[0]
+                try:
+                    card_num = int(card_part)
+                    # Check if the card exists in /proc/asound/cards
+                    with open('/proc/asound/cards', 'r') as f:
+                        cards_content = f.read()
+                        if f' {card_num} [' in cards_content:
+                            logger.debug(f"Device {device} verified as accessible (card {card_num} exists)")
+                            return True
+                        else:
+                            logger.warning(f"Device {device} not found (card {card_num} does not exist)")
+                            return False
+                except (ValueError, IndexError):
+                    logger.warning(f"Could not parse card number from device {device}")
+                    return False
+            else:
+                logger.warning(f"Device {device} not in expected hw:X,Y format")
+                return False
+                
+        except (FileNotFoundError, PermissionError) as e:
+            logger.warning(f"Could not access /proc/asound/cards to verify device {device}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error verifying device {device}: {e}")
+            return False
+    
     def _is_jack_running(self) -> bool:
-        """Check if JACK is currently running.
+        """Check if JACK is currently running via jackdbus.
         
         Returns:
             True if JACK is running, False otherwise
         """
         try:
-            # Check for both jackd and jackdbus processes
-            jackd_result = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
-            jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
+            # Ensure proper environment for jackdbus commands
+            env = os.environ.copy()
+            if 'XDG_RUNTIME_DIR' not in env:
+                env['XDG_RUNTIME_DIR'] = self._get_runtime_dir()
             
-            jackd_running = jackd_result.returncode == 0
-            jackdbus_running = jackdbus_result.returncode == 0
-            
-            if jackd_running or jackdbus_running:
-                logger.debug(f"JACK status: jackd={jackd_running}, jackdbus={jackdbus_running}")
-                return True
+            # Use jack_control status to check if JACK is started
+            status_result = subprocess.run(['jack_control', 'status'], capture_output=True, text=True, timeout=3.0, env=env)
+            if status_result.returncode == 0:
+                # Check if status contains "started" 
+                return 'started' in status_result.stdout.lower()
             return False
         except Exception as e:
             logger.debug(f"Error checking JACK status: {e}")
             return False
     
-    def _stop_existing_jack(self) -> bool:
-        """Stop any existing JACK processes before starting our own.
+    def _stop_jack(self) -> bool:
+        """Stop JACK via jackdbus if it's running.
         
         Returns:
-            True if all JACK processes were stopped successfully, False otherwise
+            True if JACK was stopped successfully, False otherwise
         """
         try:
-            # Stop jackdbus first if running
-            jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
-            if jackdbus_result.returncode == 0:
-                logger.info("Stopping existing jackdbus process")
-                try:
-                    # Try to stop jackdbus gracefully using jack_control
-                    subprocess.run(['jack_control', 'stop'], capture_output=True, text=True, timeout=3.0)
-                    subprocess.run(['jack_control', 'exit'], capture_output=True, text=True, timeout=3.0)
-                    time.sleep(2.0)  # Give it more time to stop
-                    
-                    # Check if jackdbus is still running after graceful stop
-                    check_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
-                    if check_result.returncode == 0:
-                        logger.warning("jackdbus did not stop gracefully, force killing")
-                        subprocess.run(['pkill', '-TERM', 'jackdbus'], capture_output=True, text=True)
-                        time.sleep(1.0)
-                        
-                        # Final check and force kill if still running
-                        final_check = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
-                        if final_check.returncode == 0:
-                            logger.warning("Force killing jackdbus with SIGKILL")
-                            subprocess.run(['pkill', '-KILL', 'jackdbus'], capture_output=True, text=True)
-                            time.sleep(1.0)
-                    
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    # Fallback to pkill if jack_control is not available or times out
-                    logger.warning("jack_control not available or timed out, using pkill")
-                    subprocess.run(['pkill', '-TERM', 'jackdbus'], capture_output=True, text=True)
-                    time.sleep(1.0)
-                    subprocess.run(['pkill', '-KILL', 'jackdbus'], capture_output=True, text=True)
-                    time.sleep(1.0)
+            # Ensure proper environment for jackdbus commands
+            env = os.environ.copy()
+            if 'XDG_RUNTIME_DIR' not in env:
+                env['XDG_RUNTIME_DIR'] = self._get_runtime_dir()
             
-            # Stop any jackd processes
-            jackd_result = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
-            if jackd_result.returncode == 0:
-                logger.info("Stopping existing jackd process")
-                subprocess.run(['pkill', '-TERM', 'jackd'], capture_output=True, text=True)
-                time.sleep(1.0)
-                # Force kill if still running
-                final_jackd_check = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
-                if final_jackd_check.returncode == 0:
-                    subprocess.run(['pkill', '-KILL', 'jackd'], capture_output=True, text=True)
-                    time.sleep(1.0)
+            # Check if JACK is running first
+            if not self._is_jack_running():
+                logger.debug("JACK is not running, nothing to stop")
+                return True
             
-            # Verify they're stopped
-            final_check = self._is_jack_running()
-            if not final_check:
-                logger.info("All existing JACK processes stopped successfully")
+            logger.info("Stopping JACK via jackdbus")
+            
+            # Try to stop jackdbus gracefully using jack_control
+            result = subprocess.run(['jack_control', 'stop'], capture_output=True, text=True, timeout=5.0, env=env)
+            if result.returncode == 0:
+                logger.info("JACK stopped successfully")
                 self.record_health_check(
-                    "jack_cleanup",
+                    "jack_shutdown",
                     HealthStatus.HEALTHY,
-                    "Successfully stopped existing JACK processes"
+                    "JACK stopped gracefully via jackdbus"
                 )
                 return True
             else:
-                logger.warning("Some JACK processes may still be running")
-                # Get details about what's still running
-                remaining_processes = []
-                try:
-                    jackd_check = subprocess.run(['pgrep', 'jackd'], capture_output=True, text=True)
-                    if jackd_check.returncode == 0:
-                        remaining_processes.append("jackd")
-                    jackdbus_check = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
-                    if jackdbus_check.returncode == 0:
-                        remaining_processes.append("jackdbus")
-                except Exception:
-                    pass
-                    
+                logger.warning(f"jack_control stop failed: {result.stderr}")
                 self.record_health_check(
-                    "jack_cleanup",
+                    "jack_shutdown",
                     HealthStatus.WARNING,
-                    f"Some JACK processes still running: {', '.join(remaining_processes)}",
-                    metadata={"remaining_processes": remaining_processes}
+                    f"jack_control stop failed: {result.stderr}"
                 )
                 return False
                 
         except Exception as e:
-            error_msg = f"Error stopping existing JACK processes: {e}"
+            error_msg = f"Error stopping JACK: {e}"
             logger.error(error_msg)
             self.record_health_check(
-                "jack_cleanup",
+                "jack_shutdown",
                 HealthStatus.ERROR,
                 error_msg,
                 metadata={"error_type": type(e).__name__}
@@ -353,7 +373,31 @@ class AudioService(BaseService):
         try:
             logger.info(f"Configuring jackdbus to use device: {device}")
             
+            # Ensure proper environment for jackdbus (critical for systemd services)
+            # jackdbus requires XDG_RUNTIME_DIR to communicate with the D-Bus session bus.
+            # Without this environment variable, jack_control commands will fail with
+            # "Cannot connect to server socket" errors. This commonly happens when
+            # running services via systemd where the user session environment isn't inherited.
+            env = os.environ.copy()
+            if 'XDG_RUNTIME_DIR' not in env:
+                env['XDG_RUNTIME_DIR'] = self._get_runtime_dir()
+            
+            # Verify device exists before trying to configure it
+            if not self._verify_audio_device_exists(device):
+                logger.error(f"Audio device {device} not found, cannot configure JACK")
+                return False
+            
+            # Stop JACK if it's running before making parameter changes
+            # This is required because jackdbus parameter changes only take effect after restart
+            if self._is_jack_running():
+                logger.debug("Stopping JACK before configuration changes")
+                stop_result = subprocess.run(['jack_control', 'stop'], capture_output=True, text=True, timeout=5.0, env=env)
+                if stop_result.returncode != 0:
+                    logger.warning(f"Failed to stop JACK before configuration: {stop_result.stderr}")
+                    # Continue anyway - might work
+            
             # Configure jackdbus with our settings
+            # These parameter changes will only take effect when JACK is next started
             output_channels = self.config.supercollider.jack_output_channels or self.config.supercollider.output_channels
             commands = [
                 ['jack_control', 'ds', 'alsa'],  # Set driver to alsa
@@ -365,13 +409,13 @@ class AudioService(BaseService):
             ]
             
             for cmd in commands:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0, env=env)
                 if result.returncode != 0:
                     logger.warning(f"Command {' '.join(cmd)} failed: {result.stderr}")
                     return False
             
             # Start jackdbus
-            result = subprocess.run(['jack_control', 'start'], capture_output=True, text=True, timeout=10.0)
+            result = subprocess.run(['jack_control', 'start'], capture_output=True, text=True, timeout=10.0, env=env)
             if result.returncode != 0:
                 logger.error(f"Failed to start jackdbus: {result.stderr}")
                 return False
@@ -380,9 +424,10 @@ class AudioService(BaseService):
             start_time = time.time()
             timeout = 5.0
             while time.time() - start_time < timeout:
-                status_result = subprocess.run(['jack_control', 'status'], capture_output=True, text=True)
+                status_result = subprocess.run(['jack_control', 'status'], capture_output=True, text=True, env=env)
                 if status_result.returncode == 0 and 'started' in status_result.stdout.lower():
                     logger.info("jackdbus started successfully")
+                    
                     self.record_health_check(
                         "jackdbus_config",
                         HealthStatus.HEALTHY,
@@ -406,8 +451,114 @@ class AudioService(BaseService):
             logger.error(f"Unexpected error configuring jackdbus: {e}")
             return False
 
+    def _verify_jack_configuration(self, expected_device: str) -> bool:
+        """Verify that the current JACK configuration matches our requirements.
+        
+        Args:
+            expected_device: The device we expect JACK to be using (e.g., "hw:4,0")
+            
+        Returns:
+            True if configuration matches, False otherwise
+        """
+        try:
+            # Ensure proper environment for jackdbus check
+            # jackdbus communicates via D-Bus, which needs XDG_RUNTIME_DIR to locate
+            # the user session bus socket. Without this, jack_control commands fail.
+            # This is critical when running as systemd services where environment
+            # variables may not be properly inherited.
+            env = os.environ.copy()
+            if 'XDG_RUNTIME_DIR' not in env:
+                env['XDG_RUNTIME_DIR'] = self._get_runtime_dir()
+            
+            # Get current JACK driver parameters
+            dp_result = subprocess.run(['jack_control', 'dp'], capture_output=True, text=True, timeout=3.0, env=env)
+            if dp_result.returncode != 0:
+                logger.debug("Could not get JACK driver parameters")
+                return False
+            
+            config_output = dp_result.stdout
+            
+            # Parse the configuration output to check key parameters
+            expected_output_channels = self.config.supercollider.jack_output_channels or self.config.supercollider.output_channels
+            expected_sample_rate = self.config.supercollider.jack_sample_rate
+            expected_buffer_size = self.config.supercollider.jack_buffer_size
+            
+            # Check device
+            device_match = re.search(r'device:.*?:([^)]+)', config_output)
+            current_device = device_match.group(1) if device_match else None
+            
+            # Check output channels
+            outchannels_match = re.search(r'outchannels:.*?:(\d+)', config_output)
+            current_output_channels = int(outchannels_match.group(1)) if outchannels_match else None
+            
+            # Check sample rate
+            rate_match = re.search(r'rate:.*?:(\d+)', config_output)
+            current_sample_rate = int(rate_match.group(1)) if rate_match else None
+            
+            # Check buffer size (period)
+            period_match = re.search(r'period:.*?:(\d+)', config_output)
+            current_buffer_size = int(period_match.group(1)) if period_match else None
+            
+            # Log current vs expected configuration
+            logger.debug(f"JACK config verification:")
+            logger.debug(f"  Device: current='{current_device}', expected='{expected_device}'")
+            logger.debug(f"  Output channels: current={current_output_channels}, expected={expected_output_channels}")
+            logger.debug(f"  Sample rate: current={current_sample_rate}, expected={expected_sample_rate}")
+            logger.debug(f"  Buffer size: current={current_buffer_size}, expected={expected_buffer_size}")
+            
+            # Check if all parameters match
+            config_matches = (
+                current_device == expected_device and
+                current_output_channels == expected_output_channels and
+                current_sample_rate == expected_sample_rate and
+                current_buffer_size == expected_buffer_size
+            )
+            
+            if config_matches:
+                logger.info("JACK configuration matches our requirements")
+                self.record_health_check(
+                    "jack_config_verification",
+                    HealthStatus.HEALTHY,
+                    "JACK configuration matches requirements",
+                    metadata={
+                        "device": current_device,
+                        "output_channels": current_output_channels,
+                        "sample_rate": current_sample_rate,
+                        "buffer_size": current_buffer_size
+                    }
+                )
+                return True
+            else:
+                logger.info("JACK configuration does not match our requirements, will reconfigure")
+                self.record_health_check(
+                    "jack_config_verification",
+                    HealthStatus.WARNING,
+                    "JACK configuration mismatch detected",
+                    metadata={
+                        "current_device": current_device,
+                        "expected_device": expected_device,
+                        "current_output_channels": current_output_channels,
+                        "expected_output_channels": expected_output_channels,
+                        "current_sample_rate": current_sample_rate,
+                        "expected_sample_rate": expected_sample_rate,
+                        "current_buffer_size": current_buffer_size,
+                        "expected_buffer_size": expected_buffer_size
+                    }
+                )
+                return False
+                
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.debug(f"Could not verify JACK configuration: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Error verifying JACK configuration: {e}")
+            return False
+
     async def _start_jack(self, device: str) -> bool:
-        """Start JACK with the specified device.
+        """Start or configure JACK via jackdbus with the specified device.
+        
+        Note: jackdbus parameter changes only take effect after stopping and restarting 
+        the JACK server. The _configure_jackdbus method handles this automatically.
         
         Args:
             device: Hardware device address (e.g., "hw:4,0")
@@ -415,182 +566,44 @@ class AudioService(BaseService):
         Returns:
             True if JACK started successfully, False otherwise
         """
-        # First check if JACK is already running and properly configured
+        # Check if JACK is already running with correct configuration
         if self._is_jack_running():
             logger.info("JACK is already running")
-            # Check if it's jackdbus and try to verify it's using the right device
-            jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
-            if jackdbus_result.returncode == 0:
-                # jackdbus is running, check its status
-                try:
-                    status_result = subprocess.run(['jack_control', 'status'], capture_output=True, text=True, timeout=3.0)
-                    if status_result.returncode == 0 and 'started' in status_result.stdout.lower():
-                        logger.info("jackdbus is already running and started, will use existing server")
-                        self.record_health_check(
-                            "jack_status",
-                            HealthStatus.HEALTHY,
-                            "Using existing jackdbus server"
-                        )
-                        return True
-                    else:
-                        logger.info("jackdbus is running but not started, will configure it")
-                        return self._configure_jackdbus(device)
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    logger.warning("Cannot communicate with jackdbus, stopping it and starting our own")
-                    if not self._stop_existing_jack():
-                        logger.warning("Could not cleanly stop existing JACK, attempting to start anyway")
-            else:
-                logger.info("jackd is running, will stop and restart with correct device")
-                if not self._stop_existing_jack():
-                    logger.warning("Could not cleanly stop existing JACK, attempting to start anyway")
-        
-        # Try to configure jackdbus first (preferred method for Ubuntu)
-        jackdbus_result = subprocess.run(['pgrep', 'jackdbus'], capture_output=True, text=True)
-        if jackdbus_result.returncode == 0:
-            logger.info("Attempting to configure existing jackdbus")
-            if self._configure_jackdbus(device):
+            if self._verify_jack_configuration(device):
+                logger.info("JACK is running with correct configuration, will use existing server")
+                self.record_health_check(
+                    "jack_startup",
+                    HealthStatus.HEALTHY,
+                    "Using existing jackdbus server with correct configuration",
+                    metadata={"device": device}
+                )
                 return True
             else:
-                logger.warning("jackdbus configuration failed, stopping it and using jackd")
-                self._stop_existing_jack()
+                logger.info("JACK is running but configuration doesn't match, will reconfigure")
+                # Stop and reconfigure
+                if not self._stop_jack():
+                    logger.warning("Could not stop existing JACK for reconfiguration")
+                    return False
         
-        # Fall back to starting our own jackd process
-        try:
-            # Build JACK command
-            output_channels = self.config.supercollider.jack_output_channels or self.config.supercollider.output_channels
-            jack_cmd = [
-                'jackd',
-                '-d', 'alsa',
-                '-d', device,
-                '-r', str(self.config.supercollider.jack_sample_rate),
-                '-p', str(self.config.supercollider.jack_buffer_size),
-                '-n', str(self.config.supercollider.jack_periods),
-                '-P', str(output_channels)  # Set playback (output) channels
-            ]
-            
-            logger.info(f"Starting jackd with command: {' '.join(jack_cmd)}")
+        # Configure jackdbus (this will auto-start it via D-Bus if needed)
+        logger.info(f"Configuring jackdbus for device: {device}")
+        if self._configure_jackdbus(device):
+            logger.info("JACK configured and started successfully via jackdbus")
             self.record_health_check(
                 "jack_startup",
                 HealthStatus.HEALTHY,
-                f"Initiating jackd startup for device {device}",
-                metadata={
-                    "device": device,
-                    "sample_rate": self.config.supercollider.jack_sample_rate,
-                    "buffer_size": self.config.supercollider.jack_buffer_size,
-                    "periods": self.config.supercollider.jack_periods
-                }
+                f"JACK started successfully via jackdbus for device {device}",
+                metadata={"device": device, "method": "jackdbus"}
             )
-            
-            # Start JACK in background
-            self.jack_process = subprocess.Popen(
-                jack_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Wait for JACK to initialize with timeout
-            start_time = time.time()
-            timeout = 5.0
-            
-            while time.time() - start_time < timeout:
-                if self._is_jack_running():
-                    logger.info(f"JACK started successfully with PID: {self.jack_process.pid}")
-                    self.record_health_check(
-                        "jack_startup",
-                        HealthStatus.HEALTHY,
-                        f"JACK started successfully with PID {self.jack_process.pid}",
-                        metadata={
-                            "pid": self.jack_process.pid,
-                            "startup_time": time.time() - start_time,
-                            "device": device
-                        }
-                    )
-                    # Give JACK a bit more time to fully initialize
-                    await asyncio.sleep(1.0)
-                    return True
-                await asyncio.sleep(0.1)
-                
-            # Timeout reached
-            logger.error("JACK failed to start within timeout")
-            self.record_health_check(
-                "jack_startup",
-                HealthStatus.ERROR,
-                f"JACK failed to start within {timeout}s timeout",
-                metadata={"timeout": timeout, "device": device}
-            )
-            return False
-            
-        except FileNotFoundError:
-            error_msg = "JACK not found - please install jackd"
-            logger.error(error_msg)
-            self.record_health_check(
-                "jack_startup",
-                HealthStatus.ERROR,
-                error_msg
-            )
-            return False
-        except Exception as e:
-            error_msg = f"Error starting JACK: {e}"
-            logger.error(error_msg)
-            self.record_health_check(
-                "jack_startup",
-                HealthStatus.ERROR,
-                error_msg,
-                metadata={"device": device, "error_type": type(e).__name__}
-            )
-            return False
-    
-    def _stop_jack(self) -> bool:
-        """Stop JACK if we started it.
-        
-        Returns:
-            True if JACK was stopped successfully, False otherwise
-        """
-        if self.jack_process is None:
-            logger.debug("No JACK process to stop (wasn't started by us)")
             return True
-            
-        try:
-            logger.info("Stopping JACK...")
-        
-            # Try graceful termination first
-            self.jack_process.terminate()
-            
-            try:
-                self.jack_process.wait(timeout=3.0)
-                logger.info("JACK terminated gracefully")
-                self.record_health_check(
-                    "jack_shutdown",
-                    HealthStatus.HEALTHY,
-                    "JACK terminated gracefully"
-                )
-                self.jack_process = None
-                return True
-            except subprocess.TimeoutExpired:
-                # Force kill if graceful termination failed
-                logger.warning("JACK did not terminate gracefully, forcing kill")
-                self.jack_process.kill()
-                self.jack_process.wait(timeout=1.0)
-                logger.info("JACK killed")
-                self.record_health_check(
-                    "jack_shutdown",
-                    HealthStatus.WARNING,
-                    "JACK had to be force-killed (did not terminate gracefully)"
-                )
-                self.jack_process = None
-                return True
-                
-        except Exception as e:
-            error_msg = f"Error stopping JACK: {e}"
-            logger.error(error_msg)
+        else:
+            logger.error("Failed to configure jackdbus")
             self.record_health_check(
-                "jack_shutdown",
+                "jack_startup",
                 HealthStatus.ERROR,
-                error_msg,
-                metadata={"error_type": type(e).__name__}
+                "jackdbus configuration failed",
+                metadata={"device": device}
             )
-            self.jack_process = None  # Clear reference anyway
             return False
     
     def _check_audio_system_health(self) -> Dict[str, Any]:
@@ -715,12 +728,43 @@ class AudioService(BaseService):
                 jack_started = True
                 
                 if self._is_jack_running():
-                    logger.info("JACK is already running, configuring SuperCollider to connect to existing server")
-                    self.record_health_check(
-                        "audio_system_startup", 
-                        HealthStatus.HEALTHY,
-                        "JACK already running, SuperCollider will connect to existing server"
-                    )
+                    logger.info("JACK is already running")
+                    # Verify that JACK configuration matches our requirements
+                    if self.config.supercollider.device:
+                        resolved_device = self._resolve_audio_device(self.config.supercollider.device)
+                        if resolved_device and not self._verify_jack_configuration(resolved_device):
+                            logger.warning("JACK configuration doesn't match requirements, reconfiguring...")
+                            # Stop existing JACK and restart with correct configuration
+                            if self._stop_jack():
+                                jack_started = await self._start_jack(resolved_device)
+                                if not jack_started:
+                                    logger.error("Failed to restart JACK with correct configuration")
+                                    self.record_health_check(
+                                        "audio_system_startup",
+                                        HealthStatus.WARNING,
+                                        "JACK reconfiguration failed, continuing with existing server"
+                                    )
+                            else:
+                                logger.warning("Could not stop existing JACK for reconfiguration")
+                                self.record_health_check(
+                                    "audio_system_startup",
+                                    HealthStatus.WARNING,
+                                    "JACK configuration mismatch but could not restart"
+                                )
+                        else:
+                            logger.info("JACK configuration verified, will connect SuperCollider to existing server")
+                            self.record_health_check(
+                                "audio_system_startup", 
+                                HealthStatus.HEALTHY,
+                                "JACK configuration verified, SuperCollider will connect to existing server"
+                            )
+                    else:
+                        logger.info("No specific device configured, will connect SuperCollider to existing JACK server")
+                        self.record_health_check(
+                            "audio_system_startup", 
+                            HealthStatus.HEALTHY,
+                            "JACK already running, SuperCollider will connect to existing server"
+                        )
                 elif self.config.supercollider.auto_start_jack and self.config.supercollider.device:
                     # Only resolve device if we need to start JACK ourselves
                     resolved_device = self._resolve_audio_device(self.config.supercollider.device)
@@ -749,6 +793,7 @@ class AudioService(BaseService):
                         temp_path=script_path.with_suffix('.tmp.scd'),
                         resolved_device=resolved_device
                     )
+                    
                     if self.osc.start_supercollider(
                         str(self.tmp_script_path), 
                         self.config.supercollider.sclang_path
@@ -815,12 +860,11 @@ class AudioService(BaseService):
         if self.auto_start_sc and hasattr(self, 'osc'):
             self.osc.stop_supercollider()
         
-        # Stop JACK if we started it
-        if hasattr(self, 'jack_process') and self.jack_process is not None:
-            self._stop_jack()
+        # Stop JACK if needed (only via jackdbus)
+        # Note: We no longer manage jackd processes directly
         
         # Clean up temporary script file if it exists
-        if self.tmp_script_path and self.tmp_script_path.exists():
+        if False and self.tmp_script_path and self.tmp_script_path.exists():
             try:
                 self.tmp_script_path.unlink()
                 logger.debug(f"Removed temporary SuperCollider script: {self.tmp_script_path}")
@@ -1105,10 +1149,12 @@ class AudioService(BaseService):
         for line in lines:
             stripped = line.strip()
             if stripped.startswith('s.options.device') and self.config.supercollider.device:
-                # If JACK is already running, don't set a device - let SC connect to existing JACK
+                # If JACK is already running, set device to nil to connect to existing JACK server
+                # According to SuperCollider docs: nil device = "default:SuperCollider" 
+                # which connects to the default JACK server with client name "SuperCollider"
                 if self._is_jack_running():
-                    logger.info("JACK is already running, configuring SuperCollider to connect to existing server")
-                    new_lines.append('s.options.device = nil;  // Connect to existing JACK server\n')
+                    logger.info("JACK is already running, SuperCollider will connect as JACK client")
+                    new_lines.append('s.options.device = nil;  // Connect to existing JACK server as client\n')
                     device_used_in_script = "existing_jack_server"
                 else:
                     # Use pre-resolved device if available, otherwise resolve now
