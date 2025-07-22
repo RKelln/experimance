@@ -184,7 +184,8 @@ class VastAIGenerator(ImageGenerator):
                 LoraData(name="experimance", strength=0.7)
             ],
             "modern": [
-                LoraData(name="experimance", strength=1.0)
+                LoraData(name="drone", strength=0.2),
+                LoraData(name="experimance", strength=0.8)
             ],
             "current": [
                 LoraData(name="experimance", strength=1.0) 

@@ -1,51 +1,51 @@
 {
     "base_prompt": {
         "prompt": "colorful satellite image",
-        "style": "rivers, water, hills, valleys, vibrant hyper detailed photorealistic maximum detail",
+        "style": "rivers, water, hills, valleys, vibrant hyper detailed photorealistic",
         "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens, vein, tentacle"
     },
     "eras": {
         "wilderness": {
-            "prompt": "pre-industrial landscape, (wilderness)",
+            "prompt": "pre-industrial wilderness",
             "negative": "modern, plastic, path, road, roads, buildings, humans"
         },
         "pre_industrial": {
-            "prompt": "pre-industrial landscape, 1600s, subsistence agriculture",
-            "negative": "roads, road, modern, plastic"
+            "prompt": "pre-industrial, 1600s, subsistence agriculture",
+            "negative": "roads, road, modern, plastic, large buildings, vehicles"
         },
         "early_industrial": {
-            "prompt": "early industrial landscape, 1700s",
+            "prompt": "early industrial, 1700s",
             "style": "brick and wood buildings, smokestacks, pollution, dirty",
-            "negative": "(paved), pavement, modern vehicles"
+            "negative": "paved, pavement, modern vehicles"
         },
         "late_industrial": {
-            "prompt": "late industrial landscape, 1800s",
+            "prompt": "late industrial, 1800s",
             "style": "brick and wood buildings, smokestacks, pollution, dirty",
-            "negative": "(paved), pavement, modern vehicles"
+            "negative": "paved, pavement, modern vehicles"
         },
         "modern": {
-            "prompt": "1970s suburban development in the style of experimance",
-            "style": "busy roads and highways, superhighways, in the style of (Burtynsky) and (Richter), (colorful), chaotic, traffic, parking lots",
+            "prompt": "1970s suburban development",
+            "style": "busy roads and highways, superhighways, traffic, parking lots",
             "negative": ""
         },
         "current": {
-            "prompt": "dense urban metropolis, 2020s, in the style of experimance",
-            "style": "busy roads and highways, in the style of (Burtynsky:1.1) and (Richter:1.1), vibrant (colorful), entangled, chaotic, dense, crowded, traffic, parking lots",
+            "prompt": "dense urban metropolis, 2020s",
+            "style": "busy roads and highways, colorful, entangled, chaotic, dense, crowded, traffic",
             "negative": ""
         },
         "future": {
-            "prompt": "future solarpunk urban landscape in the style of experimance, eco-friendly, sustainable architecture, high density city",
-            "style": "in the style of (Burtynsky) and (Richter), vibrant (colorful), solar, green roofs, gardens",
+            "prompt": "future solarpunk urban, eco-friendly, sustainable architecture, high density city",
+            "style": "colorful, solar, green roofs, gardens",
             "negative": "pollution, smog, traffic"
         },
         "dystopia": {
             "prompt": "dystopia, post-apocalyptic city, bombed, destroyed",
-            "style": "in the style of (Burtynsky:1.1) and (Richter:0.5), burnt and damaged buildings, wartorn, craters, destroyed vehicles, debris, rubble",
+            "style": "burnt and damaged buildings, wartorn, craters, destroyed vehicles, debris, rubble",
             "negative": "people"
         },
         "ruins": {
-            "prompt": "ruins for modern city, abandoned, (overgrown), rubble, debris",
-            "style": "abandoned buildings, parking lots, overgrown, decay, rust, ruin, flooded",
+            "prompt": "ruins for modern city, abandoned, overgrown, rubble, debris",
+            "style": "abandoned buildings, parking lots, decay, rust, ruin, flooded",
             "negative": "people, vehicles"
         }
     },
@@ -2289,8 +2289,8 @@
                 "housing": [
                     "eco-research pod",
                     "mobile field shelter",
-                    "exclusive arctic luxury lodge for corporate clients",
-                    "temporary worker camp for oil/gas crews"
+                    "exclusive arctic luxury lodge",
+                    "temporary worker camp for oil gas crews"
                 ],
                 "industry": [
                     "climate monitoring station",
@@ -2304,8 +2304,8 @@
                     "resource extraction logistics office"
                 ],
                 "culture": [
-                    "indigenous cultural center (underfunded)",
-                    "corporate-sponsored arctic science festival"
+                    "indigenous cultural center",
+                    "arctic science festival"
                 ]
             },
             "future": {
