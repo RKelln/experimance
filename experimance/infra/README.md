@@ -101,6 +101,7 @@ sudo ./infra/scripts/deploy.sh experimance restart
 # Status checking
 sudo ./infra/scripts/deploy.sh experimance status
 sudo ./infra/scripts/deploy.sh experimance diagnose
+sudo systemctl list-units "*@experimance*" --no-pager
 
 # Individual service control (new format: service_type@project)
 sudo systemctl status core@experimance
