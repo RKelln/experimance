@@ -406,7 +406,16 @@ class VastAIManager:
                     else:
                         logger.error(f"Provisioning script failed with exit code {process.returncode}")
                         print(f"❌ Provisioning script failed with exit code {process.returncode}")
-                        return False
+                        
+                        # Even if the script failed, check if the service is actually running
+                        print("⚠️  Checking if service is running despite script failure...")
+                        if self._check_service_health(instance_id):
+                            logger.warning("Service appears to be healthy despite script failure, considering provisioning successful")
+                            print("✅ Service is healthy despite script failure, provisioning considered successful!")
+                            return True
+                        else:
+                            print("❌ Service is not healthy, provisioning failed")
+                            return False
                         
                 except subprocess.TimeoutExpired:
                     process.kill()
@@ -428,7 +437,14 @@ class VastAIManager:
                     if result.stdout:
                         logger.error(f"Script stdout: {result.stdout}")
                     logger.debug(f"Full SSH command: {' '.join(ssh_cmd)}")
-                    return False
+                    
+                    # Even if the script failed, check if the service is actually running
+                    logger.warning("Checking if service is running despite script failure...")
+                    if self._check_service_health(instance_id):
+                        logger.warning("Service appears to be healthy despite script failure, considering provisioning successful")
+                        return True
+                    else:
+                        return False
                 
         except subprocess.TimeoutExpired:
             logger.error(f"Provisioning script timed out after {timeout} seconds")
@@ -437,6 +453,40 @@ class VastAIManager:
             logger.error(f"Failed to provision instance via SCP: {e}")
             return False
     
+    def _check_service_health(self, instance_id: int, timeout: int = 30) -> bool:
+        """
+        Check if the Experimance image server is healthy on the given instance.
+        
+        Args:
+            instance_id: The Vast.ai instance ID
+            timeout: Timeout in seconds for health check
+            
+        Returns:
+            True if service is healthy, False otherwise
+        """
+        try:
+            endpoint = self.get_model_server_endpoint(instance_id)
+            if not endpoint:
+                logger.debug(f"Could not get endpoint for instance {instance_id}")
+                return False
+            
+            import requests
+            response = requests.get(f"{endpoint.url}/healthcheck", timeout=timeout)
+            if response.status_code == 200:
+                health_data = response.json()
+                if health_data.get('status') == 'healthy':
+                    logger.debug(f"Health check passed for instance {instance_id}")
+                    return True
+                else:
+                    logger.debug(f"Health check failed: service not healthy")
+                    return False
+            else:
+                logger.debug(f"Health check failed: HTTP {response.status_code}")
+                return False
+        except Exception as e:
+            logger.debug(f"Health check failed for instance {instance_id}: {e}")
+            return False
+
     def update_server_code(self, instance_id: int, timeout: int = 120, verbose: bool = False) -> bool:
         """
         Update server code on an existing instance by uploading Python files and restarting service.

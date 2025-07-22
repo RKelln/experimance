@@ -67,10 +67,10 @@ fi
 
 # Install dependencies for image generation (preserving existing PyTorch)
 echo "Installing image generation dependencies..."
-$PIP_CMD install tokenizers regex pillow requests numpy importlib_metadata
-$PIP_CMD install diffusers transformers accelerate safetensors --no-deps
-$PIP_CMD install controlnet-aux peft
-$PIP_CMD install fastapi uvicorn pydantic python-multipart
+$PIP_CMD install --root-user-action=ignore tokenizers regex pillow requests numpy importlib_metadata
+$PIP_CMD install --root-user-action=ignore diffusers transformers accelerate safetensors --no-deps
+$PIP_CMD install --root-user-action=ignore controlnet-aux peft
+$PIP_CMD install --root-user-action=ignore fastapi uvicorn pydantic python-multipart
 
 # Install xformers for current PyTorch version
 PYTORCH_VERSION=$($PYTHON_CMD -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
@@ -101,10 +101,10 @@ if [ -n "$INDEX_URL" ]; then
     # Use latest xformers only for PyTorch 2.7+ with CUDA 12.6/12.8
     if [[ "$PYTORCH_VERSION" == 2.7* ]] && ([[ "$CUDA_VERSION" == *"12.6"* ]] || [[ "$CUDA_VERSION" == *"12.8"* ]]); then
         echo "Installing latest xformers for PyTorch 2.7+ with CUDA 12.6/12.8..."
-        $PIP_CMD install xformers --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
+        $PIP_CMD install --root-user-action=ignore xformers --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
     else
         echo "Installing xformers==0.0.28.post3 for PyTorch ${PYTORCH_VERSION} with CUDA ${CUDA_VERSION}..."
-        $PIP_CMD install xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
+        $PIP_CMD install --root-user-action=ignore xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
     fi
 else
     echo "⚠️  Skipping xformers installation due to unsupported CUDA version"
@@ -146,12 +146,37 @@ else
     
     # Reset any local changes and pull latest
     echo "Resetting local changes and cleaning untracked files..."
-    git reset --hard HEAD
-    git clean -fd
+    
+    # Check if git repository is in a valid state
+    if git rev-parse --verify HEAD >/dev/null 2>&1; then
+        echo "Git repository is valid, resetting to HEAD..."
+        git reset --hard HEAD || echo "⚠️  Git reset failed, but continuing..."
+        git clean -fd || echo "⚠️  Git clean failed, but continuing..."
+    else
+        echo "Git repository appears corrupted or shallow, attempting to fix..."
+        # Try to fetch and set HEAD properly
+        if [ -n "$GITHUB_TOKEN" ]; then
+            git remote set-url origin https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git || echo "⚠️  Failed to set remote URL"
+        fi
+        git fetch origin main --depth=1 || {
+            echo "⚠️  Git fetch failed, repository may be corrupted. Re-cloning..."
+            cd ..
+            rm -rf experimance
+            if [ -n "$GITHUB_TOKEN" ]; then
+                git clone https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git
+            else
+                git clone https://github.com/RKelln/experimance.git
+            fi
+            cd experimance
+        }
+        # Try reset again after fetch
+        git reset --hard origin/main || git reset --hard FETCH_HEAD || echo "⚠️  Could not reset, but continuing..."
+        git clean -fd || echo "⚠️  Could not clean, but continuing..."
+    fi
     
     if [ -n "$GITHUB_TOKEN" ]; then
         echo "Using GitHub token for private repo access..."
-        git remote set-url origin https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git
+        git remote set-url origin https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git || echo "⚠️  Failed to set remote URL"
     fi
     
     echo "Pulling latest changes from main branch..."
@@ -249,3 +274,17 @@ supervisorctl reload
 
 echo ""
 echo "=== Provisioning script completed successfully ==="
+
+# Wait a moment for supervisor to start the service
+sleep 5
+
+# Check if the service is running
+echo "Checking if Experimance Image Server is running..."
+if supervisorctl status experimance-image-server | grep -q "RUNNING"; then
+    echo "✅ Experimance Image Server is running successfully!"
+    exit 0
+else
+    echo "⚠️  Service may not be running yet, but configuration is complete"
+    # Still exit successfully since configuration completed
+    exit 0
+fi

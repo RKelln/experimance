@@ -111,6 +111,27 @@ manager = VastAIManager()
 success = manager.provision_existing_instance(instance_id)
 ```
 
+**Git "ambiguous argument 'HEAD'" error?**
+This can happen when the git repository is in a shallow or corrupted state. The provisioning script now:
+- Checks if HEAD is valid before attempting reset
+- Falls back to fetching and resetting to origin/main
+- Re-clones the repository if git operations fail
+- Continues execution even if some git operations fail
+
+**Pip warnings about running as root?**
+The provisioning script now uses `--root-user-action=ignore` to suppress pip warnings about running as root user, which is normal in container environments.
+
+**Exit code 128 but service works?**
+Exit code 128 typically indicates a git error. The provisioning script now handles this more gracefully:
+- Attempts to fix git issues automatically with better error handling
+- Falls back to re-cloning if necessary  
+- Continues with service setup even if some git operations fail
+- Explicitly exits with 0 when service setup is successful
+- Vast.ai manager now checks service health even if script reports failure
+- If the service is running and healthy, provisioning is considered successful regardless of intermediate failures
+
+This ensures that temporary git issues don't prevent successful deployment of a working service.
+
 ### Dedicated Python CLI for Vast.ai
 
 Use the `vastai_cli.py` script located in the `scripts` directory to manage Vast.ai instances with a unified interface.

@@ -141,6 +141,7 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
                     if endpoint:
                         print(f"✅ Instance {instance_id} provisioned successfully!")
                         print(f"Instance ready at {endpoint.url} (ID: {endpoint.instance_id})")
+                        print(manager.get_ssh_command(endpoint.instance_id))
                     else:
                         print(f"✅ Instance {instance_id} provisioned successfully!")
                         print("⚠️  Could not get model server endpoint, but provisioning completed")
@@ -161,6 +162,7 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
         if endpoint:
             print(f"✅ New instance created and provisioned successfully!")
             print(f"Instance ready at {endpoint.url} (ID: {endpoint.instance_id})")
+            print(manager.get_ssh_command(endpoint.instance_id))
         else:
             print("❌ Failed to create and provision new instance")
 
