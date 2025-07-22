@@ -18,6 +18,7 @@ Commands:
     restart        Restart an instance (auto-detects active instance)
     destroy        Destroy an instance (auto-detects active instance)
     health         Check health of the model server (auto-detects active instance)
+    test-markers   Check for test provisioning markers (auto-detects active instance)
 
 Note: Commands that take an instance_id will automatically use the first running 
 Experimance instance if no ID is provided.
@@ -25,6 +26,7 @@ Experimance instance if no ID is provided.
 import argparse
 import logging
 import json
+import subprocess
 from typing import Optional
 
 import requests
@@ -126,6 +128,10 @@ def search_offers(manager: VastAIManager, args: argparse.Namespace):
 
 
 def provision_instance(manager: VastAIManager, args: argparse.Namespace):
+    # Create a new manager with custom provisioning script if provided
+    if hasattr(args, 'provision_script') and args.provision_script:
+        manager = VastAIManager(provisioning_script_url=args.provision_script)
+    
     # Check if there's already an existing instance
     existing_instances = manager.find_experimance_instances()
     
@@ -160,17 +166,29 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
     else:
         # No existing instance - create and provision a new one
         print("No existing Experimance instances found, creating new one...")
+        
+        # Disable SCP provisioning if we have a custom provisioning script
+        # to test if PROVISIONING_SCRIPT environment variable works
+        disable_scp = hasattr(args, 'provision_script') and args.provision_script
+        if disable_scp:
+            print("🚫 Disabling SCP provisioning to test PROVISIONING_SCRIPT environment variable")
+        
         endpoint = manager.find_or_create_instance(
             create_if_none=True,  # Always create since we confirmed none exist
             wait_for_ready=not args.no_wait,
             provision_existing=False,  # Not needed since it's a new instance
+            disable_scp_provisioning=disable_scp
         )
         if endpoint:
-            print(f"✅ New instance created and provisioned successfully!")
+            print(f"✅ New instance created successfully!")
             print(f"Instance ready at {endpoint.url} (ID: {endpoint.instance_id})")
             print(manager.get_ssh_command(endpoint.instance_id))
+            
+            if disable_scp:
+                print("📋 Test if provisioning script ran by checking for markers...")
+                test_provisioning_simple(manager, endpoint.instance_id)
         else:
-            print("❌ Failed to create and provision new instance")
+            print("❌ Failed to create new instance")
 
 
 def update_instance(manager: VastAIManager, args: argparse.Namespace):
@@ -250,16 +268,81 @@ def fix_instance(manager: VastAIManager, args: argparse.Namespace):
 
 def ssh_command(manager: VastAIManager, args: argparse.Namespace):
     instance_id = getattr(args, 'instance_id', None)
+    debug = getattr(args, 'debug', False)
+    
     if instance_id is None:
         instance_id = get_active_instance_id(manager)
         if instance_id is None:
             return
     
-    cmd = manager.get_ssh_command(instance_id)
-    if cmd:
-        print(cmd)
+    if debug:
+        # Show all available SSH methods for debugging
+        methods = manager.get_ssh_methods(instance_id)
+        print(f"SSH methods for instance {instance_id}:")
+        
+        if methods['direct']:
+            print(f"  Direct:  {methods['direct']}")
+            _cleanup_ssh_host_keys(methods['direct'])
+        else:
+            print("  Direct:  Not available")
+            
+        if methods['proxy']:
+            print(f"  Proxy:   {methods['proxy']}")
+            _cleanup_ssh_host_keys(methods['proxy'])
+        else:
+            print("  Proxy:   Not available")
     else:
-        print("SSH command not available for instance", instance_id)
+        # Show preferred SSH method
+        cmd = manager.get_ssh_command(instance_id)
+        if cmd:
+            # Clean up old host keys before showing SSH command
+            _cleanup_ssh_host_keys(cmd)
+            print(cmd)
+        else:
+            print("SSH command not available for instance", instance_id)
+
+
+def _cleanup_ssh_host_keys(ssh_cmd: str):
+    """
+    Remove old SSH host keys for the host/port combination to prevent 
+    'remote host identification has changed' warnings.
+    
+    Args:
+        ssh_cmd: SSH command string like "ssh -p 40730 root@70.77.113.32"
+    """
+    try:
+        import subprocess
+        import os
+        
+        # Parse SSH command to extract host and port
+        parts = ssh_cmd.split()
+        port = None
+        host = None
+        
+        for i, part in enumerate(parts):
+            if part == "-p" and i + 1 < len(parts):
+                port = parts[i + 1]
+            elif "@" in part:
+                host = part.split("@")[1]
+        
+        if host and port:
+            # Format the host entry as SSH stores it: [host]:port
+            host_entry = f"[{host}]:{port}"
+            
+            # Check if we have a known_hosts file
+            known_hosts_path = os.path.expanduser("~/.ssh/known_hosts")
+            if os.path.exists(known_hosts_path):
+                # Remove old entries for this host:port combination
+                cleanup_cmd = ["ssh-keygen", "-f", known_hosts_path, "-R", host_entry]
+                result = subprocess.run(cleanup_cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0 and "updated" in result.stdout:
+                    print(f"🧹 Cleaned up old SSH host keys for {host_entry}")
+                # Don't show anything if no cleanup was needed
+                    
+    except Exception as e:
+        # Don't fail the SSH command if cleanup fails
+        print(f"⚠️  Note: Could not clean up SSH host keys: {e}")
 
 
 def endpoint_info(manager: VastAIManager, args: argparse.Namespace):
@@ -347,6 +430,178 @@ def destroy_instance(manager: VastAIManager, args: argparse.Namespace):
     print(json.dumps(result, indent=2))
 
 
+def test_provisioning_simple(manager: VastAIManager, instance_id: int):
+    """Simple test if provisioning markers exist on an instance."""
+    import time
+    
+    print(f"Testing provisioning markers on instance {instance_id}...")
+    print("⏳ Waiting 30 seconds for provisioning script to complete...")
+    time.sleep(30)
+    
+    # Get SSH connection info
+    ssh_cmd = manager.get_ssh_command(instance_id)
+    if not ssh_cmd:
+        print("❌ Could not get SSH command for instance")
+        return
+    
+    # Parse SSH command
+    try:
+        parts = ssh_cmd.split()
+        port = parts[2]  # After -p
+        host_and_user = parts[3]  # root@HOST
+        host = host_and_user.split('@')[1]
+        user = host_and_user.split('@')[0]
+    except (IndexError, ValueError) as e:
+        print(f"❌ Failed to parse SSH command '{ssh_cmd}': {e}")
+        return
+    
+    # Test SSH connectivity first
+    test_ssh_cmd = [
+        "ssh", "-p", port,
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null", 
+        "-o", "LogLevel=ERROR",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+        f"{user}@{host}",
+        "echo 'SSH OK'"
+    ]
+    
+    try:
+        result = subprocess.run(test_ssh_cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            print(f"❌ SSH connection failed: {result.stderr.strip()}")
+            return
+        print("✅ SSH connection successful")
+    except Exception as e:
+        print(f"❌ SSH test failed: {e}")
+        return
+    
+    # Check for test provisioning markers
+    test_markers_cmd = [
+        "ssh", "-p", port,
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR", 
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+        f"{user}@{host}",
+        "ls -la /TEST_PROVISIONING_* 2>/dev/null || echo 'NO_MARKERS'"
+    ]
+    
+    try:
+        result = subprocess.run(test_markers_cmd, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip()
+        
+        if "NO_MARKERS" in output:
+            print("❌ No test provisioning markers found")
+            print("   This suggests PROVISIONING_SCRIPT environment variable did not run")
+        else:
+            print("✅ Test provisioning markers found:")
+            print(f"   {output}")
+            print("   This suggests PROVISIONING_SCRIPT environment variable worked!")
+            
+    except Exception as e:
+        print(f"❌ Failed to check markers: {e}")
+    
+    # Check if test web server is running
+    endpoint = manager.get_model_server_endpoint(instance_id)
+    if endpoint:
+        test_url = f"{endpoint.url}/test"
+        print(f"\n🌐 Testing if test web server is running at {test_url}...")
+        try:
+            import requests
+            response = requests.get(test_url, timeout=10)
+            if response.status_code == 200:
+                print("✅ Test web server is running!")
+                print(f"   Response: {response.text.strip()}")
+            else:
+                print(f"❌ Test web server returned HTTP {response.status_code}")
+        except Exception as e:
+            print(f"❌ Failed to connect to test web server: {e}")
+    else:
+        print("❌ Could not get instance endpoint for web server test")
+
+
+def test_provisioning_markers(manager: VastAIManager, args: argparse.Namespace):
+    """Test if provisioning markers exist on an instance to verify if provisioning script ran."""
+    instance_id = getattr(args, 'instance_id', None)
+    if instance_id is None:
+        instance_id = get_active_instance_id(manager)
+        if instance_id is None:
+            return
+    
+    print(f"Testing provisioning markers on instance {instance_id}...")
+    
+    # Get SSH connection info
+    ssh_cmd = manager.get_ssh_command(instance_id)
+    if not ssh_cmd:
+        print("❌ Could not get SSH command for instance")
+        return
+    
+    # Parse SSH command
+    try:
+        parts = ssh_cmd.split()
+        port = parts[2]
+        host_and_user = parts[3]
+        host = host_and_user.split('@')[1]
+        user = host_and_user.split('@')[0]
+    except (IndexError, ValueError) as e:
+        print(f"❌ Failed to parse SSH command: {e}")
+        return
+    
+    marker_locations = [
+        '/workspace/TEST_PROVISIONING_SUCCESS.txt',
+        '/tmp/TEST_PROVISIONING_SUCCESS.txt',
+        '/root/TEST_PROVISIONING_SUCCESS.txt',
+        '/tmp/test_provisioning.log'
+    ]
+    
+    results = {}
+    
+    for location in marker_locations:
+        try:
+            import subprocess
+            check_cmd = [
+                "ssh", "-p", port,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null", 
+                "-o", "LogLevel=ERROR",
+                "-o", "ConnectTimeout=10",
+                "-o", "BatchMode=yes",
+                f"{user}@{host}",
+                f"test -f {location} && echo EXISTS || echo MISSING"
+            ]
+            
+            result = subprocess.run(check_cmd, capture_output=True, text=True, timeout=15)
+            if result.returncode == 0:
+                exists = "EXISTS" in result.stdout.strip()
+                results[location] = exists
+            else:
+                results[location] = False
+                
+        except Exception as e:
+            print(f"❌ Error checking {location}: {e}")
+            results[location] = False
+    
+    # Display results
+    print("Marker file status:")
+    for location, exists in results.items():
+        status = "✅ EXISTS" if exists else "❌ MISSING"
+        print(f"  {location}: {status}")
+    
+    if any(results.values()):
+        print("\n🎉 Provisioning script appears to have run successfully!")
+        
+        # Try to show the test endpoint if it exists
+        endpoint = manager.get_model_server_endpoint(instance_id)
+        if endpoint:
+            print(f"💡 You can also check the test web page at: http://{endpoint.public_ip}:8000/test")
+    else:
+        print("\n❌ No provisioning markers found - script may not have executed.")
+        print("💡 Try running: python scripts/vastai_cli.py fix")
+
+
 def health_check(manager: VastAIManager, args: argparse.Namespace):
     instance_id = getattr(args, 'instance_id', None)
     if instance_id is None:
@@ -387,6 +642,7 @@ def main():
     p_prov = subparsers.add_parser('provision', help='Find or create an instance (always provisions)')
     p_prov.add_argument('--no-wait', action='store_true', dest='no_wait', help='Do not wait for instance ready')
     p_prov.add_argument('--verbose', action='store_true', help='Show provisioning script output in real-time')
+    p_prov.add_argument('--provision-script', type=str, metavar='URL', help='Custom provisioning script URL to use')
 
     # fix
     p_fix = subparsers.add_parser('fix', help='Fix an instance using SCP provisioning')
@@ -405,18 +661,24 @@ def main():
     # ssh
     p_ssh = subparsers.add_parser('ssh', help='Get SSH command for an instance')
     p_ssh.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
+    p_ssh.add_argument('--debug', action='store_true', help='Show all available SSH methods (direct and proxy)')
 
     # endpoint
     p_ep = subparsers.add_parser('endpoint', help='Get model server endpoint for an instance')
     p_ep.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
 
-    # stop/start/restart/destroy
-    for cmd in ('stop', 'start', 'restart', 'destroy', 'health'):
+    # stop/start/restart/destroy/health/test-markers
+    for cmd in ('stop', 'start', 'restart', 'destroy', 'health', 'test-markers'):
         p = subparsers.add_parser(cmd, help=f'{cmd.capitalize()} an instance')
         p.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
 
     args = parser.parse_args()
-    manager = VastAIManager()
+    
+    # Create manager with custom provisioning script if provided for provision command
+    if args.command == 'provision' and hasattr(args, 'provision_script') and args.provision_script:
+        manager = VastAIManager(provisioning_script_url=args.provision_script)
+    else:
+        manager = VastAIManager()
 
     # Dispatch commands
     if args.command == 'list':
@@ -443,6 +705,8 @@ def main():
         destroy_instance(manager, args)
     elif args.command == 'health':
         health_check(manager, args)
+    elif args.command == 'test-markers':
+        test_provisioning_markers(manager, args)
     else:
         parser.print_help()
 

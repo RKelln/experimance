@@ -44,19 +44,30 @@ class InstanceEndpoint:
 class VastAIManager:
     """Manages vast.ai instances for experimance image generation."""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, provisioning_script_url: Optional[str] = None):
         """
         Initialize the VastAI manager.
         
         Args:
             api_key: Optional API key. If not provided, will use vastai CLI auth.
+            provisioning_script_url: Optional URL for the provisioning script. If not provided,
+                                   will use the default experimance provisioning script.
         """
         self.api_key = api_key or os.getenv("VASTAI_API_KEY")
-        self.experimance_template_id = "e77f3f3425011b283b73c093feb2d600"
+        self.experimance_template_id = "d1328a4225c2f54cb1908912be208bf4"  # PyTorch template
         self.experimance_template_name = "PyTorch (Vast) web accessible"  # Custom template name
+        
+        # Allow custom provisioning script URL or use default
+        # NOTE: PROVISIONING_SCRIPT env var is documented but appears broken in VastAI PyTorch template
+        # See: https://cloud.vast.ai/template/readme/b28b2d2625172e089509d1c0331258b8
+        # "Runs any custom setup script defined in the PROVISIONING_SCRIPT environment variable"
+        # Using SCP provisioning as workaround until this is fixed
+        default_provisioning_url = "https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw"
+        self.provisioning_script_url = provisioning_script_url or os.getenv("VASTAI_PROVISIONING_SCRIPT", default_provisioning_url)
+        
         self.required_env_vars = {
             "GITHUB_ACCESS_TOKEN": os.getenv("GITHUB_ACCESS_TOKEN", ""),
-            "PROVISIONING_SCRIPT": "https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw"
+            "PROVISIONING_SCRIPT": self.provisioning_script_url
         }
         self.disk_size = 20 # Gigabytes
         
@@ -128,12 +139,16 @@ class VastAIManager:
         
         return experimance_instances
     
-    def get_ssh_command(self, instance_id: int) -> Optional[str]:
+    def get_ssh_command(self, instance_id: int, prefer_direct: bool = True) -> Optional[str]:
         """
         Get the SSH command to connect to an instance.
         
+        Provides both direct SSH (via public IP and mapped port) and proxy SSH
+        (via VastAI's SSH gateway). Direct SSH is preferred as it's more reliable.
+        
         Args:
             instance_id: The vast.ai instance ID
+            prefer_direct: If True, prefer direct SSH over proxy SSH
             
         Returns:
             SSH command string, or None if not available
@@ -141,18 +156,81 @@ class VastAIManager:
         try:
             instance = self.show_instance(instance_id)
             
+            # Try direct SSH first (via public IP and port mapping)
+            if prefer_direct:
+                public_ip = instance.get("public_ipaddr")
+                ports = instance.get("ports", {})
+                ssh_port_mapping = ports.get("22/tcp")
+                
+                if public_ip and ssh_port_mapping:
+                    try:
+                        external_ssh_port = int(ssh_port_mapping[0]["HostPort"])
+                        direct_ssh = f"ssh -p {external_ssh_port} root@{public_ip}"
+                        logger.debug(f"Direct SSH available: {direct_ssh}")
+                        return direct_ssh
+                    except (IndexError, ValueError, KeyError) as e:
+                        logger.debug(f"Failed to parse direct SSH port mapping: {e}")
+                
+                logger.debug(f"Direct SSH not available for instance {instance_id}, trying proxy SSH")
+            
+            # Fall back to proxy SSH (via VastAI's SSH gateway)
             ssh_host = instance.get("ssh_host")
             ssh_port = instance.get("ssh_port")
             
-            if not ssh_host or not ssh_port:
-                logger.warning(f"No SSH connection info found for instance {instance_id}")
-                return None
+            if ssh_host and ssh_port:
+                proxy_ssh = f"ssh -p {ssh_port} root@{ssh_host}"
+                logger.debug(f"Proxy SSH available: {proxy_ssh}")
+                return proxy_ssh
             
-            return f"ssh -p {ssh_port} root@{ssh_host}"
+            # If we get here, neither method worked
+            logger.warning(f"No SSH access method found for instance {instance_id}")
+            logger.debug(f"Instance data: public_ip={instance.get('public_ipaddr')}, "
+                        f"ssh_host={instance.get('ssh_host')}, ssh_port={instance.get('ssh_port')}, "
+                        f"ports={instance.get('ports', {})}")
+            return None
             
         except Exception as e:
             logger.error(f"Failed to get SSH command for instance {instance_id}: {e}")
             return None
+
+    def get_ssh_methods(self, instance_id: int) -> Dict[str, Optional[str]]:
+        """
+        Get all available SSH connection methods for debugging.
+        
+        Args:
+            instance_id: The vast.ai instance ID
+            
+        Returns:
+            Dictionary with 'direct' and 'proxy' SSH commands
+        """
+        try:
+            instance = self.show_instance(instance_id)
+            methods: Dict[str, Optional[str]] = {"direct": None, "proxy": None}
+            
+            # Direct SSH (via public IP and port mapping)
+            public_ip = instance.get("public_ipaddr")
+            ports = instance.get("ports", {})
+            ssh_port_mapping = ports.get("22/tcp")
+            
+            if public_ip and ssh_port_mapping:
+                try:
+                    external_ssh_port = int(ssh_port_mapping[0]["HostPort"])
+                    methods["direct"] = f"ssh -p {external_ssh_port} root@{public_ip}"
+                except (IndexError, ValueError, KeyError):
+                    pass
+            
+            # Proxy SSH (via VastAI's SSH gateway)
+            ssh_host = instance.get("ssh_host")
+            ssh_port = instance.get("ssh_port")
+            
+            if ssh_host and ssh_port:
+                methods["proxy"] = f"ssh -p {ssh_port} root@{ssh_host}"
+            
+            return methods
+            
+        except Exception as e:
+            logger.error(f"Failed to get SSH methods for instance {instance_id}: {e}")
+            return {"direct": None, "proxy": None}
 
     def get_model_server_endpoint(self, instance_id: int) -> Optional[InstanceEndpoint]:
         """
@@ -296,7 +374,15 @@ class VastAIManager:
     def provision_instance_via_scp(self, instance_id: int, timeout: int = 300, verbose: bool = False) -> bool:
         """
         Provision an instance by SCPing the provisioning script and running it.
-        This is a workaround for when the PROVISIONING_SCRIPT environment variable doesn't work.
+        
+        This is currently required because the PROVISIONING_SCRIPT environment variable
+        feature is broken in VastAI's PyTorch template (as of July 2025).
+        
+        Bug details:
+        - Environment variable is correctly passed to container
+        - Template documentation claims it should execute the script: 
+          https://cloud.vast.ai/template/readme/b28b2d2625172e089509d1c0331258b8
+        - But /opt/instance-tools/bin/entrypoint.sh does not actually run the script
         
         Args:
             instance_id: The instance ID to provision
@@ -495,6 +581,56 @@ class VastAIManager:
         except Exception as e:
             logger.debug(f"Health check failed for instance {instance_id}: {e}")
             return False
+
+    def _wait_for_service_healthy(self, instance_id: int, timeout: int = 180) -> bool:
+        """
+        Wait for the Experimance image server to become healthy.
+        
+        Args:
+            instance_id: The Vast.ai instance ID
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if service becomes healthy, False if timeout
+        """
+        logger.info(f"Waiting for service to become healthy on instance {instance_id} (timeout: {timeout}s)...")
+        start_time = time.time()
+        endpoint_url = None
+        
+        while time.time() - start_time < timeout:
+            # Try to get endpoint each iteration - it might not be available initially
+            endpoint = self.get_model_server_endpoint(instance_id)
+            if endpoint:
+                if endpoint_url != endpoint.url:
+                    endpoint_url = endpoint.url
+                    logger.info(f"Endpoint now available, checking health at: {endpoint_url}/healthcheck")
+                
+                # Now try health check
+                if self._check_service_health(instance_id, timeout=10):
+                    logger.info(f"Service is healthy on instance {instance_id}")
+                    return True
+            else:
+                # Endpoint not available yet - this is normal early in instance lifecycle
+                elapsed = int(time.time() - start_time)
+                if elapsed % 30 == 0:  # Log every 30 seconds
+                    logger.info(f"Endpoint not available yet, waiting for port mappings... ({elapsed}s elapsed)")
+                else:
+                    logger.debug(f"Endpoint not available yet, waiting for port mappings... ({elapsed}s elapsed)")
+            
+            elapsed = int(time.time() - start_time)
+            if elapsed % 30 == 0 and endpoint:  # Log every 30 seconds when we have endpoint
+                logger.info(f"Service not healthy yet, waiting... ({elapsed}s elapsed)")
+            elif endpoint:
+                logger.debug(f"Service not healthy yet, waiting... ({elapsed}s elapsed)")
+                
+            time.sleep(5)  # Check every 5 seconds
+        
+        elapsed = int(time.time() - start_time)
+        if not endpoint:
+            logger.warning(f"Endpoint never became available within {timeout} seconds on instance {instance_id} (waited {elapsed}s)")
+        else:
+            logger.warning(f"Service did not become healthy within {timeout} seconds on instance {instance_id} (waited {elapsed}s)")
+        return False
 
     def update_server_code(self, instance_id: int, timeout: int = 120, verbose: bool = False) -> bool:
         """
@@ -841,25 +977,27 @@ class VastAIManager:
         Returns:
             Instance creation result
         """
-        # Prepare environment variables and port mappings
-        env_vars = []
+        # Build environment string with all env vars and port mappings
+        env_parts = []
+        
+        # Add environment variables
         for key, value in self.required_env_vars.items():
-            env_vars.append(f"-e {key}={value}")
+            env_parts.append(f"-e {key}={value}")
         
         # Add port mappings
-        port_mappings = [
-            "-p 1111:1111/tcp",   # Instance Portal
-            "-p 8000:8000/tcp"    # Model Server
-        ]
+        # FIXME: these are already prt of the template, so not needed here
+        #env_parts.append("-p 1111:1111/tcp")
+        #env_parts.append("-p 8000:8000/tcp")
         
-        # Combine all environment and port arguments
-        env_string = " ".join(env_vars + port_mappings)
+        env_string = " ".join(env_parts)
         
+        # Build the command
         cmd = [
             "create", "instance", str(offer_id),
-            "--template_hash", self.experimance_template_id,  # Use correct parameter name
-            "--disk", str(self.disk_size),  # 20GB disk
-            "--env", env_string  # All env vars and ports in one string
+            "--template_hash", self.experimance_template_id,
+            "--disk", str(self.disk_size),
+            "--env", env_string,
+            "--ssh"
         ]
         
         return self._run_vastai_command(cmd)
@@ -919,7 +1057,8 @@ class VastAIManager:
     def find_or_create_instance(self, 
                                create_if_none: bool = True,
                                wait_for_ready: bool = True,
-                               provision_existing: bool = False) -> Optional[InstanceEndpoint]:
+                               provision_existing: bool = False,
+                               disable_scp_provisioning: bool = False) -> Optional[InstanceEndpoint]:
         """
         Find an existing experimance instance or create a new one.
         
@@ -927,6 +1066,7 @@ class VastAIManager:
             create_if_none: Create a new instance if none found
             wait_for_ready: Wait for the instance to be fully ready
             provision_existing: Whether to run SCP provisioning on existing instances
+            disable_scp_provisioning: If True, skip SCP provisioning fallback (useful for testing PROVISIONING_SCRIPT env var)
             
         Returns:
             InstanceEndpoint for the ready instance, or None
@@ -953,6 +1093,8 @@ class VastAIManager:
                                 logger.warning("SCP provisioning of existing instance failed, but continuing anyway")
                         else:
                             logger.warning(f"SSH not ready for existing instance {instance_id}, skipping provisioning")
+                    elif disable_scp_provisioning:
+                        logger.info(f"SCP provisioning disabled for testing - relying on PROVISIONING_SCRIPT environment variable")
                     
                     return self.get_model_server_endpoint(instance_id)
                 else:
@@ -994,18 +1136,35 @@ class VastAIManager:
         
         if wait_for_ready:
             if self.wait_for_instance_ready(instance_id):
-                # Try SCP provisioning as a fallback since PROVISIONING_SCRIPT env var isn't working
-                logger.info(f"Instance {instance_id} is ready, attempting SCP provisioning...")
-                
-                # Wait for SSH to be ready before provisioning
-                if self.wait_for_ssh_ready(instance_id, timeout=180):  # 3 minutes for SSH
-                    if self.provision_instance_via_scp(instance_id):
-                        logger.info("SCP provisioning completed successfully")
+                if disable_scp_provisioning:
+                    logger.info(f"Instance {instance_id} is ready. SCP provisioning disabled - relying on PROVISIONING_SCRIPT environment variable")
+                    # Wait for the provisioning script to complete and service to become healthy
+                    logger.info("Waiting for PROVISIONING_SCRIPT to complete and service to become healthy...")
+                    if self._wait_for_service_healthy(instance_id, timeout=180):  # 3 minutes for provisioning
+                        logger.info("Service is healthy - PROVISIONING_SCRIPT completed successfully")
                     else:
-                        logger.warning("SCP provisioning failed, but continuing anyway")
+                        logger.warning("Service did not become healthy within timeout - PROVISIONING_SCRIPT may have failed")
                 else:
-                    logger.warning(f"SSH not ready for new instance {instance_id}, skipping provisioning")
-                
+                    # Give PROVISIONING_SCRIPT a chance to work first, then fall back to SCP if needed
+                    logger.info(f"Instance {instance_id} is ready. Waiting for PROVISIONING_SCRIPT to complete...")
+
+                    # Wait for the service to become healthy first (PROVISIONING_SCRIPT should handle this)
+                    if self._wait_for_service_healthy(instance_id, timeout=180):  # 3 minutes for PROVISIONING_SCRIPT
+                        logger.info("Service became healthy - PROVISIONING_SCRIPT worked successfully, skipping SCP fallback")
+                    else:
+                        logger.warning("Service not healthy after 180s, falling back to SCP provisioning...")
+                        
+                        # Now wait for SSH to be ready before attempting SCP
+                        if self.wait_for_ssh_ready(instance_id, timeout=60):  # 1 minute for SSH
+                            logger.info("SSH is ready, running provisioning script via SCP...")
+                            
+                            if self.provision_instance_via_scp(instance_id):
+                                logger.info("SCP provisioning completed successfully")
+                            else:
+                                logger.warning("SCP provisioning failed, but continuing anyway")
+                        else:
+                            logger.error("SSH not ready, cannot run SCP fallback provisioning")
+
                 return self.get_model_server_endpoint(instance_id)
             else:
                 logger.error(f"New instance {instance_id} failed to become ready")
@@ -1027,10 +1186,12 @@ def main():
                        help="Manually provision a specific instance by ID")
     parser.add_argument("--create", action="store_true",
                        help="Create new instance if none found")
+    parser.add_argument("--provision-script", type=str, metavar="URL",
+                       help="Custom provisioning script URL to use instead of default")
     
     args = parser.parse_args()
     
-    manager = VastAIManager()
+    manager = VastAIManager(provisioning_script_url=args.provision_script)
 
     if args.provision_instance:
         print(f"Manually provisioning instance {args.provision_instance}...")

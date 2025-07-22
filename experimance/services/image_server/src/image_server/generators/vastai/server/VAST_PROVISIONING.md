@@ -111,6 +111,12 @@ manager = VastAIManager()
 success = manager.provision_existing_instance(instance_id)
 ```
 
+You can check the provisioning script log on the instance:
+```bash
+cat /var/log/portal/provisioning.log
+```
+
+
 **Git "ambiguous argument 'HEAD'" error?**
 This can happen when the git repository is in a shallow or corrupted state. The provisioning script now:
 - Checks if HEAD is valid before attempting reset
