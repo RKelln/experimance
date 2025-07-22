@@ -86,6 +86,20 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
         le=2.0
     )
     
+    control_guidance_start: float = Field(
+        default=0.0,
+        description="Percentage of total steps at which ControlNet starts applying",
+        ge=0.0,
+        le=1.0
+    )
+    
+    control_guidance_end: float = Field(
+        default=1.0,
+        description="Percentage of total steps at which ControlNet stops applying", 
+        ge=0.0,
+        le=1.0
+    )
+    
     width: int = Field(
         default=1024, 
         description="Output image width",
@@ -102,4 +116,6 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
     
     def model_post_init(self, __context):
         """Validate configuration after initialization."""
+        if self.control_guidance_start > self.control_guidance_end:
+            raise ValueError(f"control_guidance_start ({self.control_guidance_start}) must be <= control_guidance_end ({self.control_guidance_end})")
         pass

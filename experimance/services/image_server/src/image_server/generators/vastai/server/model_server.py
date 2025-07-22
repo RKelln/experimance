@@ -26,7 +26,7 @@ import uvicorn # type: ignore (loaded on server not locally)
 from fastapi import FastAPI, HTTPException # type: ignore (loaded on server not locally)
 from fastapi.responses import JSONResponse # type: ignore (loaded on server not locally)
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from diffusers import ( # type: ignore (loaded on server not locally)
     StableDiffusionXLPipeline,
@@ -44,7 +44,8 @@ from data_types import ( # type: ignore (loaded on server not locally)
     ControlNetGenerateData,
     ControlNetGenerateResponse,
     HealthCheckResponse,
-    ModelListResponse
+    ModelListResponse,
+    LoraData
 )
 
 
@@ -62,6 +63,7 @@ logger = logging.getLogger(__name__)
 # Global variables for model management
 loaded_models: Dict[str, Any] = {}
 loaded_controlnets: Dict[str, ControlNetModel] = {}
+loaded_loras: Dict[str, List[LoraData]] = {}  # Track loaded LoRAs per model
 startup_time = None
 
 # Model configuration with optimized scheduler settings
@@ -127,7 +129,7 @@ MODEL_CONFIG = {
     }
 }
 
-LORA_CONFIG = {
+KNOWN_LORAS = {
     "drone": "https://storage.googleapis.com/experimance_models/drone_photo_v1.0_XL.safetensors",
     "experimance": "https://storage.googleapis.com/experimance_models/civitai_experimance_sdxl_lora_step_1000_1024x1024.safetensors"
 }
@@ -184,26 +186,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
-
-class GenerateRequest(BaseModel):
-    """Request model for the generate endpoint."""
-    prompt: str
-    negative_prompt: Optional[str] = None
-    depth_map_b64: Optional[str] = None
-    mock_depth: bool = False
-    model: str = "lightning"
-    controlnet: str = "sdxl_small"  # Which ControlNet to use
-    era: Optional[str] = None
-    steps: Optional[int] = None
-    cfg: Optional[float] = None
-    seed: Optional[int] = None
-    lora_strength: float = 1.0
-    controlnet_strength: float = 0.8
-    scheduler: str = "auto"  # auto, euler, euler_a, dpm_multi, dpm_single, ddim
-    use_karras_sigmas: Optional[bool] = None  # Override Karras setting
-    width: int = 1024
-    height: int = 1024
 
 
 def download_model(url: str, filename: str, models_dir: Path) -> Path:
@@ -283,11 +265,16 @@ def unload_model(cache_key: Optional[str] = None):
     if cache_key and cache_key in loaded_models:
         logger.info(f"Unloading model: {cache_key}")
         del loaded_models[cache_key]
+        # Also clear LoRA cache for this model
+        if cache_key in loaded_loras:
+            del loaded_loras[cache_key]
     elif cache_key is None:
         # Unload all models
         for model_key in list(loaded_models.keys()):
             logger.info(f"Unloading model: {model_key}")
             del loaded_models[model_key]
+        # Clear all LoRA caches
+        loaded_loras.clear()
     
     # Force garbage collection and clear CUDA cache
     gc.collect()
@@ -486,30 +473,181 @@ def setup_scheduler(pipe: StableDiffusionXLControlNetPipeline,
         logger.warning(f"Unknown scheduler: {scheduler_name}, keeping default")
 
 
-def load_loras(pipe: StableDiffusionXLControlNetPipeline, lora_id: str, strength: float):
-    """Load era-specific LoRA weights."""
-    if lora_id not in LORA_CONFIG:
-        logger.warning(f"Unknown era: {lora_id}")
+def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData]):
+    """Load multiple LoRA weights, optimized for known LoRAs that stay loaded."""
+    
+    # Create a cache key for the current model
+    model_cache_key = None
+    for key, model in loaded_models.items():
+        if model is pipe:
+            model_cache_key = key
+            break
+    
+    if model_cache_key is None:
+        logger.warning("Could not find model cache key for LoRA optimization")
+        model_cache_key = "unknown"
+    
+    # Get currently loaded LoRAs
+    current_loras = loaded_loras.get(model_cache_key, [])
+    
+    # Check if the LoRA set is exactly the same as last time (including strengths)
+    if current_loras == loras:
+        logger.info(f"LoRA set unchanged, skipping reload: {[f'{lora.name}({lora.strength})' for lora in loras]}")
         return
     
+    # Check if we have any custom LoRAs (not in KNOWN_LORAS)
+    custom_loras = [lora for lora in loras if lora.name not in KNOWN_LORAS]
+    current_custom_loras = [lora for lora in current_loras if lora.name not in KNOWN_LORAS]
+    
+    # If custom LoRAs changed, we need to unload and reload everything
+    if custom_loras != current_custom_loras:
+        logger.info(f"Custom LoRAs changed, full reload required")
+        if hasattr(pipe, 'unload_lora_weights') and current_loras:
+            pipe.unload_lora_weights()
+            logger.info("Unloaded all LoRAs for custom LoRA change")
+        need_full_reload = True
+    else:
+        # Only known LoRAs, check if we can just update strengths
+        need_full_reload = False
+        
+        # If no LoRAs are currently loaded, we need to load them
+        if not current_loras:
+            need_full_reload = True
+            logger.info("No LoRAs currently loaded, loading known LoRAs")
+    
     models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
-    lora_url = LORA_CONFIG[lora_id]
-    lora_filename = f"experimance_{lora_id}_sdxl.safetensors"
     
     try:
-        lora_path = download_model(lora_url, lora_filename, models_dir)
+        if need_full_reload:
+            # Load all LoRAs (known + custom)
+            adapter_names = []
+            adapter_weights = []
+            
+            for lora in loras:
+                # Check if this is a known LoRA or a custom one
+                if lora.name in KNOWN_LORAS:
+                    # Known LoRA
+                    lora_url = KNOWN_LORAS[lora.name]
+                    lora_filename = f"experimance_{lora.name}_sdxl.safetensors"
+                    lora_path = download_model(lora_url, lora_filename, models_dir)
+                else:
+                    # Custom LoRA
+                    if lora.name.startswith("http"):
+                        # Download from URL
+                        lora_filename = f"custom_{lora.name.split('/')[-1]}"
+                        lora_path = download_model(lora.name, lora_filename, models_dir)
+                    else:
+                        # Assume it's a local file path
+                        lora_path = Path(lora.name)
+                        if not lora_path.exists():
+                            logger.error(f"LoRA file not found: {lora_path}")
+                            continue
+                
+                # Load the LoRA
+                adapter_name = f"lora_{len(adapter_names)}"
+                pipe.load_lora_weights(str(lora_path), adapter_name=adapter_name)
+                adapter_names.append(adapter_name)
+                adapter_weights.append(lora.strength)
+                
+                logger.info(f"Loaded LoRA {lora.name} with strength {lora.strength} as adapter {adapter_name}")
+            
+            # Set all adapters at once if any were loaded
+            if adapter_names:
+                pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
+                logger.info(f"Activated {len(adapter_names)} LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+                
+                # Cache the loaded LoRAs for this model
+                loaded_loras[model_cache_key] = loras.copy()
+        else:
+            # Only update strengths for known LoRAs (no custom LoRAs changed)
+            logger.info("Only known LoRA strengths changed, updating weights without reloading files")
+            
+            # We can only do strength-only updates if we have the same number of LoRAs
+            # and they're in the same order (since adapter names are sequential)
+            if len(loras) != len(current_loras):
+                logger.info(f"LoRA count changed ({len(current_loras)} -> {len(loras)}), need full reload")
+                need_full_reload = True
+            else:
+                # Build adapter names and weights for current LoRAs
+                adapter_names = [f"lora_{i}" for i in range(len(loras))]
+                adapter_weights = [lora.strength for lora in loras]
+                
+                pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
+                logger.info(f"Updated LoRA strengths: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+                
+                # Cache the updated LoRAs
+                loaded_loras[model_cache_key] = loras.copy()
+            
+            # If we discovered we need a full reload, do it now
+            if need_full_reload:
+                logger.info("Falling back to full reload due to LoRA count/order change")
+                if hasattr(pipe, 'unload_lora_weights') and current_loras:
+                    pipe.unload_lora_weights()
+                    logger.info("Unloaded all LoRAs for full reload")
+                
+                # Load all LoRAs (known + custom)
+                adapter_names = []
+                adapter_weights = []
+                
+                for lora in loras:
+                    # Check if this is a known LoRA or a custom one
+                    if lora.name in KNOWN_LORAS:
+                        # Known LoRA
+                        lora_url = KNOWN_LORAS[lora.name]
+                        lora_filename = f"experimance_{lora.name}_sdxl.safetensors"
+                        lora_path = download_model(lora_url, lora_filename, models_dir)
+                    else:
+                        # Custom LoRA
+                        if lora.name.startswith("http"):
+                            # Download from URL
+                            lora_filename = f"custom_{lora.name.split('/')[-1]}"
+                            lora_path = download_model(lora.name, lora_filename, models_dir)
+                        else:
+                            # Assume it's a local file path
+                            lora_path = Path(lora.name)
+                            if not lora_path.exists():
+                                logger.error(f"LoRA file not found: {lora_path}")
+                                continue
+                    
+                    # Load the LoRA
+                    adapter_name = f"lora_{len(adapter_names)}"
+                    pipe.load_lora_weights(str(lora_path), adapter_name=adapter_name)
+                    adapter_names.append(adapter_name)
+                    adapter_weights.append(lora.strength)
+                    
+                    logger.info(f"Loaded LoRA {lora.name} with strength {lora.strength} as adapter {adapter_name}")
+                
+                # Set all adapters at once if any were loaded
+                if adapter_names:
+                    pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
+                    logger.info(f"Activated {len(adapter_names)} LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+                    
+                    # Cache the loaded LoRAs for this model
+                    loaded_loras[model_cache_key] = loras.copy()
         
-        # Unload existing LoRAs first
-        if hasattr(pipe, 'unload_lora_weights'):
-            pipe.unload_lora_weights()
-        
-        pipe.load_lora_weights(str(lora_path), adapter_name=lora_id)
-        pipe.set_adapters([lora_id], adapter_weights=[strength])
-        logger.info(f"Loaded {lora_id} LoRA with strength {strength}")
+        # Handle the case where no LoRAs are requested
+        if not loras and current_loras:
+            logger.info("No LoRAs requested, unloading existing LoRAs")
+            if hasattr(pipe, 'unload_lora_weights'):
+                pipe.unload_lora_weights()
+            loaded_loras[model_cache_key] = []
+        elif not loras:
+            logger.info("No LoRAs to load")
         
     except Exception as e:
-        logger.error(f"Failed to load {lora_id} LoRA: {e}")
+        logger.error(f"Failed to load LoRAs: {e}")
         raise
+
+
+def load_loras_legacy(pipe: StableDiffusionXLControlNetPipeline, lora_id: str, strength: float):
+    """Load era-specific LoRA weights (legacy function for backward compatibility)."""
+    if lora_id not in KNOWN_LORAS:
+        logger.warning(f"Unknown LoRA: {lora_id}")
+        return
+    
+    # Convert to new format and use new function
+    loras = [LoraData(name=lora_id, strength=strength)]
+    load_loras(pipe, loras)
 
 
 @app.get("/healthcheck")
@@ -563,7 +701,6 @@ async def list_models() -> Dict[str, Any]:
     response = ModelListResponse(
         available_models=list(MODEL_CONFIG.keys()),
         available_controlnets=list(CONTROLNET_CONFIG.keys()),
-        available_eras=list(LORA_CONFIG.keys()),
         available_schedulers=["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"]
     )
     return response.to_dict()
@@ -616,37 +753,21 @@ async def unload_models(model_key: Optional[str] = None) -> Dict[str, Any]:
 
 
 @app.post("/generate")
-async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
+async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
     """Generate an image using ControlNet."""
     start_time = time.time()
     
     logger.info(f"Received generation request: {request.model} model, prompt: {request.prompt[:50]}...")
     
     try:
-        # Convert request to our data type for validation
-        data = ControlNetGenerateData(
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt,
-            depth_map_b64=request.depth_map_b64,
-            mock_depth=request.mock_depth,
-            model=request.model,
-            controlnet=request.controlnet,
-            era=request.era,
-            steps=request.steps or MODEL_CONFIG[request.model]["steps"],
-            cfg=request.cfg or MODEL_CONFIG[request.model]["cfg"],
-            seed=request.seed,
-            lora_strength=request.lora_strength,
-            controlnet_strength=request.controlnet_strength,
-            scheduler=request.scheduler,
-            use_karras_sigmas=request.use_karras_sigmas,
-            width=request.width,
-            height=request.height
-        )
+        # Set default values based on model if not provided
+        steps = request.steps if request.steps is not None else MODEL_CONFIG[request.model]["steps"]
+        cfg = request.cfg if request.cfg is not None else MODEL_CONFIG[request.model]["cfg"]
         
-        # Validate the request
-        validation_errors = data.validate()
-        if validation_errors:
-            raise HTTPException(status_code=400, detail=f"Validation errors: {validation_errors}")
+        # Create a new instance with resolved defaults for internal use
+        data = request.model_copy(update={"steps": steps, "cfg": cfg})
+        
+        # Pydantic validation is automatic, no need for manual validation
         
         # Load the model (this applies the MODEL_CONFIG scheduler when scheduler="auto")
         pipe = load_model(data.model, data.controlnet)
@@ -658,9 +779,9 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
             # If user wants to override just the Karras setting, do that
             setup_scheduler(pipe, "auto", data.use_karras_sigmas, data.model)
         
-        # Load era-specific LoRA if specified
-        if data.era:
-            load_loras(pipe, data.era, data.lora_strength)
+        # Load LoRAs if specified
+        if data.loras:
+            load_loras(pipe, data.loras)
         
         # Get or generate depth map
         logger.info(f"Debug - depth_map_b64: {'Present' if data.depth_map_b64 else 'None'}, mock_depth: {data.mock_depth}")
@@ -701,6 +822,8 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
             num_inference_steps=data.steps,
             guidance_scale=data.cfg,
             controlnet_conditioning_scale=data.controlnet_strength,
+            control_guidance_start=data.control_guidance_start,
+            control_guidance_end=data.control_guidance_end,
             width=data.width,
             height=data.height,
             generator=generator
@@ -708,20 +831,25 @@ async def generate_image(request: GenerateRequest) -> Dict[str, Any]:
         
         generation_time = time.time() - start_time
         
-        # Create response
+        # Create response with LoRA metadata
+        lora_metadata = []
+        if data.loras:
+            lora_metadata = [{"name": lora.name, "strength": lora.strength} for lora in data.loras]
+        
         response = ControlNetGenerateResponse.success_response(
             image=result.images[0],
             generation_time=generation_time,
             seed_used=seed_used,
             model_used=data.model,
-            era_used=data.era,
             metadata={
                 "steps": data.steps,
                 "cfg": data.cfg,
                 "scheduler": pipe.scheduler.__class__.__name__,
                 "controlnet": data.controlnet,
                 "controlnet_strength": data.controlnet_strength,
-                "lora_strength": data.lora_strength if data.era else None
+                "control_guidance_start": data.control_guidance_start,
+                "control_guidance_end": data.control_guidance_end,
+                "loras": lora_metadata
             }
         )
         

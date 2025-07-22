@@ -8,7 +8,7 @@ and handles image generation requests serially.
 
 The generator supports:
 - Multiple ControlNet models (sdxl_small, llite, etc.)
-- Era-specific LoRA selection (experimance, drone)
+- Multiple LoRA loading with automatic era → LoRA mapping
 - Depth map conditioning via base64 or PIL Image
 - Configurable generation parameters
 """
@@ -18,7 +18,7 @@ import logging
 import time
 import base64
 import io
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 from PIL import Image
 from experimance_common.image_utils import base64url_to_png, png_to_base64url
 import aiohttp
@@ -27,9 +27,7 @@ import requests  # Keep requests for quick health checks
 from image_server.generators.generator import ImageGenerator, mock_depth_map
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.vastai.vastai_manager import VastAIManager, InstanceEndpoint
-from image_server.generators.vastai.server.data_types import ControlNetGenerateData
-
-from experimance_common.schemas import Era
+from image_server.generators.vastai.server.data_types import ControlNetGenerateData, LoraData
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +141,67 @@ class VastAIGenerator(ImageGenerator):
             logger.warning(f"Health check failed for instance {endpoint.instance_id}: {e}")
             return False
     
+    def _era_to_loras(self, era: Optional[Union[str, Any]]) -> List[LoraData]:
+        """
+        Convert an era to the appropriate LoRA configuration.
+        
+        This mapping defines which LoRAs should be applied for each era.
+        Can be extended with additional LoRAs or custom configurations.
+        
+        Args:
+            era: The era from the render request (string or enum value)
+            
+        Returns:
+            List of LoraData objects to apply
+        """
+        if not era:
+            # Default: experimance LoRA for general art generation
+            return [LoraData(name="experimance", strength=1.0)]
+        
+        # Convert era to string for comparison (handles both string and enum values)
+        era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
+        
+        # Era to LoRA mapping (using string comparisons for flexibility)
+        era_lora_map = {
+            "wilderness": [
+                LoraData(name="drone", strength=0.8),
+                LoraData(name="experimance", strength=0.3)  # Blend with base style
+            ],
+            "pre_industrial": [
+                LoraData(name="drone", strength=0.8),
+                LoraData(name="experimance", strength=0.3)
+            ],
+            "early_industrial": [
+                LoraData(name="drone", strength=0.8),
+                LoraData(name="experimance", strength=0.4)
+            ],
+            "late_industrial": [
+                LoraData(name="drone", strength=0.6),
+                LoraData(name="experimance", strength=0.5)
+            ],
+            "industrial": [
+                LoraData(name="drone", strength=0.3),
+                LoraData(name="experimance", strength=0.7)
+            ],
+            "modern": [
+                LoraData(name="experimance", strength=1.0)
+            ],
+            "current": [
+                LoraData(name="experimance", strength=1.0) 
+            ],
+            "future": [
+                LoraData(name="experimance", strength=1.2) 
+            ],
+            "dystopia": [
+                LoraData(name="experimance", strength=1.2) 
+            ],
+            "ruins": [
+                LoraData(name="drone", strength=0.8)
+            ]
+        }
+        
+        return era_lora_map.get(era_str, [LoraData(name="experimance", strength=1.0)])
+    
     def _encode_image_to_base64(self, image: Image.Image, format: str = "PNG") -> str:
         """Encode PIL Image to base64 string."""
         buffer = io.BytesIO()
@@ -172,7 +231,8 @@ class VastAIGenerator(ImageGenerator):
             **kwargs: Additional generation parameters
                 depth_map_b64: Base64 encoded depth map (alternative to depth_image)
                 controlnet: ControlNet model to use (default: "sdxl_small")
-                era: Era for LoRA selection (influences era-specific styling)
+                loras: List of LoraData objects to apply (optional)
+                era: Era for automatic LoRA mapping (converted to loras if no loras provided)
             
         Returns:
             Path to the saved generated image
@@ -205,10 +265,16 @@ class VastAIGenerator(ImageGenerator):
         else:
             logger.warning("⚠️  VastAI: No depth map and mock_depth=False - server may fail")
 
-        era = "experimance"
-        if kwargs.get("era"):
-            if kwargs["era"] in [Era.WILDERNESS, Era.PRE_INDUSTRIAL]:
-                era = "drone"
+        # Handle LoRA configuration
+        loras = kwargs.get("loras", [])
+        if not loras and kwargs.get("era"):
+            # Convert era to LoRAs using mapping
+            loras = self._era_to_loras(kwargs["era"])
+            logger.info(f"🎨 Converted era {kwargs['era']} to LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+        elif not loras:
+            # Default LoRAs if none specified
+            loras = self._era_to_loras(None)
+            logger.info(f"🎨 Using default LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
 
         try:
             endpoint = self.current_endpoint  # Use pre-initialized endpoint
@@ -221,22 +287,20 @@ class VastAIGenerator(ImageGenerator):
                 mock_depth=mock_depth,
                 model=self.config.model_name,
                 controlnet=kwargs.get("controlnet", "sdxl_small"),
-                era=era,
+                loras=loras,  # Use the LoRA list instead of era
                 steps=self.config.steps or 6,
                 cfg=self.config.cfg or 2.0,
                 seed=seed,
                 scheduler=self.config.scheduler,
                 use_karras_sigmas=self.config.use_karras_sigmas,
-                lora_strength=self.config.lora_strength,
                 controlnet_strength=self.config.controlnet_strength,
+                control_guidance_start=kwargs.get("control_guidance_start", self.config.control_guidance_start),
+                control_guidance_end=kwargs.get("control_guidance_end", self.config.control_guidance_end),
                 width=self.config.width,
                 height=self.config.height,
             )
             
-            # Validate the request
-            validation_errors = data.validate()
-            if validation_errors:
-                raise RuntimeError(f"Generation request validation failed: {validation_errors}")
+            # Pydantic validation is automatic, no need for manual validation
             
             # Convert to JSON payload
             payload = data.generate_payload_json()

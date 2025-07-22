@@ -5,13 +5,12 @@ This module defines the request and response data structures for ControlNet-base
 """
 
 import base64
-import dataclasses
 import logging
 import random
-from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, List
 from io import BytesIO
 from PIL import Image
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # Sample prompts for testing
@@ -26,55 +25,94 @@ SAMPLE_PROMPTS = [
     "A bustling marketplace in an ancient civilization"
 ]
 
+class LoraData(BaseModel):
+    """
+    Data structure for LoRA (Low-Rank Adaptation) parameters.
+    
+    This class holds the LoRA model name and its strength.
+    """
+    name: str
+    strength: float = Field(default=1.0, ge=0.0, le=2.0, description="LoRA strength between 0.0 and 2.0")
 
-@dataclass
-class ControlNetGenerateData:
+
+class ControlNetGenerateData(BaseModel):
     """
     Request payload for ControlNet image generation.
     
     This class defines all the parameters needed for generating images using ControlNet models.
+    Uses Pydantic for validation and works directly with FastAPI.
     """
-    prompt: str
-    negative_prompt: Optional[str] = None
-    depth_map_b64: Optional[str] = None  # base64 encoded depth map
-    mock_depth: bool = False
-    model: str = "lightning"  # lightning, hyper, base
-    controlnet: str = "sdxl_small"  # sdxl_small, llite
-    era: Optional[str] = None  # drone, experimance
-    steps: int = 6
-    cfg: float = 2.0
-    seed: Optional[int] = None
-    lora_strength: float = 1.0
-    controlnet_strength: float = 0.8
-    scheduler: str = "auto"  # auto, euler, euler_a, dpm_multi, dpm_single, ddim, lcm
-    use_karras_sigmas: Optional[bool] = None
-    width: int = 1024
-    height: int = 1024
+    prompt: str = Field(..., min_length=1, max_length=1000, description="Text prompt for image generation")
+    negative_prompt: Optional[str] = Field(None, max_length=1000, description="Negative prompt to avoid certain elements")
+    depth_map_b64: Optional[str] = Field(None, description="Base64 encoded depth map")
+    mock_depth: bool = Field(False, description="Generate a mock depth map for testing")
+    model: str = Field("lightning", pattern="^(lightning|hyper|base)$", description="Model to use for generation")
+    controlnet: str = Field("sdxl_small", pattern="^(sdxl_small|llite)$", description="ControlNet model to use")
+    steps: Optional[int] = Field(None, ge=1, le=50, description="Number of inference steps")
+    cfg: Optional[float] = Field(None, ge=0.1, le=20.0, description="Classifier-free guidance scale")
+    seed: Optional[int] = Field(None, ge=0, description="Random seed for reproducible generation")
+    loras: List[LoraData] = Field(default_factory=list, description="List of LoRA models to apply")
+    controlnet_strength: float = Field(0.8, ge=0.0, le=2.0, description="ControlNet conditioning strength")
+    control_guidance_start: float = Field(0.0, ge=0.0, le=1.0, description="Percentage of total steps at which ControlNet starts applying")
+    control_guidance_end: float = Field(1.0, ge=0.0, le=1.0, description="Percentage of total steps at which ControlNet stops applying")
+    scheduler: str = Field("auto", pattern="^(auto|euler|euler_a|dpm_multi|dpm_single|ddim|lcm)$", description="Sampling scheduler")
+    use_karras_sigmas: Optional[bool] = Field(None, description="Override Karras sigma setting for scheduler")
+    width: int = Field(1024, ge=256, le=2048, description="Output image width")
+    height: int = Field(1024, ge=256, le=2048, description="Output image height")
+    
+    @field_validator('width', 'height')
+    @classmethod
+    def validate_dimensions(cls, v: int) -> int:
+        """Ensure dimensions are multiples of 64."""
+        if v % 64 != 0:
+            raise ValueError(f"Dimension must be a multiple of 64, got {v}")
+        return v
+    
+    @model_validator(mode='after')
+    def validate_depth_input(self) -> 'ControlNetGenerateData':
+        """Ensure either depth_map_b64 or mock_depth is provided."""
+        if not self.depth_map_b64 and not self.mock_depth:
+            raise ValueError("Either depth_map_b64 or mock_depth=true must be provided")
+        return self
+    
+    @model_validator(mode='after')
+    def validate_control_guidance_timing(self) -> 'ControlNetGenerateData':
+        """Ensure control_guidance_start <= control_guidance_end."""
+        if self.control_guidance_start > self.control_guidance_end:
+            raise ValueError(f"control_guidance_start ({self.control_guidance_start}) must be <= control_guidance_end ({self.control_guidance_end})")
+        return self
     
     @classmethod
     def for_test(cls) -> "ControlNetGenerateData":
         """Create a test payload for development and testing."""
         prompt = random.choice(SAMPLE_PROMPTS)
-        era = random.choice([None, "drone", "experimance"])
         model = random.choice(["lightning", "hyper", "base"])
         controlnet = random.choice(["sdxl_small", "llite"])
         
+        # Create with explicit values for all parameters
         return cls(
             prompt=prompt,
             negative_prompt="blurry, low quality, artifacts, distorted",
+            depth_map_b64=None,  # Will use mock_depth instead
             mock_depth=True,
             model=model,
             controlnet=controlnet,
-            era=era,
             steps=6 if model == "lightning" else 6 if model == "hyper" else 20,
             cfg=1.0 if model == "lightning" else 2.0 if model == "hyper" else 7.5,
+            seed=None,  # Will be generated randomly
+            loras=[],  # No LoRAs for test
+            controlnet_strength=0.8,
+            control_guidance_start=0.0,
+            control_guidance_end=1.0,
+            scheduler="auto",
+            use_karras_sigmas=None,
             width=1024,
             height=1024
         )
     
     def generate_payload_json(self) -> Dict[str, Any]:
         """Generate JSON representation of the payload for sending to model API."""
-        return asdict(self)
+        return self.model_dump()
     
     def get_depth_image(self) -> Optional[Image.Image]:
         """Decode base64 depth map to PIL Image if available."""
@@ -103,54 +141,9 @@ class ControlNetGenerateData:
             logger.error(f"Data length: {len(self.depth_map_b64)}")
             logger.error(f"Data prefix: {self.depth_map_b64[:100]}..." if len(self.depth_map_b64) > 100 else f"Full data: {self.depth_map_b64}")
             return None
-    
-    def validate(self) -> List[str]:
-        """
-        Validate the payload and return list of validation errors.
-        """
-        errors = []
-        
-        if not self.prompt or len(self.prompt.strip()) == 0:
-            errors.append("Prompt cannot be empty")
-        
-        if len(self.prompt) > 1000:
-            errors.append("Prompt must be less than 1000 characters")
-        
-        if self.model not in ["lightning", "hyper", "base"]:
-            errors.append("Model must be one of: lightning, hyper, base")
-        
-        if self.controlnet not in ["sdxl_small", "llite"]:
-            errors.append("ControlNet must be one of: sdxl_small, llite")
-        
-        if self.era and self.era not in ["drone", "experimance"]:
-            errors.append("Era must be one of: drone, experimance")
-        
-        if not (1 <= self.steps <= 50):
-            errors.append("Steps must be between 1 and 50")
-        
-        if not (0.1 <= self.cfg <= 20.0):
-            errors.append("CFG must be between 0.1 and 20.0")
-        
-        if not (0.0 <= self.lora_strength <= 2.0):
-            errors.append("LoRA strength must be between 0.0 and 2.0")
-        
-        if not (0.0 <= self.controlnet_strength <= 2.0):
-            errors.append("ControlNet strength must be between 0.0 and 2.0")
-        
-        if self.width % 64 != 0 or self.height % 64 != 0:
-            errors.append("Width and height must be multiples of 64")
-        
-        if not (256 <= self.width <= 2048) or not (256 <= self.height <= 2048):
-            errors.append("Width and height must be between 256 and 2048")
-        
-        if self.scheduler not in ["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"]:
-            errors.append("Scheduler must be one of: auto, euler, euler_a, dpm_multi, dpm_single, ddim, lcm")
-        
-        return errors
 
 
-@dataclass
-class ControlNetGenerateResponse:
+class ControlNetGenerateResponse(BaseModel):
     """
     Response payload for ControlNet image generation.
     """
@@ -160,7 +153,6 @@ class ControlNetGenerateResponse:
     generation_time: Optional[float] = None
     seed_used: Optional[int] = None
     model_used: Optional[str] = None
-    era_used: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     
     @classmethod
@@ -170,7 +162,6 @@ class ControlNetGenerateResponse:
         generation_time: float,
         seed_used: int,
         model_used: str,
-        era_used: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> "ControlNetGenerateResponse":
         """Create a successful response with the generated image."""
@@ -185,7 +176,6 @@ class ControlNetGenerateResponse:
             generation_time=generation_time,
             seed_used=seed_used,
             model_used=model_used,
-            era_used=era_used,
             metadata=metadata or {}
         )
     
@@ -199,11 +189,10 @@ class ControlNetGenerateResponse:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert response to dictionary for JSON serialization."""
-        return asdict(self)
+        return self.model_dump()
 
 
-@dataclass
-class HealthCheckResponse:
+class HealthCheckResponse(BaseModel):
     """Response for health check endpoint."""
     status: str
     model_server_healthy: bool
@@ -213,19 +202,15 @@ class HealthCheckResponse:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert response to dictionary for JSON serialization."""
-        return asdict(self)
+        return self.model_dump()
 
 
-@dataclass
-class ModelListResponse:
+class ModelListResponse(BaseModel):
     """Response for model listing endpoint."""
     available_models: List[str]
     available_controlnets: List[str]
-    available_eras: List[str]
     available_schedulers: List[str]
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert response to dictionary for JSON serialization."""
-        return asdict(self)
-        """Convert response to dictionary for JSON serialization."""
-        return asdict(self)
+        return self.model_dump()
