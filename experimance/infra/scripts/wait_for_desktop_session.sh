@@ -3,10 +3,11 @@
 # Usage: wait_for_desktop_session.sh <username>
 
 USERNAME="${1:-experimance}"
+USER_ID=$(id -u "$USERNAME" 2>/dev/null || echo "1000")
 MAX_WAIT_TIME=300  # 5 minutes maximum wait
-CHECK_INTERVAL=10  # Check every 10 seconds
+CHECK_INTERVAL=5   # Check every 5 seconds
 
-echo "Waiting for user '$USERNAME' to have an active desktop session..."
+echo "Waiting for user '$USERNAME' (UID: $USER_ID) to have an active desktop session..."
 
 wait_start=$(date +%s)
 
@@ -19,12 +20,19 @@ while true; do
         exit 1
     fi
     
+    # Check if user runtime directory exists
+    if [ ! -d "/run/user/$USER_ID" ]; then
+        echo "Waiting for user runtime directory /run/user/$USER_ID... (${elapsed}s elapsed)"
+        sleep $CHECK_INTERVAL
+        continue
+    fi
+    
     # Check if user has an active session
     if loginctl list-sessions --no-legend | grep "$USERNAME.*seat0.*active" >/dev/null 2>&1; then
         echo "Found active session for user '$USERNAME'"
         
         # Wait a bit more for desktop environment to fully load
-        sleep 5
+        sleep 3
         
         # Check if gnome-shell is running (indicates desktop is ready)
         if pgrep -u "$USERNAME" gnome-shell >/dev/null 2>&1; then

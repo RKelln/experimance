@@ -1,23 +1,21 @@
 [Unit]
 Description=Health Service (%i)
-After=network.target user-1000.slice
-Wants=network.target
-# Wait for experimance user session to be active (needed for camera/vision access)
-Requisite=user-1000.slice
+After=network.target user@1000.service
+Wants=network.target user@1000.service
 
 [Service]
 Type=simple
 User=experimance
 Group=experimance
 WorkingDirectory=/opt/experimance
-Environment="PROJECT_ENV=%i"
-Environment="EXPERIMANCE_ENV=production"
+Environment=PROJECT_ENV=%i
+Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Dynamic display environment detection via wrapper script
 ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/opt/experimance/infra/scripts/setup_display_env.sh /home/experimance/.local/bin/uv run -m experimance_health
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=no
+Restart=on-failure
 
 # Logging
 StandardOutput=journal

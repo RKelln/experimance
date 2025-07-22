@@ -402,6 +402,7 @@ class AudioService(BaseService):
             commands = [
                 ['jack_control', 'ds', 'alsa'],  # Set driver to alsa
                 ['jack_control', 'dps', 'device', device],  # Set device
+                ['jack_control', 'dps', 'playback', device],  # Set playback device to the same
                 ['jack_control', 'dps', 'rate', str(self.config.supercollider.jack_sample_rate)],  # Set sample rate
                 ['jack_control', 'dps', 'period', str(self.config.supercollider.jack_buffer_size)],  # Set buffer size
                 ['jack_control', 'dps', 'nperiods', str(self.config.supercollider.jack_periods)],  # Set periods
@@ -554,6 +555,188 @@ class AudioService(BaseService):
             logger.warning(f"Error verifying JACK configuration: {e}")
             return False
 
+    def _check_pipewire_device_conflict(self, device: str) -> bool:
+        """Check if PipeWire is holding exclusive access to our target device.
+        
+        Args:
+            device: Hardware device address (e.g., "hw:4,0")
+            
+        Returns:
+            True if PipeWire is blocking access to the device, False otherwise
+        """
+        try:
+            # Extract card number from device string like "hw:4,0"
+            if device.startswith('hw:'):
+                card_part = device.split(':')[1].split(',')[0]
+                card_num = int(card_part)
+                
+                # Check if fuser shows any processes using the control device
+                result = subprocess.run(['fuser', '-v', f'/dev/snd/controlC{card_num}'], 
+                                      capture_output=True, text=True, timeout=3.0)
+                
+                if result.returncode == 0 and 'wireplumber' in result.stderr:
+                    logger.warning(f"PipeWire/WirePlumber is holding exclusive access to {device}")
+                    return True
+                    
+        except Exception as e:
+            logger.debug(f"Error checking PipeWire device conflict: {e}")
+            
+        return False
+
+    def _attempt_pipewire_device_release(self, device: str) -> bool:
+        """Attempt to release a specific device from PipeWire control while keeping PipeWire running.
+        
+        This method tries several approaches to release just the target device without
+        disrupting other audio devices (like the Yealink speakerphone for the AI agent).
+        
+        Args:
+            device: Hardware device address (e.g., "hw:4,0")
+            
+        Returns:
+            True if device was released successfully, False otherwise
+        """
+        try:
+            if not self._check_pipewire_device_conflict(device):
+                return True  # No conflict to resolve
+                
+            logger.info(f"Attempting to release {device} from PipeWire control (keeping PipeWire running)")
+            
+            # Extract card number from device string like "hw:4,0"
+            if device.startswith('hw:'):
+                card_part = device.split(':')[1].split(',')[0]
+                card_num = int(card_part)
+            else:
+                logger.warning(f"Cannot extract card number from device {device}")
+                return False
+            
+            # Method 1: Try to use pw-cli to suspend the specific device
+            try:
+                # First, list devices to find the PipeWire node ID
+                list_result = subprocess.run(['pw-cli', 'list-objects'], 
+                                           capture_output=True, text=True, timeout=5.0)
+                if list_result.returncode == 0:
+                    # Look for our specific card in the output
+                    lines = list_result.stdout.split('\n')
+                    for i, line in enumerate(lines):
+                        if f'alsa_card.usb-' in line and f'card{card_num}' in line:
+                            # Try to extract the node ID and suspend it
+                            node_match = re.search(r'id (\d+)', line)
+                            if node_match:
+                                node_id = node_match.group(1)
+                                logger.debug(f"Found PipeWire node {node_id} for card {card_num}")
+                                
+                                # Suspend the device node
+                                suspend_result = subprocess.run(['pw-cli', 'suspend-node', node_id], 
+                                                              capture_output=True, text=True, timeout=3.0)
+                                if suspend_result.returncode == 0:
+                                    logger.info(f"Suspended PipeWire node {node_id} for device {device}")
+                                    time.sleep(0.5)  # Brief pause
+                                    
+                                    # Check if conflict is resolved
+                                    if not self._check_pipewire_device_conflict(device):
+                                        logger.info(f"Successfully released {device} from PipeWire via node suspension")
+                                        self.record_health_check(
+                                            "pipewire_device_release",
+                                            HealthStatus.HEALTHY,
+                                            f"Released device {device} from PipeWire via node suspension",
+                                            metadata={"device": device, "method": "node_suspension", "node_id": node_id}
+                                        )
+                                        return True
+                                break
+            except Exception as e:
+                logger.debug(f"pw-cli method failed: {e}")
+            
+            # Method 2: Try to kill just the WirePlumber process handling this device
+            try:
+                # Use lsof to find processes using the specific control device
+                lsof_result = subprocess.run(['lsof', f'/dev/snd/controlC{card_num}'], 
+                                           capture_output=True, text=True, timeout=3.0)
+                if lsof_result.returncode == 0:
+                    for line in lsof_result.stdout.split('\n')[1:]:  # Skip header
+                        if 'wireplumber' in line:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                pid = parts[1]
+                                logger.debug(f"Found WirePlumber PID {pid} using device {device}")
+                                
+                                # Send SIGUSR1 to WirePlumber to ask it to release the device
+                                # This is gentler than killing the process
+                                try:
+                                    subprocess.run(['kill', '-USR1', pid], timeout=2.0)
+                                    time.sleep(0.5)
+                                    
+                                    if not self._check_pipewire_device_conflict(device):
+                                        logger.info(f"Successfully released {device} via WirePlumber signal")
+                                        self.record_health_check(
+                                            "pipewire_device_release",
+                                            HealthStatus.HEALTHY,
+                                            f"Released device {device} via WirePlumber signal",
+                                            metadata={"device": device, "method": "wireplumber_signal", "pid": pid}
+                                        )
+                                        return True
+                                except Exception as e:
+                                    logger.debug(f"Signal method failed: {e}")
+            except Exception as e:
+                logger.debug(f"lsof method failed: {e}")
+            
+            # Method 3: Fallback - temporarily stop only WirePlumber (not all of PipeWire)
+            # This preserves other PipeWire functionality while releasing device control
+            logger.info("Trying fallback: temporary WirePlumber restart")
+            try:
+                # Stop just WirePlumber
+                stop_result = subprocess.run(['systemctl', '--user', 'stop', 'wireplumber'], 
+                                           capture_output=True, text=True, timeout=5.0)
+                if stop_result.returncode == 0:
+                    time.sleep(1.0)  # Give it time to release the device
+                    
+                    # Check if device is now free
+                    if not self._check_pipewire_device_conflict(device):
+                        logger.info(f"Successfully released {device} by stopping WirePlumber")
+                        
+                        # Restart WirePlumber to restore functionality for other devices
+                        restart_result = subprocess.run(['systemctl', '--user', 'start', 'wireplumber'], 
+                                                      capture_output=True, text=True, timeout=5.0)
+                        if restart_result.returncode == 0:
+                            logger.debug("WirePlumber restarted successfully")
+                        else:
+                            logger.warning("WirePlumber restart failed, but device was released")
+                        
+                        self.record_health_check(
+                            "pipewire_device_release",
+                            HealthStatus.HEALTHY,
+                            f"Released device {device} via WirePlumber restart",
+                            metadata={"device": device, "method": "wireplumber_restart"}
+                        )
+                        return True
+                    else:
+                        # Device still conflicted, restart WirePlumber anyway
+                        subprocess.run(['systemctl', '--user', 'start', 'wireplumber'], 
+                                     capture_output=True, text=True, timeout=5.0)
+                        logger.warning(f"WirePlumber restart did not resolve conflict for {device}")
+                        
+            except Exception as e:
+                logger.debug(f"WirePlumber restart method failed: {e}")
+            
+            # All methods failed
+            logger.warning(f"Could not release {device} from PipeWire control using any method")
+            self.record_health_check(
+                "pipewire_device_release",
+                HealthStatus.WARNING,
+                f"Failed to release device {device} from PipeWire control",
+                metadata={"device": device, "attempted_methods": ["node_suspension", "wireplumber_signal", "wireplumber_restart"]}
+            )
+            return False
+                
+        except Exception as e:
+            logger.error(f"Error attempting to release device from PipeWire: {e}")
+            self.record_health_check(
+                "pipewire_device_release",
+                HealthStatus.ERROR,
+                f"Error during device release: {e}",
+                metadata={"device": device, "error_type": type(e).__name__}
+            )
+            return False
+
     async def _start_jack(self, device: str) -> bool:
         """Start or configure JACK via jackdbus with the specified device.
         
@@ -584,6 +767,19 @@ class AudioService(BaseService):
                 if not self._stop_jack():
                     logger.warning("Could not stop existing JACK for reconfiguration")
                     return False
+        
+        # Check for PipeWire conflicts and attempt to release the device if needed
+        if self._check_pipewire_device_conflict(device):
+            logger.info(f"PipeWire conflict detected for {device}, attempting to release")
+            if not self._attempt_pipewire_device_release(device):
+                logger.error(f"Failed to release {device} from PipeWire control")
+                self.record_health_check(
+                    "jack_startup",
+                    HealthStatus.ERROR,
+                    f"PipeWire blocking access to {device}, could not release",
+                    metadata={"device": device}
+                )
+                return False
         
         # Configure jackdbus (this will auto-start it via D-Bus if needed)
         logger.info(f"Configuring jackdbus for device: {device}")

@@ -1,9 +1,7 @@
 [Unit]
 Description=Core Service (%i project)
-After=network.target user-1000.slice
-Wants=network.target
-# Wait for experimance user session to be active (needed for RealSense camera access)
-Requisite=user-1000.slice
+After=network.target user@1000.service
+Wants=network.target user@1000.service
 
 [Service]
 Type=simple
@@ -17,7 +15,7 @@ Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/
 ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_core
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=no
+Restart=on-failure
 
 # Logging
 StandardOutput=journal
