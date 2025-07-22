@@ -1445,8 +1445,8 @@ main() {
             ;;
         schedule-custom)
             # Expect start and stop schedules as additional arguments
-            local start_schedule="$4"
-            local stop_schedule="$5"
+            local start_schedule="${4:-}"
+            local stop_schedule="${5:-}"
             
             if [[ -z "$start_schedule" || -z "$stop_schedule" ]]; then
                 error "Custom schedule requires start and stop cron expressions"
@@ -1457,6 +1457,40 @@ main() {
             
             log "Setting up custom schedule"
             setup_schedule "$start_schedule" "$stop_schedule"
+            ;;
+        schedule-shutdown)
+            # Schedule a one-time shutdown for a specific time (uses shutdown.sh which destroys instances)
+            local stop_time="${3:-}"
+            if [[ -z "$stop_time" ]]; then
+                error "Stop time required in format 'HH:MM' (24-hour format)"
+                error "Usage: $0 $PROJECT schedule-shutdown 'HH:MM'"
+                error "Example: $0 $PROJECT schedule-shutdown '12:00'"
+                exit 1
+            fi
+            
+            # Parse the time and create a cron expression for today
+            local hour="${stop_time%:*}"
+            local minute="${stop_time#*:}"
+            local today=$(date '+%d')
+            local month=$(date '+%m')
+            local stop_cron="$minute $hour $today $month *"
+            
+            log "Scheduling one-time stop for today at $stop_time"
+            log "Cron expression: $stop_cron"
+            
+            # Create a temporary cron entry that will be removed after execution
+            local temp_cron=$(mktemp)
+            crontab -l 2>/dev/null | grep -v "experimance-onetime-shutdown" > "$temp_cron" || true
+            
+            echo "# experimance-onetime-shutdown" >> "$temp_cron"
+            echo "$stop_cron $SCRIPT_DIR/shutdown.sh --project $PROJECT && (crontab -l 2>/dev/null | grep -v 'experimance-onetime-shutdown' | crontab -) >/dev/null 2>&1" >> "$temp_cron"
+            
+            crontab "$temp_cron"
+            rm "$temp_cron"
+            
+            log "✓ Scheduled one-time shutdown for $stop_time today"
+            log "The cron job will automatically remove itself after execution"
+            log "Note: Using shutdown.sh which will destroy service instances"
             ;;
         schedule-remove)
             log "Removing schedule"
@@ -1598,7 +1632,7 @@ if [[ $# -eq 0 ]]; then
     echo "Usage: $0 [project_name] [action] [mode]"
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
     echo "Actions: install, start, stop, restart, status, services, diagnose"
-    echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
+    echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-shutdown, schedule-remove, schedule-show"
     echo "Modes: dev, prod (only for install action)"
     echo ""
     echo "Install Modes:"
@@ -1616,6 +1650,7 @@ if [[ $# -eq 0 ]]; then
     echo "  $0 experimance schedule-demo         # Daily, 9AM-6PM"  
     echo "  $0 experimance schedule-weekend      # Saturday-Sunday, 10AM-4PM"
     echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'  # Custom: Weekdays 8AM-8PM"
+    echo "  $0 experimance schedule-shutdown '12:30' # Call shutdown.sh at 12:30 today"
     echo "  $0 experimance schedule-show         # Show current schedule"
     echo "  $0 experimance schedule-remove       # Remove schedule"
     echo ""
