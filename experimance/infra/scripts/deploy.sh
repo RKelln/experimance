@@ -4,6 +4,13 @@
 # Usage: ./deploy.sh [project_name] [action] [mode]
 # Actions: install, start, stop, restart, status
 # Modes: dev, prod (only for install action)
+#
+# SYSTEMD TEMPLATE SYSTEM:
+# This script uses systemd template services for multi-project support:
+# - Template files: core@.service, display@.service, experimance@.target (installed to /etc/systemd/system/)
+# - Instance services: core@experimance.service, display@sohkepayin.service (created when started)
+# - The @ symbol makes it a template, %i gets replaced with project name
+# - Multiple projects can share the same templates with different instances
 
 set -euo pipefail
 
@@ -225,23 +232,97 @@ install_systemd_files() {
     
     log "Installing systemd service files..."
     
-    # Copy all system service files
+    # Copy all template service files (e.g., core@.service, display@.service)
+    # These are TEMPLATES that systemd uses to create instances like core@experimance.service
+    local files_copied=0
     for service_file in "$SCRIPT_DIR"/../systemd/*.service; do
         if [[ -f "$service_file" ]]; then
             cp "$service_file" "$SYSTEMD_DIR/"
             log "Copied $(basename "$service_file")"
+            ((files_copied++))
         fi
     done
     
-    # Copy target file
+    # Copy target template file (e.g., experimance@.target)
     if [[ -f "$SCRIPT_DIR/../systemd/experimance@.target" ]]; then
         cp "$SCRIPT_DIR/../systemd/experimance@.target" "$SYSTEMD_DIR/"
         log "Copied experimance@.target"
+        ((files_copied++))
     fi
     
-    # Reload systemd
+    if [[ $files_copied -eq 0 ]]; then
+        log "ERROR: No systemd files found to copy!"
+        return 1
+    fi
+    
+    # Set proper permissions on template files
+    sudo chmod 644 "$SYSTEMD_DIR"/*.service "$SYSTEMD_DIR"/*.target 2>/dev/null || true
+    
+    # Reload systemd to recognize new template files
     systemctl daemon-reload
     log "Reloaded systemd configuration"
+    log "Installed $files_copied systemd template files"
+    
+    # Enable and link all service instances to the target
+    log "Enabling service instances and linking to target..."
+    local services_enabled=0
+    for service in "${SERVICES[@]}"; do
+        # service is in format "service_type@project", e.g., "core@experimance"
+        local full_service_name="$service.service"
+        local service_type="${service%@*}"
+        local template_file="$SYSTEMD_DIR/${service_type}@.service"
+        
+        if [ -f "$template_file" ]; then
+            log "Enabling $full_service_name..."
+            if systemctl enable "$full_service_name"; then
+                log "✓ Enabled $full_service_name"
+                ((services_enabled++))
+            else
+                warn "Failed to enable $full_service_name"
+            fi
+        else
+            warn "Template file not found for $full_service_name: $template_file"
+        fi
+    done
+    
+    # Enable the target instance
+    local target="experimance@${PROJECT}.target"
+    if [ -f "$SYSTEMD_DIR/experimance@.target" ]; then
+        log "Enabling target $target..."
+        if systemctl enable "$target"; then
+            log "✓ Enabled $target"
+        else
+            warn "Failed to enable $target"
+        fi
+    else
+        warn "Target template file not found: $SYSTEMD_DIR/experimance@.target"
+    fi
+    
+    # Verify service linking
+    log "Verifying service linking to target..."
+    local linked_services=0
+    for service in "${SERVICES[@]}"; do
+        local full_service_name="$service.service"
+        if systemctl list-dependencies "$target" 2>/dev/null | grep -q "$full_service_name"; then
+            log "✓ $full_service_name is linked to $target"
+            ((linked_services++))
+        else
+            warn "✗ $full_service_name is NOT linked to $target"
+        fi
+    done
+    
+    log "Installation summary:"
+    log "  Template files copied: $files_copied"
+    log "  Service instances enabled: $services_enabled/${#SERVICES[@]}"
+    log "  Services linked to target: $linked_services/${#SERVICES[@]}"
+    
+    if [[ $services_enabled -eq ${#SERVICES[@]} ]] && [[ $linked_services -eq ${#SERVICES[@]} ]]; then
+        log "✓ All services successfully installed, enabled, and linked"
+    else
+        warn "⚠ Some services may not be properly configured. Run 'sudo ./deploy.sh $PROJECT diagnose' for details"
+    fi
+    
+    log "Note: Instance services are now created and linked. Use 'sudo ./deploy.sh $PROJECT start' to start them"
 }
 
 # Download file from Google Drive using uvx gdown
@@ -876,23 +957,105 @@ start_services() {
     
     log "Starting services for project $PROJECT..."
     
-    # Handle all services as system services
+    # First, reload systemd configuration to pick up any changes
+    log "Reloading systemd daemon..."
+    systemctl daemon-reload
+    
+    # Start individual services first
     for service in "${SERVICES[@]}"; do
-        # Use service names directly as returned from get_project_services.py
-        if systemctl is-enabled "$service.service" &>/dev/null; then
-            systemctl start "$service.service"
-            log "Started $service.service"
+        # service is in format "service_type@project", e.g., "core@experimance"
+        local full_service_name="$service.service"
+        log "Processing service: $full_service_name"
+        
+        # Check if service template exists (e.g., core@.service)
+        local service_type="${service%@*}"
+        local template_file="$SYSTEMD_DIR/${service_type}@.service"
+        
+        if [ -f "$template_file" ]; then
+            log "Service template found: $template_file"
+            
+            # Enable the service instance if not already enabled
+            if ! systemctl is-enabled "$full_service_name" &>/dev/null; then
+                log "Enabling $full_service_name..."
+                systemctl enable "$full_service_name"
+            else
+                log "$full_service_name is already enabled"
+            fi
+            
+            # Start the service instance
+            if systemctl is-active "$full_service_name" &>/dev/null; then
+                log "$full_service_name is already active"
+            else
+                log "Starting $full_service_name..."
+                if systemctl start "$full_service_name"; then
+                    log "✓ Started $full_service_name"
+                    
+                    # Wait a moment and check if it's actually running
+                    sleep 1
+                    if systemctl is-active "$full_service_name" &>/dev/null; then
+                        log "✓ Confirmed $full_service_name is active"
+                    else
+                        warn "⚠ $full_service_name started but is not active. Checking status..."
+                        systemctl status "$full_service_name" --no-pager -l || true
+                    fi
+                else
+                    error "✗ Failed to start $full_service_name"
+                    log "Service status:"
+                    systemctl status "$full_service_name" --no-pager -l || true
+                fi
+            fi
         else
-            systemctl enable "$service.service"
-            systemctl start "$service.service"
-            log "Enabled and started $service.service"
+            error "Service template file not found: $template_file"
+            log "Available service templates matching pattern:"
+            ls -la "$SYSTEMD_DIR" | grep "@\.service" || log "  No template service files found"
         fi
     done
     
-    # Enable and start the target
-    systemctl enable "experimance@${PROJECT}.target"
-    systemctl start "experimance@${PROJECT}.target"
-    log "Started experimance@${PROJECT}.target"
+    # Now start the target
+    local target="experimance@${PROJECT}.target"
+    log "Processing target: $target"
+    
+    # Check if the target template exists and if systemd recognizes the instance
+    if [ -f "$SYSTEMD_DIR/experimance@.target" ]; then
+        log "Target template found: experimance@.target"
+        
+        # Enable the target instance if not already enabled
+        if ! systemctl is-enabled "$target" &>/dev/null; then
+            log "Enabling $target..."
+            systemctl enable "$target"
+        else
+            log "$target is already enabled"
+        fi
+        
+        # Start the target instance
+        if systemctl is-active "$target" &>/dev/null; then
+            log "$target is already active"
+        else
+            log "Starting $target..."
+            if systemctl start "$target"; then
+                log "✓ Started $target"
+                
+                # Wait a moment and verify
+                sleep 2
+                if systemctl is-active "$target" &>/dev/null; then
+                    log "✓ Confirmed $target is active"
+                else
+                    warn "⚠ $target started but is not active. Checking status..."
+                    systemctl status "$target" --no-pager -l || true
+                fi
+            else
+                error "✗ Failed to start $target"
+                log "Target status:"
+                systemctl status "$target" --no-pager -l || true
+            fi
+        fi
+    else
+        error "Target template file not found: $SYSTEMD_DIR/experimance@.target"
+        log "Available target templates matching 'experimance':"
+        ls -la "$SYSTEMD_DIR" | grep experimance | grep target || log "  No experimance target files found"
+    fi
+    
+    log "Start operation complete"
 }
 
 stop_services() {
@@ -903,20 +1066,74 @@ stop_services() {
     
     log "Stopping services for project $PROJECT..."
     
-    # Stop the target first
-    if systemctl is-active "experimance@${PROJECT}.target" &>/dev/null; then
-        systemctl stop "experimance@${PROJECT}.target"
-        log "Stopped experimance@${PROJECT}.target"
+    # Check if target exists and is loaded
+    local target="experimance@${PROJECT}.target"
+    if systemctl list-units --all "$target" | grep -q "$target"; then
+        log "Target $target exists"
+        if systemctl is-active "$target" &>/dev/null; then
+            log "Stopping active target: $target"
+            systemctl stop "$target"
+            
+            # Wait for it to actually stop
+            local timeout=10
+            local count=0
+            while systemctl is-active "$target" &>/dev/null && [ $count -lt $timeout ]; do
+                log "Waiting for $target to stop... ($count/$timeout)"
+                sleep 1
+                count=$((count + 1))
+            done
+            
+            if systemctl is-active "$target" &>/dev/null; then
+                warn "$target did not stop within $timeout seconds"
+            else
+                log "✓ Stopped $target"
+            fi
+        else
+            log "Target $target is not active (state: $(systemctl is-active "$target" 2>/dev/null || echo "unknown"))"
+        fi
+    else
+        warn "Target $target not found or not loaded"
+        log "Available targets matching 'experimance':"
+        systemctl list-units --all | grep experimance || log "  No experimance units found"
     fi
     
-    # Stop all services
+    # Stop individual services
+    log "Stopping individual services..."
     for service in "${SERVICES[@]}"; do
-        # Use service names directly as returned from get_project_services.py
-        if systemctl is-active "$service.service" &>/dev/null; then
-            systemctl stop "$service.service"
-            log "Stopped $service.service"
+        # service is in format "service_type@project", e.g., "core@experimance"
+        local full_service_name="$service.service"
+        
+        # Check if service template exists
+        local service_type="${service%@*}"
+        local template_file="$SYSTEMD_DIR/${service_type}@.service"
+        
+        if [ -f "$template_file" ]; then
+            if systemctl is-active "$full_service_name" &>/dev/null; then
+                log "Stopping $full_service_name..."
+                systemctl stop "$full_service_name"
+                
+                # Wait for it to stop
+                local timeout=5
+                local count=0
+                while systemctl is-active "$full_service_name" &>/dev/null && [ $count -lt $timeout ]; do
+                    sleep 1
+                    count=$((count + 1))
+                done
+                
+                if systemctl is-active "$full_service_name" &>/dev/null; then
+                    warn "$full_service_name did not stop within $timeout seconds"
+                else
+                    log "✓ Stopped $full_service_name"
+                fi
+            else
+                log "$full_service_name is not active (state: $(systemctl is-active "$full_service_name" 2>/dev/null || echo "unknown"))"
+            fi
+        else
+            warn "Service template not found: $template_file"
         fi
     done
+    
+    log "Stop operation complete"
 }
 
 restart_services() {
@@ -929,26 +1146,190 @@ restart_services() {
 status_services() {
     log "Checking status of services for project $PROJECT..."
     
-    echo -e "\n${BLUE}=== Service Status ===${NC}"
+    echo -e "\n${BLUE}=== Systemd Template Files Status ===${NC}"
+    
+    # Check if template files exist (these are the actual files we install)
+    local target="experimance@${PROJECT}.target"
+    if [ -f "$SYSTEMD_DIR/experimance@.target" ]; then
+        echo -e "${GREEN}✓${NC} Target template exists: experimance@.target"
+    else
+        echo -e "${RED}✗${NC} Target template missing: experimance@.target"
+    fi
+    
     for service in "${SERVICES[@]}"; do
-        # Use service names directly as returned from get_project_services.py
-        if systemctl is-active "$service.service" &>/dev/null; then
-            echo -e "${GREEN}✓${NC} $service: $(systemctl is-active "$service.service")"
+        # Extract service type from service@project format (e.g., "core" from "core@experimance")
+        local service_type="${service%@*}"
+        local template_file="${service_type}@.service"
+        if [ -f "$SYSTEMD_DIR/$template_file" ]; then
+            echo -e "${GREEN}✓${NC} Service template exists: $template_file"
         else
-            echo -e "${RED}✗${NC} $service: $(systemctl is-active "$service.service")"
+            echo -e "${RED}✗${NC} Service template missing: $template_file"
         fi
     done
     
+    echo -e "\n${BLUE}=== Service Instance Status ===${NC}"
+    echo "Note: Instances are created from templates when services start"
+    for service in "${SERVICES[@]}"; do
+        local full_service_name="$service.service"
+        local status=$(systemctl is-active "$full_service_name" 2>/dev/null || echo "not-found")
+        local enabled=$(systemctl is-enabled "$full_service_name" 2>/dev/null || echo "not-found")
+        
+        case $status in
+            active)
+                echo -e "${GREEN}✓${NC} $full_service_name: $status (enabled: $enabled)"
+                ;;
+            inactive)
+                echo -e "${YELLOW}○${NC} $full_service_name: $status (enabled: $enabled)"
+                ;;
+            failed)
+                echo -e "${RED}✗${NC} $full_service_name: $status (enabled: $enabled)"
+                ;;
+            *)
+                echo -e "${RED}?${NC} $full_service_name: $status (enabled: $enabled)"
+                ;;
+        esac
+    done
+    
     echo -e "\n${BLUE}=== Target Status ===${NC}"
-    target="experimance@${PROJECT}.target"
-    if systemctl is-active "$target" &>/dev/null; then
-        echo -e "${GREEN}✓${NC} $target: $(systemctl is-active "$target")"
-    else
-        echo -e "${RED}✗${NC} $target: $(systemctl is-active "$target")"
+    local status=$(systemctl is-active "$target" 2>/dev/null || echo "not-found")
+    local enabled=$(systemctl is-enabled "$target" 2>/dev/null || echo "not-found")
+    
+    case $status in
+        active)
+            echo -e "${GREEN}✓${NC} $target: $status (enabled: $enabled)"
+            ;;
+        inactive)
+            echo -e "${YELLOW}○${NC} $target: $status (enabled: $enabled)"
+            ;;
+        failed)
+            echo -e "${RED}✗${NC} $target: $status (enabled: $enabled)"
+            ;;
+        *)
+            echo -e "${RED}?${NC} $target: $status (enabled: $enabled)"
+            ;;
+    esac
+    
+    # Show failed services details
+    echo -e "\n${BLUE}=== Failed Services Details ===${NC}"
+    local any_failed=false
+    for service in "${SERVICES[@]}"; do
+        local full_service_name="$service.service"
+        if systemctl is-failed "$full_service_name" &>/dev/null; then
+            any_failed=true
+            echo -e "${RED}Failed service: $full_service_name${NC}"
+            systemctl status "$full_service_name" --no-pager -l | head -10
+            echo ""
+        fi
+    done
+    
+    if systemctl is-failed "$target" &>/dev/null; then
+        any_failed=true
+        echo -e "${RED}Failed target: $target${NC}"
+        systemctl status "$target" --no-pager -l | head -10
+        echo ""
+    fi
+    
+    if [ "$any_failed" = false ]; then
+        echo "No failed services"
     fi
     
     echo -e "\n${BLUE}=== Recent Logs ===${NC}"
-    journalctl --no-pager -n 20 -u "experimance-core@${PROJECT}" || true
+    # Look for core service logs using the correct service instance name
+    local core_service="core@${PROJECT}.service"
+    if systemctl list-units --all | grep -q "$core_service"; then
+        echo "Logs for $core_service:"
+        journalctl --no-pager -n 10 -u "$core_service" || true
+    else
+        log "No core service logs available for $core_service"
+    fi
+}
+
+# Scheduling functions
+setup_schedule() {
+    local start_schedule="$1"
+    local stop_schedule="$2"
+    
+    log "Setting up schedule..."
+    log "  Start: $start_schedule"
+    log "  Stop: $stop_schedule"
+    
+    # Create crontab entries
+    local temp_cron=$(mktemp)
+    local startup_script="$SCRIPT_DIR/startup.sh"
+    local shutdown_script="$SCRIPT_DIR/shutdown.sh"
+    
+    # Get existing crontab (excluding our entries)
+    crontab -l 2>/dev/null | grep -v "experimance-auto" > "$temp_cron" || true
+    
+    # Add startup schedule
+    echo "# experimance-auto-start" >> "$temp_cron"
+    echo "$start_schedule $startup_script --project $PROJECT >/dev/null 2>&1" >> "$temp_cron"
+    
+    # Add shutdown schedule  
+    echo "# experimance-auto-stop" >> "$temp_cron"
+    echo "$stop_schedule $shutdown_script --project $PROJECT >/dev/null 2>&1" >> "$temp_cron"
+    
+    # Install new crontab
+    crontab "$temp_cron"
+    rm "$temp_cron"
+    
+    success "Schedule installed successfully"
+    log "Current schedule:"
+    crontab -l | grep "experimance-auto" || true
+}
+
+remove_schedule() {
+    log "Removing schedule..."
+    
+    # Remove our crontab entries
+    local temp_cron=$(mktemp)
+    crontab -l 2>/dev/null | grep -v "experimance-auto" > "$temp_cron" || true
+    crontab "$temp_cron"
+    rm "$temp_cron"
+    
+    success "Schedule removed successfully"
+}
+
+show_schedule() {
+    log "Current schedule:"
+    local schedule_found=false
+    
+    if crontab -l 2>/dev/null | grep -q "experimance-auto"; then
+        crontab -l | grep "experimance-auto" -A1 -B0
+        schedule_found=true
+    fi
+    
+    if [ "$schedule_found" = false ]; then
+        log "No schedule currently set"
+    fi
+}
+
+# Preset schedules for common use cases
+setup_gallery_schedule() {
+    # Gallery hours: Monday-Friday, 12PM-5PM
+    local start_schedule="0 12 * * 1-5"  # Start at 12:00 PM, Monday-Friday
+    local stop_schedule="0 17 * * 1-5"   # Stop at 5:00 PM, Monday-Friday
+    
+    log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)..."
+    setup_schedule "$start_schedule" "$stop_schedule"
+}
+
+setup_demo_schedule() {
+    # Demo schedule: Every day, 9AM-6PM
+    local start_schedule="0 9 * * *"   # Start at 9:00 AM every day
+    local stop_schedule="0 18 * * *"   # Stop at 6:00 PM every day
+    
+    log "Setting up demo schedule (Daily, 9AM-6PM)..."
+    setup_schedule "$start_schedule" "$stop_schedule"
+}
+
+setup_weekend_schedule() {
+    # Weekend schedule: Saturday-Sunday, 10AM-4PM
+    local start_schedule="0 10 * * 6,0"  # Start at 10:00 AM, Saturday-Sunday
+    local stop_schedule="0 16 * * 6,0"   # Stop at 4:00 PM, Saturday-Sunday
+    
+    log "Setting up weekend schedule (Saturday-Sunday, 10AM-4PM)..."
+    setup_schedule "$start_schedule" "$stop_schedule"
 }
 
 main() {
@@ -1050,8 +1431,164 @@ main() {
                 echo "  $service"
             done
             ;;
+        schedule-gallery)
+            log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)"
+            setup_gallery_schedule
+            ;;
+        schedule-demo)
+            log "Setting up demo schedule (Daily, 9AM-6PM)"
+            setup_demo_schedule
+            ;;
+        schedule-weekend)
+            log "Setting up weekend schedule (Saturday-Sunday, 10AM-4PM)"
+            setup_weekend_schedule
+            ;;
+        schedule-custom)
+            # Expect start and stop schedules as additional arguments
+            local start_schedule="$4"
+            local stop_schedule="$5"
+            
+            if [[ -z "$start_schedule" || -z "$stop_schedule" ]]; then
+                error "Custom schedule requires start and stop cron expressions"
+                error "Usage: $0 $PROJECT schedule-custom 'start-cron' 'stop-cron'"
+                error "Example: $0 $PROJECT schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'"
+                exit 1
+            fi
+            
+            log "Setting up custom schedule"
+            setup_schedule "$start_schedule" "$stop_schedule"
+            ;;
+        schedule-remove)
+            log "Removing schedule"
+            remove_schedule
+            ;;
+        schedule-show)
+            show_schedule
+            ;;
+        diagnose)
+            log "Running systemd diagnostics for project $PROJECT..."
+            
+            echo -e "\n${BLUE}=== System Information ===${NC}"
+            echo "User: $(whoami)"
+            echo "Project: $PROJECT"
+            echo "Mode: $MODE"
+            echo "Use Systemd: $USE_SYSTEMD"
+            echo "Runtime User: $RUNTIME_USER"
+            
+            echo -e "\n${BLUE}=== Systemd Files ===${NC}"
+            echo "Systemd directory: $SYSTEMD_DIR"
+            echo "Available experimance systemd files:"
+            ls -la "$SYSTEMD_DIR" | grep experimance || echo "  No experimance files found"
+            
+            echo -e "\n${BLUE}=== Unit Files Check ===${NC}"
+            local target="experimance@${PROJECT}.target"
+            
+            echo "Target template file: $SYSTEMD_DIR/experimance@.target"
+            if [ -f "$SYSTEMD_DIR/experimance@.target" ]; then
+                echo -e "${GREEN}✓${NC} Target template file exists"
+                echo "Target file permissions: $(ls -la "$SYSTEMD_DIR/experimance@.target")"
+            else
+                echo -e "${RED}✗${NC} Target template file missing"
+            fi
+            
+            echo -e "\n${BLUE}=== Service Template Files ===${NC}"
+            for service in "${SERVICES[@]}"; do
+                # Extract service type from service@project format (e.g., "core" from "core@experimance")
+                local service_type="${service%@*}"
+                local template_file="$SYSTEMD_DIR/${service_type}@.service"
+                echo "Service template: $template_file"
+                if [ -f "$template_file" ]; then
+                    echo -e "${GREEN}✓${NC} Template exists"
+                    echo "  Permissions: $(ls -la "$template_file")"
+                else
+                    echo -e "${RED}✗${NC} Template missing"
+                fi
+            done
+            
+            echo -e "\n${BLUE}=== Service Instance Status ===${NC}"
+            echo "Note: systemd creates instances from templates when you start them"
+            for service in "${SERVICES[@]}"; do
+                # service is in format "service_type@project", e.g., "core@experimance"
+                local full_service_name="$service.service"
+                echo "Instance: $full_service_name"
+                
+                # Check enabled status (this is the key check for instances)
+                local enabled_status=$(systemctl is-enabled "$full_service_name" 2>/dev/null || echo "not-found")
+                local active_status=$(systemctl is-active "$full_service_name" 2>/dev/null || echo "inactive")
+                
+                case $enabled_status in
+                    enabled)
+                        echo -e "${GREEN}✓${NC} Enabled (active: $active_status)"
+                        ;;
+                    disabled)
+                        echo -e "${YELLOW}○${NC} Disabled (active: $active_status)"
+                        ;;
+                    not-found)
+                        echo -e "${RED}?${NC} Not found (never created)"
+                        ;;
+                    *)
+                        echo -e "${YELLOW}?${NC} Status: $enabled_status (active: $active_status)"
+                        ;;
+                esac
+            done
+            
+            echo -e "\n${BLUE}=== Systemd Daemon Status ===${NC}"
+            systemctl status --no-pager | head -5
+            
+            echo -e "\n${BLUE}=== All Experimance Units ===${NC}"
+            echo "Loaded units:"
+            systemctl list-units --all | grep experimance || echo "  No experimance units found"
+            
+            echo -e "\n${BLUE}=== Unit File Status ===${NC}"
+            echo "Unit files:"
+            systemctl list-unit-files | grep experimance || echo "  No experimance unit files found"
+            
+            if systemctl list-unit-files | grep -q "$target"; then
+                echo -e "\n${BLUE}=== Target Dependencies ===${NC}"
+                echo "Dependencies for $target:"
+                if systemctl list-dependencies "$target"; then
+                    echo ""
+                    echo -e "${BLUE}=== Service Linking Analysis ===${NC}"
+                    echo "Checking if services are properly linked to target..."
+                    
+                    # Check each service's enabled status and linking
+                    for service in "${SERVICES[@]}"; do
+                        local full_service_name="$service.service"
+                        local enabled_status=$(systemctl is-enabled "$full_service_name" 2>/dev/null || echo "not-found")
+                        echo "Service: $full_service_name"
+                        echo "  Enabled status: $enabled_status"
+                        
+                        # Check if service appears in target dependencies
+                        if systemctl list-dependencies "$target" 2>/dev/null | grep -q "$full_service_name"; then
+                            echo -e "  ${GREEN}✓${NC} Linked to target"
+                        else
+                            echo -e "  ${RED}✗${NC} NOT linked to target"
+                            echo "  To fix: sudo systemctl enable $full_service_name"
+                        fi
+                        
+                        # Check if symlink exists in target.wants directory
+                        local wants_dir="/etc/systemd/system/${target}.wants"
+                        if [ -L "$wants_dir/$full_service_name" ]; then
+                            echo -e "  ${GREEN}✓${NC} Symlink exists in $wants_dir"
+                        else
+                            echo -e "  ${YELLOW}○${NC} No symlink in $wants_dir"
+                        fi
+                        echo ""
+                    done
+                else
+                    echo "Could not list dependencies for $target"
+                fi
+            else
+                echo -e "\n${BLUE}=== Target Not Found ===${NC}"
+                echo "Target $target is not recognized by systemd"
+                echo "This usually means:"
+                echo "  1. Target template file is missing"
+                echo "  2. systemctl daemon-reload was not run"
+                echo "  3. Target was never enabled"
+            fi
+            ;;
         *)
-            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services"
+            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
             ;;
     esac
 }
@@ -1060,18 +1597,27 @@ main() {
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 [project_name] [action] [mode]"
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
-    echo "Actions: install, start, stop, restart, status, services"
+    echo "Actions: install, start, stop, restart, status, services, diagnose"
+    echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
     echo "Modes: dev, prod (only for install action)"
     echo ""
     echo "Install Modes:"
     echo "  dev     # Development setup - no systemd, local directories, current user"
     echo "  prod    # Production setup - systemd services, system directories, experimance user"
     echo ""
-    echo "Examples:"
+    echo "Basic Examples:"
     echo "  $0 experimance services              # Show services (no sudo needed)"
     echo "  $0 experimance install dev           # Development setup (no sudo needed)"
     echo "  sudo $0 experimance install prod     # Production setup (sudo needed)"
     echo "  sudo $0 experimance start            # Start services in production (sudo needed)"
+    echo ""
+    echo "Schedule Examples:"
+    echo "  $0 experimance schedule-gallery      # Monday-Friday, 12PM-5PM"
+    echo "  $0 experimance schedule-demo         # Daily, 9AM-6PM"  
+    echo "  $0 experimance schedule-weekend      # Saturday-Sunday, 10AM-4PM"
+    echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'  # Custom: Weekdays 8AM-8PM"
+    echo "  $0 experimance schedule-show         # Show current schedule"
+    echo "  $0 experimance schedule-remove       # Remove schedule"
     echo ""
     echo "Development workflow:"
     echo "  $0 experimance install dev           # Setup dependencies and directories"

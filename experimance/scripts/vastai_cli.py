@@ -60,8 +60,14 @@ def get_active_instance_id(manager: VastAIManager) -> Optional[int]:
 
 
 def list_instances(manager: VastAIManager, args: argparse.Namespace):
-    instances = manager.show_instances()
-    print(json.dumps(instances, indent=2))
+    raw  = getattr(args, 'raw', False)
+    instances = manager.show_instances(raw=raw)
+    if isinstance(instances, str):
+        # If it's a string with \n characters, print it directly to interpret newlines
+        print(instances)
+    else:
+        # If it's a JSON object, pretty print it
+        print(json.dumps(instances, indent=2))
 
 
 def search_offers(manager: VastAIManager, args: argparse.Namespace):
@@ -306,10 +312,37 @@ def restart_instance(manager: VastAIManager, args: argparse.Namespace):
 def destroy_instance(manager: VastAIManager, args: argparse.Namespace):
     instance_id = getattr(args, 'instance_id', None)
     if instance_id is None:
-        instance_id = get_active_instance_id(manager)
-        if instance_id is None:
+        # If no specific instance ID provided, destroy ALL instances
+        all_instances = manager.show_instances(raw=True)
+        if not all_instances:
+            print("No instances found to destroy")
             return
+        
+        print(f"Found {len(all_instances)} instance(s) to destroy:")
+        for instance in all_instances:
+            inst_id = instance.get("id")
+            status = instance.get("actual_status", "unknown")
+            image = instance.get("image", "unknown")
+            print(f"  - Instance {inst_id}: {status} ({image})")
+        
+        # Destroy all instances
+        destroyed_count = 0
+        for instance in all_instances:
+            inst_id = instance.get("id")
+            if inst_id is not None:
+                try:
+                    result = manager.destroy_instance(inst_id)
+                    print(f"✅ Destroyed instance {inst_id}")
+                    destroyed_count += 1
+                except Exception as e:
+                    print(f"❌ Failed to destroy instance {inst_id}: {e}")
+            else:
+                print(f"❌ Instance missing ID: {instance}")
+        
+        print(f"Destroyed {destroyed_count}/{len(all_instances)} instances")
+        return
     
+    # Destroy specific instance by ID
     result = manager.destroy_instance(instance_id)
     print(json.dumps(result, indent=2))
 
@@ -341,7 +374,8 @@ def main():
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     # list
-    subparsers.add_parser('list', help='List all instances')
+    p_list = subparsers.add_parser('list', help='List all instances')
+    p_list.add_argument('--raw', action='store_true', help='Show json output instead of pretty print')
 
     # search
     p_search = subparsers.add_parser('search', help='Search for GPU offers')

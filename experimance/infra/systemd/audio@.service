@@ -1,7 +1,8 @@
 [Unit]
 Description=Audio Service (%i project)
-After=network.target user@1000.service
-Wants=network.target user@1000.service
+After=experimance@%i.target
+BindsTo=experimance@%i.target
+# Target handles network and user session dependencies
 
 [Service]
 Type=simple

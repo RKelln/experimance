@@ -1,7 +1,12 @@
 [Unit]
+Description=Health Service (%i project)
+After=experimance@%i.target
+BindsTo=experimance@%i.target
+# Target handles network and user session dependencies]
 Description=Health Service (%i)
-After=network.target user@1000.service
+After=network.target user@1000.service experimance@%i.target
 Wants=network.target user@1000.service
+BindsTo=experimance@%i.target
 
 [Service]
 Type=simple

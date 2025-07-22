@@ -1,7 +1,23 @@
+# SYSTEMD TEMPLATE SERVICE
+# This is a template file (note the @ in filename: core@.service)
+# 
+# Template Usage:
+#   - This file defines HOW to run the core service
+#   - %i gets replaced with the instance identifier (project name)
+#   - To start: systemctl start core@experimance.service
+#   - systemd creates instance "core@experimance.service" from this template
+#   - Multiple projects can use same template: core@sohkepayin.service, etc.
+#
+# Instance Examples:
+#   - core@experimance.service  (for experimance project)
+#   - core@sohkepayin.service   (for sohkepayin project)
+#   - core@demo.service         (for demo project)
+
 [Unit]
 Description=Core Service (%i project)
-After=network.target user@1000.service
-Wants=network.target user@1000.service
+After=experimance@%i.target
+BindsTo=experimance@%i.target
+# Target handles network and user session dependencies
 
 [Service]
 Type=simple

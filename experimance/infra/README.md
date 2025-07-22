@@ -32,7 +32,7 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 
 ### 5. **Kiosk-Style Display Support**
 - **Wayland compatibility**: Automatic detection and configuration for Ubuntu 24.04+ Wayland sessions
-- **Desktop session waiting**: Display service waits for user login before starting
+- **Desktop session waiting**: Services wait for user login before starting
 - **Xwayland integration**: Seamless fallback to X11 applications on Wayland
 - **Auto-recovery**: Display service automatically adapts to desktop environment changes
 
@@ -77,23 +77,87 @@ libs/common/src/experimance_common/
 ## Quick Start Commands
 
 ### Production (Full Deployment)
+Installs functional systemd system services (that wait for the user session to start).
+
 ```bash
 # One-time setup (creates experimance user and system services)
 sudo useradd -m -s /bin/bash experimance
 sudo ./infra/scripts/deploy.sh experimance install prod
 sudo ./infra/scripts/deploy.sh experimance start
 
-# Daily operations
-sudo ./infra/scripts/deploy.sh experimance status
+# View available services
+sudo ./infra/scripts/deploy.sh experimance services
+
+# Group service management (the goal!)
+sudo systemctl start experimance@experimance.target    # Starts all services
+sudo systemctl stop experimance@experimance.target     # Stops all services
+sudo systemctl restart experimance@experimance.target  # Restarts all services
+
+# Script-based management (still works)
+sudo ./infra/scripts/deploy.sh experimance start
+sudo ./infra/scripts/deploy.sh experimance stop
 sudo ./infra/scripts/deploy.sh experimance restart
 
-# View available services (now uses standardized naming)
-./infra/scripts/deploy.sh experimance services
+# Status checking
+sudo ./infra/scripts/deploy.sh experimance status
+sudo ./infra/scripts/deploy.sh experimance diagnose
 
 # Individual service control (new format: service_type@project)
 sudo systemctl status core@experimance
 sudo systemctl status display@experimance  # Includes Wayland support
 sudo systemctl restart agent@experimance
+
+# follow logs
+sudo journalctl -u image_server@experimance.service -f
+
+# logs since last started target service (all services at once!)
+sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" -o cat  # clean, human-readable
+
+# other output formats
+sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" --no-hostname              # with timestamps
+sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" --no-hostname -o short-precise  # precise timestamps
+
+# get timestamp of last target start (for --since)  
+sudo journalctl -u experimance@experimance.target --no-pager -n 20
+
+# follow all service logs live (clean format)
+sudo journalctl -f -u "*@experimance.*" -o cat
+```
+
+## Systemd Templates vs Instances (Important!)
+
+Our systemd setup uses **template services** for multi-project support:
+
+### Template Files (What We Install)
+- `core@.service` - Template for core service
+- `display@.service` - Template for display service  
+- `experimance@.target` - Template for project target
+- Located in `/etc/systemd/system/`
+
+### Instance Services (What Actually Runs)
+- `core@experimance.service` - Running instance for experimance project
+- `display@experimance.service` - Running instance for experimance project
+- `experimance@experimance.target` - Target instance for experimance project
+- Created automatically by systemd when you start services
+
+### How It Works
+1. **Template**: `core@.service` contains `%i` placeholder for project name
+2. **Instance**: `systemctl start core@experimance.service` creates instance with `%i=experimance`
+3. **Multiple Projects**: Same templates can run `core@sohkepayin.service`, etc.
+
+### Common Commands
+```bash
+# Start/stop instances (what you actually run)
+sudo systemctl start core@experimance.service
+sudo systemctl stop display@experimance.service  
+sudo systemctl status agent@experimance.service
+
+# Check template files exist (troubleshooting)
+ls -la /etc/systemd/system/*@.service
+ls -la /etc/systemd/system/*@.target
+
+# See all instances for a project
+sudo systemctl status "*@experimance"
 ```
 
 ### Development (Testing on Any Machine)
@@ -172,10 +236,10 @@ uv run python infra/scripts/get_project_services.py experimance
 tail logs/dev/*
 
 # Production (updated service names)
-sudo journalctl -u core@experimance -f
-sudo journalctl -u display@experimance -f    # Display service with Wayland support
-sudo journalctl -u health@experimance -f     # Health notifications
-sudo journalctl -u agent@experimance -f      # Agent service logs
+sudo journalctl -u "*@experimance.*" -f -o cat        # All services, follow live (clean, human-readable)
+sudo journalctl -u "*@experimance.*" -o cat           # All services, recent logs (clean, human-readable)
+sudo journalctl -u core@experimance -f     # Individual service logs
+sudo journalctl -u health@experimance -f   # Health notifications
 ```
 
 ### Health Monitoring
@@ -184,11 +248,8 @@ sudo journalctl -u agent@experimance -f      # Agent service logs
 ls -la /var/cache/experimance/health/     # Production
 ls -la cache/health/                      # Development
 
-# Check health service (production only) - updated service name
+# Check health service (production only)
 sudo journalctl -u health@experimance -f
-
-# Monitor display service specifically (with Wayland support)
-sudo journalctl -u display@experimance -f
 ```
 
 ## Monitoring Options

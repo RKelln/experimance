@@ -60,10 +60,16 @@ class VastAIManager:
         }
         self.disk_size = 20 # Gigabytes
         
-    def _run_vastai_command(self, cmd: List[str]) -> Any:
+    def _run_vastai_command(self, cmd: List[str], raw: bool = True) -> Any:
         """Run a vastai CLI command and return parsed JSON result."""
         try:
-            command_args = ["--raw", "--api-key", self.api_key] if self.api_key else ["--raw"]
+            command_args = []
+            if raw:
+                command_args.append("--raw")
+            if self.api_key:
+                command_args.append("--api-key")
+                command_args.append(self.api_key)
+            #command_args = ["--raw", "--api-key", self.api_key] if self.api_key else ["--raw"]
             command = (
                 ["uv", "tool", "run", "vastai"] +
                 cmd +
@@ -77,7 +83,10 @@ class VastAIManager:
                 text=True,
                 check=True
             )
-            return json.loads(result.stdout)
+            if raw:
+                return json.loads(result.stdout)
+            else:
+                return result.stdout.strip()
         except subprocess.CalledProcessError as e:
             logger.error(f"VastAI command failed: {e}")
             logger.error(f"stderr: {e.stderr}")
@@ -86,18 +95,18 @@ class VastAIManager:
             logger.error(f"Failed to parse VastAI response: {e}")
             logger.error(f"$ {' '.join(command)}: {result.stdout}")
             raise
-    
-    def show_instances(self) -> List[Dict[str, Any]]:
+
+    def show_instances(self, raw: bool = True) -> List[Dict[str, Any]]:
         """List all instances for the current user."""
-        return self._run_vastai_command(["show", "instances"])
-    
-    def show_instance(self, instance_id: int) -> Dict[str, Any]:
+        return self._run_vastai_command(["show", "instances"], raw=raw)
+
+    def show_instance(self, instance_id: int, raw: bool = True) -> Dict[str, Any]:
         """Get detailed information about a specific instance."""
-        return self._run_vastai_command(["show", "instance", str(instance_id)])
-    
+        return self._run_vastai_command(["show", "instance", str(instance_id)], raw=raw)
+
     def find_experimance_instances(self) -> List[Dict[str, Any]]:
         """Find all running experimance instances."""
-        instances = self.show_instances()
+        instances = self.show_instances(raw=True)  # Force raw=True to get JSON
         experimance_instances = []
         
         for instance in instances:
@@ -204,7 +213,7 @@ class VastAIManager:
         
         while time.time() - start_time < timeout:
             try:
-                instance = self.show_instance(instance_id)
+                instance = self.show_instance(instance_id, raw=True)
                 status = instance.get("actual_status", "unknown")
                 
                 # Check if instance is running

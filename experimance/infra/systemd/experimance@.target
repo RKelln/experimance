@@ -1,8 +1,10 @@
 [Unit]
 Description=Experimance Target (%i project)
-After=network.target user-1000.slice
-Wants=network.target
-# Target waits for user session since all services now require it
+After=network.target user@1000.service
+Wants=network.target user@1000.service
+Requires=network.target user@1000.service
+# Target ensures fundamental dependencies are met before any services start
+# Services bind to this target and will start after it's ready
 
 [Install]
 WantedBy=multi-user.target
