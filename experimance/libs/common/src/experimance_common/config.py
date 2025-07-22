@@ -419,7 +419,15 @@ def load_config_with_overrides(
                 with open(config_path, 'r') as f:
                     file_config = toml.load(f)
                     config = deep_merge(config, file_config)
-                    logger.info(f"Loaded configuration from {config_path.relative_to(Path.cwd())}")
+                    
+                    # Safe relative path calculation
+                    try:
+                        display_path = config_path.relative_to(Path.cwd())
+                    except ValueError:
+                        # If not a subpath of cwd, just use the absolute path
+                        display_path = config_path
+                    
+                    logger.info(f"Loaded configuration from {display_path}")
                     logger.debug(config)
             except Exception as e:
                 logger.warning(f"Error loading config from {config_file}: {e}")
