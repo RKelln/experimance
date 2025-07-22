@@ -1,5 +1,5 @@
 [Unit]
-Description=Experimance Display Service (%i project)
+Description=Display Service (%i project)
 After=network.target user-1000.slice
 Wants=network.target
 # Wait for experimance user session to be active
@@ -10,7 +10,7 @@ Type=simple
 User=experimance
 Group=experimance
 WorkingDirectory=/opt/experimance
-Environment=EXPERIMANCE_PROJECT=%i
+Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Dynamic display environment detection via wrapper script
@@ -24,10 +24,6 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=experimance-display-%i
 
-# Resource limits
-MemoryMax=2G
-CPUQuota=100%
-
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
@@ -36,4 +32,4 @@ ProtectHome=false
 ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
 
 [Install]
-WantedBy=experimance.target
+WantedBy=experimance@.target

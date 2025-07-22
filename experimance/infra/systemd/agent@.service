@@ -1,16 +1,20 @@
 [Unit]
-Description=Experimance Agent Service (%i project)
-After=network.target
+Description=Agent Service (%i project)
+After=network.target user-1000.slice
 Wants=network.target
+# Wait for experimance user session to be active (needed for camera/vision access)
+Requisite=user-1000.slice
 
 [Service]
 Type=simple
 User=experimance
 Group=experimance
 WorkingDirectory=/opt/experimance
-Environment=EXPERIMANCE_PROJECT=%i
+Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Wait for user session before starting agent service (camera/vision access)
+ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_agent
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=no
@@ -19,10 +23,6 @@ Restart=no
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=experimance-agent-%i
-
-# Resource limits
-MemoryMax=2G
-CPUQuota=75%
 
 # Security
 NoNewPrivileges=true
@@ -35,4 +35,4 @@ ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local 
 SupplementaryGroups=audio video
 
 [Install]
-WantedBy=experimance@%i.target
+WantedBy=experimance@.target

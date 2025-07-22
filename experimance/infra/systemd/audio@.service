@@ -1,16 +1,25 @@
 [Unit]
-Description=Experimance Audio Service (%i project)
-After=network.target
+Description=Audio Service (%i project)
+After=network.target user-1000.slice
 Wants=network.target
+# Wait for experimance user session to be active (needed for JACK/audio)
+Requisite=user-1000.slice
 
 [Service]
 Type=simple
 User=experimance
 Group=experimance
 WorkingDirectory=/opt/experimance
-Environment=EXPERIMANCE_PROJECT=%i
+Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Audio and D-Bus environment
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+# Wait for user session before starting audio (JACK needs user session)
+ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_audio
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=no
@@ -20,19 +29,15 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=experimance-audio-%i
 
-# Resource limits
-MemoryMax=1G
-CPUQuota=50%
-
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
+ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv /run/user/1000
 
 # Audio access
 SupplementaryGroups=audio
 
 [Install]
-WantedBy=experimance@%i.target
+WantedBy=experimance@.target

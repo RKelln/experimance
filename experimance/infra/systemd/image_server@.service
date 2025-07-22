@@ -1,17 +1,21 @@
 [Unit]
 Description=Image Server (%i project)
-After=network.target
+After=network.target user-1000.slice
 Wants=network.target
+# Wait for experimance user session to be active (needed for camera/vision access)
+Requisite=user-1000.slice
 
 [Service]
 Type=simple
 User=experimance
 Group=experimance
 WorkingDirectory=/opt/experimance
-Environment=EXPERIMANCE_PROJECT=%i
+Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/experimance/.local/bin/uv run -m image_server
+# Dynamic display environment detection via wrapper script
+ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
+ExecStart=/opt/experimance/infra/scripts/setup_display_env.sh /home/experimance/.local/bin/uv run -m image_server
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=no
 
@@ -19,10 +23,6 @@ Restart=no
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=image-server-%i
-
-# Resource limits
-MemoryMax=2G
-CPUQuota=100%
 
 # Security
 NoNewPrivileges=true
@@ -32,4 +32,4 @@ ProtectHome=false
 ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
 
 [Install]
-WantedBy=experimance.target
+WantedBy=experimance@.target
