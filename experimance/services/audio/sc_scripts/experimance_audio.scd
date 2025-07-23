@@ -25,7 +25,7 @@ s.options.device = nil;  // "plughw:1,0" // USB audio interface
 ~configDir = "../config";  // Default config directory
 
 // Environmental sound crossfading:
-// - Layers with "interval": "loop" use seamless crossfading (LoopBuf)
+// - Layers with "interval": "loop" use seamless crossfading (dual PlayBuf with crossfade)
 // - Other intervals ("frequent", "occasional", "rare") play as one-shots
 // - Crossfade time can be configured per layer with "crossfade_time" field (default: 2.0 seconds)
 
@@ -1376,11 +1376,35 @@ s.waitForBoot {
 
         // Environmental sound player (seamless looping with crossfade for loops only)
         SynthDef(\loopPlayer, { |buf, amp=1.0, fadeTime=3.0, duck=1.0, gate=1, masterVolume=1.0, envVolume=1.0, crossfadeTime=2.0|
-            var sig, env;
+            var sig, env, sig1, sig2, phase, crossfade;
+            var bufFrames, bufRate, loopDur;
+            
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
             
-            // Use LoopBuf for seamless crossfading loops
-            sig = LoopBuf.ar(2, buf, BufRateScale.kr(buf), 1, 0, 0, BufFrames.kr(buf), crossfadeTime);
+            // Get buffer info
+            bufFrames = BufFrames.kr(buf);
+            bufRate = BufRateScale.kr(buf);
+            loopDur = bufFrames / (SampleRate.ir * bufRate);
+            
+            // Create two overlapping PlayBuf instances for seamless crossfading
+            // Use Phasor to track position for crossfade timing
+            phase = Phasor.ar(0, bufRate / SampleRate.ir, 0, 1);
+            
+            // First PlayBuf - normal playback
+            sig1 = PlayBuf.ar(2, buf, bufRate, 1, 0, 1);
+            
+            // Second PlayBuf - delayed by (loop_duration - crossfade_time)
+            // This creates the overlap for crossfading
+            sig2 = PlayBuf.ar(2, buf, bufRate, 1, 
+                (loopDur - crossfadeTime) * SampleRate.ir * bufRate, 1);
+            
+            // Crossfade between the two signals
+            // When phase approaches 1.0 (end of loop), fade from sig1 to sig2
+            crossfade = (1 - phase).clip(0, crossfadeTime / loopDur) / (crossfadeTime / loopDur);
+            crossfade = crossfade.clip(0, 1);
+            
+            // Mix the two signals with crossfade
+            sig = (sig1 * crossfade) + (sig2 * (1 - crossfade));
             
             sig = sig * env * amp * duck * envVolume * masterVolume; // Apply both environment and master volume
             
