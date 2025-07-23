@@ -869,7 +869,7 @@ class AudioService(BaseService):
         
         # Set up message handlers
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
-        self.zmq_service.add_message_handler(MessageType.IDLE_STATUS, self._handle_idle_status)
+        self.zmq_service.add_message_handler(MessageType.PRESENCE_STATUS, self._handle_presence_status)
         self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._handle_agent_control_event)
 
         # Resolve SuperCollider script path if auto-start is enabled
@@ -1135,11 +1135,11 @@ class AudioService(BaseService):
         self.osc.transition(False)
         logger.debug("Transition ended")
     
-    async def _handle_idle_status(self, message_data: MessageDataType):
+    async def _handle_presence_status(self, message_data: MessageDataType):
         """Handle idle status events from the coordinator.
         
         Args:
-            message_data: IDLE_STATUS event data
+            message_data: PRESENCE_STATUS event data
         """
         try:
             # Handle both dict and MessageBase types

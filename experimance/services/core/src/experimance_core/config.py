@@ -84,6 +84,39 @@ class StateMachineConfig(BaseModel):
     )
 
 
+class PresenceConfig(BaseModel):
+    """Presence detection and idle state configuration for core service."""
+    
+    # Hysteresis/debouncing thresholds for core's presence decisions
+    presence_threshold: float = Field(
+        default=2.0,
+        description="Seconds of presence detection before considering audience present"
+    )
+    
+    idle_threshold: float = Field(
+        default=10.0,
+        description="Seconds of no presence detection before considering audience gone"
+    )
+    
+    # Publishing frequency
+    presence_publish_interval: float = Field(
+        default=5.0,
+        description="Interval in seconds to publish presence status updates"
+    )
+    
+    # Conversation timeout
+    conversation_timeout: float = Field(
+        default=3.0,
+        description="Seconds after speech ends before conversation is considered inactive"
+    )
+    
+    # Touch timeout
+    touch_timeout: float = Field(
+        default=5.0,
+        description="Seconds after last significant change before touch is considered inactive"
+    )
+
+
 class ColorizerScheme(Enum):
     """Colorizer schemes for depth visualization."""
     # from: https://intelrealsense.github.io/librealsense/python_docs/_generated/pyrealsense2.colorizer.html
@@ -491,7 +524,7 @@ class CoreServiceConfig(BaseConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["agent"],
-                topics=[MessageType.AGENT_CONTROL_EVENT]
+                topics=[MessageType.SUGGEST_BIOME, MessageType.AUDIENCE_PRESENT, MessageType.SPEECH_DETECTED]
             ),
             workers={
                 "image_server": WorkerConfig(
@@ -525,6 +558,7 @@ class CoreServiceConfig(BaseConfig):
         )
     )
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
+    presence: PresenceConfig = Field(default_factory=PresenceConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     depth_processing: DepthProcessingConfig = Field(default_factory=DepthProcessingConfig)  # Legacy compatibility
     audio: AudioConfig = Field(default_factory=AudioConfig)

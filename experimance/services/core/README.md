@@ -14,6 +14,7 @@ Experimance is an interactive art installation that responds to human presence a
 - 🎨 **Image Generation**: Coordinates AI image generation based on interactions
 - 🔊 **Environmental Audio**: Manages spatial audio that responds to era and biome
 - 🤖 **AI Agent Integration**: Conversational AI that can influence the experience
+- 🎯 **Presence Management**: Multi-modal audience detection with idle state coordination
 - 🛡️ **Robust Error Handling**: Automatic recovery from hardware and network failures
 
 ## Architecture
@@ -108,8 +109,9 @@ uv run python tests/test_camera.py --visualize
 The experience progresses through different eras based on user interaction:
 
 ```
-Wilderness → Pre-industrial → Early Industrial → Late Industrial → 
-Early Modern → Modern → AI/Future ⟷ Post-apocalyptic → Ruins → [back to Wilderness]
+Wilderness → Pre-industrial → Early Industrial → Late Industrial → Modern (1970s) → Current (2020s) 
+→ Future (AI) or
+→ Post-apocalyptic → Ruins → [back to Wilderness]
 ```
 
 ### Era Progression Logic
@@ -118,13 +120,6 @@ Early Modern → Modern → AI/Future ⟷ Post-apocalyptic → Ruins → [back t
 - **Idle Drift**: Gradually returns toward Wilderness after periods of inactivity
 - **Agent Influence**: Conversational AI can suggest biome changes and influence progression
 - **Branching Paths**: AI era can transition to Post-apocalyptic scenarios or loop within AI themes
-
-### Biome System
-
-Each era can be experienced in different environmental contexts:
-- **Natural**: `forest`, `desert`, `mountain`, `coastal`, `tundra`
-- **Human**: `urban`, `farmland`, `industrial`, `residential`
-- **Future**: `space_station`, `underwater`, `virtual`, `post_apocalyptic`
 
 ## Interaction Detection
 
@@ -135,7 +130,32 @@ The Core Service uses Intel RealSense depth cameras for sophisticated interactio
 1. **Hand Detection**: Recognizes hands entering the interaction space
 2. **Change Detection**: Tracks movement and changes in the depth field
 3. **Presence Detection**: Determines if people are present in the space
-4. **Future**: Touch sensors in sand table (planned integration)
+4. **Touch Detection**: One-shot triggers for audio SFX (no persistent state)
+5. **Future**: Touch sensors in sand table (planned integration)
+
+### Presence Management System
+
+The service includes a comprehensive presence detection system that coordinates audience interaction states across all services:
+
+#### PresenceStatus Components
+- **`idle`**: Core's decision on whether system should idle (cost optimization)
+- **`present`**: Audience is detected in the space (vision, hand, voice)
+- **`hand`**: Hand detected over the sand bowl (depth camera)
+- **`voice`**: Audience is speaking (audio detection)
+- **`touch`**: Momentary interaction trigger for audio SFX
+- **`conversation`**: Either agent or human is speaking (audio ducking control)
+- **`people_count`**: Number of people detected by vision system
+
+#### Hysteresis Logic
+- **Presence confirmation**: Requires 1+ seconds of consistent detection
+- **Absence confirmation**: Requires 2+ seconds of no detection
+- **Prevents flapping**: Debounces rapid state changes for stable operation
+
+#### Service Integration
+- **Audio Service**: Uses `conversation` field for audio ducking during speech
+- **Agent Service**: Receives presence updates for conversation management
+- **Display Service**: Coordinates visual feedback based on interaction state
+- **Image Server**: Presence influences generation timing and content
 
 ### Camera Integration
 
@@ -294,11 +314,22 @@ Notifies all services when the experience transitions between eras:
 ```json
 {
   "event_type": "EraChanged",
-  "timestamp": "2025-06-15T10:30:00Z",
-  "era": "modern",
-  "biome": "urban", 
-  "user_interaction_score": 0.7,
   "transition_reason": "user_interaction"
+}
+```
+
+#### PresenceStatus
+Publishes comprehensive audience detection state for service coordination:
+```json
+{
+  "event_type": "PresenceStatus",
+  "idle": false,
+  "present": true,
+  "hand": true,
+  "voice": false,
+  "touch": false,
+  "conversation": true,
+  "people_count": 1
 }
 ```
 

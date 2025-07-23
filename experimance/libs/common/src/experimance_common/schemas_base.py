@@ -3,6 +3,7 @@ Schema definitions for Experimance inter-service messages.
 """
 
 from __future__ import annotations
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
@@ -215,11 +216,14 @@ class MessageType(StringComparableEnum):
     """Message types used in the Experimance system."""
     SPACE_TIME_UPDATE = "SpaceTimeUpdate"
     RENDER_REQUEST = "RenderRequest"
-    IDLE_STATUS = "IdleStatus"
+    PRESENCE_STATUS = "PresenceStatus"
     IMAGE_READY = "ImageReady"
     TRANSITION_READY = "TransitionReady"
     LOOP_READY = "LoopReady"
-    AGENT_CONTROL_EVENT = "AgentControlEvent"
+    # Agent control message types
+    SUGGEST_BIOME = "SuggestBiome"
+    AUDIENCE_PRESENT = "AudiencePresent"
+    SPEECH_DETECTED = "SpeechDetected"
     TRANSITION_REQUEST = "TransitionRequest"
     LOOP_REQUEST = "LoopRequest"
     ALERT = "Alert"
@@ -265,12 +269,30 @@ class RenderRequest(MessageBase):
     depth_map: Optional[ImageSource] = None  # Optional depth map URI for depth-aware generation
 
 
-class IdleStatus(MessageBase):
-    """Event published when the idle status changes."""
-    type: str = MessageType.IDLE_STATUS
-    status: bool  # True = now idle, False = exiting idle
-    idle_duration: float
-    timestamp: str
+class PresenceStatus(MessageBase):
+    """Event published when the presence status changes."""
+    type: str = MessageType.PRESENCE_STATUS
+    idle: bool      # core's decision whether to idle
+    present: bool   # core's decision is the audience is present (from agent's vision, etc)
+    # sub-categories of present (if any are true then present is true)
+    hand: bool      # the audience hand is detected over the bowl
+    voice: bool     # the audience is speaking
+    touch: bool     # currently unused but for future sand sensors
+    # installation activity
+    conversation: bool     # either agent or human is speaking (or recently spoke)
+    # detection counts
+    people_count: int = 0  # number of people detected by vision system
+    # timestamps of last detection
+    last_present: Optional[datetime] = None
+    last_hand: Optional[datetime] = None
+    last_voice: Optional[datetime] = None
+    last_touch: Optional[datetime] = None
+    # durations of sub-categories being true (in seconds)
+    presence_duration: float = 0.0  # how long the audience has been present
+    hand_duration: float = 0.0      # how long the hand has been over the bowl 
+    touch_duration: float = 0.0     # how long the visitor has been touching the sand
+    voice_duration: float = 0.0     # duration of visitor speaking
+    timestamp: datetime = Field(default_factory=datetime.now)  # timestamp of when message was sent
 
 class ImageReady(MessageBase):
     """Event published when a new image is ready.
@@ -301,26 +323,23 @@ class LoopReady(MessageBase):
     duration_s: Optional[float] = None  # Duration in seconds if known
 
 
-class AgentControlEventPayload(BaseModel):
-    """Base class for agent control event payloads."""
-    pass
+class SuggestBiome(MessageBase):
+    """Message to suggest a biome change."""
+    type: MessageType = MessageType.SUGGEST_BIOME
+    biome: str  # The suggested biome name
 
 
-class AudiencePresentPayload(AgentControlEventPayload):
-    """Payload for audience presence detection."""
-    status: bool
+class AudiencePresent(MessageBase):
+    """Message indicating audience presence status."""
+    type: MessageType = MessageType.AUDIENCE_PRESENT
+    status: bool  # True if audience is present, False otherwise
 
 
-class SpeechDetectedPayload(AgentControlEventPayload):
-    """Payload for speech detection."""
-    is_speaking: bool
-
-
-class AgentControlEvent(MessageBase):
-    """Event published by the agent to control other services."""
-    type: MessageType = MessageType.AGENT_CONTROL_EVENT
-    sub_type: str  # "SuggestBiome", "AudiencePresent", "SpeechDetected"
-    payload: Dict  # Structure varies based on sub_type
+class SpeechDetected(MessageBase):
+    """Message indicating speech detection status."""
+    type: MessageType = MessageType.SPEECH_DETECTED
+    is_speaking: bool  # True if speech is detected, False otherwise
+    speaker: Optional[str] = None  # "agent" or "human" to identify the speaker
 
 FadeDurationType = Union[float, tuple[float, float]]  # Single fade duration or (fade_in, fade_out) tuple
 

@@ -49,7 +49,8 @@ from experimance_common.schemas import MessageType
 # Available message types
 # MessageType.SPACE_TIME_UPDATE
 # MessageType.RENDER_REQUEST
-# MessageType.IDLE_STATUSSPACE_TIME_UPDATE
+# MessageType.PRESENCE_STATUS
+# MessageType.SPACE_TIME_UPDATE
 # MessageType.IMAGE_READY
 # MessageType.TRANSITION_READY
 # MessageType.LOOP_READY

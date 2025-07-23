@@ -7,19 +7,9 @@
 
 ## 1  Experience Overview
 
-A large bowl of white sand has AI generated satellite images projected on it. As the audience interacts with the sand the images update```
+A large bowl of white sand has AI generated satellite images projected on it. As the audience interacts with the sand the images update.
 
 Complete schema definitions live at `/schemas`.
-
----
-
-## 5.1 DISPLAY_MEDIA Message Flow and Design
-
-### Overview
-
-The DISPLAY_MEDIA message type represents a significant architectural improvement in how media content is delivered to the display service. Instead of the display service directly handling ImageReady messages, the core---
-
-© 2025 Experimance — MIT‑licensed where applicable.
 
 ---
 
@@ -39,12 +29,12 @@ For reliability and simplicity, the production deployment uses native systemd se
 
 **Quick Deployment:**
 ```bash
-# Install and start all services
+# Install and start all services (production)
 sudo ./infra/scripts/deploy.sh experimance install
 sudo ./infra/scripts/deploy.sh experimance start
 
 # Check status
-./infra/scripts/status.sh experimance
+sudo ./infra/scripts/deploy.sh experimance status
 ```
 
 ### 12.2 Monitoring & Remote Management
@@ -66,8 +56,6 @@ sudo ./infra/scripts/deploy.sh experimance start
 **Key Scripts:**
 * `infra/scripts/deploy.sh` - Service management (install, start, stop, restart, status)
 * `infra/scripts/healthcheck.py` - Comprehensive health monitoring
-* `infra/scripts/status.sh` - Quick system overview
-* `infra/scripts/update.sh` - Safe updates with rollback
 * `infra/scripts/switch-project.sh` - Project management
 
 ### 12.3 Infrastructure Files
@@ -76,9 +64,9 @@ sudo ./infra/scripts/deploy.sh experimance start
 ```
 infra/
 ├── systemd/                    # Service unit files
-│   ├── experimance-core@.service
-│   ├── experimance-display@.service
-│   ├── image-server@.service
+│   ├── core@.service
+│   ├── display@.service
+│   ├── image_server@.service
 │   └── experimance@.target
 ├── scripts/                    # Management scripts
 │   ├── deploy.sh              # Main deployment script
@@ -232,6 +220,39 @@ DISPLAY_MEDIA messages leverage the modernized image transport utilities:
 }
 ```
 
+### Presence Logic
+
+### Presence Logic
+
+The system detects audience presence at multiple levels to manage interaction states and cost optimization through idle detection.
+
+**PresenceStatus Components:**
+- `idle`: Core's decision on system idle state (cost optimization)
+- `present`: Audience detected (vision/hand/voice with hysteresis)
+- `hand`: Hand over sand bowl (depth camera)
+- `voice`: Human speaking (audio detection)  
+- `touch`: One-shot trigger for audio SFX (no persistent state)
+- `conversation`: Agent OR human speaking (audio ducking control)
+- `people_count`: Vision-detected count
+
+**Detection Sources:**
+- **Agent Service**: Vision-based people counting and presence detection
+- **Core Service**: Depth camera hand detection over sand bowl
+- **Audio Services**: Voice activity detection for human speech
+- **Agent Service**: Agent speaking state
+
+**Hysteresis Logic:**
+- **Presence confirmation**: 1+ seconds consistent detection
+- **Absence confirmation**: 2+ seconds no detection  
+- **Touch behavior**: Momentary trigger, no timeout extension
+
+**Service Integration:**
+- **Audio**: Uses `conversation` field for ducking during speech
+- **Agent**: Ends conversations on `idle`, notices extended inactivity
+- **Display**: Coordinates visual feedback based presence state
+- **Cost Optimization**: System idles when no audience detected
+
+Published as `PresenceStatus` message to `events` channel for all service coordination.
 ---
 
 ## 6  Hardware & I/Oessing from untouched wilderness through many eras of human development to the modern day and then beyond to an imagined abstract AI-infused cityscape or post-apocalyptic ruins depending on the audience's interactions with the sand. A depth camera is used to observe the topology of the sand which informs the generated images. Sensors on the sand's contain detect how gently the sand is moved. 

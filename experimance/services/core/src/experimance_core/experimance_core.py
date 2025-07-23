@@ -5,6 +5,7 @@ This service manages:
 - Experience state machine (era progression, biome selection)
 - Depth camera processing and user interaction detection
 - Event publishing and coordination with other services
+  - Presence management (coordinating audience detection and interaction)
 - Prompt generation and audio tag extraction
 """
 import argparse
@@ -26,7 +27,8 @@ from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
 from experimance_common.schemas import (
-    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, IdleStatus
+    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, PresenceStatus,
+    SuggestBiome, AudiencePresent, SpeechDetected
 )
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
@@ -114,6 +116,10 @@ class ExperimanceCoreService(BaseService):
         # Internal state
         self.last_significant_depth_map: Optional[Any] = None
 
+        # Initialize presence manager
+        from experimance_core.presence import PresenceManager
+        self.presence_manager = PresenceManager(config.presence)
+
         # Depth processing state
         self._depth_processor: Optional[DepthProcessor] = None
         self._depth_visualizer: Optional[DepthVisualizer] = None
@@ -192,6 +198,7 @@ class ExperimanceCoreService(BaseService):
         self.add_task(self._main_event_loop())
         self.add_task(self._depth_processing_task())
         self.add_task(self._state_machine_task())
+        self.add_task(self._presence_publishing_task())
         
         # Initialize depth processing (non-blocking on failure)
         try:
@@ -316,6 +323,9 @@ class ExperimanceCoreService(BaseService):
                 self.hand_detected = hand_detected
                 logger.debug(f"Hand detection changed: {hand_detected}")
                 
+                # Update presence manager with hand detection using clean property interface
+                self.presence_manager.hand = hand_detected
+                
                 # Publish interaction sound trigger
                 await self._publish_interaction_sound(hand_detected)
                 
@@ -379,6 +389,9 @@ class ExperimanceCoreService(BaseService):
 
                 # Store change map for display service
                 self.change_map = change_map
+
+                # Update touch detection based on significant change (proxy for sand interaction)
+                self.presence_manager.touch = True
 
                 # Update depth difference score for interaction calculations (use smoothed score)
                 self.depth_difference_score = smoothed_change_score
@@ -549,29 +562,35 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error publishing interaction sound: {e}")
 
-    async def _publish_idle_state_changed(self):
-        """Publish idle state changed event."""
-        event = {
-            "type": MessageType.IDLE_STATUS.value,
-            "idle_duration": self.idle_timer,
-            "current_era": self.current_era,
-            "current_biome": self.current_biome,
-            "timestamp": datetime.now().isoformat()
-        }
-        
+    async def _publish_presence_status(self):
+        """Publish current presence status from the presence manager."""
         try:
-            success = await self.zmq_service.publish(event)
+            presence_status = self.presence_manager.get_current_status()
+            
+            # Publish the presence status
+            success = await self.zmq_service.publish(presence_status)
             if success:
-                logger.debug(f"Published idle state: {self.idle_timer:.1f}s")
+                self.presence_manager.mark_published()
+                logger.debug(f"Published presence status: present={presence_status.present}, "
+                           f"idle={presence_status.idle}, hand={presence_status.hand}, "
+                           f"voice={presence_status.voice}, people={presence_status.people_count}")
             else:
-                logger.warning("Failed to publish idle state event")
+                logger.warning("Failed to publish presence status")
         except Exception as e:
-            logger.error(f"Error publishing idle state: {e}")
+            logger.error(f"Error publishing presence status: {e}")
+
+    async def _publish_idle_state_changed(self):
+        """Publish idle state changed event (legacy - replaced by presence status)."""
+        # For backward compatibility, we can still publish this but it's deprecated
+        logger.warning("_publish_idle_state_changed is deprecated, use _publish_presence_status instead")
+        await self._publish_presence_status()
 
     def _register_message_handlers(self):
         """Register handlers for different message types."""
         # Register PubSub message handlers
-        self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._zmq_handle_agent_control)
+        self.zmq_service.add_message_handler(MessageType.SUGGEST_BIOME, self._zmq_handle_suggest_biome)
+        self.zmq_service.add_message_handler(MessageType.AUDIENCE_PRESENT, self._zmq_handle_audience_present)
+        self.zmq_service.add_message_handler(MessageType.SPEECH_DETECTED, self._zmq_handle_speech_detected)
         self.zmq_service.add_message_handler("AudioStatus", self._zmq_handle_audio_status)
         
         # Register worker response handler for responses from push/pull workers
@@ -944,10 +963,61 @@ class ExperimanceCoreService(BaseService):
             logger.error(f"Error sending DISPLAY_MEDIA: {e}")
             logger.debug(f"Image message: {image_message}", exc_info=True)
 
-    async def _handle_agent_control(self, message: Dict[str, Any]):
-        """Handle AgentControl messages from agent service."""
-        logger.debug(f"Received AgentControl message: {message.get('sub_type')}")
-        # TODO: Implement agent control handling logic
+    async def _handle_suggest_biome(self, message: Dict[str, Any]):
+        """Handle SuggestBiome messages from agent service."""
+        biome_name = message.get('biome', '')
+        logger.debug(f"Received SuggestBiome message: {biome_name}")
+        
+        try:
+            # TODO: Implement biome switching logic
+            logger.info(f"Agent suggested biome: {biome_name}")
+        except Exception as e:
+            logger.error(f"Error processing suggest biome message: {e}")
+
+    async def _handle_audience_present(self, message: Dict[str, Any]):
+        """Handle AudiencePresent messages from agent service."""
+        status = message.get('status', False)
+        logger.debug(f"Received AudiencePresent message: {status}")
+        
+        try:
+            # Agent vision detection - just use people_count (simpler and more informative)
+            people_count = message.get('people_count', 0)
+            # If status is False but people_count > 0, trust the count. If status is True but count is 0, set count to 1
+            if not status and people_count > 0:
+                # Trust the count over the boolean
+                pass
+            elif status and people_count == 0:
+                # Set count to 1 if status indicates present but no count provided
+                people_count = 1
+            elif not status:
+                # Ensure count is 0 if not present
+                people_count = 0
+                
+            self.presence_manager.people_count = people_count
+            logger.debug(f"Updated people count: {people_count}")
+        except Exception as e:
+            logger.error(f"Error processing audience present message: {e}")
+
+    async def _handle_speech_detected(self, message: Dict[str, Any]):
+        """Handle SpeechDetected messages from agent service."""
+        is_speaking = message.get('is_speaking', False)
+        speaker = message.get('speaker', 'unknown')
+        logger.debug(f"Received SpeechDetected message: {is_speaking}, speaker: {speaker}")
+        
+        try:
+            # Update presence manager based on who is speaking - use clean property interface
+            if speaker == 'agent':
+                self.presence_manager.agent_speaking = is_speaking
+                logger.debug(f"Updated agent speaking: {is_speaking}")
+            elif speaker == 'human':
+                self.presence_manager.voice = is_speaking
+                logger.debug(f"Updated human voice detection: {is_speaking}")
+            else:
+                # Generic voice detection
+                self.presence_manager.voice = is_speaking
+                logger.debug(f"Updated voice detection: {is_speaking}")
+        except Exception as e:
+            logger.error(f"Error processing speech detected message: {e}")
 
     async def _handle_audio_status(self, message: Dict[str, Any]):
         """Handle AudioStatus messages from audio service.""" 
@@ -1353,6 +1423,24 @@ class ExperimanceCoreService(BaseService):
                 if not await self._sleep_if_running(1.0):
                     break
 
+    async def _presence_publishing_task(self):
+        """Handle periodic publishing of presence status."""
+        logger.info("Presence publishing task started")
+        
+        while self.running:
+            try:
+                # Check if it's time to publish presence status
+                if self.presence_manager.should_publish():
+                    await self._publish_presence_status()
+                
+                # Sleep for a short interval
+                if not await self._sleep_if_running(1.0):  # Check every second
+                    break
+                    
+            except Exception as e:
+                self.record_error(e, is_fatal=False, 
+                                custom_message="Error in presence publishing task")
+
     async def _state_machine_task(self):
         """Handle era progression and state machine logic."""
         logger.info("State machine task started")
@@ -1541,16 +1629,35 @@ class ExperimanceCoreService(BaseService):
 # ZMQ Message Handler Adapters
     # These methods adapt between the new ZMQ signature (topic, data) and the old message handler signature
     
-    def _zmq_handle_agent_control(self, topic: str, data: MessageDataType):
-        """ZMQ adapter for agent control messages."""
+    def _zmq_handle_suggest_biome(self, topic: str, data: MessageDataType):
+        """ZMQ adapter for suggest biome messages."""
         try:
             if isinstance(data, dict):
-                # Create a task for async execution
-                asyncio.create_task(self._handle_agent_control(data))
+                asyncio.create_task(self._handle_suggest_biome(data))
             else:
-                logger.warning(f"Unexpected agent control data type: {type(data)}")
+                logger.warning(f"Unexpected suggest biome data type: {type(data)}")
         except Exception as e:
-            logger.error(f"Error handling agent control message: {e}")
+            logger.error(f"Error handling suggest biome message: {e}")
+
+    def _zmq_handle_audience_present(self, topic: str, data: MessageDataType):
+        """ZMQ adapter for audience present messages."""
+        try:
+            if isinstance(data, dict):
+                asyncio.create_task(self._handle_audience_present(data))
+            else:
+                logger.warning(f"Unexpected audience present data type: {type(data)}")
+        except Exception as e:
+            logger.error(f"Error handling audience present message: {e}")
+
+    def _zmq_handle_speech_detected(self, topic: str, data: MessageDataType):
+        """ZMQ adapter for speech detected messages."""
+        try:
+            if isinstance(data, dict):
+                asyncio.create_task(self._handle_speech_detected(data))
+            else:
+                logger.warning(f"Unexpected speech detected data type: {type(data)}")
+        except Exception as e:
+            logger.error(f"Error handling speech detected message: {e}")
     
     def _zmq_handle_audio_status(self, topic: str, data: MessageDataType):
         """ZMQ adapter for audio status messages."""
