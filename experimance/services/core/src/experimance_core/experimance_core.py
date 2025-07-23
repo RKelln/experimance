@@ -104,7 +104,6 @@ class ExperimanceCoreService(BaseService):
         self.current_era: Era = Era.WILDERNESS
         self.current_biome: Biome = random.choice(self.AVAILABLE_BIOMES)
         self.user_interaction_score: float = 0.0
-        self.idle_timer: float = 0.0
         self.audience_present: bool = False
         self.era_progression_timer: float = 0.0
         self.session_start_time: datetime = datetime.now()
@@ -646,7 +645,6 @@ class ExperimanceCoreService(BaseService):
         
         # reset interaction score and idle timer on era change
         self.user_interaction_score = 0.0
-        self.idle_timer = 0.0
             
         # For Future era, use probability to decide between looping and progressing
         if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
@@ -671,22 +669,17 @@ class ExperimanceCoreService(BaseService):
         else:
             return possible_next_eras[0].value
 
-    
-    def update_idle_timer(self, delta_time: float):
-        """Update the idle timer."""
-        self.idle_timer += delta_time
-    
     def should_reset_to_wilderness(self) -> bool:
         """Check if system should reset to wilderness due to idle timeout."""
-        idle_timeout = self.config.state_machine.idle_timeout
-        return self.idle_timer >= idle_timeout and self.current_era != Era.WILDERNESS.value
+        # TODO: wait for longer past start of idle?
+        #idle_timeout = self.config.state_machine.idle_timeout
+        return self.current_era != Era.WILDERNESS and self.presence_manager.is_idle()
     
     async def reset_to_wilderness(self):
         """Reset the system to wilderness state."""
         # Use the advance_era and switch_biome methods for prompt manager consistency
         self.advance_era(Era.WILDERNESS)
-        self.switch_biome(Biome.TEMPERATE_FOREST) # TODO: pick random biome?
-        self.idle_timer = 0.0
+        self.switch_biome(random.choice(self.AVAILABLE_BIOMES))
         self.user_interaction_score = 0.0
         self.audience_present = False
         
@@ -1446,7 +1439,6 @@ class ExperimanceCoreService(BaseService):
                 last_update = current_time
                 
                 # Update timers
-                self.update_idle_timer(delta_time)
                 self.era_progression_timer += delta_time
                 
                 #logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
@@ -1469,10 +1461,6 @@ class ExperimanceCoreService(BaseService):
                     if next_era and next_era != self.current_era:
                         logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
                         await self.progress_era()
-                
-                # Publish idle state changes if needed
-                # if self.idle_timer > 0 and int(self.idle_timer) % 10 == 0:  # Every 10 seconds of idle
-                #     await self._publish_presence_status()
                 
                 # Use _sleep_if_running() to respect shutdown requests
                 if not await self._sleep_if_running(1.0):  # 1 Hz for state updates
@@ -1565,7 +1553,6 @@ class ExperimanceCoreService(BaseService):
                 f"Era: {self.current_era.value}",
                 f"Biome: {self.current_biome.value}",
                 f"Interaction Score: {self.user_interaction_score:.3f}",
-                f"Idle Timer: {self.idle_timer:.1f}s",
                 f"Camera State: {self._camera_state.value}",
             ]
             

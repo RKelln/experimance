@@ -17,15 +17,10 @@ era_max_duration = 120       # maximum time in seconds before era can change
 
 [presence]
 # Hysteresis/debouncing thresholds for presence detection
-presence_threshold = 2.0     # seconds of presence detection before considering audience present
-idle_threshold = 10.0        # seconds of no presence detection before considering audience gone
-
-# Publishing frequency  
-presence_publish_interval = 5.0  # interval in seconds to publish presence status updates
-
-# Timeouts
-conversation_timeout = 3.0   # seconds after speech ends before conversation is considered inactive
-touch_timeout = 5.0          # seconds after last significant change before touch is considered inactive
+presence_threshold = 0.5     # seconds of presence detection before considering audience present
+absence_threshold = 5.0      # seconds of no presence detection before considering audience gone
+idle_threshold = 30.0        # seconds of no presence detection before considering audience gone
+presence_publish_interval = 10.0  # interval in seconds to publish presence status updates
 
 [camera]
 # Core camera settings

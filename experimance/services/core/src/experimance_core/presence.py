@@ -51,10 +51,10 @@ class PresenceManager:
         
         # Last confirmed state change times for duration calculations
         self._last_present_time: Optional[datetime] = None
+        self._last_absence_time: Optional[datetime] = None  # Track when presence was lost for idle timeout
         self._last_hand_time: Optional[datetime] = None
         self._last_voice_time: Optional[datetime] = None
         self._last_touch_time: Optional[datetime] = None
-        self._last_absence_time: Optional[datetime] = None  # Track when presence was lost for idle timeout
         
         # Current stable decisions (after hysteresis)
         self._current_status = PresenceStatus(
@@ -313,6 +313,15 @@ class PresenceManager:
         """Force an immediate update of the presence state (for testing)."""
         self._update_presence_state()
     
+    def is_idle(self) -> bool:
+        """
+        Check if the current status is idle.
+        
+        Returns:
+            True if currently idle, False otherwise
+        """
+        return self._current_status.idle
+
     def get_debug_info(self) -> dict:
         """Get debug information about the presence manager state."""
         now = datetime.now()

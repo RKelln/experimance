@@ -108,18 +108,6 @@ class PresenceConfig(BaseModel):
         default=5.0,
         description="Interval in seconds to publish presence status updates"
     )
-    
-    # Conversation timeout
-    conversation_timeout: float = Field(
-        default=3.0,
-        description="Seconds after speech ends before conversation is considered inactive"
-    )
-    
-    # Touch timeout
-    touch_timeout: float = Field(
-        default=5.0,
-        description="Seconds after last significant change before touch is considered inactive"
-    )
 
 
 class ColorizerScheme(Enum):
