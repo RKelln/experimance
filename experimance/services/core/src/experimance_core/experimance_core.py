@@ -317,18 +317,16 @@ class ExperimanceCoreService(BaseService):
             # Extract data from DepthFrame
             depth_image = depth_frame.depth_image
             hand_detected = depth_frame.hand_detected
-            
+            self.presence_manager.hand = hand_detected if hand_detected is not None else False
+
             # Update hand detection state (handle None case)
             if hand_detected is not None and self.hand_detected != hand_detected:
                 self.hand_detected = hand_detected
                 logger.debug(f"Hand detection changed: {hand_detected}")
-                
-                # Update presence manager with hand detection using clean property interface
-                self.presence_manager.hand = hand_detected
-                
+
                 # Publish interaction sound trigger
-                await self._publish_interaction_sound(hand_detected)
-                
+                # await self._publish_interaction_sound(hand_detected)
+
                 # Clear change score queue when hand state changes to reset smoothing
                 self.change_score_queue.clear()
                 logger.debug("Cleared change score queue due to hand state change")
@@ -1099,6 +1097,9 @@ class ExperimanceCoreService(BaseService):
                 period += sleep
 
                 await self._check_pending_render_request() # handle pending render requests
+
+                if self.presence_manager.should_publish():
+                    await self._publish_presence_status()
 
                 # Periodic state logging for debugging
                 if period > state_display_period:  # Every 30 seconds

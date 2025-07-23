@@ -68,6 +68,7 @@ class PresenceManager:
         
         # Publishing control
         self._last_publish_time: Optional[datetime] = None
+        self.updated : bool = False  # Flag to track if presence state has changed
         
         logger.info("PresenceManager initialized")
     
@@ -147,6 +148,7 @@ class PresenceManager:
     def _update_presence_state(self) -> None:
         """Update the internal presence state based on current inputs."""
         now = datetime.now()
+        self.updated = True  # Mark that state has changed
         
         # Determine if any presence indicators are active
         # Note: touch is one-shot and doesn't extend presence beyond the moment it occurs
@@ -253,6 +255,10 @@ class PresenceManager:
         Returns:
             True if it's time to publish an update
         """
+        if self.updated:
+            self.updated = False
+            return True  # Force publish if state was updated
+        
         if self._last_publish_time is None:
             return True
         
