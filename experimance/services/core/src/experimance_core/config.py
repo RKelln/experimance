@@ -109,6 +109,11 @@ class PresenceConfig(BaseModel):
         description="Interval in seconds to publish presence status updates"
     )
 
+    conversation_timeout: float = Field(
+        default=5.0,
+        description="Seconds after speech ends before conversation is considered inactive"
+    )
+
 
 class ColorizerScheme(Enum):
     """Colorizer schemes for depth visualization."""

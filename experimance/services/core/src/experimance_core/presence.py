@@ -111,6 +111,7 @@ class PresenceManager:
         if self._agent_speaking != value:
             logger.debug(f"Agent speaking changed: {value}")
             self._agent_speaking = value
+            self._last_voice_time = datetime.now() # last time we heard the agent speaking (starting or ending)
             self._update_presence_state()
             self.updated = True
     
@@ -251,7 +252,13 @@ class PresenceManager:
         
         # Calculate conversation status (either agent or human speaking)
         conversation_active = self._agent_speaking or self._voice_detected
-        
+        if self._current_status.conversation and not conversation_active: # if we were in a conversation but not actively speaking, check for timeout
+            conversation_active = self._last_voice_time and (now - self._last_voice_time).total_seconds() < self.config.conversation_timeout
+
+        if conversation_active != self._current_status.conversation:
+            logger.debug(f"Conversation state changed: {conversation_active}")
+            self.updated = True
+
         # Update status
         self._current_status = PresenceStatus(
             idle=idle,

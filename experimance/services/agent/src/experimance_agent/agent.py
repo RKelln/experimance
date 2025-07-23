@@ -7,6 +7,7 @@ controlling other services.
 """
 
 import asyncio
+import time
 import json
 import logging
 import uuid
@@ -350,7 +351,9 @@ class AgentService(BaseService):
         frame_duration = 1.0 / self.config.vision.webcam_fps
         rapid_interval = max(frame_duration, normal_interval / 5)  # 5x faster, but at least 1 frame
         current_interval = normal_interval
-        
+        last_publish_time = time.monotonic() # used to ensure we report at least every report_min_interval seconds
+        report_min_interval = 30.0  # used so if core service restarts we update it every 30 seconds regardless of changes
+
         while self.running:
             try:
                 if (self.config.vision.audience_detection_enabled and 
@@ -372,7 +375,9 @@ class AgentService(BaseService):
                             if is_stable:
                                 current_interval = normal_interval
                                 person_count = detection_result.get("person_count", 0)
-                                if self._person_count != person_count:
+                                now = time.monotonic()
+                                if self._person_count != person_count or now - last_publish_time > report_min_interval:
+                                    last_publish_time = now
                                     self._person_count = person_count
                                     await self._publish_audience_present(
                                         person_count=person_count

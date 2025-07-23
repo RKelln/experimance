@@ -567,9 +567,9 @@ class ExperimanceCoreService(BaseService):
                 presence = self.presence_manager.get_current_status()
 
             logger.info(f"Published presence status: present={presence.present}, "
-                       f"idle={presence.idle}, hand={presence.hand}, "
-                       f"voice={presence.voice}, people={presence.person_count}, "
-                       f"touch={presence.touch}")
+                       f"idle={presence.idle}, hand={presence.hand}, touch={presence.touch}, "
+                       f"voice={presence.voice}, conversation={presence.conversation}, "
+                       f"people={presence.person_count}")
 
             # Publish the presence status (publish() raises exception on failure)
             await self.zmq_service.publish(presence)
