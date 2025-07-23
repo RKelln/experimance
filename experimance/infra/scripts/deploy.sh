@@ -483,6 +483,7 @@ get_required_packages() {
         "libv4l-dev"       # Video4Linux development libraries  
         "uvcdynctrl"       # UVC (USB Video Class) control tools
         "guvcview"         # GTK+ UVC Viewer and control tool (optional)
+        "ffmpeg"           # FFmpeg for video/audio processing
     )
     
     # Export arrays for use by calling functions
