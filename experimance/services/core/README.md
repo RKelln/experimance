@@ -159,7 +159,7 @@ The service includes a comprehensive presence detection system that coordinates 
 
 ### Camera Integration
 
-The service uses the `robust_camera.py` module for reliable depth processing:
+The service uses the `realsense_camera.py` module for reliable depth processing:
 
 - **Automatic Error Recovery**: Handles camera disconnections and USB issues
 - **Mock Support**: Development and testing without hardware

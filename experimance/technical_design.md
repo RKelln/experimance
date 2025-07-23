@@ -139,7 +139,7 @@ sequenceDiagram
     Core->>Display: CHANGE_MAP (push)
 
     %% Agent interactions
-    Agent-->>Core: AGENT_CONTROL_EVENT (pubsub)
+    Agent-->>Core: AUDIENCE_PRESENT / SPEECH_DETECTED (pubsub)
     Agent->>Display: TEXT_OVERLAY (push)
     Agent->>Display: REMOVE_TEXT (push)
 ```
@@ -164,7 +164,7 @@ Additional core events:
   Core         -> Display:          CHANGE_MAP (push)
 
 Agent interactions:
-  Agent        -> Core:             AGENT_CONTROL_EVENT (pubsub)
+  Agent        -> Core:             AUDIENCE_PRESENT / SPEECH_DETECTED (pubsub)
   Agent        -> Display:          TEXT_OVERLAY (push)
   Agent        -> Display:          REMOVE_TEXT (push)
 ```

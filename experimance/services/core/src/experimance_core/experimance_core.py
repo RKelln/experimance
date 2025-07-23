@@ -567,23 +567,14 @@ class ExperimanceCoreService(BaseService):
         try:
             presence_status = self.presence_manager.get_current_status()
             
-            # Publish the presence status
-            success = await self.zmq_service.publish(presence_status)
-            if success:
-                self.presence_manager.mark_published()
-                logger.debug(f"Published presence status: present={presence_status.present}, "
-                           f"idle={presence_status.idle}, hand={presence_status.hand}, "
-                           f"voice={presence_status.voice}, people={presence_status.people_count}")
-            else:
-                logger.warning("Failed to publish presence status")
+            # Publish the presence status (publish() raises exception on failure)
+            await self.zmq_service.publish(presence_status)
+            self.presence_manager.mark_published()
+            logger.debug(f"Published presence status: present={presence_status.present}, "
+                       f"idle={presence_status.idle}, hand={presence_status.hand}, "
+                       f"voice={presence_status.voice}, people={presence_status.people_count}")
         except Exception as e:
             logger.error(f"Error publishing presence status: {e}")
-
-    async def _publish_idle_state_changed(self):
-        """Publish idle state changed event (legacy - replaced by presence status)."""
-        # For backward compatibility, we can still publish this but it's deprecated
-        logger.warning("_publish_idle_state_changed is deprecated, use _publish_presence_status instead")
-        await self._publish_presence_status()
 
     def _register_message_handlers(self):
         """Register handlers for different message types."""
@@ -962,7 +953,7 @@ class ExperimanceCoreService(BaseService):
             logger.error(f"Error sending DISPLAY_MEDIA: {e}")
             logger.debug(f"Image message: {image_message}", exc_info=True)
 
-    async def _handle_request_biome(self, message: MessageDataType):
+    async def _handle_request_biome(self, topic: str, message: MessageDataType):
         """Handle RequestBiome messages from agent service."""
         biome_name = message.get('biome', '')
         logger.debug(f"Received RequestBiome message: {biome_name}")
@@ -973,7 +964,7 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error processing suggest biome message: {e}")
 
-    async def _handle_audience_present(self, message: MessageDataType):
+    async def _handle_audience_present(self, topic: str, message: MessageDataType):
         """Handle AudiencePresent messages from agent service."""
         status = message.get('status', False)
         logger.debug(f"Received AudiencePresent message: {status}")
@@ -997,7 +988,7 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error processing audience present message: {e}")
 
-    async def _handle_speech_detected(self, message: MessageDataType):
+    async def _handle_speech_detected(self, topic: str, message: MessageDataType):
         """Handle SpeechDetected messages from agent service."""
         is_speaking = message.get('is_speaking', False)
         speaker = message.get('speaker', 'unknown')
@@ -1427,8 +1418,9 @@ class ExperimanceCoreService(BaseService):
                 if self.presence_manager.should_publish():
                     await self._publish_presence_status()
                 
-                # Sleep for a short interval
-                if not await self._sleep_if_running(1.0):  # Check every second
+                # Sleep for the configured interval
+                sleep_time = self.config.presence.presence_publish_interval
+                if not await self._sleep_if_running(sleep_time):
                     break
                     
             except Exception as e:
@@ -1473,8 +1465,8 @@ class ExperimanceCoreService(BaseService):
                         await self.progress_era()
                 
                 # Publish idle state changes if needed
-                if self.idle_timer > 0 and int(self.idle_timer) % 10 == 0:  # Every 10 seconds of idle
-                    await self._publish_idle_state_changed()
+                # if self.idle_timer > 0 and int(self.idle_timer) % 10 == 0:  # Every 10 seconds of idle
+                #     await self._publish_presence_status()
                 
                 # Use _sleep_if_running() to respect shutdown requests
                 if not await self._sleep_if_running(1.0):  # 1 Hz for state updates

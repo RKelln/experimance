@@ -54,7 +54,8 @@ from experimance_common.schemas import MessageType
 # MessageType.IMAGE_READY
 # MessageType.TRANSITION_READY
 # MessageType.LOOP_READY
-# MessageType.AGENT_CONTROL_EVENT
+# MessageType.AUDIENCE_PRESENT
+# MessageType.SPEECH_DETECTED
 # MessageType.TRANSITION_REQUEST
 # MessageType.LOOP_REQUEST
 ```
