@@ -2,10 +2,6 @@
     {
         "path": "environment/rainforest_ambience.mp3",
         "tags": [
-            "rainforest",
-            "wilderness"
-        ],
-        "requires": [
             "rainforest"
         ],
         "requires_any": [
@@ -21,10 +17,6 @@
     {
         "path": "environment/jungle_ambience.mp3",
         "tags": [
-            "jungle",
-            "wilderness"
-        ],
-        "requires": [
             "jungle"
         ],
         "requires_any": [
@@ -40,11 +32,7 @@
     {
         "path": "environment/temperate_forest_ambience.mp3",
         "tags": [
-            "temperate_forest",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "temperate_forest"
         ],
         "requires_any": [
             "wilderness",
@@ -59,11 +47,7 @@
     {
         "path": "environment/boreal_forest_ambience.mp3",
         "tags": [
-            "boreal_forest",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "boreal_forest"
         ],
         "requires_any": [
             "wilderness",
@@ -78,11 +62,7 @@
     {
         "path": "environment/deciduous_forest_ambience.mp3",
         "tags": [
-            "deciduous_forest",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "deciduous_forest"
         ],
         "requires_any": [
             "wilderness",
@@ -97,19 +77,21 @@
     {
         "path": "environment/desert_ambience.mp3",
         "tags": [
-            "desert",
-            "wilderness"
+            "desert"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
         ],
         "prompt": "desert ambience: wind over sand, sparse animal calls, distant shifting dunes"
     },
     {
         "path": "environment/mountain_ambience.mp3",
         "tags": [
-            "mountain",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "mountain"
         ],
         "requires_any": [
             "wilderness",
@@ -124,11 +106,7 @@
     {
         "path": "environment/tropical_island_ambience.mp3",
         "tags": [
-            "tropical_island",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "tropical_island"
         ],
         "requires_any": [
             "wilderness",
@@ -143,11 +121,7 @@
     {
         "path": "environment/river_ambience.mp3",
         "tags": [
-            "river",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "river"
         ],
         "requires_any": [
             "wilderness",
@@ -162,11 +136,7 @@
     {
         "path": "environment/tundra_ambience.mp3",
         "tags": [
-            "tundra",
-            "wilderness"
-        ],
-        "requires": [
-            "jungle"
+            "tundra"
         ],
         "requires_any": [
             "wilderness",
@@ -181,10 +151,6 @@
     {
         "path": "environment/steppe_ambience.mp3",
         "tags": [
-            "steppe",
-            "wilderness"
-        ],
-        "requires": [
             "steppe"
         ],
         "requires_any": [
@@ -200,10 +166,6 @@
     {
         "path": "environment/coastal_ambience.mp3",
         "tags": [
-            "coastal",
-            "wilderness"
-        ],
-        "requires": [
             "coastal"
         ],
         "requires_any": [
@@ -219,10 +181,6 @@
     {
         "path": "environment/swamp_ambience.mp3",
         "tags": [
-            "swamp",
-            "wilderness"
-        ],
-        "requires": [
             "swamp"
         ],
         "requires_any": [
@@ -238,10 +196,6 @@
     {
         "path": "environment/plains_ambience.mp3",
         "tags": [
-            "plains",
-            "wilderness"
-        ],
-        "requires": [
             "plains"
         ],
         "requires_any": [
@@ -257,10 +211,6 @@
     {
         "path": "environment/arctic_ambience.mp3",
         "tags": [
-            "arctic",
-            "wilderness"
-        ],
-        "requires": [
             "arctic"
         ],
         "requires_any": [
