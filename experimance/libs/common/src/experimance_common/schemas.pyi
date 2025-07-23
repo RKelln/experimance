@@ -27,17 +27,15 @@ from experimance_common.schemas_base import (
     ContentType,
     
     # Message types that are NOT extended by projects
-    AgentControlEvent,
-    AgentControlEventPayload,
-    AudiencePresentPayload,
+    PresenceStatus,
+    AudiencePresent,
+    SpeechDetected,
     DisplayMedia,
     DisplayText,
-    IdleStatus,
     ImageSource,
     LoopReady,
     LoopRequest,
     RemoveText,
-    SpeechDetectedPayload,
     TransitionReady,
     TransitionRequest,
 )
@@ -53,7 +51,7 @@ if TYPE_CHECKING:
             ImageReady,
             RenderRequest,
             SpaceTimeUpdate,
-            SuggestBiomePayload,
+            RequestBiome,
         )
     elif _PROJECT_ENV == "sohkepayin":
         from projects.sohkepayin.schemas import (
@@ -95,16 +93,14 @@ __all__: list[str] = [
     "ContentType",
     
     # Message types that are NOT extended by projects
-    "AgentControlEvent",
-    "AgentControlEventPayload",
-    "AudiencePresentPayload",
+    "PresenceStatus",
+    "AudiencePresent",
+    "SpeechDetected",
     "DisplayText",
-    "IdleStatus",
     "ImageSource",
     "LoopReady",
     "LoopRequest",
     "RemoveText",
-    "SpeechDetectedPayload",
     "TransitionReady",
     "TransitionRequest",
     
@@ -115,7 +111,7 @@ __all__: list[str] = [
     "RenderRequest",  # Extended by all projects
     "SpaceTimeUpdate",  # Extended by all projects
     
-    # Note: Project-specific types like Era, Emotion, SuggestBiomePayload, etc.
+    # Note: Project-specific types like Era, Emotion, RequestBiome, etc.
     # are not included here since they're not universal across all projects.
     # They are still available for import when the appropriate PROJECT_ENV is set.
 ]

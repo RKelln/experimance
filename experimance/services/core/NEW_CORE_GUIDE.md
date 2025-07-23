@@ -63,7 +63,6 @@ from experimance_common.schemas_base import (
     SpaceTimeUpdate as _BaseSpaceTimeUpdate,
     RenderRequest as _BaseRenderRequest,
     ImageReady as _BaseImageReady,
-    AgentControlEventPayload,
     DisplayMedia as _BaseDisplayMedia,
     MessageBase,
     MessageType as _BaseMessageType,

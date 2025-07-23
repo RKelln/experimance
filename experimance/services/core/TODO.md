@@ -44,7 +44,7 @@
 ## Phase 6: Agent Integration
 - [ ] Subscribe to `agent_ctrl` channel (tcp://*:5559)
 - [ ] Implement `AudiencePresent` event handler
-- [ ] Implement `SuggestBiome` event handler
+- [ ] Implement `RequestBiome` event handler
 - [ ] Add agent influence on state machine
 - [ ] Create agent response validation
 - [ ] Add timeout handling for agent communication

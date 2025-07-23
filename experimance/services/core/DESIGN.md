@@ -125,30 +125,6 @@ Early Modern → Modern → AI/Future ⟷ Post-apocalyptic → Ruins → [drift 
 }
 ```
 
-#### AgentControl (from Agent Service)
-```json
-{
-  "event_type": "AgentControl",
-  "timestamp": "2025-06-13T10:30:00Z",
-  "sub_type": "AudiencePresent" | "SuggestBiome" | "ConversationState",
-  "audience_present": true,
-  "biome_suggestion": "desert",
-  "conversation_active": false
-}
-```
-
-#### AudioStatus (from Audio Service)
-```json
-{
-  "event_type": "AudioStatus",
-  "timestamp": "2025-06-13T10:30:00Z",
-  "status": "ready" | "transitioning" | "error",
-  "active_tags": ["urban", "church", "traffic"],
-  "current_era": "modern",
-  "current_biome": "urban"
-}
-```
-
 ## Internal Modules
 
 ### depth_finder.py
@@ -208,7 +184,6 @@ def update_audio_tags(new_tags: List[str], previous_tags: List[str]) -> Tuple[Li
 [experimance_core]
 name = "experimance_core"
 publish_port = 5555
-heartbeat_interval = 3.0
 
 [state_machine]
 idle_timeout = 45.0           # seconds before idle drift starts

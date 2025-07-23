@@ -9,12 +9,11 @@ from typing import Optional
 from experimance_common.schemas_base import (
     StringComparableEnum,
     MessageBase,
+    MessageType,
     SpaceTimeUpdate as _BaseSpaceTimeUpdate,
     RenderRequest as _BaseRenderRequest,
     ImageReady as _BaseImageReady,
     DisplayMedia as _BaseDisplayMedia,
-    AgentControlEventPayload,
-    ImageSource
 )
 
 class Era(StringComparableEnum):
@@ -64,6 +63,8 @@ class ImageReady(_BaseImageReady):
     era: Era
     biome: Biome
 
-class SuggestBiomePayload(AgentControlEventPayload):
-    """Experimance-specific SuggestBiomePayload with biome_suggestion field."""
-    biome_suggestion: Biome
+
+class RequestBiome(MessageBase):
+    """Experimance-specific RequestBiome with biome field, allows the agent to request a biome change."""
+    type: MessageType = MessageType.REQUEST_BIOME
+    biome: Biome

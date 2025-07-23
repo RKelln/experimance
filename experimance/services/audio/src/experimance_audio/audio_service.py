@@ -1198,11 +1198,6 @@ class AudioService(BaseService):
                 is_listening = payload.get("status", False)
                 self.osc.listening(is_listening)
                 
-            elif sub_type == "SuggestBiome":
-                # Agent suggested a biome change
-                # No immediate audio response needed, will get EraChanged event later
-                pass
-                
             elif sub_type == "AudiencePresent":
                 # Audience presence detected
                 is_present = payload.get("status", False)

@@ -28,7 +28,7 @@ from experimance_common.constants import (
 )
 from experimance_common.schemas import (
     Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, PresenceStatus,
-    SuggestBiome, AudiencePresent, SpeechDetected
+    RequestBiome, AudiencePresent, SpeechDetected
 )
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
@@ -588,10 +588,9 @@ class ExperimanceCoreService(BaseService):
     def _register_message_handlers(self):
         """Register handlers for different message types."""
         # Register PubSub message handlers
-        self.zmq_service.add_message_handler(MessageType.SUGGEST_BIOME, self._zmq_handle_suggest_biome)
-        self.zmq_service.add_message_handler(MessageType.AUDIENCE_PRESENT, self._zmq_handle_audience_present)
-        self.zmq_service.add_message_handler(MessageType.SPEECH_DETECTED, self._zmq_handle_speech_detected)
-        self.zmq_service.add_message_handler("AudioStatus", self._zmq_handle_audio_status)
+        self.zmq_service.add_message_handler(MessageType.REQUEST_BIOME, self._handle_request_biome)
+        self.zmq_service.add_message_handler(MessageType.AUDIENCE_PRESENT, self._handle_audience_present)
+        self.zmq_service.add_message_handler(MessageType.SPEECH_DETECTED, self._handle_speech_detected)
         
         # Register worker response handler for responses from push/pull workers
         self.zmq_service.add_response_handler(self._handle_worker_response)
@@ -963,18 +962,18 @@ class ExperimanceCoreService(BaseService):
             logger.error(f"Error sending DISPLAY_MEDIA: {e}")
             logger.debug(f"Image message: {image_message}", exc_info=True)
 
-    async def _handle_suggest_biome(self, message: Dict[str, Any]):
-        """Handle SuggestBiome messages from agent service."""
+    async def _handle_request_biome(self, message: MessageDataType):
+        """Handle RequestBiome messages from agent service."""
         biome_name = message.get('biome', '')
-        logger.debug(f"Received SuggestBiome message: {biome_name}")
+        logger.debug(f"Received RequestBiome message: {biome_name}")
         
         try:
             # TODO: Implement biome switching logic
-            logger.info(f"Agent suggested biome: {biome_name}")
+            logger.info(f"Agent requested biome: {biome_name}")
         except Exception as e:
             logger.error(f"Error processing suggest biome message: {e}")
 
-    async def _handle_audience_present(self, message: Dict[str, Any]):
+    async def _handle_audience_present(self, message: MessageDataType):
         """Handle AudiencePresent messages from agent service."""
         status = message.get('status', False)
         logger.debug(f"Received AudiencePresent message: {status}")
@@ -998,7 +997,7 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error processing audience present message: {e}")
 
-    async def _handle_speech_detected(self, message: Dict[str, Any]):
+    async def _handle_speech_detected(self, message: MessageDataType):
         """Handle SpeechDetected messages from agent service."""
         is_speaking = message.get('is_speaking', False)
         speaker = message.get('speaker', 'unknown')
@@ -1019,12 +1018,7 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error processing speech detected message: {e}")
 
-    async def _handle_audio_status(self, message: Dict[str, Any]):
-        """Handle AudioStatus messages from audio service.""" 
-        logger.debug(f"Received AudioStatus message: {message.get('status')}")
-        # TODO: Implement audio status handling logic
-
-    async def _handle_transition_ready(self, message: Dict[str, Any]):
+    async def _handle_transition_ready(self, message: MessageDataType):
         """Handle TRANSITION_READY messages from transition service."""
         logger.debug(f"Received TRANSITION_READY message: {message.get('transition_id')}")
         
@@ -1625,50 +1619,6 @@ class ExperimanceCoreService(BaseService):
                 
         except Exception as e:
             logger.warning(f"Visualization error: {e}")
-        
-# ZMQ Message Handler Adapters
-    # These methods adapt between the new ZMQ signature (topic, data) and the old message handler signature
-    
-    def _zmq_handle_suggest_biome(self, topic: str, data: MessageDataType):
-        """ZMQ adapter for suggest biome messages."""
-        try:
-            if isinstance(data, dict):
-                asyncio.create_task(self._handle_suggest_biome(data))
-            else:
-                logger.warning(f"Unexpected suggest biome data type: {type(data)}")
-        except Exception as e:
-            logger.error(f"Error handling suggest biome message: {e}")
-
-    def _zmq_handle_audience_present(self, topic: str, data: MessageDataType):
-        """ZMQ adapter for audience present messages."""
-        try:
-            if isinstance(data, dict):
-                asyncio.create_task(self._handle_audience_present(data))
-            else:
-                logger.warning(f"Unexpected audience present data type: {type(data)}")
-        except Exception as e:
-            logger.error(f"Error handling audience present message: {e}")
-
-    def _zmq_handle_speech_detected(self, topic: str, data: MessageDataType):
-        """ZMQ adapter for speech detected messages."""
-        try:
-            if isinstance(data, dict):
-                asyncio.create_task(self._handle_speech_detected(data))
-            else:
-                logger.warning(f"Unexpected speech detected data type: {type(data)}")
-        except Exception as e:
-            logger.error(f"Error handling speech detected message: {e}")
-    
-    def _zmq_handle_audio_status(self, topic: str, data: MessageDataType):
-        """ZMQ adapter for audio status messages."""
-        try:
-            if isinstance(data, dict):
-                # Create a task for async execution
-                asyncio.create_task(self._handle_audio_status(data))
-            else:
-                logger.warning(f"Unexpected audio status data type: {type(data)}")
-        except Exception as e:
-            logger.error(f"Error handling audio status message: {e}")
 
     async def _handle_worker_response(self, worker_name: str, response_data: MessageDataType):
         """Handle responses from workers via pull sockets.

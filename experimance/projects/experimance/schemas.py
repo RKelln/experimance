@@ -9,12 +9,13 @@ when PROJECT_ENV=experimance.
 from enum import Enum
 from typing import Optional, List
 from experimance_common.schemas_base import (
+    MessageBase,
     StringComparableEnum, 
     SpaceTimeUpdate as _BaseSpaceTimeUpdate,
     RenderRequest as _BaseRenderRequest,
     ImageReady as _BaseImageReady,
-    AgentControlEventPayload,
     DisplayMedia as _BaseDisplayMedia,
+
     MessageType
 )
 
@@ -76,9 +77,10 @@ class ImageReady(_BaseImageReady):
     biome: Biome
 
 
-class SuggestBiomePayload(AgentControlEventPayload):
-    """Experimance-specific SuggestBiomePayload with biome_suggestion field."""
-    biome_suggestion: Biome
+class RequestBiome(MessageBase):
+    """Experimance-specific RequestBiome with biome field, allows the agent to request a biome change."""
+    type: MessageType = MessageType.REQUEST_BIOME
+    biome: Biome
 
 
 # Add any other Experimance-specific schema extensions here

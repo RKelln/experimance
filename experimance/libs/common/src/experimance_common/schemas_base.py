@@ -221,7 +221,7 @@ class MessageType(StringComparableEnum):
     TRANSITION_READY = "TransitionReady"
     LOOP_READY = "LoopReady"
     # Agent control message types
-    SUGGEST_BIOME = "SuggestBiome"
+    REQUEST_BIOME = "RequestBiome"
     AUDIENCE_PRESENT = "AudiencePresent"
     SPEECH_DETECTED = "SpeechDetected"
     TRANSITION_REQUEST = "TransitionRequest"
@@ -294,6 +294,19 @@ class PresenceStatus(MessageBase):
     voice_duration: float = 0.0     # duration of visitor speaking
     timestamp: datetime = Field(default_factory=datetime.now)  # timestamp of when message was sent
 
+class AudiencePresent(MessageBase):
+    """Message indicating audience presence status."""
+    type: MessageType = MessageType.AUDIENCE_PRESENT
+    status: bool  # True if audience is present, False otherwise
+
+
+class SpeechDetected(MessageBase):
+    """Message indicating speech detection status."""
+    type: MessageType = MessageType.SPEECH_DETECTED
+    is_speaking: bool  # True if speech is detected, False otherwise
+    speaker: Optional[str] = None  # "agent" or "human" to identify the speaker
+
+
 class ImageReady(MessageBase):
     """Event published when a new image is ready.
     Base class - projects should extend this to add era/biome fields.
@@ -322,24 +335,6 @@ class LoopReady(MessageBase):
     is_video: bool  # True if URI points to video file, False if image sequence
     duration_s: Optional[float] = None  # Duration in seconds if known
 
-
-class SuggestBiome(MessageBase):
-    """Message to suggest a biome change."""
-    type: MessageType = MessageType.SUGGEST_BIOME
-    biome: str  # The suggested biome name
-
-
-class AudiencePresent(MessageBase):
-    """Message indicating audience presence status."""
-    type: MessageType = MessageType.AUDIENCE_PRESENT
-    status: bool  # True if audience is present, False otherwise
-
-
-class SpeechDetected(MessageBase):
-    """Message indicating speech detection status."""
-    type: MessageType = MessageType.SPEECH_DETECTED
-    is_speaking: bool  # True if speech is detected, False otherwise
-    speaker: Optional[str] = None  # "agent" or "human" to identify the speaker
 
 FadeDurationType = Union[float, tuple[float, float]]  # Single fade duration or (fade_in, fade_out) tuple
 

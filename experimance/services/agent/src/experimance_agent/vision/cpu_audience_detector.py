@@ -49,6 +49,12 @@ class CPUAudienceDetector:
         self.last_detection_time: float = 0.0
         self.confidence_score: float = 0.0
         
+        # State tracking for flapping detection
+        self.previous_state = False
+        self.state_change_count = 0
+        self.confidence_history = []
+        self.stable_readings_required = 2  # Configurable stability requirement
+        
         # Precompute scaling factors to avoid division in hot path
         self.scale_factor = self.profile.detection.detection_scale_factor
         self.scale_inverse = 1.0 / self.scale_factor if self.scale_factor > 0 else 1.0
@@ -167,11 +173,14 @@ class CPUAudienceDetector:
             # Perform motion detection (if enabled)
             motion_result = await self._detect_motion(small_frame, include_mask=include_motion_mask)
             
-            # Combine results with face detection
-            detection_result = self._combine_cpu_results(person_result, face_result, motion_result)
+            # Combine results with intelligent face prioritization
+            combined_result = self._combine_cpu_results(person_result, face_result, motion_result)
             
-            # Apply temporal smoothing
-            smoothed_result = self._apply_temporal_smoothing(detection_result)
+            # Apply temporal smoothing for stability
+            smoothed_result = self._apply_temporal_smoothing(combined_result)
+            
+            # Apply state change detection to prevent flapping
+            final_result = self._apply_state_change_detection(smoothed_result)
             
             detection_time = time.time() - start_time
             self.detection_times.append(detection_time)
@@ -180,16 +189,20 @@ class CPUAudienceDetector:
             if len(self.detection_times) > 100:
                 self.detection_times = self.detection_times[-50:]
             
-            # Build result
+            # Build result using final processed detection
             result = {
-                "audience_detected": smoothed_result["detected"],
-                "confidence": smoothed_result["confidence"],
+                "audience_detected": final_result["detected"],
+                "confidence": final_result["confidence"],
                 "detection_time": detection_time,
                 "timestamp": time.time(),
                 "person_detection": person_result,
                 "face_detection": face_result,
                 "motion_detection": motion_result,
                 "method_used": "cpu_multimodal",
+                "primary_method": final_result.get("primary_method", "unknown"),
+                "people_count": final_result.get("people_count", 0),
+                "state_changed": final_result.get("state_changed", False),
+                "stable": final_result.get("stable", True),
                 "performance": {
                     "avg_detection_time": np.mean(self.detection_times),
                     "frame_scale": self.profile.detection.detection_scale_factor,
@@ -460,7 +473,7 @@ class CPUAudienceDetector:
                            face_result: Dict[str, Any],
                            motion_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Combine HOG person detection, face detection, and motion detection results using profile parameters.
+        Intelligently combine detection results, prioritizing face detection for seated audiences.
         
         Args:
             person_result: Results from HOG person detection
@@ -468,7 +481,7 @@ class CPUAudienceDetector:
             motion_result: Results from motion detection
             
         Returns:
-            dict: Combined detection result
+            dict: Combined detection result with intelligence and people count
         """
         persons_detected = person_result.get("persons_detected", False)
         faces_detected = face_result.get("faces_detected", False)
@@ -478,54 +491,80 @@ class CPUAudienceDetector:
         face_confidence = face_result.get("confidence", 0.0)
         motion_confidence = motion_result.get("confidence", 0.0)
         
+        face_count = face_result.get("face_count", 0)
+        person_count = person_result.get("person_count", 0)
+        
         conf_params = self.profile.confidence
         
-        # Prioritize face detection as it's most reliable for seated people
-        if faces_detected:
+        # INTELLIGENT PRIORITIZATION: Face detection is most reliable for seated people
+        if faces_detected and face_confidence > 0.5:
+            # Face detection takes priority - best for seated audiences
+            return {
+                "detected": True,
+                "confidence": face_confidence,
+                "primary_method": "face_priority",
+                "people_count": face_count,
+                "reasoning": f"Face detection: {face_count} faces with {face_confidence:.2f} confidence"
+            }
+        elif faces_detected:
+            # Face detection with motion confirmation
             if motion_detected:
-                # Face + motion = very high confidence
+                combined_confidence = min(conf_params.max_combined_confidence, 
+                                        face_confidence + motion_confidence * conf_params.motion_confidence_weight)
                 return {
                     "detected": True,
-                    "confidence": min(conf_params.max_combined_confidence, 
-                                    face_confidence + motion_confidence * conf_params.motion_confidence_weight),
-                    "primary_method": "face+motion"
+                    "confidence": combined_confidence,
+                    "primary_method": "face+motion",
+                    "people_count": face_count,
+                    "reasoning": f"Face+motion: {face_count} faces, motion confirmed"
                 }
             else:
-                # Face only = high confidence (good for seated people)
+                # Low confidence face detection only
                 return {
                     "detected": True,
                     "confidence": face_confidence,
-                    "primary_method": "face_only"
+                    "primary_method": "face_only",
+                    "people_count": face_count,
+                    "reasoning": f"Face only: {face_count} faces with {face_confidence:.2f} confidence"
                 }
         elif persons_detected:
+            # Fall back to person detection
             if motion_detected:
-                # Person + motion = high confidence
+                combined_confidence = min(conf_params.max_combined_confidence, 
+                                        person_confidence + motion_confidence * conf_params.motion_confidence_weight)
                 return {
                     "detected": True,
-                    "confidence": min(conf_params.max_combined_confidence, 
-                                    person_confidence + motion_confidence * conf_params.motion_confidence_weight),
-                    "primary_method": "person+motion"
+                    "confidence": combined_confidence,
+                    "primary_method": "person+motion",
+                    "people_count": person_count,
+                    "reasoning": f"Person+motion: {person_count} people detected with motion"
                 }
             else:
-                # Person only = medium confidence
                 return {
                     "detected": True,
                     "confidence": person_confidence,
-                    "primary_method": "person_only"
+                    "primary_method": "person_only",
+                    "people_count": person_count,
+                    "reasoning": f"Person only: {person_count} people detected"
                 }
         elif motion_detected:
-            # Motion only = lower confidence
+            # Motion only detection (lowest confidence)
+            motion_only_detected = motion_confidence > conf_params.motion_only_threshold
             return {
-                "detected": motion_confidence > conf_params.motion_only_threshold,
+                "detected": motion_only_detected,
                 "confidence": motion_confidence * conf_params.motion_only_confidence_factor,
-                "primary_method": "motion_only"
+                "primary_method": "motion_only",
+                "people_count": 1 if motion_only_detected else 0,  # Assume 1 person for motion
+                "reasoning": f"Motion only: {motion_confidence:.2f} confidence"
             }
         else:
             # No detection
             return {
                 "detected": False,
                 "confidence": conf_params.absence_confidence,
-                "primary_method": "none"
+                "primary_method": "none",
+                "people_count": 0,
+                "reasoning": "No detection from any method"
             }
     
     def _apply_temporal_smoothing(self, detection_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -579,6 +618,10 @@ class CPUAudienceDetector:
             "avg_detection_time": np.mean(self.detection_times) if self.detection_times else 0.0,
             "max_detection_time": np.max(self.detection_times) if self.detection_times else 0.0,
             "detection_history_size": len(self.detection_history),
+            "confidence_history_size": len(self.confidence_history),
+            "current_stability_count": self.state_change_count,
+            "stable_readings_required": self.stable_readings_required,
+            "previous_state": self.previous_state,
             "performance_optimized": True,
             "detection_scale_factor": self.profile.detection.detection_scale_factor,
             "profile_name": self.profile.name,
@@ -591,9 +634,12 @@ class CPUAudienceDetector:
     def reset_detection_history(self):
         """Reset detection history for clean state."""
         self.detection_history.clear()
+        self.confidence_history.clear()
         self.audience_present = False
         self.confidence_score = 0.0
-        logger.info("CPU detection history reset")
+        self.previous_state = False
+        self.state_change_count = 0
+        logger.info("CPU detection history and state tracking reset")
     
     def set_performance_mode(self, mode: str):
         """
@@ -637,3 +683,65 @@ class CPUAudienceDetector:
                 history=mog2_params.history
             )
             logger.info("Reinitialized background subtractor with new profile parameters")
+    
+    def _apply_state_change_detection(self, detection_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Apply state change detection to prevent flapping between presence states.
+        
+        Args:
+            detection_result: Detection result from temporal smoothing
+            
+        Returns:
+            dict: Detection result with state change information
+        """
+        current_detected = detection_result["detected"]
+        confidence = detection_result["confidence"]
+        
+        # Add confidence to history for smoothing
+        self.confidence_history.append(confidence)
+        if len(self.confidence_history) > 5:
+            self.confidence_history.pop(0)
+        
+        # Calculate smoothed confidence
+        avg_confidence = sum(self.confidence_history) / len(self.confidence_history)
+        
+        # Check for state change
+        state_changed = current_detected != self.previous_state
+        
+        if state_changed:
+            self.state_change_count = 0  # Reset counter on state change
+        else:
+            self.state_change_count += 1
+        
+        # Determine if we should publish this state change
+        should_publish = False
+        stable = True
+        
+        if state_changed:
+            # For state changes, require stability (multiple consistent readings)
+            should_publish = False  # Don't publish immediately
+            stable = False
+            logger.debug(f"State change detected: {self.previous_state} -> {current_detected}, requiring stability")
+        else:
+            # For stable state, check if we've had enough consistent readings
+            if self.state_change_count >= self.stable_readings_required:
+                should_publish = True
+                stable = True
+            else:
+                should_publish = False
+                stable = False
+        
+        # Update previous state for next iteration
+        if should_publish:
+            self.previous_state = current_detected
+        
+        result = detection_result.copy()
+        result.update({
+            "confidence": avg_confidence,  # Use smoothed confidence
+            "state_changed": state_changed,
+            "should_publish": should_publish,
+            "stable": stable,
+            "stability_count": self.state_change_count
+        })
+        
+        return result

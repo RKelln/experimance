@@ -524,7 +524,7 @@ class CoreServiceConfig(BaseConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["agent"],
-                topics=[MessageType.SUGGEST_BIOME, MessageType.AUDIENCE_PRESENT, MessageType.SPEECH_DETECTED]
+                topics=[MessageType.REQUEST_BIOME, MessageType.AUDIENCE_PRESENT, MessageType.SPEECH_DETECTED]
             ),
             workers={
                 "image_server": WorkerConfig(

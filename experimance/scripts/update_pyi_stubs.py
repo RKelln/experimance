@@ -146,7 +146,8 @@ def generate_schemas_pyi() -> str:
         "StringComparableEnum", "MessageSchema", "MessageBase", "TransitionStyle",
         "DisplayContentType", "DisplayTransitionType", "MessageType", "ContentType",
         "ImageSource", "IdleStatus", "TransitionReady", "LoopReady", 
-        "AgentControlEventPayload", "AudiencePresentPayload", "SpeechDetectedPayload",
+        "PresenceStatus",
+        "AudiencePresent", "SpeechDetected", # agent messages
         "AgentControlEvent", "DisplayText", "RemoveText", "TransitionRequest", "LoopRequest"
     }
     
@@ -264,7 +265,7 @@ __all__: list[str] = [
         content += f'    "{schema}",  # Extended by all projects\n'
     
     content += '''    
-    # Note: Project-specific types like Era, Emotion, SuggestBiomePayload, etc.
+    # Note: Project-specific types like Era, Emotion, RequestBiome, etc.
     # are not included here since they're not universal across all projects.
     # They are still available for import when the appropriate PROJECT_ENV is set.
 ]'''
@@ -302,6 +303,7 @@ from experimance_common.constants_base import (
         "# Port configurations": ["DEFAULT_PORTS"],
         "# Timeout settings": ["DEFAULT_TIMEOUT", "DEFAULT_RETRY_ATTEMPTS", 
                               "DEFAULT_RETRY_DELAY", "DEFAULT_RECV_TIMEOUT", "TICK"],
+        "# Service types": ["SERVICE_TYPES"],
         "# Image transport configuration": ["IMAGE_TRANSPORT_MODES", "DEFAULT_IMAGE_TRANSPORT_MODE", 
                                           "IMAGE_TRANSPORT_SIZE_THRESHOLD"],
         "# Temporary file settings": ["TEMP_FILE_PREFIX", "TEMP_FILE_SUFFIX", "TEMP_FILE_CLEANUP_AGE",

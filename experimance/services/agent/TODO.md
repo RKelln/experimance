@@ -80,7 +80,7 @@ Create a modular agent service that handles speech-to-speech conversation with t
 ### 6. Tools Integration (`tools/`)
 
 #### Biome Control (`tools/biome.py`)
-- [ ] AgentControlEvent generation for SuggestBiome
+- [ ] AgentControlEvent generation for RequestBiome
 - [ ] Integration with agent tool calling
 - [ ] Validation of biome suggestions
 
@@ -93,7 +93,7 @@ Create a modular agent service that handles speech-to-speech conversation with t
 
 ### Publishing Messages
 1. **AgentControlEvent** → Core (port 5557)
-   - SuggestBiome: When agent decides to change biome
+   - RequestBiome: When agent decides to change biome
    - AudiencePresent: When webcam detects audience presence/absence
    - SpeechDetected: When agent is actively speaking
 

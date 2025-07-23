@@ -139,8 +139,8 @@ class VisionConfig(BaseModel):
     
     # Detector profile configuration
     detector_profile: str = Field(
-        default="indoor_office",
-        description="Detector profile name (indoor_office, gallery_dim, outdoor_bright, workshop_cluttered, or custom)"
+        default="face_detection",
+        description="Detector profile name (indoor_office, gallery_dim, outdoor_bright, workshop_cluttered, face_detection, or custom)"
     )
     detector_profile_dir: Optional[Path] = Field(
         default=None,

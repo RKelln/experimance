@@ -13,7 +13,6 @@ from experimance_common.schemas_base import (
     SpaceTimeUpdate as _BaseSpaceTimeUpdate,
     RenderRequest as _BaseRenderRequest,
     ImageReady as _BaseImageReady,
-    AgentControlEventPayload,
     DisplayMedia as _BaseDisplayMedia,
     MessageBase,
     MessageType as _BaseMessageType,
@@ -51,7 +50,7 @@ class MessageType(StringComparableEnum):
     # Base Experimance message types
     SPACE_TIME_UPDATE = "SpaceTimeUpdate"
     RENDER_REQUEST = "RenderRequest"
-    IDLE_STATUS = "IdleStatus"
+    PRESENCE_STATUS = "PresenceStatus"
     IMAGE_READY = "ImageReady"
     TRANSITION_READY = "TransitionReady"
     LOOP_READY = "LoopReady"
@@ -70,7 +69,7 @@ class MessageType(StringComparableEnum):
     UPDATE_LOCATION = "UpdateLocation"
 
 
-class SuggestTimePeriodPayload(AgentControlEventPayload):
+class SuggestTimePeriodPayload(MessageBase):
     """Sohkepayin-specific SuggestTimePeriodPayload with time_period field."""
     time_period: str
 

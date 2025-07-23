@@ -17,8 +17,8 @@ from experimance_common.base_service import BaseService
 from experimance_common.health import HealthStatus
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
-    AgentControlEvent, SuggestBiomePayload, AudiencePresentPayload, 
-    SpeechDetectedPayload, DisplayText, RemoveText, MessageType, Biome
+    RequestBiome, AudiencePresent, SpeechDetected,
+    DisplayText, RemoveText, MessageType, Biome
 )
 from experimance_common.constants import TICK, DEFAULT_PORTS
 from experimance_common.zmq.config import MessageDataType
@@ -49,7 +49,6 @@ class AgentService(BaseService):
         # Runtime state
         self.current_backend: Optional[AgentBackend] = None
         self.is_conversation_active = False
-        self.audience_present = False
         self.agent_speaking = False
         
         # Display text tracking (for transcript display)
@@ -254,7 +253,7 @@ class AgentService(BaseService):
             detection_method = self.config.vision.detection_method
             
             if detection_method == "cpu":
-                # Use fast CPU-only detection
+                # Use fast CPU-only detection with intelligent face prioritization
                 self.audience_detector = CPUAudienceDetector(self.config.vision)
                 await self.audience_detector.start()
                 
@@ -262,7 +261,7 @@ class AgentService(BaseService):
                 performance_mode = self.config.vision.cpu_performance_mode
                 self.audience_detector.set_performance_mode(performance_mode)
                 
-                logger.info(f"Using CPU-only audience detection (mode: {performance_mode})")
+                logger.info(f"Using CPU audience detection (mode: {performance_mode}) with built-in intelligence")
                 
             elif detection_method in ["vlm", "hybrid"]:
                 # Use VLM-based detection (original detector)
@@ -338,7 +337,7 @@ class AgentService(BaseService):
                 await self._sleep_if_running(10.0)  # Back off on error
     
     async def _audience_detection_loop(self):
-        """Monitor audience presence through vision processing."""
+        """Monitor audience presence and publish to presence system."""
         while self.running:
             try:
                 if (self.config.vision.audience_detection_enabled and 
@@ -349,22 +348,27 @@ class AgentService(BaseService):
                     # Capture frame for analysis
                     frame = await self.webcam_manager.capture_frame()
                     if frame is not None:
-                        # Perform audience detection
-                        detection_result = await self.audience_detector.detect_audience(
-                            frame, 
-                            webcam_manager=self.webcam_manager, 
-                            vlm_processor=self.vlm_processor
-                        )
+                        # Let the detector handle all the complex logic
+                        detection_result = await self.audience_detector.detect_audience(frame)
                         
                         if detection_result.get("success", False):
-                            new_status = detection_result["audience_detected"]
-                            confidence = detection_result.get("confidence", 0.0)
+                            # Check if detector says we should publish (handles flapping internally)
+                            if detection_result.get("should_publish", False):
+                                await self._publish_audience_present(
+                                    present=detection_result["audience_detected"],
+                                    confidence=detection_result["confidence"],
+                                    people_count=detection_result.get("people_count", 0)
+                                )
+                                
+                                logger.info(f"Published audience detection: {detection_result['audience_detected']} "
+                                          f"(confidence: {detection_result['confidence']:.2f}, "
+                                          f"people: {detection_result.get('people_count', 0)}, "
+                                          f"method: {detection_result.get('primary_method', 'unknown')})")
                             
-                            # Only update if there's a significant change
-                            if (new_status != self.audience_present and 
-                                confidence > self.config.vision.audience_detection_threshold):
-                                await self._publish_audience_status(new_status)
-                                logger.info(f"Audience status changed: {new_status} (confidence: {confidence:.2f})")
+                            # Log detector reasoning for debugging
+                            if detection_result.get("reasoning"):
+                                logger.debug(f"Detection reasoning: {detection_result['reasoning']}")
+                                
                         else:
                             logger.warning(f"Audience detection failed: {detection_result.get('error', 'Unknown error')}")
                 
@@ -453,22 +457,32 @@ class AgentService(BaseService):
         await self._clear_all_displayed_text()
     
     async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Handle speech detection event."""
+        """Handle speech detection event from pipecat backend."""
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
+        # Update internal state
         if speaker == "agent":
             self.agent_speaking = True
-            if self.config.speech_detection_enabled:
-                await self._publish_agent_control_event("SpeechDetected", {"is_speaking": True})
+        
+        # Publish to presence system for conversation tracking
+        if self.config.speech_detection_enabled:
+            speaker_type = "agent" if speaker == "agent" else "human"
+            await self._publish_speech_detected(is_speaking=True, speaker_type=speaker_type)
+            logger.debug(f"Speech detected: {speaker_type}")
     
     async def _on_speech_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Handle speech ended event."""
+        """Handle speech ended event from pipecat backend."""
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
+        # Update internal state
         if speaker == "agent":
             self.agent_speaking = False
-            if self.config.speech_detection_enabled:
-                await self._publish_agent_control_event("SpeechDetected", {"is_speaking": False})
+        
+        # Publish to presence system for conversation tracking
+        if self.config.speech_detection_enabled:
+            speaker_type = "agent" if speaker == "agent" else "human"
+            await self._publish_speech_detected(is_speaking=False, speaker_type=speaker_type)
+            logger.debug(f"Speech ended: {speaker_type}")
     
     async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle new transcription data."""
@@ -496,11 +510,8 @@ class AgentService(BaseService):
             # Validate biome name
             biome = Biome(biome_name.lower())
             
-            # Publish biome suggestion
-            await self._publish_agent_control_event(
-                "SuggestBiome", 
-                {"biome_suggestion": biome, "reason": reason}
-            )
+            # Publish biome suggestion using new schema
+            await self._publish_suggest_biome(biome, confidence=0.8)
             
             logger.info(f"Agent suggested biome change to: {biome}")
             return {"success": True, "biome": biome, "reason": reason}
@@ -510,11 +521,12 @@ class AgentService(BaseService):
             return {"success": False, "error": f"Invalid biome: {biome_name}"}
     
     async def _get_audience_status_tool(self) -> Dict[str, Any]:
-        """Tool for checking audience presence."""
+        """Tool for checking conversation and agent status."""
+        # Note: We no longer track audience_present directly - that's handled by the presence system
         return {
-            "audience_present": self.audience_present,
             "conversation_active": self.is_conversation_active,
-            "agent_speaking": self.agent_speaking
+            "agent_speaking": self.agent_speaking,
+            "note": "Audience presence is now managed by the core service presence system"
         }
     
     # =========================================================================
@@ -534,10 +546,9 @@ class AgentService(BaseService):
         elif turn.speaker == "agent":
             self.agent_speaking = True
             
-        # Publish speech events if needed
+        # Publish speech events if needed  
         if turn.speaker == "human":
-            await self._publish_agent_control_event("speech_detected", 
-                SpeechDetectedPayload(is_speaking=True).model_dump())
+            await self._publish_speech_detected(is_speaking=True, speaker_type="human")
     
     async def _display_transcript_text(self, content: str, speaker: str):
         """Display transcript text on the visual interface."""
@@ -620,25 +631,45 @@ class AgentService(BaseService):
     # Publishing Methods
     # =========================================================================
     
-    async def _publish_agent_control_event(self, sub_type: str, payload: Dict[str, Any]):
-        """Publish an agent control event to other services."""
-        event = AgentControlEvent(
-            sub_type=sub_type,
-            payload=payload
+    async def _publish_audience_present(self, present: bool, confidence: float = 0.0, people_count: int = 0):
+        """Publish audience presence detection."""
+        message = AudiencePresent(
+            status=present,  # Field name expected by core service
+            people_count=people_count
         )
-        
-        await self.zmq_service.publish(event.model_dump(), MessageType.AGENT_CONTROL_EVENT)
-        logger.debug(f"Published agent control event: {sub_type}")
+        await self.zmq_service.publish(message.model_dump(), MessageType.AUDIENCE_PRESENT)
+        logger.debug(f"Published audience present: {present} (confidence: {confidence:.2f}, people: {people_count})")
+    
+    async def _publish_speech_detected(self, is_speaking: bool, speaker_type: str = "agent"):
+        """Publish speech detection for conversation tracking."""
+        message = SpeechDetected(
+            is_speaking=is_speaking,
+            speaker=speaker_type  # Field name expected by core service 
+        )
+        await self.zmq_service.publish(message.model_dump(), MessageType.SPEECH_DETECTED)
+        logger.debug(f"Published speech detected: {speaker_type} speaking={is_speaking}")
+    
+    async def _publish_suggest_biome(self, suggested_biome: str, confidence: float = 0.8):
+        """Publish biome suggestion based on conversation context."""
+        try:
+            # Convert string to Biome enum if needed
+            if isinstance(suggested_biome, str):
+                biome_enum = Biome(suggested_biome.lower())
+            else:
+                biome_enum = suggested_biome
+                
+            message = RequestBiome(
+                biome=biome_enum.value  # Field name expected by core service
+            )
+            await self.zmq_service.publish(message.model_dump(), MessageType.REQUEST_BIOME)
+            logger.info(f"Published biome suggestion: {biome_enum.value}")
+        except ValueError as e:
+            logger.warning(f"Invalid biome suggestion '{suggested_biome}': {e}")
     
     async def _publish_audience_status(self, present: bool):
         """Publish audience presence status."""
-        if present != self.audience_present:
-            self.audience_present = present
-            await self._publish_agent_control_event(
-                "AudiencePresent", 
-                {"status": present}
-            )
-            logger.info(f"Audience presence changed: {present}")
+        # This is kept for backward compatibility but redirects to new method
+        await self._publish_audience_present(present)
     
     async def get_debug_status(self) -> Dict[str, Any]:
         """Get comprehensive debug status from the agent service."""
@@ -647,9 +678,9 @@ class AgentService(BaseService):
                 "name": self.service_name,
                 "status": self.status.value if self.status else "unknown",
                 "is_conversation_active": self.is_conversation_active,
-                "audience_present": self.audience_present,
                 "agent_speaking": self.agent_speaking,
                 "displayed_text_count": len(self.displayed_text_ids),
+                "note": "audience_present is now managed by the core service presence system"
             },
             "backend": None,
             "vision": {},

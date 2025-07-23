@@ -313,9 +313,8 @@ class DisplayMedia(_BaseDisplayMedia):
 
 # TODO: Add any other project-specific payload classes here
 # Example:
-# class SuggestBiomePayload(BaseModel):
-#     suggested_biome: Biome
-#     confidence: float
+# class RequestBiome(MessageBase):
+#     biome: Biome
 '''
     
     schemas_path.write_text(schemas_content)
