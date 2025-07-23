@@ -50,10 +50,18 @@ Format:
 
 - **`interval`** *(string)*  
   Specifies the repetition type:
-  - `"loop"`: continuously and seamlessly looped
+  - `"loop"`: continuously and seamlessly looped with crossfading
   - `"frequent"`: played many times per minute
   - `"occasional"`: played a few times per minute
   - `"rare"`: played only a couple of times per minute at most
+
+##### **Optional audio fields**
+
+- **`volume`** *(number)*  
+  Playback volume (0.0 to 1.0, default: 1.0)
+
+- **`crossfade_time`** *(number)*  
+  For `"loop"` interval only: Duration in seconds for seamless crossfading between the end and beginning of the audio file (default: 2.0). This creates smooth, unnoticeable transitions in looping environmental sounds.
 
 ##### **Optional gating fields (to control playback eligibility)**
 
@@ -123,6 +131,7 @@ If a sound should be available for multiple biomes with otherwise identical cond
       "wilderness", "pre_industrial", "early_industrial", "dystopia", "ruins"
     ],
     "interval": "loop",
+    "crossfade_time": 3.0
   },
   {
     "path": "environment/nature/rainforest_rain.wav",

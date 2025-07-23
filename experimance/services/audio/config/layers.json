@@ -5,6 +5,17 @@
             "rainforest",
             "wilderness"
         ],
+        "requires": [
+            "rainforest"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "dense rainforest ambience: insects, distant animal calls"
     },
     {
@@ -13,6 +24,17 @@
             "jungle",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "jungle ambience: dense foliage, insects buzzing, distant animal calls"
     },
     {
@@ -21,6 +43,17 @@
             "temperate_forest",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "temperate forest ambience: rustling leaves, songbirds, wind in trees, distant animal sounds"
     },
     {
@@ -29,6 +62,17 @@
             "boreal_forest",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "boreal forest ambience: pine trees creaking, wind, ravens, light snow in winter"
     },
     {
@@ -37,6 +81,17 @@
             "deciduous_forest",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "deciduous forest ambience: birds, wind, seasonal leaf fall, insects"
     },
     {
@@ -53,6 +108,17 @@
             "mountain",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "mountain ambience: wind, distant avalanches, eagles, occasional rocks tumbling"
     },
     {
@@ -61,6 +127,17 @@
             "tropical_island",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "tropical island ambience: waves on shore, palm leaves, tropical birds, distant thunder"
     },
     {
@@ -69,6 +146,17 @@
             "river",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "river ambience: flowing water, splashes, reeds in wind, riverbank animals"
     },
     {
@@ -77,6 +165,17 @@
             "tundra",
             "wilderness"
         ],
+        "requires": [
+            "jungle"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "tundra ambience: wind, distant birds, light snow, silence"
     },
     {
@@ -85,6 +184,17 @@
             "steppe",
             "wilderness"
         ],
+        "requires": [
+            "steppe"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "steppe ambience: tall grasses rustling, insects, distant herds"
     },
     {
@@ -93,6 +203,17 @@
             "coastal",
             "wilderness"
         ],
+        "requires": [
+            "coastal"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "coastal ambience: breaking waves, seabirds, wind, tidal sounds"
     },
     {
@@ -101,6 +222,17 @@
             "swamp",
             "wilderness"
         ],
+        "requires": [
+            "swamp"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "swamp ambience: frogs, insects, water movement, distant birds"
     },
     {
@@ -109,6 +241,17 @@
             "plains",
             "wilderness"
         ],
+        "requires": [
+            "plains"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "plains ambience: wind in grasses, crickets, distant animal herds"
     },
     {
@@ -117,6 +260,17 @@
             "arctic",
             "wilderness"
         ],
+        "requires": [
+            "arctic"
+        ],
+        "requires_any": [
+            "wilderness",
+            "pre_industrial",
+            "early_industrial",
+            "dystopia",
+            "ruins"
+        ],
+        "interval": "loop",
         "prompt": "arctic ambience: howling wind, cracking ice, distant seals, muffled silence"
     },
     {
@@ -124,6 +278,7 @@
         "tags": [
             "airport"
         ],
+        "interval": "occasional",
         "prompt": "airport ambience: ambient sounds of a busy airport terminal, including rolling luggage, distant PA announcements, soft chatter, and the occasional roar of planes taking off and landing"
     },
     {
@@ -131,6 +286,7 @@
         "tags": [
             "airstrip"
         ],
+        "interval": "occasional",
         "prompt": "airstrip ambience: open-air ambience with the hum of small aircraft engines, wind over flat land, and scattered distant voices and tool clinks from ground crew"
     },
     {
@@ -138,6 +294,7 @@
         "tags": [
             "algae_farm"
         ],
+        "interval": "occasional",
         "prompt": "algae farm ambience: quiet mechanical bubbling and soft flowing water with intermittent wet sloshes and faint hums of pumps in a humid, open structure"
     },
     {
@@ -145,6 +302,7 @@
         "tags": [
             "amphitheater"
         ],
+        "interval": "occasional",
         "prompt": "amphitheater ambience: audience murmurs and applause in a semi-open stone or concrete space, with voice echoes and natural reverb from a live performance or speech"
     },
     {
@@ -152,6 +310,7 @@
         "tags": [
             "amusement_park"
         ],
+        "interval": "occasional",
         "prompt": "amusement park ambience: a vibrant mix of mechanical whirs, people laughing and screaming in delight, carnival game bells, and ambient pop music in the distance"
     },
     {
@@ -159,6 +318,7 @@
         "tags": [
             "apartment"
         ],
+        "interval": "occasional",
         "prompt": "apartment ambience: interior domestic sounds like muffled voices through walls, footsteps on floors above, appliance hums, and occasional distant traffic"
     },
     {
@@ -166,6 +326,7 @@
         "tags": [
             "arcade"
         ],
+        "interval": "rare",
         "prompt": "arcade ambience: retro and modern arcade machine loops, button presses, chiptune melodies, and a blend of excited voices and competitive banter"
     },
     {
@@ -173,6 +334,7 @@
         "tags": [
             "arena"
         ],
+        "interval": "rare",
         "prompt": "arena ambience: cheering crowd reverberating in a large enclosed space, echoing announcements, foot thumps, and team chants"
     },
     {
@@ -180,6 +342,7 @@
         "tags": [
             "bar"
         ],
+        "interval": "occasional",
         "prompt": "bar ambience: low clink of glassware, background chatter and laughter, muffled music, and stools scraping on hard floors"
     },
     {
@@ -187,6 +350,7 @@
         "tags": [
             "barracks"
         ],
+        "interval": "occasional",
         "prompt": "barracks ambience: communal living sounds, distant talking and orders being shouted, gear clanking, and footsteps on wooden or concrete floors"
     },
     {
@@ -194,6 +358,7 @@
         "tags": [
             "boat"
         ],
+        "interval": "occasional",
         "prompt": "boat ambience: wood creaking, gentle waves against the hull, seabirds in the distance, and rope or sail adjustments with occasional voices"
     },
     {
@@ -201,6 +366,7 @@
         "tags": [
             "bonfire"
         ],
+        "interval": "occasional",
         "prompt": "bonfire ambience: crackling wood flames, wind rustling through trees or clothes, and murmured conversation or light acoustic music nearby"
     },
     {
@@ -208,6 +374,7 @@
         "tags": [
             "bowling_alley"
         ],
+        "interval": "rare",
         "prompt": "bowling alley ambience: echoes of heavy balls striking pins, electronic scoring systems, and players cheering or groaning"
     },
     {
@@ -215,6 +382,7 @@
         "tags": [
             "bridge"
         ],
+        "interval": "frequent",
         "prompt": "bridge ambience: wind and distant vehicle hums over a long span, with occasional footsteps or bike tires clattering on metal or wood planks"
     },
     {
@@ -243,6 +411,7 @@
         "tags": [
             "caravan"
         ],
+        "interval": "frequent",
         "prompt": "caravan ambience: light footsteps on dirt, low chatter, animal sounds like hoofbeats or camels, and the creak of loaded carts or wagons"
     },
     {
@@ -299,6 +468,7 @@
         "tags": [
             "concert"
         ],
+        "interval": "rare",
         "prompt": "concert ambience: cheering crowd, reverb-heavy live music, stage movements, and moments of silence followed by applause"
     },
     {
@@ -327,6 +497,7 @@
         "tags": [
             "drive_in"
         ],
+        "interval": "rare",
         "prompt": "drive in ambience: low hum of parked vehicles, faint film audio through tinny speakers, and background night insects or breeze"
     },
     {
@@ -334,6 +505,7 @@
         "tags": [
             "event"
         ],
+        "interval": "rare",
         "prompt": "event ambience: crowd murmurs, speaker or performance sounds, occasional applause, and a general air of anticipation and energy"
     },
     {
@@ -355,6 +527,7 @@
         "tags": [
             "festival"
         ],
+        "interval": "rare",
         "prompt": "festival ambience: overlapping music, laughing voices, vendors calling out, footsteps on various terrain, and distant fireworks or instruments"
     },
     {
@@ -418,6 +591,7 @@
         "tags": [
             "highway"
         ],
+        "interval": "frequent",
         "prompt": "highway ambience: steady flow of vehicles passing at varying speeds, occasional honks, and wind rushing past open stretches"
     },
     {
@@ -474,6 +648,7 @@
         "tags": [
             "marina"
         ],
+        "interval": "frequent",
         "prompt": "marina ambience: light clinking of boat rigging, water lapping, seabirds calling, and soft footsteps on docks"
     },
     {
@@ -516,6 +691,7 @@
         "tags": [
             "music_hall"
         ],
+        "interval": "rare",
         "prompt": "music hall ambience: orchestral tuning, soft crowd murmurs, stage creaks, and detailed reverb of live instruments"
     },
     {
@@ -537,6 +713,12 @@
         "tags": [
             "ocean waves"
         ],
+        "requires_any": [
+            "ocean",
+            "coastal",
+            "beach"
+        ],
+        "interval": "loop",
         "prompt": "ocean waves ambience: continuous wash and pull of surf on sand or rock, with seagull calls and coastal breeze"
     },
     {
@@ -558,6 +740,7 @@
         "tags": [
             "opera"
         ],
+        "interval": "rare",
         "prompt": "opera ambience: powerful live vocal performance, rich orchestration, and audience shifting and applause in a large hall"
     },
     {
@@ -579,6 +762,7 @@
         "tags": [
             "pier"
         ],
+        "interval": "frequent",
         "prompt": "pier ambience: wood creaks over water, gulls overhead, occasional splash or boat rope sound, and footsteps on planks"
     },
     {
@@ -684,6 +868,7 @@
         "tags": [
             "roller_rink"
         ],
+        "interval": "rare",
         "prompt": "roller rink ambience: rolling skates on smooth surface, upbeat music, echoed laughter and motion"
     },
     {
@@ -761,6 +946,7 @@
         "tags": [
             "stadium"
         ],
+        "interval": "rare",
         "prompt": "stadium ambience: cheering fans, announcer echoes, distant music or horns, and team-related sounds"
     },
     {
@@ -789,6 +975,7 @@
         "tags": [
             "theatre"
         ],
+        "interval": "rare",
         "prompt": "theatre ambience: audience whispers, stage creaks, applause"
     },
     {
@@ -810,6 +997,7 @@
         "tags": [
             "traffic"
         ],
+        "interval": "frequent",
         "prompt": "traffic ambience: layered car and truck motion, horns, tires over pavement, and shifting city density"
     },
     {
@@ -844,6 +1032,9 @@
         "path": "environment/tribal_village.mp3",
         "tags": [
             "tribal_village"
+        ],
+        "requires_any": [
+            "pre_industrial"
         ],
         "prompt": "tribal village ambience: communal voices, drumbeats or singing, tools in use"
     },
