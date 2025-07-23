@@ -69,23 +69,30 @@ class PipecatEventProcessor(FrameProcessor):
         # Handle user speaking state
         if isinstance(frame, UserStartedSpeakingFrame):
             self.user_speaking = True
-            await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED)
+            await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED, {
+                "speaker": "user"
+            })
             logger.debug("User started speaking")
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self.user_speaking = False
-            await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED)
+            await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED, {
+                "speaker": "user"
+            })
             logger.debug("User stopped speaking")
             
         # Handle bot speaking state  
         elif isinstance(frame, TTSStartedFrame):
             self.bot_speaking = True
-            await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING)
+            await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING, {
+                "speaker": "agent"
+            })
             logger.debug("Bot started speaking")
             
         elif isinstance(frame, TTSStoppedFrame):
             self.bot_speaking = False
-            await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING)
+            await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
+                "speaker": "agent"})
             logger.debug("Bot stopped speaking")
             
         # Forward the frame to the next processor

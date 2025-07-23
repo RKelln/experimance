@@ -18,10 +18,9 @@ def presence_config():
     """Create a test presence configuration with short timeouts for faster testing."""
     return PresenceConfig(
         presence_threshold=1.0,  # 1 second to confirm presence
-        idle_threshold=2.0,      # 2 seconds to confirm absence
-        presence_publish_interval=0.5,  # Publish every 0.5 seconds
-        touch_timeout=5.0,       # Not used anymore but kept for config
-        conversation_timeout=3.0  # Not used anymore but kept for config
+        absence_threshold=1.0,   # 1 second to confirm absence  
+        idle_threshold=2.0,      # 2 seconds to confirm idle
+        presence_publish_interval=0.5  # Publish every 0.5 seconds
     )
 
 
@@ -44,7 +43,7 @@ class TestPresenceManagerInitialization:
         assert status.voice is False
         assert status.touch is False
         assert status.conversation is False
-        assert status.people_count == 0
+        assert status.person_count == 0
         assert status.presence_duration == 0.0
         assert status.hand_duration == 0.0
         assert status.voice_duration == 0.0
@@ -55,14 +54,14 @@ class TestPropertyInterface:
     """Test the property-based interface for setting detection states."""
     
     def test_people_count_property(self, presence_manager):
-        """Test people_count property setter and getter."""
-        assert presence_manager.people_count == 0
+        """Test person_count property setter and getter."""
+        assert presence_manager.person_count == 0
         
-        presence_manager.people_count = 2
-        assert presence_manager.people_count == 2
+        presence_manager.person_count = 2
+        assert presence_manager.person_count == 2
         
         status = presence_manager.get_current_status()
-        assert status.people_count == 2
+        assert status.person_count == 2
     
     def test_voice_property(self, presence_manager):
         """Test voice property setter and getter."""
@@ -101,16 +100,23 @@ class TestPropertyInterface:
         # Trigger touch
         presence_manager.touch = True
         
-        # Should immediately return to false (one-shot)
+        # Touch trigger should now be active
+        assert presence_manager.touch is True
+        
+        # Status should reflect the trigger before reset
+        status = presence_manager.get_current_status()
+        assert status.touch is True
+        
+        # Last_touch should be recorded
+        assert status.last_touch is not None
+        
+        # After marking as published, touch should reset
+        presence_manager.mark_published()
         assert presence_manager.touch is False
         
-        # But the status should reflect the trigger during update
+        # Next status should show touch as false
         status = presence_manager.get_current_status()
-        # Touch should be false in status too since it's reset immediately
         assert status.touch is False
-        
-        # But last_touch should be recorded
-        assert status.last_touch is not None
 
 
 class TestConversationDetection:
@@ -149,7 +155,7 @@ class TestHysteresisLogic:
     def test_presence_requires_threshold_time(self, presence_manager):
         """Test that presence is not confirmed until threshold time passes."""
         # Set presence indicators
-        presence_manager.people_count = 1
+        presence_manager.person_count = 1
         
         # Should not be present immediately
         status = presence_manager.get_current_status()
@@ -169,7 +175,7 @@ class TestHysteresisLogic:
     def test_absence_requires_threshold_time(self, presence_manager):
         """Test that absence is not confirmed until threshold time passes."""
         # First establish presence
-        presence_manager.people_count = 1
+        presence_manager.person_count = 1
         
         with patch('experimance_core.presence.datetime') as mock_datetime:
             # Fast-forward to establish presence
@@ -181,17 +187,26 @@ class TestHysteresisLogic:
             assert status.present is True
             
             # Now remove presence indicators
-            presence_manager.people_count = 0
+            presence_manager.person_count = 0
             
             # Should still be present immediately after
             status = presence_manager.get_current_status()
             assert status.present is True
             assert status.idle is False
             
-            # Fast-forward past idle threshold
-            future_time = datetime.now() + timedelta(seconds=5)
+            # Fast-forward past absence threshold but not idle threshold
+            future_time = datetime.now() + timedelta(seconds=3)
             mock_datetime.now.return_value = future_time
             presence_manager.force_update()
+            
+            status = presence_manager.get_current_status()
+            assert status.present is False
+            assert status.idle is False  # Still not idle
+            
+            # Fast-forward past idle threshold and use update() to trigger idle logic
+            future_time = datetime.now() + timedelta(seconds=5)
+            mock_datetime.now.return_value = future_time
+            presence_manager.update()  # Use update() instead of force_update()
             
             status = presence_manager.get_current_status()
             assert status.present is False
@@ -208,7 +223,7 @@ class TestTypicalInteractionFlow:
             mock_datetime.now.return_value = base_time
             
             # 1. Vision sees a person
-            presence_manager.people_count = 1
+            presence_manager.person_count = 1
             
             # Should not be present yet (hysteresis)
             status = presence_manager.get_current_status()
@@ -222,7 +237,7 @@ class TestTypicalInteractionFlow:
             status = presence_manager.get_current_status()
             assert status.present is True
             assert status.idle is False
-            assert status.people_count == 1
+            assert status.person_count == 1
             
             # 3. Bot speaks
             mock_datetime.now.return_value = base_time + timedelta(seconds=2)
@@ -255,7 +270,12 @@ class TestTypicalInteractionFlow:
             
             status = presence_manager.get_current_status()
             assert status.last_touch is not None
-            # Touch should be false (one-shot)
+            # Touch should be true until published
+            assert status.touch is True
+            
+            # Simulate publishing
+            presence_manager.mark_published()
+            status = presence_manager.get_current_status()
             assert status.touch is False
             
             # 7. User stops speaking
@@ -272,27 +292,28 @@ class TestTypicalInteractionFlow:
             
             status = presence_manager.get_current_status()
             assert status.hand is False
-            assert status.present is True  # Still present due to people_count only
+            assert status.present is True  # Still present due to person_count only
             
             # 9. Person leaves (vision loses them)
             mock_datetime.now.return_value = base_time + timedelta(seconds=8)
-            presence_manager.people_count = 0
+            presence_manager.person_count = 0
             
             # Should still be present (hysteresis)
             status = presence_manager.get_current_status()
             assert status.present is True
-            assert status.people_count == 0
+            assert status.person_count == 0
             
             # 10. Wait for idle threshold (touch doesn't extend presence)
-            # Absence tracking should start at second 8 when people_count goes to 0
+            # Absence tracking should start at second 8 when person_count goes to 0
             # Idle threshold is 2s, so absence should be confirmed at second 10
-            mock_datetime.now.return_value = base_time + timedelta(seconds=10)
-            presence_manager.force_update()
+            # And idle should be confirmed a bit later
+            mock_datetime.now.return_value = base_time + timedelta(seconds=11)
+            presence_manager.update()  # Use update() to trigger idle logic
             
             status = presence_manager.get_current_status()
             assert status.present is False
             assert status.idle is True
-            assert status.people_count == 0
+            assert status.person_count == 0
     
     def test_touch_triggers_audio_sfx(self, presence_manager):
         """Test that touch properly triggers for audio SFX."""
@@ -303,12 +324,21 @@ class TestTypicalInteractionFlow:
         # Trigger touch
         presence_manager.touch = True
         
-        # Touch should immediately reset (one-shot)
+        # Touch should be active until published
+        assert presence_manager.touch is True
+        
+        # Status should show touch is active
+        status = presence_manager.get_current_status()
+        assert status.touch is True
+        assert status.last_touch is not None
+        
+        # After marking as published, touch should reset
+        presence_manager.mark_published()
         assert presence_manager.touch is False
         
-        # But timestamp should be recorded
+        # Next status should show touch as false
         status = presence_manager.get_current_status()
-        assert status.last_touch is not None
+        assert status.touch is False
     
     def test_multiple_presence_indicators(self, presence_manager):
         """Test behavior with multiple simultaneous presence indicators."""
@@ -317,7 +347,7 @@ class TestTypicalInteractionFlow:
             mock_datetime.now.return_value = base_time
             
             # Set multiple indicators
-            presence_manager.people_count = 2
+            presence_manager.person_count = 2
             presence_manager.hand = True
             presence_manager.voice = True
             
@@ -327,7 +357,7 @@ class TestTypicalInteractionFlow:
             
             status = presence_manager.get_current_status()
             assert status.present is True
-            assert status.people_count == 2
+            assert status.person_count == 2
             assert status.hand is True
             assert status.voice is True
             assert status.conversation is True
@@ -340,18 +370,18 @@ class TestTypicalInteractionFlow:
             
             presence_manager.hand = False
             status = presence_manager.get_current_status()
-            assert status.present is True  # Still present due to people_count
+            assert status.present is True  # Still present due to person_count
             
             # Remove final indicator
-            presence_manager.people_count = 0
+            presence_manager.person_count = 0
             
             # Should still be present (hysteresis)
             status = presence_manager.get_current_status()
             assert status.present is True
             
             # Wait for idle threshold
-            mock_datetime.now.return_value = base_time + timedelta(seconds=4)
-            presence_manager.force_update()
+            mock_datetime.now.return_value = base_time + timedelta(seconds=5)
+            presence_manager.update()  # Use update() to trigger idle logic
             
             status = presence_manager.get_current_status()
             assert status.present is False
@@ -365,17 +395,22 @@ class TestEdgeCases:
         """Test rapid on/off state changes are handled correctly."""
         # Rapidly toggle presence indicators
         for i in range(5):
-            presence_manager.people_count = 1 if i % 2 == 0 else 0
+            presence_manager.person_count = 1 if i % 2 == 0 else 0
             status = presence_manager.get_current_status()
             # Should not become present due to hysteresis
             assert status.present is False
     
-    def test_touch_multiple_triggers(self, presence_manager):
+    def test_multiple_touch_triggers(self, presence_manager):
         """Test multiple touch triggers work correctly."""
         # First touch
         presence_manager.touch = True
         status1 = presence_manager.get_current_status()
         first_touch_time = status1.last_touch
+        assert status1.touch is True
+        
+        # Reset via mark_published
+        presence_manager.mark_published()
+        assert presence_manager.touch is False
         
         # Second touch (after small delay)
         with patch('experimance_core.presence.datetime') as mock_datetime:
@@ -386,7 +421,8 @@ class TestEdgeCases:
             status2 = presence_manager.get_current_status()
             second_touch_time = status2.last_touch
             
-            # Should have updated timestamp
+            # Should have updated timestamp and be active
+            assert status2.touch is True
             assert second_touch_time != first_touch_time
             assert second_touch_time > first_touch_time
     
@@ -397,7 +433,7 @@ class TestEdgeCases:
             mock_datetime.now.return_value = base_time
             
             # Establish presence
-            presence_manager.people_count = 1
+            presence_manager.person_count = 1
             presence_manager.hand = True
             presence_manager.voice = True
             
@@ -436,9 +472,46 @@ class TestPublishingControl:
             
             assert presence_manager.should_publish() is True
     
+    def test_update_method_returns_publish_decision(self, presence_manager):
+        """Test that update() method returns the publish decision."""
+        # Initially should publish
+        assert presence_manager.update() is True
+        
+        # After marking published, should not publish immediately
+        presence_manager.mark_published()
+        assert presence_manager.update() is False
+        
+        # After interval, should publish again
+        with patch('experimance_core.presence.datetime') as mock_datetime:
+            future_time = datetime.now() + timedelta(seconds=1)
+            mock_datetime.now.return_value = future_time
+            
+            assert presence_manager.update() is True
+    
+    def test_touch_triggers_immediate_publish(self, presence_manager):
+        """Test that touch events trigger immediate publishing."""
+        # Mark as recently published
+        presence_manager.mark_published()
+        assert presence_manager.update() is False
+        
+        # Touch should trigger immediate publish
+        presence_manager.touch = True
+        assert presence_manager.update() is True
+        
+        # And touch should be visible in status
+        status = presence_manager.get_current_status()
+        assert status.touch is True
+        
+        # After marking published, touch should reset
+        presence_manager.mark_published()
+        assert presence_manager.touch is False
+        
+        status = presence_manager.get_current_status()
+        assert status.touch is False
+    
     def test_debug_info(self, presence_manager):
         """Test debug info provides useful information."""
-        presence_manager.people_count = 1
+        presence_manager.person_count = 1
         presence_manager.hand = True
         
         debug_info = presence_manager.get_debug_info()
@@ -447,7 +520,7 @@ class TestPublishingControl:
         assert "hysteresis_state" in debug_info
         assert "current_status" in debug_info
         
-        assert debug_info["raw_inputs"]["people_count"] == 1
+        assert debug_info["raw_inputs"]["person_count"] == 1
         assert debug_info["raw_inputs"]["hand_detected"] is True
         # Note: current_status reflects the stable state after hysteresis
         # so it might not immediately reflect the raw inputs

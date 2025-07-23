@@ -62,6 +62,7 @@ class AgentService(BaseService):
         self.vlm_processor = None
         self.audience_detector = None
         self._detector_profile = None  # Store loaded detector profile
+        self._person_count = 0  # Track number of people currently detected
         
         # Transcript display handler (will be initialized if enabled)
         self.transcript_display_handler = None
@@ -88,7 +89,7 @@ class AgentService(BaseService):
             await self._initialize_transcript_display_handler()
         
         # Register background tasks
-        self.add_task(self._conversation_monitor_loop())
+        #self.add_task(self._conversation_monitor_loop())
         self.add_task(self._audience_detection_loop())
         if self.config.vision.vlm_enabled:
             self.add_task(self._vision_analysis_loop())
@@ -157,6 +158,12 @@ class AgentService(BaseService):
                 )
                 backend.add_event_callback(
                     AgentBackendEvent.SPEECH_ENDED, self._on_speech_ended
+                )
+                backend.add_event_callback(
+                    AgentBackendEvent.BOT_STARTED_SPEAKING, self._on_speech_detected
+                )
+                backend.add_event_callback(
+                    AgentBackendEvent.BOT_STOPPED_SPEAKING, self._on_speech_ended
                 )
                 backend.add_event_callback(
                     AgentBackendEvent.TRANSCRIPTION_RECEIVED, self._on_transcription_received
@@ -338,6 +345,12 @@ class AgentService(BaseService):
     
     async def _audience_detection_loop(self):
         """Monitor audience presence and publish to presence system."""
+        # Adaptive timing: faster checks when detector reports instability
+        normal_interval = self.config.vision.audience_detection_interval
+        frame_duration = 1.0 / self.config.vision.webcam_fps
+        rapid_interval = max(frame_duration, normal_interval / 5)  # 5x faster, but at least 1 frame
+        current_interval = normal_interval
+        
         while self.running:
             try:
                 if (self.config.vision.audience_detection_enabled and 
@@ -352,33 +365,35 @@ class AgentService(BaseService):
                         detection_result = await self.audience_detector.detect_audience(frame)
                         
                         if detection_result.get("success", False):
-                            # Check if detector says we should publish (handles flapping internally)
-                            if detection_result.get("should_publish", False):
-                                await self._publish_audience_present(
-                                    present=detection_result["audience_detected"],
-                                    confidence=detection_result["confidence"],
-                                    people_count=detection_result.get("people_count", 0)
-                                )
-                                
-                                logger.info(f"Published audience detection: {detection_result['audience_detected']} "
-                                          f"(confidence: {detection_result['confidence']:.2f}, "
-                                          f"people: {detection_result.get('people_count', 0)}, "
-                                          f"method: {detection_result.get('primary_method', 'unknown')})")
+                            # Use detector's stability assessment for adaptive timing
+                            is_stable = detection_result.get("stable", False)
                             
-                            # Log detector reasoning for debugging
-                            if detection_result.get("reasoning"):
-                                logger.debug(f"Detection reasoning: {detection_result['reasoning']}")
-                                
+                            # Publish when detector reports stable state
+                            if is_stable:
+                                current_interval = normal_interval
+                                person_count = detection_result.get("person_count", 0)
+                                if self._person_count != person_count:
+                                    self._person_count = person_count
+                                    await self._publish_audience_present(
+                                        person_count=person_count
+                                    )
+                                    
+                            else:
+                                current_interval = rapid_interval
+                                logger.debug(f"Detector reports instability, using rapid checks ({rapid_interval}s)")
+
                         else:
                             logger.warning(f"Audience detection failed: {detection_result.get('error', 'Unknown error')}")
+                            # On error, use normal interval
+                            current_interval = normal_interval
                 
-                await self._sleep_if_running(self.config.vision.audience_detection_interval)
+                await self._sleep_if_running(current_interval)
                 
             except Exception as e:
                 self.record_error(e, is_fatal=False)
-                await self._sleep_if_running(10.0)  # Back off on error
-    
-    async def _vision_analysis_loop(self):
+                # Reset to normal interval on error and back off more
+                current_interval = normal_interval
+                await self._sleep_if_running(10.0)  # Back off on error    async def _vision_analysis_loop(self):
         """Perform periodic vision analysis for scene understanding."""
         while self.running:
             try:
@@ -458,6 +473,8 @@ class AgentService(BaseService):
     
     async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech detection event from pipecat backend."""
+        logger.debug("_on_speech_detected: event=%s, data=%s", event, data)
+
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
         # Update internal state
@@ -472,6 +489,7 @@ class AgentService(BaseService):
     
     async def _on_speech_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech ended event from pipecat backend."""
+        logger.debug("_on_speech_ended: event=%s, data=%s", event, data)
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
         # Update internal state
@@ -631,22 +649,21 @@ class AgentService(BaseService):
     # Publishing Methods
     # =========================================================================
     
-    async def _publish_audience_present(self, present: bool, confidence: float = 0.0, people_count: int = 0):
+    async def _publish_audience_present(self, person_count: int = 0):
         """Publish audience presence detection."""
         message = AudiencePresent(
-            status=present,  # Field name expected by core service
-            people_count=people_count
+            person_count=person_count
         )
-        await self.zmq_service.publish(message.model_dump(), MessageType.AUDIENCE_PRESENT)
-        logger.debug(f"Published audience present: {present} (confidence: {confidence:.2f}, people: {people_count})")
-    
+        await self.zmq_service.publish(message, MessageType.AUDIENCE_PRESENT)
+        logger.debug(f"Published audience present: (people: {person_count})")
+
     async def _publish_speech_detected(self, is_speaking: bool, speaker_type: str = "agent"):
         """Publish speech detection for conversation tracking."""
         message = SpeechDetected(
             is_speaking=is_speaking,
-            speaker=speaker_type  # Field name expected by core service 
+            speaker=speaker_type  # Convert to enum value
         )
-        await self.zmq_service.publish(message.model_dump(), MessageType.SPEECH_DETECTED)
+        await self.zmq_service.publish(message, MessageType.SPEECH_DETECTED)
         logger.debug(f"Published speech detected: {speaker_type} speaking={is_speaking}")
     
     async def _publish_suggest_biome(self, suggested_biome: str, confidence: float = 0.8):

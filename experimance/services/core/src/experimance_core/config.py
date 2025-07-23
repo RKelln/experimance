@@ -89,13 +89,18 @@ class PresenceConfig(BaseModel):
     
     # Hysteresis/debouncing thresholds for core's presence decisions
     presence_threshold: float = Field(
-        default=2.0,
+        default=1.0,
         description="Seconds of presence detection before considering audience present"
+    )
+
+    absence_threshold: float = Field(
+        default=10.0,
+        description="Seconds of no presence detection before considering audience gone"
     )
     
     idle_threshold: float = Field(
-        default=10.0,
-        description="Seconds of no presence detection before considering audience gone"
+        default=30.0,
+        description="Seconds of no presence detection before going idle"
     )
     
     # Publishing frequency

@@ -514,7 +514,7 @@ class ExperimanceCoreService(BaseService):
             # Apply flip transformations if configured
             debug_depth_image = depth_image.copy()
 
-            debug_depth_image = self._process_image(debug_depth_image, blur=False)
+            debug_depth_image = self._process_image(debug_depth_image)
             
             # Convert depth map to colorized visualization for better visibility
             depth_colorized = cv2.applyColorMap(debug_depth_image, cv2.COLORMAP_JET)
@@ -560,17 +560,22 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error publishing interaction sound: {e}")
 
-    async def _publish_presence_status(self):
+    async def _publish_presence_status(self, presence: PresenceStatus | None = None):
         """Publish current presence status from the presence manager."""
         try:
-            presence_status = self.presence_manager.get_current_status()
-            
+            if presence is None:
+                # Get current presence status from manager
+                presence = self.presence_manager.get_current_status()
+
+            logger.info(f"Published presence status: present={presence.present}, "
+                       f"idle={presence.idle}, hand={presence.hand}, "
+                       f"voice={presence.voice}, people={presence.person_count}, "
+                       f"touch={presence.touch}")
+
             # Publish the presence status (publish() raises exception on failure)
-            await self.zmq_service.publish(presence_status)
+            await self.zmq_service.publish(presence)
             self.presence_manager.mark_published()
-            logger.debug(f"Published presence status: present={presence_status.present}, "
-                       f"idle={presence_status.idle}, hand={presence_status.hand}, "
-                       f"voice={presence_status.voice}, people={presence_status.people_count}")
+            
         except Exception as e:
             logger.error(f"Error publishing presence status: {e}")
 
@@ -968,21 +973,21 @@ class ExperimanceCoreService(BaseService):
         logger.debug(f"Received AudiencePresent message: {status}")
         
         try:
-            # Agent vision detection - just use people_count (simpler and more informative)
-            people_count = message.get('people_count', 0)
-            # If status is False but people_count > 0, trust the count. If status is True but count is 0, set count to 1
-            if not status and people_count > 0:
+            # Agent vision detection - just use person_count (simpler and more informative)
+            person_count = message.get('person_count', 0)
+            # If status is False but person_count > 0, trust the count. If status is True but count is 0, set count to 1
+            if not status and person_count > 0:
                 # Trust the count over the boolean
                 pass
-            elif status and people_count == 0:
+            elif status and person_count == 0:
                 # Set count to 1 if status indicates present but no count provided
-                people_count = 1
+                person_count = 1
             elif not status:
                 # Ensure count is 0 if not present
-                people_count = 0
+                person_count = 0
                 
-            self.presence_manager.people_count = people_count
-            logger.debug(f"Updated people count: {people_count}")
+            self.presence_manager.person_count = person_count
+            logger.debug(f"Updated people count: {person_count}")
         except Exception as e:
             logger.error(f"Error processing audience present message: {e}")
 
@@ -1091,14 +1096,14 @@ class ExperimanceCoreService(BaseService):
         
         period = 0
         sleep = 0.5
-        state_display_period = 30  # seconds
+        state_display_period = 180  # seconds
         while self.running:
             try:
                 period += sleep
 
                 await self._check_pending_render_request() # handle pending render requests
 
-                if self.presence_manager.should_publish():
+                if self.presence_manager.update():
                     await self._publish_presence_status()
 
                 # Periodic state logging for debugging
@@ -1205,7 +1210,7 @@ class ExperimanceCoreService(BaseService):
 
         if blur and self.config.camera.blur_depth:
             # Apply Gaussian blur to reduce noise
-            image = cv2.GaussianBlur(image, (11, 11), 0)
+            image = cv2.GaussianBlur(image, (17, 17), 0)
         
         return image
 

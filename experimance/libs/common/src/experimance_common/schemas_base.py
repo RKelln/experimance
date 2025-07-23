@@ -5,7 +5,7 @@ Schema definitions for Experimance inter-service messages.
 from __future__ import annotations
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -281,7 +281,7 @@ class PresenceStatus(MessageBase):
     # installation activity
     conversation: bool     # either agent or human is speaking (or recently spoke)
     # detection counts
-    people_count: int = 0  # number of people detected by vision system
+    person_count: int = 0  # number of people detected by vision system
     # timestamps of last detection
     last_present: Optional[datetime] = None
     last_hand: Optional[datetime] = None
@@ -297,16 +297,15 @@ class PresenceStatus(MessageBase):
 class AudiencePresent(MessageBase):
     """Message indicating audience presence status."""
     type: MessageType = MessageType.AUDIENCE_PRESENT
-    status: bool  # True if audience is present, False otherwise
+    person_count: int = 0  # Number of people detected
 
 
 class SpeechDetected(MessageBase):
     """Message indicating speech detection status."""
     type: MessageType = MessageType.SPEECH_DETECTED
     is_speaking: bool  # True if speech is detected, False otherwise
-    speaker: Optional[str] = None  # "agent" or "human" to identify the speaker
-
-
+    speaker: str = Field(default="human", description="Who is speaking: 'agent' or 'human'")
+    
 class ImageReady(MessageBase):
     """Event published when a new image is ready.
     Base class - projects should extend this to add era/biome fields.
