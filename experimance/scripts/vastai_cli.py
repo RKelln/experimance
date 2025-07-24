@@ -132,9 +132,23 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
     if hasattr(args, 'provision_script') and args.provision_script:
         manager = VastAIManager(provisioning_script_url=args.provision_script)
     
-    # Check if there's already an existing instance
-    existing_instances = manager.find_experimance_instances()
+    # Check if an instance ID was provided
+    instance_id = getattr(args, 'instance_id', None)
+    print(f"Instance ID provided: {instance_id}")
     
+    if instance_id is None:
+        # Check if there's already an existing instance
+        existing_instances = manager.find_experimance_instances()
+    else:
+        result = manager.create_instance(instance_id)
+        instance_id = result.get("new_contract")
+        
+        if not instance_id:
+            print(f"Failed to create instance: {result}")
+            return None
+    
+        existing_instances = manager.find_experimance_instances()
+
     if existing_instances:
         # Found existing instance - provision it
         instance_id = existing_instances[0]["id"]
@@ -640,6 +654,7 @@ def main():
 
     # provision
     p_prov = subparsers.add_parser('provision', help='Find or create an instance (always provisions)')
+    p_prov.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
     p_prov.add_argument('--no-wait', action='store_true', dest='no_wait', help='Do not wait for instance ready')
     p_prov.add_argument('--verbose', action='store_true', help='Show provisioning script output in real-time')
     p_prov.add_argument('--provision-script', type=str, metavar='URL', help='Custom provisioning script URL to use')
