@@ -376,13 +376,17 @@ class AgentService(BaseService):
                                 current_interval = normal_interval
                                 person_count = detection_result.get("person_count", 0)
                                 now = time.monotonic()
+                                # Only publish if we have a significant change or it's time to report
                                 if self._person_count != person_count or now - last_publish_time > report_min_interval:
+                                    if self._person_count != person_count:
+                                        self._person_count = person_count
+                                        # update the LLM backend
+                                        await self._backend_update_person_count(person_count)
+
                                     last_publish_time = now
-                                    self._person_count = person_count
                                     await self._publish_audience_present(
                                         person_count=person_count
                                     )
-                                    
                             else:
                                 current_interval = rapid_interval
                                 logger.debug(f"Detector reports instability, using rapid checks ({rapid_interval}s)")
@@ -467,6 +471,21 @@ class AgentService(BaseService):
         #         speaker="system"
         #     )
     
+    async def _backend_update_person_count(self, person_count: int):
+        """Send audience presence update to the LLM service."""
+        if self.current_backend and self.current_backend.is_connected:
+            text = ""
+            if person_count == 0:
+                text = "No people"
+            elif person_count == 1:
+                text = "One person"
+            elif person_count > 1:
+                text = f"{person_count} people"
+            await self.current_backend.send_message(
+                f"<vision: {text} detected>",
+                speaker="system"
+            )
+
     async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle conversation ended event."""
         self.is_conversation_active = False
