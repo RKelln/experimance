@@ -2,9 +2,9 @@
 
 # Display settings
 [display]
-fullscreen = true             # Whether to run in fullscreen mode
-monitor = 0                   # Monitor to display on (0 = primary)
-resolution = [1920, 1080]     # Resolution to use if not fullscreen
+fullscreen = true            # Whether to run in fullscreen mode
+monitor = 2                   # Monitor to display on (0 = primary)
+resolution = [1080, 1080]     # Resolution to use if not fullscreen
 fps_limit = 30                # Frame rate limit
 vsync = true                  # Whether to use vertical sync
 debug_overlay = false          # Whether to show debug overlay
