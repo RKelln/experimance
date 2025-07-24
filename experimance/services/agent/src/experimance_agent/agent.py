@@ -63,31 +63,28 @@ class AgentService(BaseService):
         self.vlm_processor = None
         self.audience_detector = None
         self._detector_profile = None  # Store loaded detector profile
-        self._person_count = 0  # Track number of people currently detected
+        self._person_count = -1  # Track number of people currently detected
         
         # Transcript display handler (will be initialized if enabled)
         self.transcript_display_handler = None
         
     async def start(self):
         """Initialize and start the agent service."""
-        logger.info(f"Starting {self.service_name} with backend: {self.config.agent_backend}")
+        logger.info(f"Starting {self.service_name} in vision-only mode")
         
         # Set up message handlers before starting ZMQ service
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
-        
+        self.zmq_service.add_message_handler(MessageType.PRESENCE_STATUS, self._handle_audience_present)
+
         # Start ZMQ service
         await self.zmq_service.start()
         
-        # Initialize agent backend
-        await self._initialize_backend()
+        # DON'T initialize agent backend yet - wait for person detection
+        # await self._initialize_backend()
         
-        # Initialize vision processing if enabled
+        # Initialize vision processing if enabled (this runs immediately)
         if self.config.vision.webcam_enabled:
             await self._initialize_vision()
-        
-        # Initialize transcript handling if enabled
-        if self.config.transcript.display_transcripts:
-            await self._initialize_transcript_display_handler()
         
         # Register background tasks
         #self.add_task(self._conversation_monitor_loop())
@@ -98,7 +95,7 @@ class AgentService(BaseService):
         # ALWAYS call super().start() LAST - this starts health monitoring automatically
         await super().start()
         
-        logger.info(f"{self.service_name} started successfully")
+        logger.info(f"{self.service_name} started successfully in vision-only mode")
     
     async def stop(self):
         """Clean up resources and stop the agent service."""
@@ -137,6 +134,8 @@ class AgentService(BaseService):
         """Initialize the selected agent backend."""
         backend_name = self.config.agent_backend.lower()
         
+        if not self.running: return
+
         try:
             if backend_name == "pipecat":
                 from .backends.pipecat_backend import PipecatBackend
@@ -172,10 +171,10 @@ class AgentService(BaseService):
                 backend.add_event_callback(
                     AgentBackendEvent.TOOL_CALLED, self._on_tool_called
                 )
-                
-                # Register available tools
-                await self._register_tools()
-                
+                backend.add_event_callback(
+                    AgentBackendEvent.CANCEL, self._cancel_backend_pipeline
+                )
+
                 # Start the backend
                 await backend.start()  # type: ignore
                 
@@ -184,6 +183,8 @@ class AgentService(BaseService):
                     pipeline_task = backend.get_pipeline_task()
                     if pipeline_task:
                         self.add_task(pipeline_task)
+                        # Add a monitor task to detect when pipeline ends unexpectedly
+                        #self.add_task(self._monitor_pipeline_task(pipeline_task))
                         logger.info("Added pipeline task to service task management")
                 
                 # Debug output
@@ -197,29 +198,61 @@ class AgentService(BaseService):
         except Exception as e:
             self.record_error(e, is_fatal=True)
             raise
+
+    async def _start_backend_for_conversation(self):
+        """Start the agent backend when a person is detected."""
+        if self.current_backend is not None:
+            logger.debug("Backend already running, skipping startup")
+            return True
+        
+        if not self.running: return
+
+        logger.info("Person detected, starting conversation backend...")
+        
+        try:
+            # Initialize the backend
+            await self._initialize_backend()
+            
+            # Initialize transcript handling if enabled
+            if self.config.transcript.display_transcripts:
+                await self._initialize_transcript_display_handler()
+                
+            logger.info("Conversation backend started successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start conversation backend: {e}")
+            self.record_error(e, is_fatal=True)
+            return False
     
-    async def _register_tools(self):
-        """Register available tools with the agent backend."""
-        if not self.current_backend:
+    async def _stop_backend_after_conversation(self):
+        """Stop the agent backend after conversation ends."""
+        if self.current_backend is None:
+            logger.debug("Backend already stopped, skipping shutdown")
             return
         
-        # Register biome suggestion tool
-        if self.config.biome_suggestions_enabled:
-            self.current_backend.register_tool(
-                "suggest_biome",
-                self._suggest_biome_tool,
-                "Suggest a new biome for the installation based on conversation context"
-            )
+        if not self.running: return
+
+        logger.info("Conversation ended, stopping backend...")
         
-        # Register audience interaction tools
-        self.current_backend.register_tool(
-            "get_audience_status",
-            self._get_audience_status_tool,
-            "Check if audience members are currently present"
-        )
-        
-        logger.info("Registered tools with agent backend")
-    
+        try:
+            # Stop the backend - this will handle pipeline task cleanup internally
+            await self.current_backend.stop()
+            self.current_backend = None
+            
+            # Clear any displayed text
+            await self._clear_all_displayed_text()
+            
+            # Reset conversation state
+            self.is_conversation_active = False
+            self.agent_speaking = False
+            
+            logger.info("Conversation backend stopped successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to stop conversation backend: {e}")
+            self.record_error(e, is_fatal=False)
+
     # =========================================================================
     # Vision Processing Initialization
     # =========================================================================
@@ -323,26 +356,36 @@ class AgentService(BaseService):
     # Background Task Loops
     # =========================================================================
     
-    async def _conversation_monitor_loop(self):
-        """Monitor conversation state and manage system interactions."""
-        while self.running:
-            try:
-                if self.current_backend and self.current_backend.is_connected:
-                    # Check if conversation is active based on recent messages
-                    if hasattr(self.current_backend, 'transcript_manager'):
-                        recent_messages = self.current_backend.transcript_manager.get_messages(limit=5)
-                        if recent_messages:
-                            # Update conversation active state based on recent activity
-                            last_message_time = recent_messages[-1].timestamp
-                            import time
-                            time_since_last = time.time() - last_message_time
-                            self.is_conversation_active = time_since_last < 30.0  # Active if message in last 30 seconds
-                
-                await self._sleep_if_running(5.0)  # Check every 5 seconds
-                
-            except Exception as e:
-                self.record_error(e, is_fatal=False)
-                await self._sleep_if_running(10.0)  # Back off on error
+    # async def _monitor_pipeline_task(self, pipeline_task: asyncio.Task):
+    #     """Monitor the pipeline task and trigger shutdown if it ends unexpectedly."""
+    #     try:
+    #         # Wait for the pipeline task to complete
+    #         await pipeline_task
+    #         logger.info("Pipeline task completed normally")
+    #     except asyncio.CancelledError:
+    #         logger.info("Pipeline task was cancelled")
+    #     except Exception as e:
+    #         logger.error(f"Pipeline task failed with error: {e}")
+        
+    #     # If we get here, the pipeline has ended for some reason
+    #     # Trigger a controlled shutdown of the service
+    #     if self.running:
+    #         logger.warning("Pipeline task ended unexpectedly, triggering service shutdown")
+    #         # Stop the service - this will trigger the normal shutdown sequence
+    #         asyncio.create_task(self._shutdown_due_to_pipeline_failure())
+    
+    # async def _shutdown_due_to_pipeline_failure(self):
+    #     """Shutdown the service due to pipeline failure."""
+    #     try:
+    #         # Give a moment for any cleanup
+    #         await asyncio.sleep(0.1)
+    #         # Trigger the service stop
+    #         await self.stop()
+    #     except Exception as e:
+    #         logger.error(f"Error during pipeline failure shutdown: {e}")
+    #         # Force exit if normal shutdown fails
+    #         import os
+    #         os._exit(1)
     
     async def _audience_detection_loop(self):
         """Monitor audience presence and publish to presence system."""
@@ -396,13 +439,16 @@ class AgentService(BaseService):
                             # On error, use normal interval
                             current_interval = normal_interval
                 
-                await self._sleep_if_running(current_interval)
+                if not await self._sleep_if_running(current_interval):
+                    break
                 
             except Exception as e:
                 self.record_error(e, is_fatal=False)
                 # Reset to normal interval on error and back off more
                 current_interval = normal_interval
-                await self._sleep_if_running(10.0)  # Back off on error    async def _vision_analysis_loop(self):
+                await self._sleep_if_running(10.0)  # Back off on error
+    
+    async def _vision_analysis_loop(self):
         """Perform periodic vision analysis for scene understanding."""
         while self.running:
             try:
@@ -447,7 +493,7 @@ class AgentService(BaseService):
                 description.strip()):
                 
                 # Format as system message for context
-                context_msg = f"<System: seen by the installation camera: {description}>"
+                context_msg = f"<vision: {description}>"
                 await self.current_backend.send_message(context_msg, speaker="system")
                 
                 logger.info(f"Updated agent context with scene analysis: {description[:100]}...")
@@ -463,14 +509,18 @@ class AgentService(BaseService):
         """Handle conversation started event."""
         self.is_conversation_active = True
         logger.info("Conversation started with audience")
-        
-        # Optionally send welcome message
-        # if self.current_backend:
-        #     await self.current_backend.send_message(
-        #         "Hello! I'm the spirit of this installation. Feel free to interact with the sand while we talk.",
-        #         speaker="system"
-        #     )
-    
+
+    async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle conversation ended event."""
+        logger.info("Conversation ended")
+        self.is_conversation_active = False
+        await self._stop_backend_after_conversation()
+
+        if self.displayed_text_ids and len(self.displayed_text_ids) > 0:
+            # Clear displayed transcripts after a delay
+            await asyncio.sleep(2.0)
+            await self._clear_all_displayed_text()
+
     async def _backend_update_person_count(self, person_count: int):
         """Send audience presence update to the LLM service."""
         if self.current_backend and self.current_backend.is_connected:
@@ -485,15 +535,6 @@ class AgentService(BaseService):
                 f"<vision: {text} detected>",
                 speaker="system"
             )
-
-    async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Handle conversation ended event."""
-        self.is_conversation_active = False
-        logger.info("Conversation ended")
-        
-        # Clear displayed transcripts after a delay
-        await asyncio.sleep(5.0)
-        await self._clear_all_displayed_text()
     
     async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech detection event from pipecat backend."""
@@ -542,6 +583,58 @@ class AgentService(BaseService):
             parameters = data.get("parameters", {})
             logger.info(f"Agent called tool: {tool_name} with parameters: {parameters}")
     
+    async def _cancel_backend_pipeline(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Cancel the backend pipeline task if running.
+        We need this because pipecat and other backends may capture signals and we need to handle graceful shutdowns.
+        """
+        if self.current_backend is None:
+            logger.debug("No backend to cancel, skipping")
+            return
+        
+        if not self.running: 
+            return
+
+        logger.info("Pipeline shutdown detected, starting non-blocking cleanup...")
+        
+        # Schedule pipeline cleanup in background to avoid blocking the event loop
+        asyncio.create_task(self._shutdown_pipeline_background())
+
+    async def _shutdown_pipeline_background(self):
+        """Handle pipeline shutdown in background without blocking the main event loop."""
+        try:
+            if self.current_backend is None or not hasattr(self.current_backend, 'get_pipeline_task'):
+                logger.info("No pipeline task to wait for, stopping service immediately")
+                await self.stop()
+                return
+            
+            pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
+            if not pipeline_task or pipeline_task.done():
+                logger.info("Pipeline task already done, stopping service")
+                await self.stop()
+                return
+            
+            logger.debug("Waiting for pipeline task to complete (non-blocking)...")
+            
+            # Use asyncio.shield to prevent cancellation of our wait
+            try:
+                await asyncio.shield(asyncio.wait_for(pipeline_task, timeout=10.0))
+                logger.info("Pipeline task completed normally")
+            except asyncio.TimeoutError:
+                logger.warning("Pipeline shutdown timed out, forcing stop")
+            except asyncio.CancelledError:
+                logger.info("Pipeline task was cancelled")
+            except Exception as e:
+                logger.error(f"Pipeline task failed: {e}")
+            
+            # Now trigger the service shutdown
+            logger.info("Pipeline cleanup finished, stopping service...")
+            await self.stop()
+            
+        except Exception as e:
+            logger.error(f"Error during background pipeline shutdown: {e}")
+            # Force shutdown if something goes wrong
+            await self.stop()
+
     # =========================================================================
     # Tool Implementation
     # =========================================================================
@@ -665,9 +758,47 @@ class AgentService(BaseService):
         
         # TODO: Update agent context with current era/biome information
         if self.current_backend and self.current_backend.is_connected:
-            context_msg = f"<System: the installation is currently showing {era} era in a {biome} biome.>"
+            context_msg = f"<projection: currently displaying a {biome} biome in the {era} era in .>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
+    async def _handle_audience_present(self, message_data: MessageDataType):
+        """Handle audience presence updates."""
+        # Don't process presence updates if service is shutting down
+        if not self.running: return
+            
+        logger.info(f"Audience presence update received: {message_data}")
+
+        audience_present = message_data.get("present", True)
+        idle = message_data.get("idle", False)
+        
+        # double check that we don't have a newer person count internally, no transition if people detected
+        # NOTE: self._person_count starts at -1, so if we have no one detected, it will be 0
+        if self._person_count == 0 and (not audience_present or idle):
+
+            # Handle flow transitions based on presence and idle state
+            if self.current_backend and hasattr(self.current_backend, 'transition_to_node'):
+                current_node = self.current_backend.get_current_node()
+                if current_node is None:
+                    logger.warning("Current node is None, cannot transition")
+                    return
+                if current_node == "welcome":
+                    # We're welcoming someone, perhaps just starting up before presence stabilized, so we don't transition
+                    return
+                
+                # idle overrides not being present
+                if idle and current_node != "goodbye":
+                    logger.info("Idle state detected, transitioning to goodbye node")
+                    await self.current_backend.transition_to_node("goodbye")
+
+                elif not audience_present and current_node not in ["search", "goodbye"]:
+                    logger.info("No audience detected, transitioning to search node")
+                    await self.current_backend.transition_to_node("search")
+        
+        elif audience_present: # don't check person count here, they may be there and we can't see them yet?
+
+            # if we are inactive then we need to start the backend
+            if not self.current_backend or not self.current_backend.is_connected:
+                await self._start_backend_for_conversation()
     
     # =========================================================================
     # Publishing Methods

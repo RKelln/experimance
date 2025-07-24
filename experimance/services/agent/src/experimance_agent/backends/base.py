@@ -36,6 +36,7 @@ class AgentBackendEvent(str, Enum):
     TOOL_CALLED = "tool_called"
     PERSONA_SWITCHED = "persona_switched"
     ERROR = "error"
+    CANCEL = "cancel"  # For graceful shutdowns or interruptions
 
 
 @dataclass
@@ -447,6 +448,53 @@ class AgentBackend(ABC):
     def backend_name(self) -> str:
         """Get the backend name (derived from class name)."""
         return self.__class__.__name__.replace("Backend", "").lower()
+    
+    # =========================================================================
+    # Flow Management (for backends that support flows)
+    # =========================================================================
+    
+    async def transition_to_node(self, node_name: str) -> bool:
+        """
+        Transition to a specific node in the conversation flow.
+        
+        Args:
+            node_name: Name of the node to transition to
+            
+        Returns:
+            True if transition was successful, False otherwise
+            
+        Note:
+            Default implementation always returns False. Override in backends
+            that support conversation flows (e.g., PipecatBackend).
+        """
+        logger.warning(f"Flow transitions not supported by {self.backend_name} backend")
+        return False
+    
+    def get_current_node(self) -> Optional[str]:
+        """
+        Get the current active node name in the conversation flow.
+        
+        Returns:
+            Current node name or None if not supported/available
+            
+        Note:
+            Default implementation returns None. Override in backends
+            that support conversation flows (e.g., PipecatBackend).
+        """
+        return None
+    
+    def is_conversation_active(self) -> bool:
+        """
+        Check if conversation is currently active (not in search or goodbye state).
+        
+        Returns:
+            True if conversation is active, False otherwise
+            
+        Note:
+            Default implementation returns True. Override in backends
+            that support conversation flows for more specific logic.
+        """
+        return True
     
     def get_status(self) -> Dict[str, Any]:
         """

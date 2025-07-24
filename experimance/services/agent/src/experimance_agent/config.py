@@ -260,7 +260,7 @@ class AgentServiceConfig(BaseServiceConfig):
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["events"],
                 topics=[
-                    MessageType.SPACE_TIME_UPDATE.value
+                    MessageType.SPACE_TIME_UPDATE, MessageType.PRESENCE_STATUS
                 ]
             )
         ),

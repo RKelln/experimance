@@ -39,7 +39,7 @@ async def collect_info_and_move_to_explorer(args: FlowArgs, flow_manager: FlowMa
         flow_manager.state["current_mode"] = "explorer"
         result = {
             "status": "transition",
-            "message": f"Nice to meet you, {stored_name}!"
+            #"message": f"Hi {stored_name}!"
         }
         return result, "explorer"
     else:
@@ -52,7 +52,7 @@ async def collect_info_and_move_to_explorer(args: FlowArgs, flow_manager: FlowMa
         else:
             result = {
                 "status": "collecting", 
-                "message": f"Nice to meet you, {stored_name}! Do you live in Hamilton?"
+                "message": f"Hi {stored_name}! Do you live in Hamilton?"
             }
         return result, None
 
@@ -65,6 +65,15 @@ async def move_to_explorer(args: FlowArgs, flow_manager: FlowManager) -> tuple[O
         "status": "transition",
     }
     return result, "explorer"
+
+async def move_to_goodbye(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Move to goodbye mode."""
+    logger.info(f"[FUNCTION CALL] move_to_goodbye with args: {args}")
+    flow_manager.state["current_mode"] = "goodbye"
+    result = {
+        "status": "transition",
+    }
+    return result, "goodbye"
 
 async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Get thematic information about the art installation."""
@@ -318,10 +327,10 @@ flow_config: FlowConfig = {
                     "role": "system",
                     "content": (
                         "Greet visitors warmly and ask for their name and where they are from, but don't press for details. "
-                        "Use the collect_info_and_move_to_explorer function to gather this information. "
+                        "Use the `collect_info_and_move_to_explorer` function to gather this information. "
                         "The function will handle the transition to explorer mode when both pieces are collected."
                         "If the users is unwilling to share their information, that's fine, "
-                        "you can still move to explorer mode using the move_to_explorer function."
+                        "you can still move to explorer mode using the `move_to_explorer` function."
                     )
                 }
             ],
@@ -348,17 +357,54 @@ flow_config: FlowConfig = {
                         "name": "move_to_explorer",
                         "handler": move_to_explorer,
                         "description": "Move to explorer mode regardless of collected information",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {},
-                            "required": []
-                        }
+                        "parameters": {"type": "object", "properties": {}}
                     }
                 }
             ],
             "context_strategy": ContextStrategyConfig(
                 strategy=ContextStrategy.RESET,
             )
+        },
+        "search": {
+            "task_messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "The visitors seem to have left, ask \"is anyone there?\" "
+                        "Use the `move_to_goodbye` function exit the conversation if no one replies or they don't want to interact. "
+                        "Or return to explorer mode using the `move_to_explorer` function if they do. "
+                    )
+                }
+            ],
+            "functions": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "move_to_goodbye",
+                        "handler": move_to_goodbye,
+                        "description": "Move to goodbye mode",
+                        "parameters": {"type": "object", "properties": {}}
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "move_to_explorer",
+                        "handler": move_to_explorer,
+                        "description": "Move to explorer mode regardless of collected information",
+                        "parameters": {"type": "object", "properties": {}}
+                    }
+                }
+            ]
+        },
+        "goodbye": {
+            "task_messages": [
+                {
+                    "role": "system",
+                    "content": "If you think the visitor is still here, thank them warmly for the chat.",
+                }
+            ],
+            "post_actions": [{"type": "end_conversation"}]
         },
         "explorer": {
             "role_messages": [
@@ -423,6 +469,7 @@ After welcoming the audience and letting the audience know they can interact wit
    - get_artist_info: information about the artist Ryan Kelln
    - get_technical_info: general, sensors, ai, audio, images, software, sand, collaborators
    - get_biomes: returns the list biomes that can be displayed
+   - move_to_goodbye: if the user says goodbye or leaves the conversation
 """
                     )
                 }
@@ -490,6 +537,15 @@ After welcoming the audience and letting the audience know they can interact wit
                             "properties": {},
                             "required": []
                         }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "move_to_goodbye",
+                        "handler": move_to_goodbye,
+                        "description": "Move to goodbye mode",
+                        "parameters": {"type": "object", "properties": {}}
                     }
                 }
             ]
