@@ -59,6 +59,7 @@ class PipecatEventProcessor(FrameProcessor):
         self.backend = backend
         self.user_speaking = False
         self.bot_speaking = False
+        self._conversation_ending = False  # Track if we're in normal conversation end sequence
         
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Process frames and extract conversation events."""
@@ -95,19 +96,25 @@ class PipecatEventProcessor(FrameProcessor):
                 "speaker": "agent"})
             logger.debug("Bot stopped speaking")
             
-        # Handle pipeline shutdown
+        # Handle pipeline shutdown - EndFrame → CancelFrame sequence
         elif isinstance(frame, EndFrame):
-            logger.info("Pipeline EndFrame received, triggering conversation ended")
+            logger.info("Pipeline EndFrame received, starting conversation end sequence")
+            self._conversation_ending = True
             await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
                 "reason": "pipeline_ended"
             })
             
         elif isinstance(frame, CancelFrame):
-            logger.info("Pipeline CancelFrame received, triggering conversation ended")
-            # CancelFrame can be sent during SIGINT shutdown, so treat as conversation end
-            await self.backend.emit_event(AgentBackendEvent.CANCEL, {
-                "reason": "pipeline_cancelled"
-            })
+            if self._conversation_ending:
+                logger.info("Pipeline CancelFrame received after EndFrame (normal conversation end)")
+                # This is the expected CancelFrame after EndFrame - just cleanup, no event needed
+                self._conversation_ending = False
+            else:
+                logger.info("Pipeline CancelFrame received without EndFrame (forced shutdown)")
+                # This is a forced shutdown (Ctrl-C) - trigger shutdown coordination
+                await self.backend.emit_event(AgentBackendEvent.CANCEL, {
+                    "reason": "pipeline_cancelled"
+                })
             
         # Forward the frame to the next processor
         await self.push_frame(frame, direction)

@@ -10,7 +10,6 @@ import asyncio
 import time
 import json
 import logging
-import uuid
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -87,7 +86,6 @@ class AgentService(BaseService):
             await self._initialize_vision()
         
         # Register background tasks
-        #self.add_task(self._conversation_monitor_loop())
         self.add_task(self._audience_detection_loop())
         if self.config.vision.vlm_enabled:
             self.add_task(self._vision_analysis_loop())
@@ -104,9 +102,8 @@ class AgentService(BaseService):
         # ALWAYS call super().stop() FIRST - this stops health monitoring automatically
         await super().stop()
         
-        # Stop agent backend
-        if self.current_backend:
-            await self.current_backend.stop()
+        # Stop agent backend with pipeline coordination
+        await self._stop_backend_with_coordination()
         
         # Stop ZMQ service
         await self.zmq_service.stop()
@@ -125,6 +122,41 @@ class AgentService(BaseService):
         await self._clear_all_displayed_text()
         
         logger.info(f"{self.service_name} stopped")
+
+    async def _stop_backend_with_coordination(self):
+        """Stop the backend with proper pipeline coordination."""
+        if not self.current_backend:
+            return
+        
+        try:
+            # If backend has a pipeline task, wait for it to finish cleanly first
+            if hasattr(self.current_backend, 'get_pipeline_task'):
+                pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
+                if pipeline_task and not pipeline_task.done():
+                    logger.debug("Waiting for pipeline cleanup before backend stop...")
+                    try:
+                        pipeline_task.cancel()  # Cancel the pipeline task if needed
+                        await asyncio.wait_for(pipeline_task, timeout=5.0)
+                        logger.debug("Pipeline task completed before backend stop")
+                    except asyncio.TimeoutError:
+                        logger.warning("Pipeline cleanup timed out, proceeding with backend stop")
+                    except Exception as e:
+                        logger.debug(f"Pipeline task finished with: {e}")
+            
+            # Now stop the backend normally
+            await self.current_backend.stop()
+            
+        except Exception as e:
+            logger.error(f"Error during coordinated backend stop: {e}")
+            # Always try to stop the backend even if coordination fails
+            try:
+                if self.current_backend:
+                    await self.current_backend.stop()
+            except Exception as e2:
+                logger.error(f"Failed to stop backend after coordination error: {e2}")
+        finally:
+            # Always clear the backend reference, regardless of success or failure
+            self.current_backend = None
     
     # =========================================================================
     # Backend Management
@@ -183,8 +215,6 @@ class AgentService(BaseService):
                     pipeline_task = backend.get_pipeline_task()
                     if pipeline_task:
                         self.add_task(pipeline_task)
-                        # Add a monitor task to detect when pipeline ends unexpectedly
-                        #self.add_task(self._monitor_pipeline_task(pipeline_task))
                         logger.info("Added pipeline task to service task management")
                 
                 # Debug output
@@ -236,9 +266,8 @@ class AgentService(BaseService):
         logger.info("Conversation ended, stopping backend...")
         
         try:
-            # Stop the backend - this will handle pipeline task cleanup internally
-            await self.current_backend.stop()
-            self.current_backend = None
+            # Use the same coordinated stop approach (this handles clearing current_backend)
+            await self._stop_backend_with_coordination()
             
             # Clear any displayed text
             await self._clear_all_displayed_text()
@@ -355,37 +384,6 @@ class AgentService(BaseService):
     # =========================================================================
     # Background Task Loops
     # =========================================================================
-    
-    # async def _monitor_pipeline_task(self, pipeline_task: asyncio.Task):
-    #     """Monitor the pipeline task and trigger shutdown if it ends unexpectedly."""
-    #     try:
-    #         # Wait for the pipeline task to complete
-    #         await pipeline_task
-    #         logger.info("Pipeline task completed normally")
-    #     except asyncio.CancelledError:
-    #         logger.info("Pipeline task was cancelled")
-    #     except Exception as e:
-    #         logger.error(f"Pipeline task failed with error: {e}")
-        
-    #     # If we get here, the pipeline has ended for some reason
-    #     # Trigger a controlled shutdown of the service
-    #     if self.running:
-    #         logger.warning("Pipeline task ended unexpectedly, triggering service shutdown")
-    #         # Stop the service - this will trigger the normal shutdown sequence
-    #         asyncio.create_task(self._shutdown_due_to_pipeline_failure())
-    
-    # async def _shutdown_due_to_pipeline_failure(self):
-    #     """Shutdown the service due to pipeline failure."""
-    #     try:
-    #         # Give a moment for any cleanup
-    #         await asyncio.sleep(0.1)
-    #         # Trigger the service stop
-    #         await self.stop()
-    #     except Exception as e:
-    #         logger.error(f"Error during pipeline failure shutdown: {e}")
-    #         # Force exit if normal shutdown fails
-    #         import os
-    #         os._exit(1)
     
     async def _audience_detection_loop(self):
         """Monitor audience presence and publish to presence system."""
@@ -584,56 +582,18 @@ class AgentService(BaseService):
             logger.info(f"Agent called tool: {tool_name} with parameters: {parameters}")
     
     async def _cancel_backend_pipeline(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Cancel the backend pipeline task if running.
-        We need this because pipecat and other backends may capture signals and we need to handle graceful shutdowns.
+        """Handle pipeline shutdown signal from backend.
+        
+        This is triggered when the backend detects a shutdown signal (like Ctrl-C).
+        We trigger immediate service shutdown - the stop() method handles pipeline coordination.
         """
-        if self.current_backend is None:
-            logger.debug("No backend to cancel, skipping")
+        if not self.current_backend or not self.running:
             return
         
-        if not self.running: 
-            return
-
-        logger.info("Pipeline shutdown detected, starting non-blocking cleanup...")
+        logger.info("Backend shutdown signal received, stopping service...")
         
-        # Schedule pipeline cleanup in background to avoid blocking the event loop
-        asyncio.create_task(self._shutdown_pipeline_background())
-
-    async def _shutdown_pipeline_background(self):
-        """Handle pipeline shutdown in background without blocking the main event loop."""
-        try:
-            if self.current_backend is None or not hasattr(self.current_backend, 'get_pipeline_task'):
-                logger.info("No pipeline task to wait for, stopping service immediately")
-                await self.stop()
-                return
-            
-            pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
-            if not pipeline_task or pipeline_task.done():
-                logger.info("Pipeline task already done, stopping service")
-                await self.stop()
-                return
-            
-            logger.debug("Waiting for pipeline task to complete (non-blocking)...")
-            
-            # Use asyncio.shield to prevent cancellation of our wait
-            try:
-                await asyncio.shield(asyncio.wait_for(pipeline_task, timeout=10.0))
-                logger.info("Pipeline task completed normally")
-            except asyncio.TimeoutError:
-                logger.warning("Pipeline shutdown timed out, forcing stop")
-            except asyncio.CancelledError:
-                logger.info("Pipeline task was cancelled")
-            except Exception as e:
-                logger.error(f"Pipeline task failed: {e}")
-            
-            # Now trigger the service shutdown
-            logger.info("Pipeline cleanup finished, stopping service...")
-            await self.stop()
-            
-        except Exception as e:
-            logger.error(f"Error during background pipeline shutdown: {e}")
-            # Force shutdown if something goes wrong
-            await self.stop()
+        # Trigger immediate service shutdown - stop() method will coordinate with pipeline
+        asyncio.create_task(self.stop())
 
     # =========================================================================
     # Tool Implementation
@@ -771,18 +731,27 @@ class AgentService(BaseService):
         audience_present = message_data.get("present", True)
         idle = message_data.get("idle", False)
         
+        # First, handle backend startup for anyone present (regardless of our person count)
+        if audience_present:
+            # if we are inactive then we need to start the backend
+            if not self.current_backend or not self.current_backend.is_connected:
+                logger.info("Audience detected, starting conversation backend...")
+                await self._start_backend_for_conversation()
+                return  # Early return to avoid flow transitions during startup
+        
+        # Then handle flow transitions only if we have a backend running
+        if not self.current_backend or not self.current_backend.is_connected:
+            return
+            
         # double check that we don't have a newer person count internally, no transition if people detected
         # NOTE: self._person_count starts at -1, so if we have no one detected, it will be 0
         if self._person_count == 0 and (not audience_present or idle):
 
             # Handle flow transitions based on presence and idle state
-            if self.current_backend and hasattr(self.current_backend, 'transition_to_node'):
+            if hasattr(self.current_backend, 'transition_to_node'):
                 current_node = self.current_backend.get_current_node()
                 if current_node is None:
                     logger.warning("Current node is None, cannot transition")
-                    return
-                if current_node == "welcome":
-                    # We're welcoming someone, perhaps just starting up before presence stabilized, so we don't transition
                     return
                 
                 # idle overrides not being present
@@ -793,12 +762,6 @@ class AgentService(BaseService):
                 elif not audience_present and current_node not in ["search", "goodbye"]:
                     logger.info("No audience detected, transitioning to search node")
                     await self.current_backend.transition_to_node("search")
-        
-        elif audience_present: # don't check person count here, they may be there and we can't see them yet?
-
-            # if we are inactive then we need to start the backend
-            if not self.current_backend or not self.current_backend.is_connected:
-                await self._start_backend_for_conversation()
     
     # =========================================================================
     # Publishing Methods
