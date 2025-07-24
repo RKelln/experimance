@@ -1104,7 +1104,6 @@ class ExperimanceCoreService(BaseService):
                     period = 0
                     logger.info(f"State: era={self.current_era}, biome={self.current_biome}, "
                                f"interaction={self.user_interaction_score:.3f}, "
-                               f"idle={self.idle_timer:.1f}s, "
                                f"era progression={self.era_progression_timer:.1f}/{self.config.state_machine.era_max_duration}s, ")
                 
                 # Use _sleep_if_running() to respect shutdown requests
