@@ -880,7 +880,7 @@ requires-dist = [
     { name = "image-server", editable = "services/image_server" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "onnxruntime", specifier = ">=1.22.1" },
-    { name = "pipecat-ai", extras = ["assemblyai", "cartesia", "elevenlabs", "openai"], specifier = ">=0.0.73" },
+    { name = "pipecat-ai", extras = ["assemblyai", "cartesia", "elevenlabs", "openai"], specifier = ">=0.0.76" },
     { name = "pipecat-ai-flows", specifier = ">=0.0.18" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyglet", specifier = ">=2.1.6" },
@@ -2127,7 +2127,7 @@ wheels = [
 
 [[package]]
 name = "pipecat-ai"
-version = "0.0.75"
+version = "0.0.76"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2144,9 +2144,9 @@ dependencies = [
     { name = "resampy" },
     { name = "soxr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/2f/01e87a22932475429fda8325dff73b2b092903d929a6fa5045bc514f4f18/pipecat_ai-0.0.75.tar.gz", hash = "sha256:15338be462fa25d2e3266535dfa1ad8e41846f2eb7e335a063ee7bdd218a4b6e", size = 2495542, upload-time = "2025-07-08T19:50:14.798Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/04/14acaa0cc029e660652e5b515733c8c917815ba5ea0f96a0ed824140fe51/pipecat_ai-0.0.76.tar.gz", hash = "sha256:de94bccfdfba282e79c452ff2ddba88f0a0ad8a2c1298229c5d12c97cf45ec93", size = 2497238, upload-time = "2025-07-12T00:28:33.502Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/8f/a215884bb7e3a139f6ab76ec00d1ea4cd88a3216dd1717dc4fc4144b604d/pipecat_ai-0.0.75-py3-none-any.whl", hash = "sha256:b4c5d61caebda12ee26c9229f9a7bebda054a9efe72e5eb3c2e0bfe08d7371bd", size = 2581827, upload-time = "2025-07-08T19:50:11.9Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/eb/8d5daf1d95507c938c640024ba1f1851783321678116ac8c936cd4916ae3/pipecat_ai-0.0.76-py3-none-any.whl", hash = "sha256:a4bff8a9729c024fd15cfd9ca7744563ae9c75f0bc67040799822e702c81924a", size = 2583208, upload-time = "2025-07-12T00:28:31.575Z" },
 ]
 
 [package.optional-dependencies]

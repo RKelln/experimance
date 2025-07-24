@@ -67,6 +67,13 @@ class PipecatEventProcessor(FrameProcessor):
         # Call parent class to handle StartFrame properly
         await super().process_frame(frame, direction)
         
+        # Skip event processing if backend is shutting down (except for shutdown frames)
+        if (self.backend._stopping and 
+            not isinstance(frame, (EndFrame, CancelFrame))):
+            logger.debug(f"Skipping frame processing during shutdown: {type(frame).__name__}")
+            await self.push_frame(frame, direction)
+            return
+        
         # Handle user speaking state
         if isinstance(frame, UserStartedSpeakingFrame):
             self.user_speaking = True
@@ -192,7 +199,10 @@ class PipecatBackend(AgentBackend):
             assert self.task is not None, "Pipeline task must be created successfully"
 
             # runner
-            self.runner = PipelineRunner()
+            self.runner = PipelineRunner(
+                handle_sigint=False,  # handle these ourselves
+                #handle_sigterm=False, # handle these ourselves (newer version of pipecat)
+            )
             
             logger.info("Pipecat backend v2 started successfully")
 
@@ -211,6 +221,11 @@ class PipecatBackend(AgentBackend):
     
     async def _on_transcript_update(self, processor, frame):
         """Handle transcript updates from Pipecat's TranscriptProcessor."""
+        # Skip processing if we're shutting down or not connected
+        if self._stopping or not self.is_connected:
+            logger.debug("Skipping transcript update - backend is shutting down")
+            return
+            
         if hasattr(frame, 'messages'):
             for message in frame.messages:
                 # TranscriptionMessage has role, content, timestamp
@@ -228,6 +243,33 @@ class PipecatBackend(AgentBackend):
                         })
                         logger.debug(f"Assistant response: {message.content}")
 
+    async def disconnect(self) -> None:
+        """Disconnect the Pipecat backend."""
+        if not self.is_connected:
+            logger.debug("Backend already disconnected, skipping")
+            return
+            
+        self._stopping = True  # Set flag to prevent event processing during shutdown
+        logger.info("Disconnecting Pipecat backend v2...")
+        
+        try:
+            # Cancel the runner - this is the proper Pipecat way
+            if self.runner and self._pipeline_task and not self._pipeline_task.done():
+                logger.debug("Cancelling pipeline runner...")
+                await self.runner.cancel()
+            
+            # Cancel our background pipeline task runner - don't wait for it
+            if self._pipeline_task and not self._pipeline_task.done():
+                logger.debug("Cancelling pipeline runner task...")
+                self._pipeline_task.cancel()
+                # Don't wait - let the task finish in the background
+                logger.debug("Pipeline runner task cancellation initiated")
+            
+        finally:
+            # Call parent class to disconnect transcript manager
+            await super().disconnect()
+            logger.info("Pipecat backend v2 disconnected successfully")
+
     async def stop(self) -> None:
         """Stop the Pipecat backend."""
         if self._stopping or not self.is_connected:
@@ -236,48 +278,21 @@ class PipecatBackend(AgentBackend):
             
         self._stopping = True  # Set flag to prevent multiple calls
         logger.info("Stopping Pipecat backend v2...")
-        
-        # Emit conversation ended event first (only once)
-        await self.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
-            "reason": "backend_stopped"
-        })
-        
-        await self.disconnect()  # Ensure we disconnect first
-        
+
         try:
-            # Stop Pipecat components first
-            # Cancel the pipeline task if it's running
-            if self._pipeline_task and not self._pipeline_task.done():
-                logger.debug("Cancelling pipeline task...")
-                self._pipeline_task.cancel()
-                try:
-                    await asyncio.wait_for(self._pipeline_task, timeout=5.0)
-                except asyncio.CancelledError:
-                    logger.debug("Pipeline task cancelled successfully")
-                except asyncio.TimeoutError:
-                    logger.warning("Pipeline task cancellation timed out")
-                except Exception as e:
-                    logger.warning(f"Error while cancelling pipeline task: {e}")
-            
-            # Stop the runner
-            if self.runner:
-                await self.runner.cleanup()
-                
-            # Stop the task
-            if self.task:
-                await self.task.cleanup()
+            await self.disconnect()  # Ensure we disconnect first
                 
             # Stop the transport
             if self.transport:
                 await self.transport.cleanup()
 
-            # Call parent class to stop transcript manager
-            await super().stop()
-                
             logger.info("Pipecat backend v2 stopped successfully")
             
         except Exception as e:
             logger.error(f"Error stopping Pipecat backend: {e}")
+        finally:
+            await super().stop()
+            
     
     def _create_transport(self) -> LocalAudioTransport:
 
@@ -552,7 +567,7 @@ class PipecatBackend(AgentBackend):
                 nodes = self._flow_config.get("nodes", {})
                 if node_name in nodes:
                     node_config = nodes[node_name]
-                    await self.flow_manager.set_node(node_name, node_config)
+                    await self.flow_manager.set_node_from_config(node_config)
                     logger.info(f"Successfully transitioned to node: {node_name}")
                     return True
                 else:

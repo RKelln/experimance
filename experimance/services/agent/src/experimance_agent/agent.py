@@ -102,8 +102,9 @@ class AgentService(BaseService):
         # ALWAYS call super().stop() FIRST - this stops health monitoring automatically
         await super().stop()
         
-        # Stop agent backend with pipeline coordination
-        await self._stop_backend_with_coordination()
+        # Stop agent backend using coordinated approach if it exists
+        if self.current_backend:
+            await self._stop_backend_with_coordination()
         
         # Stop ZMQ service
         await self.zmq_service.stop()
@@ -129,19 +130,21 @@ class AgentService(BaseService):
             return
         
         try:
+            #await self.current_backend.disconnect()  # Ensure backend is disconnected
+
             # If backend has a pipeline task, wait for it to finish cleanly first
-            if hasattr(self.current_backend, 'get_pipeline_task'):
-                pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
-                if pipeline_task and not pipeline_task.done():
-                    logger.debug("Waiting for pipeline cleanup before backend stop...")
-                    try:
-                        pipeline_task.cancel()  # Cancel the pipeline task if needed
-                        await asyncio.wait_for(pipeline_task, timeout=5.0)
-                        logger.debug("Pipeline task completed before backend stop")
-                    except asyncio.TimeoutError:
-                        logger.warning("Pipeline cleanup timed out, proceeding with backend stop")
-                    except Exception as e:
-                        logger.debug(f"Pipeline task finished with: {e}")
+            # if hasattr(self.current_backend, 'get_pipeline_task'):
+            #     pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
+            #     if pipeline_task and not pipeline_task.done():
+            #         logger.debug("Waiting for pipeline cleanup before backend stop...")
+            #         try:
+            #             pipeline_task.cancel()  # Cancel the pipeline task if needed
+            #             await asyncio.wait_for(pipeline_task, timeout=5.0)
+            #             logger.debug("Pipeline task completed before backend stop")
+            #         except asyncio.TimeoutError:
+            #             logger.warning("Pipeline cleanup timed out, proceeding with backend stop")
+            #         except Exception as e:
+            #             logger.debug(f"Pipeline task finished with: {e}")
             
             # Now stop the backend normally
             await self.current_backend.stop()
@@ -204,7 +207,7 @@ class AgentService(BaseService):
                     AgentBackendEvent.TOOL_CALLED, self._on_tool_called
                 )
                 backend.add_event_callback(
-                    AgentBackendEvent.CANCEL, self._cancel_backend_pipeline
+                    AgentBackendEvent.CANCEL, self._on_cancel_backend_pipeline
                 )
 
                 # Start the backend
@@ -266,9 +269,11 @@ class AgentService(BaseService):
         logger.info("Conversation ended, stopping backend...")
         
         try:
-            # Use the same coordinated stop approach (this handles clearing current_backend)
-            await self._stop_backend_with_coordination()
-            
+            # Use coordinated stop approach that handles pipeline task lifecycle
+            #await self._stop_backend_with_coordination()
+            await self.current_backend.stop()  # Ensure backend is disconnected
+            self.current_backend = None
+
             # Clear any displayed text
             await self._clear_all_displayed_text()
             
@@ -581,7 +586,9 @@ class AgentService(BaseService):
             parameters = data.get("parameters", {})
             logger.info(f"Agent called tool: {tool_name} with parameters: {parameters}")
     
-    async def _cancel_backend_pipeline(self, event: AgentBackendEvent, data: Dict[str, Any]):
+
+    # ONLY for use if pipecat sigint handling is on (currently off by default)
+    async def _on_cancel_backend_pipeline(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle pipeline shutdown signal from backend.
         
         This is triggered when the backend detects a shutdown signal (like Ctrl-C).
@@ -757,7 +764,8 @@ class AgentService(BaseService):
                 # idle overrides not being present
                 if idle and current_node != "goodbye":
                     logger.info("Idle state detected, transitioning to goodbye node")
-                    await self.current_backend.transition_to_node("goodbye")
+                    #await self.current_backend.transition_to_node("goodbye")
+                    await self.current_backend.stop()
 
                 elif not audience_present and current_node not in ["search", "goodbye"]:
                     logger.info("No audience detected, transitioning to search node")
