@@ -59,6 +59,7 @@ class PipecatEventProcessor(FrameProcessor):
         self.backend = backend
         self.user_speaking = False
         self.bot_speaking = False
+        self._conversation_ending = False  # Track if we're in normal conversation end sequence
         
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Process frames and extract conversation events."""
@@ -69,24 +70,51 @@ class PipecatEventProcessor(FrameProcessor):
         # Handle user speaking state
         if isinstance(frame, UserStartedSpeakingFrame):
             self.user_speaking = True
-            await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED)
+            await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED, {
+                "speaker": "user"
+            })
             logger.debug("User started speaking")
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self.user_speaking = False
-            await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED)
+            await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED, {
+                "speaker": "user"
+            })
             logger.debug("User stopped speaking")
             
         # Handle bot speaking state  
         elif isinstance(frame, TTSStartedFrame):
             self.bot_speaking = True
-            await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING)
+            await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING, {
+                "speaker": "agent"
+            })
             logger.debug("Bot started speaking")
             
         elif isinstance(frame, TTSStoppedFrame):
             self.bot_speaking = False
-            await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING)
+            await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
+                "speaker": "agent"})
             logger.debug("Bot stopped speaking")
+            
+        # Handle pipeline shutdown - EndFrame → CancelFrame sequence
+        elif isinstance(frame, EndFrame):
+            logger.info("Pipeline EndFrame received, starting conversation end sequence")
+            self._conversation_ending = True
+            await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
+                "reason": "pipeline_ended"
+            })
+            
+        elif isinstance(frame, CancelFrame):
+            if self._conversation_ending:
+                logger.info("Pipeline CancelFrame received after EndFrame (normal conversation end)")
+                # This is the expected CancelFrame after EndFrame - just cleanup, no event needed
+                self._conversation_ending = False
+            else:
+                logger.info("Pipeline CancelFrame received without EndFrame (forced shutdown)")
+                # This is a forced shutdown (Ctrl-C) - trigger shutdown coordination
+                await self.backend.emit_event(AgentBackendEvent.CANCEL, {
+                    "reason": "pipeline_cancelled"
+                })
             
         # Forward the frame to the next processor
         await self.push_frame(frame, direction)
@@ -109,13 +137,11 @@ class PipecatBackend(AgentBackend):
         self.transport: Optional[LocalAudioTransport] = None
         self.flow_manager: Optional[FlowManager] = None
         self._pipeline_task: Optional[asyncio.Task] = None
+        self._flow_config: Optional[FlowConfig] = None
+        self._stopping = False  # Flag to prevent multiple stop calls
         
         # Event handling
         self.event_processor: Optional[PipecatEventProcessor] = None
-        
-        # Conversation state
-        self.is_connected = False
-        self.is_running = False
         
 
     def _load_flow_config(self) -> FlowConfig:
@@ -168,9 +194,6 @@ class PipecatBackend(AgentBackend):
             # runner
             self.runner = PipelineRunner()
             
-            # Call base class connect to set flags
-            await self.connect()
-            
             logger.info("Pipecat backend v2 started successfully")
 
             # Start the pipeline as a background task - this doesn't block
@@ -179,6 +202,7 @@ class PipecatBackend(AgentBackend):
                     self.runner.run(self.task),
                     name="pipecat-pipeline"
                 )
+                await self.connect()
                 logger.info("Pipecat pipeline started as background task")
             
         except Exception as e:
@@ -206,10 +230,19 @@ class PipecatBackend(AgentBackend):
 
     async def stop(self) -> None:
         """Stop the Pipecat backend."""
+        if self._stopping or not self.is_connected:
+            logger.debug("Backend already stopping or stopped, skipping")
+            return
+            
+        self._stopping = True  # Set flag to prevent multiple calls
         logger.info("Stopping Pipecat backend v2...")
         
-        self.is_running = False
-        self.is_connected = False
+        # Emit conversation ended event first (only once)
+        await self.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
+            "reason": "backend_stopped"
+        })
+        
+        await self.disconnect()  # Ensure we disconnect first
         
         try:
             # Stop Pipecat components first
@@ -218,9 +251,11 @@ class PipecatBackend(AgentBackend):
                 logger.debug("Cancelling pipeline task...")
                 self._pipeline_task.cancel()
                 try:
-                    await self._pipeline_task
+                    await asyncio.wait_for(self._pipeline_task, timeout=5.0)
                 except asyncio.CancelledError:
                     logger.debug("Pipeline task cancelled successfully")
+                except asyncio.TimeoutError:
+                    logger.warning("Pipeline task cancellation timed out")
                 except Exception as e:
                     logger.warning(f"Error while cancelling pipeline task: {e}")
             
@@ -235,7 +270,7 @@ class PipecatBackend(AgentBackend):
             # Stop the transport
             if self.transport:
                 await self.transport.cleanup()
-                
+
             # Call parent class to stop transcript manager
             await super().stop()
                 
@@ -363,6 +398,7 @@ class PipecatBackend(AgentBackend):
         
         # Create flow manager
         flow_config = self._load_flow_config()
+        self._flow_config = flow_config  # Store for later use in transitions
         
         self.flow_manager = FlowManager(
             task=self.task,
@@ -433,7 +469,7 @@ class PipecatBackend(AgentBackend):
             
         try:
             # Use LLMMessagesAppendFrame to add messages to the context
-            if self.task and self.is_running:
+            if self.task:
                 from pipecat.frames.frames import LLMMessagesAppendFrame
                 
                 if speaker == "system":
@@ -454,7 +490,7 @@ class PipecatBackend(AgentBackend):
     
     async def interrupt_bot(self) -> None:
         """Interrupt the bot if it's currently speaking."""
-        if self.task and self.is_running:
+        if self.task and self.is_connected:
             try:
                 # Send cancel frame to interrupt
                 await self.task.queue_frame(CancelFrame())
@@ -471,7 +507,7 @@ class PipecatBackend(AgentBackend):
             self.transcript_manager._messages.clear()
             
         # Reset context using frames instead of direct access to aggregator
-        if self.task and self.is_running:
+        if self.task and self.is_connected:
             try:
                 from pipecat.frames.frames import LLMMessagesUpdateFrame
                 # Clear context by sending an empty messages list
@@ -484,7 +520,6 @@ class PipecatBackend(AgentBackend):
         """Get connection status information."""
         return {
             "is_connected": self.is_connected,
-            "is_running": self.is_running,
             "mode": self.config.backend_config.pipecat.mode,
             "conversation_turns": len(self._conversation_history),
             "user_context": self.user_context.__dict__ if self.user_context else None
@@ -504,3 +539,40 @@ class PipecatBackend(AgentBackend):
     def get_pipeline_task(self) -> Optional[asyncio.Task]:
         """Get the pipeline task for external management."""
         return self._pipeline_task
+    
+    async def transition_to_node(self, node_name: str) -> bool:
+        """Transition to a specific node in the flow."""
+        if not self.flow_manager:
+            logger.warning("Cannot transition to node: flow manager not available")
+            return False
+            
+        try:
+            # For static flows, we need to create the node config from the flow_config
+            if hasattr(self, '_flow_config') and self._flow_config:
+                nodes = self._flow_config.get("nodes", {})
+                if node_name in nodes:
+                    node_config = nodes[node_name]
+                    await self.flow_manager.set_node(node_name, node_config)
+                    logger.info(f"Successfully transitioned to node: {node_name}")
+                    return True
+                else:
+                    logger.error(f"Node '{node_name}' not found in flow configuration")
+                    return False
+            else:
+                logger.error("Flow configuration not available for node transition")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to transition to node '{node_name}': {e}")
+            return False
+    
+    def get_current_node(self) -> Optional[str]:
+        """Get the current active node name."""
+        if self.flow_manager and hasattr(self.flow_manager, 'current_node'):
+            return self.flow_manager.current_node
+        return None
+    
+    def is_conversation_active(self) -> bool:
+        """Check if conversation is currently active (not in search or goodbye)."""
+        current_node = self.get_current_node()
+        return current_node not in ["search", "goodbye"] if current_node else False

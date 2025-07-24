@@ -139,7 +139,7 @@ sequenceDiagram
     Core->>Display: CHANGE_MAP (push)
 
     %% Agent interactions
-    Agent-->>Core: AGENT_CONTROL_EVENT (pubsub)
+    Agent-->>Core: AUDIENCE_PRESENT / SPEECH_DETECTED (pubsub)
     Agent->>Display: TEXT_OVERLAY (push)
     Agent->>Display: REMOVE_TEXT (push)
 ```
@@ -164,7 +164,7 @@ Additional core events:
   Core         -> Display:          CHANGE_MAP (push)
 
 Agent interactions:
-  Agent        -> Core:             AGENT_CONTROL_EVENT (pubsub)
+  Agent        -> Core:             AUDIENCE_PRESENT / SPEECH_DETECTED (pubsub)
   Agent        -> Display:          TEXT_OVERLAY (push)
   Agent        -> Display:          REMOVE_TEXT (push)
 ```
@@ -233,7 +233,7 @@ The system detects audience presence at multiple levels to manage interaction st
 - `voice`: Human speaking (audio detection)  
 - `touch`: One-shot trigger for audio SFX (no persistent state)
 - `conversation`: Agent OR human speaking (audio ducking control)
-- `people_count`: Vision-detected count
+- `person_count`: Vision-detected count
 
 **Detection Sources:**
 - **Agent Service**: Vision-based people counting and presence detection

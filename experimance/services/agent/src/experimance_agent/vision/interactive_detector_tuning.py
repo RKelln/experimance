@@ -1092,7 +1092,7 @@ def setup_camera_for_gallery(camera_id: Optional[int] = None, camera_name: Optio
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive detector parameter tuning")
-    parser.add_argument('--profile', '-p', default='indoor_office',
+    parser.add_argument('--profile', '-p', default='face_detection',
                        help='Detector profile to start with')
     parser.add_argument('--camera', '-c', type=int, default=0,
                        help='Camera device ID')

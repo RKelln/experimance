@@ -254,13 +254,13 @@ class AgentServiceConfig(BaseServiceConfig):
             publisher=PublisherConfig(
                 address=ZMQ_TCP_BIND_PREFIX,
                 port=DEFAULT_PORTS["agent"],
-                default_topic=MessageType.AGENT_CONTROL_EVENT.value
+                default_topic="agent"
             ),
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["events"],
                 topics=[
-                    MessageType.SPACE_TIME_UPDATE.value
+                    MessageType.SPACE_TIME_UPDATE, MessageType.PRESENCE_STATUS
                 ]
             )
         ),

@@ -15,13 +15,21 @@ interaction_threshold = 0.1  # threshold for user interaction detection
 era_min_duration = 0         # minimum time in seconds before era can change
 era_max_duration = 120       # maximum time in seconds before era can change
 
+[presence]
+# Hysteresis/debouncing thresholds for presence detection
+presence_threshold = 0.5     # seconds of presence detection before considering audience present
+absence_threshold = 5.0      # seconds of no presence detection before considering audience gone
+idle_threshold = 30.0        # seconds of no presence detection before considering audience gone
+presence_publish_interval = 10.0  # interval in seconds to publish presence status updates
+conversation_timeout = 5.0  # time after a agent or human speaker finishes that conversation is considered complete
+
 [camera]
 # Core camera settings
 resolution = [1280, 720]     # depth camera resolution (width, height)
 fps = 30                    # camera frames per second 
 # for sand a range of about 7 cm works well
-min_depth = 0.52            # minimum depth value in meters
-max_depth = 0.58            # maximum depth value in meters
+min_depth = 0.50            # minimum depth value in meters
+max_depth = 0.56            # maximum depth value in meters
 align_frames = true         # use color frames to help align the depth frames
 colorizer_scheme = 2        # white to black
 #json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config

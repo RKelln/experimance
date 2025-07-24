@@ -104,7 +104,6 @@ class ExperimanceCoreService(BaseService):
         self.current_era: Era = Era.WILDERNESS
         self.current_biome: Biome = random.choice(self.AVAILABLE_BIOMES)
         self.user_interaction_score: float = 0.0
-        self.idle_timer: float = 0.0
         self.audience_present: bool = False
         self.era_progression_timer: float = 0.0
         self.session_start_time: datetime = datetime.now()
@@ -317,18 +316,16 @@ class ExperimanceCoreService(BaseService):
             # Extract data from DepthFrame
             depth_image = depth_frame.depth_image
             hand_detected = depth_frame.hand_detected
-            
+            self.presence_manager.hand = hand_detected if hand_detected is not None else False
+
             # Update hand detection state (handle None case)
             if hand_detected is not None and self.hand_detected != hand_detected:
                 self.hand_detected = hand_detected
                 logger.debug(f"Hand detection changed: {hand_detected}")
-                
-                # Update presence manager with hand detection using clean property interface
-                self.presence_manager.hand = hand_detected
-                
+
                 # Publish interaction sound trigger
-                await self._publish_interaction_sound(hand_detected)
-                
+                # await self._publish_interaction_sound(hand_detected)
+
                 # Clear change score queue when hand state changes to reset smoothing
                 self.change_score_queue.clear()
                 logger.debug("Cleared change score queue due to hand state change")
@@ -516,7 +513,7 @@ class ExperimanceCoreService(BaseService):
             # Apply flip transformations if configured
             debug_depth_image = depth_image.copy()
 
-            debug_depth_image = self._process_image(debug_depth_image, blur=False)
+            debug_depth_image = self._process_image(debug_depth_image)
             
             # Convert depth map to colorized visualization for better visibility
             depth_colorized = cv2.applyColorMap(debug_depth_image, cv2.COLORMAP_JET)
@@ -562,28 +559,24 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error publishing interaction sound: {e}")
 
-    async def _publish_presence_status(self):
+    async def _publish_presence_status(self, presence: PresenceStatus | None = None):
         """Publish current presence status from the presence manager."""
         try:
-            presence_status = self.presence_manager.get_current_status()
+            if presence is None:
+                # Get current presence status from manager
+                presence = self.presence_manager.get_current_status()
+
+            logger.info(f"Published presence status: present={presence.present}, "
+                       f"idle={presence.idle}, hand={presence.hand}, touch={presence.touch}, "
+                       f"voice={presence.voice}, conversation={presence.conversation}, "
+                       f"people={presence.person_count}")
+
+            # Publish the presence status (publish() raises exception on failure)
+            await self.zmq_service.publish(presence)
+            self.presence_manager.mark_published()
             
-            # Publish the presence status
-            success = await self.zmq_service.publish(presence_status)
-            if success:
-                self.presence_manager.mark_published()
-                logger.debug(f"Published presence status: present={presence_status.present}, "
-                           f"idle={presence_status.idle}, hand={presence_status.hand}, "
-                           f"voice={presence_status.voice}, people={presence_status.people_count}")
-            else:
-                logger.warning("Failed to publish presence status")
         except Exception as e:
             logger.error(f"Error publishing presence status: {e}")
-
-    async def _publish_idle_state_changed(self):
-        """Publish idle state changed event (legacy - replaced by presence status)."""
-        # For backward compatibility, we can still publish this but it's deprecated
-        logger.warning("_publish_idle_state_changed is deprecated, use _publish_presence_status instead")
-        await self._publish_presence_status()
 
     def _register_message_handlers(self):
         """Register handlers for different message types."""
@@ -652,7 +645,6 @@ class ExperimanceCoreService(BaseService):
         
         # reset interaction score and idle timer on era change
         self.user_interaction_score = 0.0
-        self.idle_timer = 0.0
             
         # For Future era, use probability to decide between looping and progressing
         if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
@@ -677,22 +669,17 @@ class ExperimanceCoreService(BaseService):
         else:
             return possible_next_eras[0].value
 
-    
-    def update_idle_timer(self, delta_time: float):
-        """Update the idle timer."""
-        self.idle_timer += delta_time
-    
     def should_reset_to_wilderness(self) -> bool:
         """Check if system should reset to wilderness due to idle timeout."""
-        idle_timeout = self.config.state_machine.idle_timeout
-        return self.idle_timer >= idle_timeout and self.current_era != Era.WILDERNESS.value
+        # TODO: wait for longer past start of idle?
+        #idle_timeout = self.config.state_machine.idle_timeout
+        return self.current_era != Era.WILDERNESS and self.presence_manager.is_idle()
     
     async def reset_to_wilderness(self):
         """Reset the system to wilderness state."""
         # Use the advance_era and switch_biome methods for prompt manager consistency
         self.advance_era(Era.WILDERNESS)
-        self.switch_biome(Biome.TEMPERATE_FOREST) # TODO: pick random biome?
-        self.idle_timer = 0.0
+        self.switch_biome(random.choice(self.AVAILABLE_BIOMES))
         self.user_interaction_score = 0.0
         self.audience_present = False
         
@@ -962,7 +949,7 @@ class ExperimanceCoreService(BaseService):
             logger.error(f"Error sending DISPLAY_MEDIA: {e}")
             logger.debug(f"Image message: {image_message}", exc_info=True)
 
-    async def _handle_request_biome(self, message: MessageDataType):
+    async def _handle_request_biome(self, topic: str, message: MessageDataType):
         """Handle RequestBiome messages from agent service."""
         biome_name = message.get('biome', '')
         logger.debug(f"Received RequestBiome message: {biome_name}")
@@ -973,31 +960,31 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error processing suggest biome message: {e}")
 
-    async def _handle_audience_present(self, message: MessageDataType):
+    async def _handle_audience_present(self, topic: str, message: MessageDataType):
         """Handle AudiencePresent messages from agent service."""
         status = message.get('status', False)
         logger.debug(f"Received AudiencePresent message: {status}")
         
         try:
-            # Agent vision detection - just use people_count (simpler and more informative)
-            people_count = message.get('people_count', 0)
-            # If status is False but people_count > 0, trust the count. If status is True but count is 0, set count to 1
-            if not status and people_count > 0:
+            # Agent vision detection - just use person_count (simpler and more informative)
+            person_count = message.get('person_count', 0)
+            # If status is False but person_count > 0, trust the count. If status is True but count is 0, set count to 1
+            if not status and person_count > 0:
                 # Trust the count over the boolean
                 pass
-            elif status and people_count == 0:
+            elif status and person_count == 0:
                 # Set count to 1 if status indicates present but no count provided
-                people_count = 1
+                person_count = 1
             elif not status:
                 # Ensure count is 0 if not present
-                people_count = 0
+                person_count = 0
                 
-            self.presence_manager.people_count = people_count
-            logger.debug(f"Updated people count: {people_count}")
+            self.presence_manager.person_count = person_count
+            logger.debug(f"Updated people count: {person_count}")
         except Exception as e:
             logger.error(f"Error processing audience present message: {e}")
 
-    async def _handle_speech_detected(self, message: MessageDataType):
+    async def _handle_speech_detected(self, topic: str, message: MessageDataType):
         """Handle SpeechDetected messages from agent service."""
         is_speaking = message.get('is_speaking', False)
         speaker = message.get('speaker', 'unknown')
@@ -1102,12 +1089,15 @@ class ExperimanceCoreService(BaseService):
         
         period = 0
         sleep = 0.5
-        state_display_period = 30  # seconds
+        state_display_period = 180  # seconds
         while self.running:
             try:
                 period += sleep
 
                 await self._check_pending_render_request() # handle pending render requests
+
+                if self.presence_manager.update():
+                    await self._publish_presence_status()
 
                 # Periodic state logging for debugging
                 if period > state_display_period:  # Every 30 seconds
@@ -1213,7 +1203,7 @@ class ExperimanceCoreService(BaseService):
 
         if blur and self.config.camera.blur_depth:
             # Apply Gaussian blur to reduce noise
-            image = cv2.GaussianBlur(image, (11, 11), 0)
+            image = cv2.GaussianBlur(image, (17, 17), 0)
         
         return image
 
@@ -1427,8 +1417,9 @@ class ExperimanceCoreService(BaseService):
                 if self.presence_manager.should_publish():
                     await self._publish_presence_status()
                 
-                # Sleep for a short interval
-                if not await self._sleep_if_running(1.0):  # Check every second
+                # Sleep for the configured interval
+                sleep_time = self.config.presence.presence_publish_interval
+                if not await self._sleep_if_running(sleep_time):
                     break
                     
             except Exception as e:
@@ -1448,7 +1439,6 @@ class ExperimanceCoreService(BaseService):
                 last_update = current_time
                 
                 # Update timers
-                self.update_idle_timer(delta_time)
                 self.era_progression_timer += delta_time
                 
                 #logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
@@ -1471,10 +1461,6 @@ class ExperimanceCoreService(BaseService):
                     if next_era and next_era != self.current_era:
                         logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
                         await self.progress_era()
-                
-                # Publish idle state changes if needed
-                if self.idle_timer > 0 and int(self.idle_timer) % 10 == 0:  # Every 10 seconds of idle
-                    await self._publish_idle_state_changed()
                 
                 # Use _sleep_if_running() to respect shutdown requests
                 if not await self._sleep_if_running(1.0):  # 1 Hz for state updates
@@ -1567,7 +1553,6 @@ class ExperimanceCoreService(BaseService):
                 f"Era: {self.current_era.value}",
                 f"Biome: {self.current_biome.value}",
                 f"Interaction Score: {self.user_interaction_score:.3f}",
-                f"Idle Timer: {self.idle_timer:.1f}s",
                 f"Camera State: {self._camera_state.value}",
             ]
             

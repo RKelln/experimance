@@ -7,9 +7,9 @@ controlling other services.
 """
 
 import asyncio
+import time
 import json
 import logging
-import uuid
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -62,33 +62,30 @@ class AgentService(BaseService):
         self.vlm_processor = None
         self.audience_detector = None
         self._detector_profile = None  # Store loaded detector profile
+        self._person_count = -1  # Track number of people currently detected
         
         # Transcript display handler (will be initialized if enabled)
         self.transcript_display_handler = None
         
     async def start(self):
         """Initialize and start the agent service."""
-        logger.info(f"Starting {self.service_name} with backend: {self.config.agent_backend}")
+        logger.info(f"Starting {self.service_name} in vision-only mode")
         
         # Set up message handlers before starting ZMQ service
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
-        
+        self.zmq_service.add_message_handler(MessageType.PRESENCE_STATUS, self._handle_audience_present)
+
         # Start ZMQ service
         await self.zmq_service.start()
         
-        # Initialize agent backend
-        await self._initialize_backend()
+        # DON'T initialize agent backend yet - wait for person detection
+        # await self._initialize_backend()
         
-        # Initialize vision processing if enabled
+        # Initialize vision processing if enabled (this runs immediately)
         if self.config.vision.webcam_enabled:
             await self._initialize_vision()
         
-        # Initialize transcript handling if enabled
-        if self.config.transcript.display_transcripts:
-            await self._initialize_transcript_display_handler()
-        
         # Register background tasks
-        self.add_task(self._conversation_monitor_loop())
         self.add_task(self._audience_detection_loop())
         if self.config.vision.vlm_enabled:
             self.add_task(self._vision_analysis_loop())
@@ -96,7 +93,7 @@ class AgentService(BaseService):
         # ALWAYS call super().start() LAST - this starts health monitoring automatically
         await super().start()
         
-        logger.info(f"{self.service_name} started successfully")
+        logger.info(f"{self.service_name} started successfully in vision-only mode")
     
     async def stop(self):
         """Clean up resources and stop the agent service."""
@@ -105,9 +102,8 @@ class AgentService(BaseService):
         # ALWAYS call super().stop() FIRST - this stops health monitoring automatically
         await super().stop()
         
-        # Stop agent backend
-        if self.current_backend:
-            await self.current_backend.stop()
+        # Stop agent backend with pipeline coordination
+        await self._stop_backend_with_coordination()
         
         # Stop ZMQ service
         await self.zmq_service.stop()
@@ -126,6 +122,41 @@ class AgentService(BaseService):
         await self._clear_all_displayed_text()
         
         logger.info(f"{self.service_name} stopped")
+
+    async def _stop_backend_with_coordination(self):
+        """Stop the backend with proper pipeline coordination."""
+        if not self.current_backend:
+            return
+        
+        try:
+            # If backend has a pipeline task, wait for it to finish cleanly first
+            if hasattr(self.current_backend, 'get_pipeline_task'):
+                pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
+                if pipeline_task and not pipeline_task.done():
+                    logger.debug("Waiting for pipeline cleanup before backend stop...")
+                    try:
+                        pipeline_task.cancel()  # Cancel the pipeline task if needed
+                        await asyncio.wait_for(pipeline_task, timeout=5.0)
+                        logger.debug("Pipeline task completed before backend stop")
+                    except asyncio.TimeoutError:
+                        logger.warning("Pipeline cleanup timed out, proceeding with backend stop")
+                    except Exception as e:
+                        logger.debug(f"Pipeline task finished with: {e}")
+            
+            # Now stop the backend normally
+            await self.current_backend.stop()
+            
+        except Exception as e:
+            logger.error(f"Error during coordinated backend stop: {e}")
+            # Always try to stop the backend even if coordination fails
+            try:
+                if self.current_backend:
+                    await self.current_backend.stop()
+            except Exception as e2:
+                logger.error(f"Failed to stop backend after coordination error: {e2}")
+        finally:
+            # Always clear the backend reference, regardless of success or failure
+            self.current_backend = None
     
     # =========================================================================
     # Backend Management
@@ -135,6 +166,8 @@ class AgentService(BaseService):
         """Initialize the selected agent backend."""
         backend_name = self.config.agent_backend.lower()
         
+        if not self.running: return
+
         try:
             if backend_name == "pipecat":
                 from .backends.pipecat_backend import PipecatBackend
@@ -159,15 +192,21 @@ class AgentService(BaseService):
                     AgentBackendEvent.SPEECH_ENDED, self._on_speech_ended
                 )
                 backend.add_event_callback(
+                    AgentBackendEvent.BOT_STARTED_SPEAKING, self._on_speech_detected
+                )
+                backend.add_event_callback(
+                    AgentBackendEvent.BOT_STOPPED_SPEAKING, self._on_speech_ended
+                )
+                backend.add_event_callback(
                     AgentBackendEvent.TRANSCRIPTION_RECEIVED, self._on_transcription_received
                 )
                 backend.add_event_callback(
                     AgentBackendEvent.TOOL_CALLED, self._on_tool_called
                 )
-                
-                # Register available tools
-                await self._register_tools()
-                
+                backend.add_event_callback(
+                    AgentBackendEvent.CANCEL, self._cancel_backend_pipeline
+                )
+
                 # Start the backend
                 await backend.start()  # type: ignore
                 
@@ -189,29 +228,60 @@ class AgentService(BaseService):
         except Exception as e:
             self.record_error(e, is_fatal=True)
             raise
+
+    async def _start_backend_for_conversation(self):
+        """Start the agent backend when a person is detected."""
+        if self.current_backend is not None:
+            logger.debug("Backend already running, skipping startup")
+            return True
+        
+        if not self.running: return
+
+        logger.info("Person detected, starting conversation backend...")
+        
+        try:
+            # Initialize the backend
+            await self._initialize_backend()
+            
+            # Initialize transcript handling if enabled
+            if self.config.transcript.display_transcripts:
+                await self._initialize_transcript_display_handler()
+                
+            logger.info("Conversation backend started successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start conversation backend: {e}")
+            self.record_error(e, is_fatal=True)
+            return False
     
-    async def _register_tools(self):
-        """Register available tools with the agent backend."""
-        if not self.current_backend:
+    async def _stop_backend_after_conversation(self):
+        """Stop the agent backend after conversation ends."""
+        if self.current_backend is None:
+            logger.debug("Backend already stopped, skipping shutdown")
             return
         
-        # Register biome suggestion tool
-        if self.config.biome_suggestions_enabled:
-            self.current_backend.register_tool(
-                "suggest_biome",
-                self._suggest_biome_tool,
-                "Suggest a new biome for the installation based on conversation context"
-            )
+        if not self.running: return
+
+        logger.info("Conversation ended, stopping backend...")
         
-        # Register audience interaction tools
-        self.current_backend.register_tool(
-            "get_audience_status",
-            self._get_audience_status_tool,
-            "Check if audience members are currently present"
-        )
-        
-        logger.info("Registered tools with agent backend")
-    
+        try:
+            # Use the same coordinated stop approach (this handles clearing current_backend)
+            await self._stop_backend_with_coordination()
+            
+            # Clear any displayed text
+            await self._clear_all_displayed_text()
+            
+            # Reset conversation state
+            self.is_conversation_active = False
+            self.agent_speaking = False
+            
+            logger.info("Conversation backend stopped successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to stop conversation backend: {e}")
+            self.record_error(e, is_fatal=False)
+
     # =========================================================================
     # Vision Processing Initialization
     # =========================================================================
@@ -315,29 +385,16 @@ class AgentService(BaseService):
     # Background Task Loops
     # =========================================================================
     
-    async def _conversation_monitor_loop(self):
-        """Monitor conversation state and manage system interactions."""
-        while self.running:
-            try:
-                if self.current_backend and self.current_backend.is_connected:
-                    # Check if conversation is active based on recent messages
-                    if hasattr(self.current_backend, 'transcript_manager'):
-                        recent_messages = self.current_backend.transcript_manager.get_messages(limit=5)
-                        if recent_messages:
-                            # Update conversation active state based on recent activity
-                            last_message_time = recent_messages[-1].timestamp
-                            import time
-                            time_since_last = time.time() - last_message_time
-                            self.is_conversation_active = time_since_last < 30.0  # Active if message in last 30 seconds
-                
-                await self._sleep_if_running(5.0)  # Check every 5 seconds
-                
-            except Exception as e:
-                self.record_error(e, is_fatal=False)
-                await self._sleep_if_running(10.0)  # Back off on error
-    
     async def _audience_detection_loop(self):
         """Monitor audience presence and publish to presence system."""
+        # Adaptive timing: faster checks when detector reports instability
+        normal_interval = self.config.vision.audience_detection_interval
+        frame_duration = 1.0 / self.config.vision.webcam_fps
+        rapid_interval = max(frame_duration, normal_interval / 5)  # 5x faster, but at least 1 frame
+        current_interval = normal_interval
+        last_publish_time = time.monotonic() # used to ensure we report at least every report_min_interval seconds
+        report_min_interval = 30.0  # used so if core service restarts we update it every 30 seconds regardless of changes
+
         while self.running:
             try:
                 if (self.config.vision.audience_detection_enabled and 
@@ -352,30 +409,41 @@ class AgentService(BaseService):
                         detection_result = await self.audience_detector.detect_audience(frame)
                         
                         if detection_result.get("success", False):
-                            # Check if detector says we should publish (handles flapping internally)
-                            if detection_result.get("should_publish", False):
-                                await self._publish_audience_present(
-                                    present=detection_result["audience_detected"],
-                                    confidence=detection_result["confidence"],
-                                    people_count=detection_result.get("people_count", 0)
-                                )
-                                
-                                logger.info(f"Published audience detection: {detection_result['audience_detected']} "
-                                          f"(confidence: {detection_result['confidence']:.2f}, "
-                                          f"people: {detection_result.get('people_count', 0)}, "
-                                          f"method: {detection_result.get('primary_method', 'unknown')})")
+                            # Use detector's stability assessment for adaptive timing
+                            is_stable = detection_result.get("stable", False)
                             
-                            # Log detector reasoning for debugging
-                            if detection_result.get("reasoning"):
-                                logger.debug(f"Detection reasoning: {detection_result['reasoning']}")
-                                
+                            # Publish when detector reports stable state
+                            if is_stable:
+                                current_interval = normal_interval
+                                person_count = detection_result.get("person_count", 0)
+                                now = time.monotonic()
+                                # Only publish if we have a significant change or it's time to report
+                                if self._person_count != person_count or now - last_publish_time > report_min_interval:
+                                    if self._person_count != person_count:
+                                        self._person_count = person_count
+                                        # update the LLM backend
+                                        await self._backend_update_person_count(person_count)
+
+                                    last_publish_time = now
+                                    await self._publish_audience_present(
+                                        person_count=person_count
+                                    )
+                            else:
+                                current_interval = rapid_interval
+                                logger.debug(f"Detector reports instability, using rapid checks ({rapid_interval}s)")
+
                         else:
                             logger.warning(f"Audience detection failed: {detection_result.get('error', 'Unknown error')}")
+                            # On error, use normal interval
+                            current_interval = normal_interval
                 
-                await self._sleep_if_running(self.config.vision.audience_detection_interval)
+                if not await self._sleep_if_running(current_interval):
+                    break
                 
             except Exception as e:
                 self.record_error(e, is_fatal=False)
+                # Reset to normal interval on error and back off more
+                current_interval = normal_interval
                 await self._sleep_if_running(10.0)  # Back off on error
     
     async def _vision_analysis_loop(self):
@@ -423,7 +491,7 @@ class AgentService(BaseService):
                 description.strip()):
                 
                 # Format as system message for context
-                context_msg = f"<System: seen by the installation camera: {description}>"
+                context_msg = f"<vision: {description}>"
                 await self.current_backend.send_message(context_msg, speaker="system")
                 
                 logger.info(f"Updated agent context with scene analysis: {description[:100]}...")
@@ -439,25 +507,37 @@ class AgentService(BaseService):
         """Handle conversation started event."""
         self.is_conversation_active = True
         logger.info("Conversation started with audience")
-        
-        # Optionally send welcome message
-        # if self.current_backend:
-        #     await self.current_backend.send_message(
-        #         "Hello! I'm the spirit of this installation. Feel free to interact with the sand while we talk.",
-        #         speaker="system"
-        #     )
-    
+
     async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle conversation ended event."""
-        self.is_conversation_active = False
         logger.info("Conversation ended")
-        
-        # Clear displayed transcripts after a delay
-        await asyncio.sleep(5.0)
-        await self._clear_all_displayed_text()
+        self.is_conversation_active = False
+        await self._stop_backend_after_conversation()
+
+        if self.displayed_text_ids and len(self.displayed_text_ids) > 0:
+            # Clear displayed transcripts after a delay
+            await asyncio.sleep(2.0)
+            await self._clear_all_displayed_text()
+
+    async def _backend_update_person_count(self, person_count: int):
+        """Send audience presence update to the LLM service."""
+        if self.current_backend and self.current_backend.is_connected:
+            text = ""
+            if person_count == 0:
+                text = "No people"
+            elif person_count == 1:
+                text = "One person"
+            elif person_count > 1:
+                text = f"{person_count} people"
+            await self.current_backend.send_message(
+                f"<vision: {text} detected>",
+                speaker="system"
+            )
     
     async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech detection event from pipecat backend."""
+        logger.debug("_on_speech_detected: event=%s, data=%s", event, data)
+
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
         # Update internal state
@@ -472,6 +552,7 @@ class AgentService(BaseService):
     
     async def _on_speech_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech ended event from pipecat backend."""
+        logger.debug("_on_speech_ended: event=%s, data=%s", event, data)
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
         # Update internal state
@@ -500,6 +581,20 @@ class AgentService(BaseService):
             parameters = data.get("parameters", {})
             logger.info(f"Agent called tool: {tool_name} with parameters: {parameters}")
     
+    async def _cancel_backend_pipeline(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle pipeline shutdown signal from backend.
+        
+        This is triggered when the backend detects a shutdown signal (like Ctrl-C).
+        We trigger immediate service shutdown - the stop() method handles pipeline coordination.
+        """
+        if not self.current_backend or not self.running:
+            return
+        
+        logger.info("Backend shutdown signal received, stopping service...")
+        
+        # Trigger immediate service shutdown - stop() method will coordinate with pipeline
+        asyncio.create_task(self.stop())
+
     # =========================================================================
     # Tool Implementation
     # =========================================================================
@@ -623,30 +718,70 @@ class AgentService(BaseService):
         
         # TODO: Update agent context with current era/biome information
         if self.current_backend and self.current_backend.is_connected:
-            context_msg = f"<System: the installation is currently showing {era} era in a {biome} biome.>"
+            context_msg = f"<projection: currently displaying a {biome} biome in the {era} era in .>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
+    async def _handle_audience_present(self, message_data: MessageDataType):
+        """Handle audience presence updates."""
+        # Don't process presence updates if service is shutting down
+        if not self.running: return
+            
+        logger.info(f"Audience presence update received: {message_data}")
+
+        audience_present = message_data.get("present", True)
+        idle = message_data.get("idle", False)
+        
+        # First, handle backend startup for anyone present (regardless of our person count)
+        if audience_present:
+            # if we are inactive then we need to start the backend
+            if not self.current_backend or not self.current_backend.is_connected:
+                logger.info("Audience detected, starting conversation backend...")
+                await self._start_backend_for_conversation()
+                return  # Early return to avoid flow transitions during startup
+        
+        # Then handle flow transitions only if we have a backend running
+        if not self.current_backend or not self.current_backend.is_connected:
+            return
+            
+        # double check that we don't have a newer person count internally, no transition if people detected
+        # NOTE: self._person_count starts at -1, so if we have no one detected, it will be 0
+        if self._person_count == 0 and (not audience_present or idle):
+
+            # Handle flow transitions based on presence and idle state
+            if hasattr(self.current_backend, 'transition_to_node'):
+                current_node = self.current_backend.get_current_node()
+                if current_node is None:
+                    logger.warning("Current node is None, cannot transition")
+                    return
+                
+                # idle overrides not being present
+                if idle and current_node != "goodbye":
+                    logger.info("Idle state detected, transitioning to goodbye node")
+                    await self.current_backend.transition_to_node("goodbye")
+
+                elif not audience_present and current_node not in ["search", "goodbye"]:
+                    logger.info("No audience detected, transitioning to search node")
+                    await self.current_backend.transition_to_node("search")
     
     # =========================================================================
     # Publishing Methods
     # =========================================================================
     
-    async def _publish_audience_present(self, present: bool, confidence: float = 0.0, people_count: int = 0):
+    async def _publish_audience_present(self, person_count: int = 0):
         """Publish audience presence detection."""
         message = AudiencePresent(
-            status=present,  # Field name expected by core service
-            people_count=people_count
+            person_count=person_count
         )
-        await self.zmq_service.publish(message.model_dump(), MessageType.AUDIENCE_PRESENT)
-        logger.debug(f"Published audience present: {present} (confidence: {confidence:.2f}, people: {people_count})")
-    
+        await self.zmq_service.publish(message, MessageType.AUDIENCE_PRESENT)
+        logger.debug(f"Published audience present: (people: {person_count})")
+
     async def _publish_speech_detected(self, is_speaking: bool, speaker_type: str = "agent"):
         """Publish speech detection for conversation tracking."""
         message = SpeechDetected(
             is_speaking=is_speaking,
-            speaker=speaker_type  # Field name expected by core service 
+            speaker=speaker_type  # Convert to enum value
         )
-        await self.zmq_service.publish(message.model_dump(), MessageType.SPEECH_DETECTED)
+        await self.zmq_service.publish(message, MessageType.SPEECH_DETECTED)
         logger.debug(f"Published speech detected: {speaker_type} speaking={is_speaking}")
     
     async def _publish_suggest_biome(self, suggested_biome: str, confidence: float = 0.8):

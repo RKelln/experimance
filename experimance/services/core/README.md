@@ -144,7 +144,7 @@ The service includes a comprehensive presence detection system that coordinates 
 - **`voice`**: Audience is speaking (audio detection)
 - **`touch`**: Momentary interaction trigger for audio SFX
 - **`conversation`**: Either agent or human is speaking (audio ducking control)
-- **`people_count`**: Number of people detected by vision system
+- **`person_count`**: Number of people detected by vision system
 
 #### Hysteresis Logic
 - **Presence confirmation**: Requires 1+ seconds of consistent detection
@@ -159,7 +159,7 @@ The service includes a comprehensive presence detection system that coordinates 
 
 ### Camera Integration
 
-The service uses the `robust_camera.py` module for reliable depth processing:
+The service uses the `realsense_camera.py` module for reliable depth processing:
 
 - **Automatic Error Recovery**: Handles camera disconnections and USB issues
 - **Mock Support**: Development and testing without hardware
@@ -329,7 +329,7 @@ Publishes comprehensive audience detection state for service coordination:
   "voice": false,
   "touch": false,
   "conversation": true,
-  "people_count": 1
+  "person_count": 1
 }
 ```
 

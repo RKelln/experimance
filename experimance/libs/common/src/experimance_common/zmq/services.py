@@ -332,14 +332,14 @@ class WorkerService(BaseZmqService):
             self.logger.error(f"Failed to publish message: {e}")
             raise
             
-    def add_message_handler(self, topic: TopicType, handler: Callable[[str, MessageDataType], None]) -> None:
+    def add_message_handler(self, topic: TopicType, handler: Callable[[str, MessageDataType], Union[None, Awaitable[None]]]) -> None:
         """Add a message handler for subscriber component."""
         topic_str = str(topic)
         topic_bytes = topic_str.encode() if isinstance(topic_str, str) else topic_str
         self._message_handlers[topic_bytes] = handler
         self.logger.debug(f"Added handler for topic '{topic_str}'")
         
-    def set_default_handler(self, handler: Callable[[str, MessageDataType], None]) -> None:
+    def set_default_handler(self, handler: Callable[[str, MessageDataType], Union[None, Awaitable[None]]]) -> None:
         """Set a default handler for unmatched subscriber topics."""
         self._default_handler = handler
         self.logger.debug("Set default message handler")
@@ -495,14 +495,14 @@ class ControllerService(BaseZmqService):
             self.logger.error(f"Failed to publish message: {e}")
             raise
             
-    def add_message_handler(self, topic: TopicType, handler: Callable[[str, MessageDataType], None]) -> None:
+    def add_message_handler(self, topic: TopicType, handler: Callable[[str, MessageDataType], Union[None, Awaitable[None]]]) -> None:
         """Add a message handler for subscriber component."""
         topic_str = str(topic)
         topic_bytes = topic_str.encode() if isinstance(topic_str, str) else topic_str
         self._message_handlers[topic_bytes] = handler
         self.logger.debug(f"Added handler for topic '{topic_str}'")
         
-    def set_default_handler(self, handler: Callable[[str, MessageDataType], None]) -> None:
+    def set_default_handler(self, handler: Callable[[str, MessageDataType], Union[None, Awaitable[None]]]) -> None:
         """Set a default handler for unmatched subscriber topics."""
         self._default_handler = handler
         self.logger.debug("Set default message handler")

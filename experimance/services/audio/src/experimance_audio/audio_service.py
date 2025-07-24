@@ -26,7 +26,7 @@ from experimance_common.health import HealthStatus
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
-    Era, Biome, SpaceTimeUpdate, AgentControlEvent, IdleStatus, MessageBase, MessageType
+    Era, Biome, SpaceTimeUpdate, MessageBase, MessageType
 )
 from pydantic import ValidationError
 
@@ -870,7 +870,7 @@ class AudioService(BaseService):
         # Set up message handlers
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
         self.zmq_service.add_message_handler(MessageType.PRESENCE_STATUS, self._handle_presence_status)
-        self.zmq_service.add_message_handler(MessageType.AGENT_CONTROL_EVENT, self._handle_agent_control_event)
+        self.zmq_service.add_message_handler(MessageType.SPEECH_DETECTED, self._handle_speech_detected)
 
         # Resolve SuperCollider script path if auto-start is enabled
         if self.config.supercollider.auto_start:
@@ -1161,11 +1161,11 @@ class AudioService(BaseService):
         except Exception as e:
             logger.error(f"Error handling idle status event: {e}")
     
-    async def _handle_agent_control_event(self, message_data: MessageDataType):
-        """Handle agent control events.
-        
+    async def _handle_speech_detected(self, message_data: MessageDataType):
+        """Handle speech detected events.
+
         Args:
-            message_data: AGENT_CONTROL_EVENT data
+            message_data: SPEECH_DETECTED data
         """
         try:
             # Handle both dict and MessageBase types
@@ -1177,16 +1177,16 @@ class AudioService(BaseService):
                 logger.warning(f"Received unexpected message type: {type(message_data)}")
                 return
                 
-            # Extract AgentControlEvent data
+            # Extract SpeechDetected data
             sub_type = data.get("sub_type")
             payload = data.get("payload", {})
             
             if not sub_type:
-                logger.warning(f"Received agent control event without sub_type: {data}")
+                logger.warning(f"Received speech detected event without sub_type: {data}")
                 return
-                
-            logger.debug(f"Agent control event: {sub_type}, payload: {payload}")
-            
+
+            logger.debug(f"Speech detected event: {sub_type}, payload: {payload}")
+
             # Handle different agent events
             if sub_type == "SpeechDetected":
                 # User is speaking, trigger appropriate audio response

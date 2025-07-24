@@ -37,7 +37,7 @@ class PresenceManager:
             config: Presence configuration with thresholds and intervals
         """
         self.config = config
-        
+
         # Current detection inputs (raw from sources)
         self._hand_detected: bool = False
         self._agent_people_count: int = 0
@@ -51,38 +51,41 @@ class PresenceManager:
         
         # Last confirmed state change times for duration calculations
         self._last_present_time: Optional[datetime] = None
+        self._last_absence_time: Optional[datetime] = None  # Track when presence was lost for idle timeout
         self._last_hand_time: Optional[datetime] = None
         self._last_voice_time: Optional[datetime] = None
         self._last_touch_time: Optional[datetime] = None
         
         # Current stable decisions (after hysteresis)
         self._current_status = PresenceStatus(
-            idle=True,
+            idle=True, # start idling
             present=False,
             hand=False,
             voice=False,
             touch=False,
             conversation=False,
-            people_count=0
+            person_count=0
         )
         
         # Publishing control
         self._last_publish_time: Optional[datetime] = None
+        self.updated : bool = False  # Flag to track if presence state has changed
         
         logger.info("PresenceManager initialized")
     
     # Property-based interface matching schema fields
     @property
-    def people_count(self) -> int:
+    def person_count(self) -> int:
         """Number of people detected by vision system."""
         return self._agent_people_count
     
-    @people_count.setter
-    def people_count(self, value: int) -> None:
+    @person_count.setter
+    def person_count(self, value: int) -> None:
         if self._agent_people_count != value:
             logger.debug(f"People count changed: {value}")
             self._agent_people_count = value
             self._update_presence_state()
+            self.updated = True
     
     @property
     def voice(self) -> bool:
@@ -94,9 +97,9 @@ class PresenceManager:
         if self._voice_detected != value:
             logger.debug(f"Voice detection changed: {value}")
             self._voice_detected = value
-            if value:
-                self._last_voice_time = datetime.now()
+            self._last_voice_time = datetime.now() # last time we heard a voice (starting or ending)
             self._update_presence_state()
+            self.updated = True
     
     @property
     def agent_speaking(self) -> bool:
@@ -108,7 +111,9 @@ class PresenceManager:
         if self._agent_speaking != value:
             logger.debug(f"Agent speaking changed: {value}")
             self._agent_speaking = value
+            self._last_voice_time = datetime.now() # last time we heard the agent speaking (starting or ending)
             self._update_presence_state()
+            self.updated = True
     
     @property
     def hand(self) -> bool:
@@ -120,9 +125,9 @@ class PresenceManager:
         if self._hand_detected != value:
             logger.debug(f"Hand detection changed: {value}")
             self._hand_detected = value
-            if value:
-                self._last_hand_time = datetime.now()
+            self._last_hand_time = datetime.now() # last time we detected a hand (starting or ending)
             self._update_presence_state()
+            self.updated = True
 
     @property
     def touch(self) -> bool:
@@ -137,17 +142,36 @@ class PresenceManager:
     def touch(self, value: bool) -> None:
         if value:
             # Record touch event and trigger one-shot state
-            logger.debug("Touch interaction detected - triggering audio SFX")
-            self._last_touch_time = datetime.now()
+            logger.debug("Touch interaction detected")
             self._touch_triggered = True
+            self._last_touch_time = datetime.now()
             self._update_presence_state()
-            # Immediately reset the trigger (one-shot behavior)
-            self._touch_triggered = False
+            self.updated = True
+
+    def update(self) -> bool:
+        """Updates timers and checks presence state.
+
+        Returns True if state was updated and needs publishing.
+        """
+        # First update presence state (this may set _last_absence_time)
+        self._update_presence_state()
+        
+        # Then handle idling, if no presence for long enough
+        if self._last_absence_time is not None and not self._current_status.present:
+            now = datetime.now()
+            absence_duration = (now - self._last_absence_time).total_seconds()
+            if absence_duration >= self.config.idle_threshold and not self._current_status.idle:
+                # Absence has been long enough and not currently idle, entering idle state
+                logger.info("Absence stable for threshold duration, updating status")
+                self._current_status.idle = True
+                return True
+        
+        return self.should_publish()
 
     def _update_presence_state(self) -> None:
         """Update the internal presence state based on current inputs."""
         now = datetime.now()
-        
+
         # Determine if any presence indicators are active
         # Note: touch is one-shot and doesn't extend presence beyond the moment it occurs
         any_presence = (
@@ -172,7 +196,7 @@ class PresenceManager:
             if presence_duration >= self.config.presence_threshold:
                 if not self._current_status.present:
                     logger.info("Audience presence confirmed (hysteresis threshold met)")
-                    self._last_present_time = now
+                    self._last_present_time = self._presence_start_time + timedelta(seconds=self.config.presence_threshold)
                 self._update_current_status(present=True)
         else:
             # Start tracking absence if not already
@@ -185,15 +209,29 @@ class PresenceManager:
             
             # Check if absence has been stable long enough
             absence_duration = (now - self._absence_start_time).total_seconds()
-            if absence_duration >= self.config.idle_threshold:
+            if absence_duration >= self.config.absence_threshold:
                 if self._current_status.present:
                     logger.info("Audience absence confirmed (hysteresis threshold met)")
+                    # Set _last_absence_time to when absence was first confirmed, not now
+                    self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
+                elif self._last_absence_time is None:
+                    # Ensure _last_absence_time is set even if absence was already confirmed
+                    # This handles the case where we're past the threshold but haven't set it yet
+                    self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
                 self._update_current_status(present=False)
     
     def _update_current_status(self, present: bool) -> None:
         """Update the current stable presence status."""
         now = datetime.now()
         
+        if present and self._current_status.idle:
+            # Reset idle state if presence is detected
+            idle = False
+            self.updated = True  # Presence state has changed
+            logger.debug("Presence detected, setting idle to False")
+        else:
+            idle = self._current_status.idle
+
         # Calculate durations
         presence_duration = 0.0
         hand_duration = 0.0
@@ -214,16 +252,22 @@ class PresenceManager:
         
         # Calculate conversation status (either agent or human speaking)
         conversation_active = self._agent_speaking or self._voice_detected
-        
+        if self._current_status.conversation and not conversation_active: # if we were in a conversation but not actively speaking, check for timeout
+            conversation_active = self._last_voice_time and (now - self._last_voice_time).total_seconds() < self.config.conversation_timeout
+
+        if conversation_active != self._current_status.conversation:
+            logger.debug(f"Conversation state changed: {conversation_active}")
+            self.updated = True
+
         # Update status
         self._current_status = PresenceStatus(
-            idle=not present,
+            idle=idle,
             present=present,
             hand=self._hand_detected,
             voice=self._voice_detected,
-            touch=self._touch_triggered,  # One-shot trigger state
+            touch=self._touch_triggered,  # Use the current touch trigger state
             conversation=conversation_active,
-            people_count=self._agent_people_count,
+            person_count=self._agent_people_count,
             last_present=self._last_present_time,
             last_hand=self._last_hand_time,
             last_voice=self._last_voice_time,
@@ -244,7 +288,7 @@ class PresenceManager:
         """
         # Always update timestamps and durations before returning
         self._update_current_status(self._current_status.present)
-        return self._current_status
+        return self._current_status.model_copy()  # Return a copy to avoid external modifications
     
     def should_publish(self) -> bool:
         """
@@ -253,6 +297,10 @@ class PresenceManager:
         Returns:
             True if it's time to publish an update
         """
+        if self.updated:
+            self.updated = False
+            return True  # Force publish if state was updated
+        
         if self._last_publish_time is None:
             return True
         
@@ -263,11 +311,24 @@ class PresenceManager:
     def mark_published(self) -> None:
         """Mark that a presence status has been published."""
         self._last_publish_time = datetime.now()
+
+        # Reset one-shot triggers after state update
+        if self._touch_triggered:
+            self._touch_triggered = False
     
     def force_update(self) -> None:
         """Force an immediate update of the presence state (for testing)."""
         self._update_presence_state()
     
+    def is_idle(self) -> bool:
+        """
+        Check if the current status is idle.
+        
+        Returns:
+            True if currently idle, False otherwise
+        """
+        return self._current_status.idle
+
     def get_debug_info(self) -> dict:
         """Get debug information about the presence manager state."""
         now = datetime.now()
@@ -283,7 +344,7 @@ class PresenceManager:
         return {
             "raw_inputs": {
                 "hand_detected": self._hand_detected,
-                "people_count": self._agent_people_count,
+                "person_count": self._agent_people_count,
                 "voice_detected": self._voice_detected,
                 "agent_speaking": self._agent_speaking,
                 "touch_triggered": self._touch_triggered,
@@ -292,6 +353,7 @@ class PresenceManager:
                 "presence_tracking_duration": presence_tracking_duration,
                 "absence_tracking_duration": absence_tracking_duration,
                 "presence_threshold": self.config.presence_threshold,
+                "absence_threshold": self.config.absence_threshold,
                 "idle_threshold": self.config.idle_threshold,
             },
             "current_status": {
@@ -301,6 +363,6 @@ class PresenceManager:
                 "voice": self._current_status.voice,
                 "touch": self._current_status.touch,
                 "conversation": self._current_status.conversation,
-                "people_count": self._current_status.people_count,
+                "person_count": self._current_status.person_count,
             }
         }

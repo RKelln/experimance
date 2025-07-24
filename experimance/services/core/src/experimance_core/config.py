@@ -89,13 +89,18 @@ class PresenceConfig(BaseModel):
     
     # Hysteresis/debouncing thresholds for core's presence decisions
     presence_threshold: float = Field(
-        default=2.0,
+        default=1.0,
         description="Seconds of presence detection before considering audience present"
+    )
+
+    absence_threshold: float = Field(
+        default=10.0,
+        description="Seconds of no presence detection before considering audience gone"
     )
     
     idle_threshold: float = Field(
-        default=10.0,
-        description="Seconds of no presence detection before considering audience gone"
+        default=30.0,
+        description="Seconds of no presence detection before going idle"
     )
     
     # Publishing frequency
@@ -103,17 +108,10 @@ class PresenceConfig(BaseModel):
         default=5.0,
         description="Interval in seconds to publish presence status updates"
     )
-    
-    # Conversation timeout
+
     conversation_timeout: float = Field(
-        default=3.0,
-        description="Seconds after speech ends before conversation is considered inactive"
-    )
-    
-    # Touch timeout
-    touch_timeout: float = Field(
         default=5.0,
-        description="Seconds after last significant change before touch is considered inactive"
+        description="Seconds after speech ends before conversation is considered inactive"
     )
 
 
@@ -524,7 +522,7 @@ class CoreServiceConfig(BaseConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["agent"],
-                topics=[MessageType.REQUEST_BIOME, MessageType.AUDIENCE_PRESENT, MessageType.SPEECH_DETECTED]
+                topics=[MessageType.REQUEST_BIOME, MessageType.AUDIENCE_PRESENT, MessageType.SPEECH_DETECTED, "agent"]
             ),
             workers={
                 "image_server": WorkerConfig(

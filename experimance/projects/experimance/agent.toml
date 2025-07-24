@@ -59,7 +59,7 @@ webcam_fps = 30
 
 # Audience detection
 audience_detection_enabled = true
-audience_detection_interval = 2.0
+audience_detection_interval = 1.0
 audience_detection_threshold = 0.5
 
 # Vision Language Model

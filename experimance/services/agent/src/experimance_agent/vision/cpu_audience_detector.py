@@ -95,6 +95,7 @@ class CPUAudienceDetector:
         self.detection_history: List[Dict[str, Any]] = []
         
         # Performance tracking
+        self.track_performance = False
         self.total_detections = 0
         self.detection_times: List[float] = []
         self.false_positive_count = 0
@@ -175,43 +176,49 @@ class CPUAudienceDetector:
             
             # Combine results with intelligent face prioritization
             combined_result = self._combine_cpu_results(person_result, face_result, motion_result)
-            
+        
             # Apply temporal smoothing for stability
-            smoothed_result = self._apply_temporal_smoothing(combined_result)
-            
+            #smoothed_result = self._apply_temporal_smoothing(combined_result)
+            smoothed_result = combined_result
+
             # Apply state change detection to prevent flapping
             final_result = self._apply_state_change_detection(smoothed_result)
-            
-            detection_time = time.time() - start_time
-            self.detection_times.append(detection_time)
-            
-            # Keep only recent performance data
-            if len(self.detection_times) > 100:
-                self.detection_times = self.detection_times[-50:]
+
+            if self.track_performance:
+                detection_time = time.time() - start_time
+                self.detection_times.append(detection_time)
+                
+                # Keep only recent performance data
+                if len(self.detection_times) > 100:
+                    self.detection_times = self.detection_times[-50:]
+
+                avg_detection_time = np.mean(self.detection_times) if self.detection_times else 0.0
             
             # Build result using final processed detection
             result = {
                 "audience_detected": final_result["detected"],
                 "confidence": final_result["confidence"],
-                "detection_time": detection_time,
                 "timestamp": time.time(),
                 "person_detection": person_result,
                 "face_detection": face_result,
                 "motion_detection": motion_result,
                 "method_used": "cpu_multimodal",
                 "primary_method": final_result.get("primary_method", "unknown"),
-                "people_count": final_result.get("people_count", 0),
+                "person_count": final_result.get("person_count", 0),
                 "state_changed": final_result.get("state_changed", False),
                 "stable": final_result.get("stable", True),
-                "performance": {
-                    "avg_detection_time": np.mean(self.detection_times),
+                "success": True
+            }
+
+            if self.track_performance:
+                result["detection_time"] = detection_time
+                result["performance"] = {
+                    "avg_detection_time": avg_detection_time,
                     "frame_scale": self.profile.detection.detection_scale_factor,
                     "profile_name": self.profile.name,
                     "profile_environment": self.profile.environment
-                },
-                "success": True
-            }
-            
+                }
+
             # Update internal state
             self.audience_present = result["audience_detected"]
             self.confidence_score = result["confidence"]
@@ -503,7 +510,7 @@ class CPUAudienceDetector:
                 "detected": True,
                 "confidence": face_confidence,
                 "primary_method": "face_priority",
-                "people_count": face_count,
+                "person_count": face_count,
                 "reasoning": f"Face detection: {face_count} faces with {face_confidence:.2f} confidence"
             }
         elif faces_detected:
@@ -515,7 +522,7 @@ class CPUAudienceDetector:
                     "detected": True,
                     "confidence": combined_confidence,
                     "primary_method": "face+motion",
-                    "people_count": face_count,
+                    "person_count": face_count,
                     "reasoning": f"Face+motion: {face_count} faces, motion confirmed"
                 }
             else:
@@ -524,7 +531,7 @@ class CPUAudienceDetector:
                     "detected": True,
                     "confidence": face_confidence,
                     "primary_method": "face_only",
-                    "people_count": face_count,
+                    "person_count": face_count,
                     "reasoning": f"Face only: {face_count} faces with {face_confidence:.2f} confidence"
                 }
         elif persons_detected:
@@ -536,7 +543,7 @@ class CPUAudienceDetector:
                     "detected": True,
                     "confidence": combined_confidence,
                     "primary_method": "person+motion",
-                    "people_count": person_count,
+                    "person_count": person_count,
                     "reasoning": f"Person+motion: {person_count} people detected with motion"
                 }
             else:
@@ -544,7 +551,7 @@ class CPUAudienceDetector:
                     "detected": True,
                     "confidence": person_confidence,
                     "primary_method": "person_only",
-                    "people_count": person_count,
+                    "person_count": person_count,
                     "reasoning": f"Person only: {person_count} people detected"
                 }
         elif motion_detected:
@@ -554,7 +561,7 @@ class CPUAudienceDetector:
                 "detected": motion_only_detected,
                 "confidence": motion_confidence * conf_params.motion_only_confidence_factor,
                 "primary_method": "motion_only",
-                "people_count": 1 if motion_only_detected else 0,  # Assume 1 person for motion
+                "person_count": 1 if motion_only_detected else 0,  # Assume 1 person for motion
                 "reasoning": f"Motion only: {motion_confidence:.2f} confidence"
             }
         else:
@@ -563,7 +570,7 @@ class CPUAudienceDetector:
                 "detected": False,
                 "confidence": conf_params.absence_confidence,
                 "primary_method": "none",
-                "people_count": 0,
+                "person_count": 0,
                 "reasoning": "No detection from any method"
             }
     
@@ -708,38 +715,31 @@ class CPUAudienceDetector:
         # Check for state change
         state_changed = current_detected != self.previous_state
         
+        # Update previous state immediately when we detect a change
         if state_changed:
+            self.previous_state = current_detected
             self.state_change_count = 0  # Reset counter on state change
         else:
             self.state_change_count += 1
         
-        # Determine if we should publish this state change
-        should_publish = False
+        # Determine stability status
         stable = True
         
         if state_changed:
             # For state changes, require stability (multiple consistent readings)
-            should_publish = False  # Don't publish immediately
             stable = False
-            logger.debug(f"State change detected: {self.previous_state} -> {current_detected}, requiring stability")
+            logger.debug(f"State change detected, new state: {current_detected}, requiring {self.stable_readings_required} stable readings")
         else:
             # For stable state, check if we've had enough consistent readings
             if self.state_change_count >= self.stable_readings_required:
-                should_publish = True
                 stable = True
             else:
-                should_publish = False
                 stable = False
-        
-        # Update previous state for next iteration
-        if should_publish:
-            self.previous_state = current_detected
         
         result = detection_result.copy()
         result.update({
             "confidence": avg_confidence,  # Use smoothed confidence
             "state_changed": state_changed,
-            "should_publish": should_publish,
             "stable": stable,
             "stability_count": self.state_change_count
         })
