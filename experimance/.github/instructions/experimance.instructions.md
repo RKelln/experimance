@@ -81,6 +81,9 @@ experimance/
 - Update files directly, don't use temp files or scripts to write and then update files
 - Use best practices and always to to keep complexity low and clarity high
 - Use the existing code as a guide for new implementations but if its a mess suggest alternatives
+- To support multiple projects:
+  - Use the `projects` directory for project-specific configurations, schemas, and constants
+  - IMPORTANT: Ignore linter and pydantic errors related to dynamic imports (Era, Biome, etc.)
 
 ## Coding Standards
 
