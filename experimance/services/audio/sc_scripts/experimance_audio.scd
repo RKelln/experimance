@@ -24,11 +24,6 @@ s.options.device = nil;  // "plughw:1,0" // USB audio interface
 ~audioDir = "../audio";  // Default audio directory
 ~configDir = "../config";  // Default config directory
 
-// Environmental sound crossfading:
-// - Layers with "interval": "loop" use seamless crossfading (dual PlayBuf with crossfade)
-// - Other intervals ("frequent", "occasional", "rare") play as one-shots
-// - Crossfade time can be configured per layer with "crossfade_time" field (default: 2.0 seconds)
-
 // Surround sound configuration (set by audio_service.py)
 ~enableSurround = false;
 ~surroundMode = "5.1";
@@ -374,7 +369,7 @@ s.waitForBoot {
 
     // Play an environmental sound layer
     ~playEnvironmentLayer = { |layerData|
-        var path, buffer, synth, tags, volume, interval, crossfadeTime;
+        var path, buffer, synth, tags, volume, interval;
         var fileExists, routine;
 
         path = layerData[\path];
@@ -382,7 +377,6 @@ s.waitForBoot {
         volume = (layerData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
         interval = layerData[\interval] ? "loop";  // Default to loop if not specified
         fileExists = layerData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
-        crossfadeTime = (layerData[\crossfade_time] ? 2.0).asFloat; // Default 2 second crossfade
 
         if(fileExists) {
             // Load audio file if it exists
@@ -390,12 +384,11 @@ s.waitForBoot {
 
             // Handle different interval types
             case { interval == "loop" } {
-                // Create synth for continuous looping playback with seamless crossfade
+                // Create synth for continuous looping playback (existing behavior)
                 synth = Synth(\loopPlayer, [
                     \buf, buffer,
                     \amp, volume,
                     \fadeTime, 3.0,  // 3 second crossfade
-                    \crossfadeTime, crossfadeTime, // Pass crossfade time to synth
                     \masterVolume, masterVolume,  // Apply current master volume
                     \envVolume, environmentVolume  // Apply current environment volume
                 ], envGroup);
@@ -403,7 +396,6 @@ s.waitForBoot {
                 routine = nil;  // No routine needed for continuous loops
             } {
                 // For non-loop intervals, create a routine that plays the sound periodically
-                // These use the existing \oneShot synth (no crossfading)
                 var minInterval, maxInterval, nextPlayTime;
 
                 // Define timing ranges for each interval type
@@ -422,14 +414,15 @@ s.waitForBoot {
                     maxInterval = 45;
                 };
 
-                // Create routine for periodic playback (one-shot, no crossfading)
+                // Create routine for periodic playback
                 routine = Routine({
                     loop {
                         // Random wait time within the interval range
                         nextPlayTime = rrand(minInterval, maxInterval);
                         nextPlayTime.wait;
 
-                        // Play the sound once using oneShot synth (no looping/crossfading)
+                        // Play the sound once (non-looping)
+                        // Access current live volume values from global scope
                         Synth(\oneShot, [
                             \buf, buffer,
                             \amp, volume,
@@ -446,11 +439,11 @@ s.waitForBoot {
             };
 
             // Return info about this layer
-            (\synth: synth, \routine: routine, \buffer: buffer, \tags: tags, \volume: volume, \interval: interval, \crossfade_time: crossfadeTime);
+            (\synth: synth, \routine: routine, \buffer: buffer, \tags: tags, \volume: volume, \interval: interval, \routine: routine);
         } {
             // Return empty info for non-existing file (no placeholder for ambient sounds)
             "Skipping non-existent environmental audio file: %".format(path).warn;
-            (\synth: nil, \buffer: nil, \tags: tags, \volume: volume, \interval: interval, \crossfade_time: crossfadeTime, \routine: nil);
+            (\synth: nil, \buffer: nil, \tags: tags, \volume: volume, \interval: interval, \routine: nil);
         };
     };
 
@@ -1374,38 +1367,11 @@ s.waitForBoot {
             ~outputToChannels.(sig, ~musicChannels);
         }).add;
 
-        // Environmental sound player (seamless looping with crossfade for loops only)
-        SynthDef(\loopPlayer, { |buf, amp=1.0, fadeTime=3.0, duck=1.0, gate=1, masterVolume=1.0, envVolume=1.0, crossfadeTime=2.0|
-            var sig, env, sig1, sig2, phase, crossfade;
-            var bufFrames, bufRate, loopDur;
-            
+        // Environmental sound player (looping with crossfade)
+        SynthDef(\loopPlayer, { |buf, amp=1.0, fadeTime=3.0, duck=1.0, gate=1, masterVolume=1.0, envVolume=1.0|
+            var sig, env;
             env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
-            
-            // Get buffer info
-            bufFrames = BufFrames.kr(buf);
-            bufRate = BufRateScale.kr(buf);
-            loopDur = bufFrames / (SampleRate.ir * bufRate);
-            
-            // Create two overlapping PlayBuf instances for seamless crossfading
-            // Use Phasor to track position for crossfade timing
-            phase = Phasor.ar(0, bufRate / SampleRate.ir, 0, 1);
-            
-            // First PlayBuf - normal playback
-            sig1 = PlayBuf.ar(2, buf, bufRate, 1, 0, 1);
-            
-            // Second PlayBuf - delayed by (loop_duration - crossfade_time)
-            // This creates the overlap for crossfading
-            sig2 = PlayBuf.ar(2, buf, bufRate, 1, 
-                (loopDur - crossfadeTime) * SampleRate.ir * bufRate, 1);
-            
-            // Crossfade between the two signals
-            // When phase approaches 1.0 (end of loop), fade from sig1 to sig2
-            crossfade = (1 - phase).clip(0, crossfadeTime / loopDur) / (crossfadeTime / loopDur);
-            crossfade = crossfade.clip(0, 1);
-            
-            // Mix the two signals with crossfade
-            sig = (sig1 * crossfade) + (sig2 * (1 - crossfade));
-            
+            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
             sig = sig * env * amp * duck * envVolume * masterVolume; // Apply both environment and master volume
             
             // Route to environment channels (front speakers in surround setup)
@@ -1756,5 +1722,3 @@ s.waitForBoot {
     // Run initialization
     ~init.();
 };
-
-
