@@ -1,6 +1,6 @@
 [
     {
-        "path": "environment/rainforest_ambience.mp3",
+        "path": "environment/rainforest_ambience_loop.mp3",
         "tags": [
             "rainforest"
         ],
@@ -15,7 +15,7 @@
         "prompt": "dense rainforest ambience: insects, distant animal calls"
     },
     {
-        "path": "environment/jungle_ambience.mp3",
+        "path": "environment/STE-104 jungle_loop.mp3",
         "tags": [
             "jungle"
         ],
@@ -30,7 +30,7 @@
         "prompt": "jungle ambience: dense foliage, insects buzzing, distant animal calls"
     },
     {
-        "path": "environment/temperate_forest_ambience.mp3",
+        "path": "environment/11L-Dry_Deciduous_Forest-1752461657513_loop.mp3",
         "tags": [
             "temperate_forest"
         ],
@@ -45,7 +45,7 @@
         "prompt": "temperate forest ambience: rustling leaves, songbirds, wind in trees, distant animal sounds"
     },
     {
-        "path": "environment/boreal_forest_ambience.mp3",
+        "path": "environment/11L-Dry_Deciduous_Forest-1752461657513_loop.mp3",
         "tags": [
             "boreal_forest"
         ],
@@ -60,7 +60,7 @@
         "prompt": "boreal forest ambience: pine trees creaking, wind, ravens, light snow in winter"
     },
     {
-        "path": "environment/deciduous_forest_ambience.mp3",
+        "path": "environment/11L-Dry_Deciduous_Forest-1752461657513_loop.mp3",
         "tags": [
             "deciduous_forest"
         ],
@@ -75,7 +75,7 @@
         "prompt": "deciduous forest ambience: birds, wind, seasonal leaf fall, insects"
     },
     {
-        "path": "environment/desert_ambience.mp3",
+        "path": "environment/697217__dhallcomposer__looping-gentle-wind-ambience-on-an-open-desert-plain.mp3",
         "tags": [
             "desert"
         ],
@@ -89,7 +89,7 @@
         "prompt": "desert ambience: wind over sand, sparse animal calls, distant shifting dunes"
     },
     {
-        "path": "environment/mountain_ambience.mp3",
+        "path": "environment/mountain_ambience_loop.mp3",
         "tags": [
             "mountain"
         ],
@@ -104,7 +104,7 @@
         "prompt": "mountain ambience: wind, distant avalanches, eagles, occasional rocks tumbling"
     },
     {
-        "path": "environment/tropical_island_ambience.mp3",
+        "path": "environment/Hawaii Beach Waves 001_loop.mp3",
         "tags": [
             "tropical_island"
         ],
@@ -119,7 +119,7 @@
         "prompt": "tropical island ambience: waves on shore, palm leaves, tropical birds, distant thunder"
     },
     {
-        "path": "environment/river_ambience.mp3",
+        "path": "environment/river_loop.mp3",
         "tags": [
             "river"
         ],
@@ -134,7 +134,7 @@
         "prompt": "river ambience: flowing water, splashes, reeds in wind, riverbank animals"
     },
     {
-        "path": "environment/tundra_ambience.mp3",
+        "path": "environment/tundra_ambience_loop.mp3",
         "tags": [
             "tundra"
         ],
@@ -149,7 +149,7 @@
         "prompt": "tundra ambience: wind, distant birds, light snow, silence"
     },
     {
-        "path": "environment/steppe_ambience.mp3",
+        "path": "environment/steppe_ambience_loop.mp3",
         "tags": [
             "steppe"
         ],
@@ -164,7 +164,7 @@
         "prompt": "steppe ambience: tall grasses rustling, insects, distant herds"
     },
     {
-        "path": "environment/coastal_ambience.mp3",
+        "path": "environment/207553__bone666138__ocean-ambience-costal-with-foghorn_loop.mp3",
         "tags": [
             "coastal"
         ],
@@ -179,7 +179,7 @@
         "prompt": "coastal ambience: breaking waves, seabirds, wind, tidal sounds"
     },
     {
-        "path": "environment/swamp_ambience.mp3",
+        "path": "environment/Tropical Swamp Day_loop.mp3",
         "tags": [
             "swamp"
         ],
@@ -194,7 +194,7 @@
         "prompt": "swamp ambience: frogs, insects, water movement, distant birds"
     },
     {
-        "path": "environment/plains_ambience.mp3",
+        "path": "environment/plains_ambience_loop.mp3",
         "tags": [
             "plains"
         ],
@@ -209,7 +209,7 @@
         "prompt": "plains ambience: wind in grasses, crickets, distant animal herds"
     },
     {
-        "path": "environment/arctic_ambience.mp3",
+        "path": "environment/573290__kevp888__210523_1598_fr_blizzard_loop.mp3",
         "tags": [
             "arctic"
         ],
@@ -343,7 +343,7 @@
         "prompt": "bus ambience: idling engine hums, door hisses, occasional conversations, and shifting chassis sounds over bumps"
     },
     {
-        "path": "environment/cable_car.mp3",
+        "path": "environment/571480__junikaefer__cable-cars-on-tracks.mp3",
         "tags": [
             "cable_car"
         ],
@@ -372,7 +372,7 @@
         "prompt": "carts ambience: wooden wheels rolling over uneven ground, creaking axles, and occasional shouts or animal sounds depending on use"
     },
     {
-        "path": "environment/church.mp3",
+        "path": "environment/244715__jlseagull__romania-church-bells.mp3",
         "tags": [
             "church"
         ],
@@ -459,7 +459,7 @@
         "prompt": "event ambience: crowd murmurs, speaker or performance sounds, occasional applause, and a general air of anticipation and energy"
     },
     {
-        "path": "environment/factory.mp3",
+        "path": "environment/754056__pauliepaulpaul__factory-26.mp3",
         "tags": [
             "factory"
         ],
@@ -530,7 +530,7 @@
         "prompt": "hall ambience: echoing footsteps, soft voices, occasional door creaks or distant claps, and reverberant indoor ambience"
     },
     {
-        "path": "environment/herding_camp.mp3",
+        "path": "environment/126358__tdes__herd-of-cows-mooing.mp3",
         "tags": [
             "herding_camp"
         ],
@@ -701,7 +701,7 @@
         "prompt": "paper mill ambience: steady machine rollers, paper tearing and folding, and layered industrial hums"
     },
     {
-        "path": "environment/park.mp3",
+        "path": "environment/162318__mxsmanic__playground-noises-in-luxembourg-gardens.mp3",
         "tags": [
             "park"
         ],
@@ -943,15 +943,14 @@
         "prompt": "tractor ambience: low rumble of engine, treads or tires over soil, surrounding farm noises"
     },
     {
-        "path": "environment/traffic.mp3",
+        "path": "environment/car_honking_traffic_2_stable_audio.mp3",
         "tags": [
             "traffic"
         ],
-        "interval": "frequent",
         "prompt": "traffic ambience: layered car and truck motion, horns, tires over pavement, and shifting city density"
     },
     {
-        "path": "environment/train.mp3",
+        "path": "environment/407391__mike_stranks__passing-steam-traction-engine-2.mp3",
         "tags": [
             "train"
         ],
@@ -979,7 +978,7 @@
         "prompt": "treehouse ambience: birds and leaves rustling, wood creaking, faint voices or footsteps, and distant ground activity"
     },
     {
-        "path": "environment/tribal_village.mp3",
+        "path": "environment/STE-150 rural town with kids.mp3",
         "tags": [
             "tribal_village"
         ],
@@ -1001,6 +1000,15 @@
             "village_green"
         ],
         "prompt": "village green ambience: open laughter and play, wind in trees, community voices, and music or instruments in distance"
+    },
+    {
+        "path": "environment/170478__cheeseheadburger__distant-ww2-gunfire-kent.mp3",
+        "tags": [
+            "wartorn"
+        ],
+        "requires": [
+            "dystopia"
+        ]
     },
     {
         "path": "environment/water_taxi.mp3",
