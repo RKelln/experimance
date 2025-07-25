@@ -707,6 +707,13 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
             
             seed_info = f" (seed: {prompt_seed})" if prompt_seed is not None else " (random seed)"
             print(f"🎨 Using prompt generator with {len(available_eras)} eras and {len(available_biomes)} biomes{seed_info}")
+            
+            # Show available options for reference
+            era_names = [str(e).lower() if hasattr(e, 'value') else str(e).lower() for e in available_eras]
+            biome_names = [str(b).lower() if hasattr(b, 'value') else str(b).lower() for b in available_biomes]
+            print(f"    Available eras: {', '.join(era_names)}")
+            print(f"    Available biomes: {', '.join(biome_names)}")
+            
         except Exception as e:
             print(f"⚠️  Could not initialize prompt generator: {e}")
             print("   Falling back to test prompts")
@@ -779,11 +786,103 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
     model = getattr(args, 'model', 'lightning')
     use_loras = getattr(args, 'loras', False)
     steps = getattr(args, 'steps', None)
+    specified_era = getattr(args, 'era', None)
+    specified_biome = getattr(args, 'biome', None)
+    all_combos = getattr(args, 'all_combos', False)
+    
+    # Generate test combinations based on arguments
+    test_combinations = []
+    
+    if all_combos and schemas_loaded and prompt_gen and available_eras and available_biomes:
+        # Test all era+biome combinations
+        for era in available_eras:
+            for biome in available_biomes:
+                test_combinations.append((era, biome))
+        print(f"🔄 Testing all {len(test_combinations)} era+biome combinations")
+        
+    elif specified_era and schemas_loaded and prompt_gen and available_eras and available_biomes:
+        # Test all biomes with specified era
+        try:
+            # Find the era enum value
+            era_enum = None
+            for era in available_eras:
+                era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
+                if era_str == specified_era.lower():
+                    era_enum = era
+                    break
+            
+            if era_enum:
+                for biome in available_biomes:
+                    test_combinations.append((era_enum, biome))
+                print(f"🎯 Testing era '{specified_era}' with all {len(available_biomes)} biomes")
+            else:
+                print(f"❌ Era '{specified_era}' not found. Available eras: {[str(e).lower() for e in available_eras]}")
+                return
+        except Exception as e:
+            print(f"❌ Error setting up era testing: {e}")
+            return
+            
+    elif specified_biome and schemas_loaded and prompt_gen and available_eras and available_biomes:
+        # Test all eras with specified biome
+        try:
+            # Find the biome enum value
+            biome_enum = None
+            for biome in available_biomes:
+                biome_str = str(biome).lower() if hasattr(biome, 'value') else str(biome).lower()
+                if biome_str == specified_biome.lower():
+                    biome_enum = biome
+                    break
+            
+            if biome_enum:
+                for era in available_eras:
+                    test_combinations.append((era, biome_enum))
+                print(f"🎯 Testing biome '{specified_biome}' with all {len(available_eras)} eras")
+            else:
+                print(f"❌ Biome '{specified_biome}' not found. Available biomes: {[str(b).lower() for b in available_biomes]}")
+                return
+        except Exception as e:
+            print(f"❌ Error setting up biome testing: {e}")
+            return
+    
+    # If we have specific combinations, use those; otherwise use random generation
+    if test_combinations:
+        num_tests = len(test_combinations)
+        def get_test_prompt(i: int) -> tuple[str, str, Optional[str]]:
+            """Get a test prompt using specific era+biome combinations."""
+            if i < len(test_combinations):
+                era, biome = test_combinations[i]
+                try:
+                    prompt_result = prompt_gen.generate_prompt(era, biome)
+                    era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
+                    biome_str = str(biome).lower() if hasattr(biome, 'value') else str(biome).lower()
+                    print(f"     🌍 Era: {era_str}, Biome: {biome_str}")
+                    return prompt_result[0], prompt_result[1], era_str
+                except Exception as e:
+                    print(f"   ⚠️  Error generating prompt for {era}/{biome}: {e}")
+                    # Fallback to test prompt
+                    prompt = fallback_prompts[i % len(fallback_prompts)]
+                    return prompt, "blurry, low quality, artifacts, distorted", None
+            else:
+                # Shouldn't happen, but fallback
+                prompt = fallback_prompts[i % len(fallback_prompts)]
+                return prompt, "blurry, low quality, artifacts, distorted", None
     
     print(f"🧪 Testing image generation on instance {instance_id}")
     print(f"📊 Running {num_tests} generation(s) with model '{model}'")
     print(f"🎨 LoRAs: {'enabled' if use_loras else 'disabled'}")
     print(f"🔗 Endpoint: {endpoint.url}")
+    
+    # Show test type information
+    if test_combinations:
+        if all_combos:
+            print(f"🔄 Test type: All era+biome combinations ({len(test_combinations)} total)")
+        elif specified_era:
+            print(f"🎯 Test type: Era '{specified_era}' with all biomes")
+        elif specified_biome:
+            print(f"🎯 Test type: Biome '{specified_biome}' with all eras")
+    else:
+        print(f"🎲 Test type: Random era+biome combinations")
+    
     print()
     
     results = []
@@ -869,10 +968,25 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
                         try:
                             generated_image = base64url_to_png(image_b64)
                             if generated_image:
-                                # Create filename with test info
-                                filename = f"{test_start_time:.0f}_test_{i+1:02d}_{model}_{seed_used}.png"
+                                # Create filename with test info, including era/biome if available
+                                base_filename = f"{test_start_time:.0f}_test_{i+1:02d}_{model}"
+                                
+                                # Add era/biome info if we're using specific combinations
+                                if test_combinations and i < len(test_combinations):
+                                    era, biome = test_combinations[i]
+                                    era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
+                                    biome_str = str(biome).lower() if hasattr(biome, 'value') else str(biome).lower()
+                                    base_filename += f"_{era_str}_{biome_str}"
+                                elif era_used:
+                                    # Fallback to era_used if available from random generation
+                                    base_filename += f"_{era_used}"
+                                
+                                # Add lora indicator and seed
                                 if use_loras:
-                                    filename = f"{test_start_time}_test_{i+1:02d}_{model}_loras_{seed_used}.png"
+                                    base_filename += "_loras"
+                                base_filename += f"_{seed_used}.png"
+                                
+                                filename = base_filename
                                 image_path = os.path.join(output_dir, filename)
                                 generated_image.save(image_path)
                                 image_saved = True
@@ -1015,11 +1129,14 @@ def main():
     # test - image generation testing with additional options
     p_test = subparsers.add_parser('test', help='Test image generation on model server')
     p_test.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
-    p_test.add_argument('--count', type=int, default=10, help='Number of test generations to run (default: 3)')
+    p_test.add_argument('--count', type=int, default=10, help='Number of test generations to run (default: 10)')
     p_test.add_argument('--model', type=str, default='lightning', choices=['lightning', 'hyper', 'base'], help='Model to use for testing (default: lightning)')
     p_test.add_argument('--loras', action='store_true', help='Enable LoRAs for testing')
     p_test.add_argument('--steps', type=int, help='Override number of inference steps (uses model default if not specified)')
     p_test.add_argument('--seed', type=int, help='Random seed for reproducible prompt generation (default: random)')
+    p_test.add_argument('--era', type=str, help='Specific era to test (tests all biomes with this era). Use "test --help" after running once to see available eras.')
+    p_test.add_argument('--biome', type=str, help='Specific biome to test (tests all eras with this biome). Use "test --help" after running once to see available biomes.')
+    p_test.add_argument('--all-combos', action='store_true', help='Test all era+biome combinations (overrides --count)')
 
     args = parser.parse_args()
     
