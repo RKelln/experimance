@@ -19,6 +19,7 @@ Commands:
     destroy        Destroy an instance (auto-detects active instance)
     health         Check health of the model server (auto-detects active instance)
     test-markers   Check for test provisioning markers (auto-detects active instance)
+    test           Test image generation performance and report timing (auto-detects active instance)
 
 Note: Commands that take an instance_id will automatically use the first running 
 Experimance instance if no ID is provided.
@@ -26,7 +27,12 @@ Experimance instance if no ID is provided.
 import argparse
 import logging
 import json
+import os
+import sys
 import subprocess
+import time
+from image_server.generators.vastai.server.data_types import era_to_loras
+import requests
 from typing import Optional
 
 import requests
@@ -635,6 +641,318 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
         print(f"Healthcheck request failed: {e}")
 
 
+def test_generation(manager: VastAIManager, args: argparse.Namespace):
+    """Test image generation on the model server and report timing."""
+    instance_id = getattr(args, 'instance_id', None)
+    if instance_id is None:
+        instance_id = get_active_instance_id(manager)
+        if instance_id is None:
+            return
+    
+    endpoint = manager.get_model_server_endpoint(instance_id)
+    if not endpoint:
+        print("Endpoint not found for instance", instance_id)
+        return
+    
+        # Import the data types for request construction
+    try:
+        from pathlib import Path
+        from PIL import Image
+        import random
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'services', 'image_server', 'src'))
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'services', 'core', 'src'))
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'libs', 'common', 'src'))
+        from image_server.generators.vastai.server.data_types import ControlNetGenerateData, LoraData
+        from experimance_common.image_utils import base64url_to_png, png_to_base64url
+        
+        # Try to load the prompt generator and schemas
+        try:
+            # Set PROJECT_ENV before importing schemas
+            os.environ.setdefault("PROJECT_ENV", "experimance")
+            from experimance_common.schemas import Era, Biome
+            from experimance_core.prompt_generator import PromptGenerator
+            schemas_loaded = True
+        except ImportError as schema_e:
+            print(f"⚠️  Could not import schemas: {schema_e}")
+            schemas_loaded = False
+            Era = Biome = PromptGenerator = None
+            
+    except ImportError as e:
+        print(f"❌ Failed to import required modules: {e}")
+        print(f"   Make sure you're running from the project root directory")
+        return
+    
+    # Initialize prompt generator
+    prompt_gen = None
+    available_eras = []
+    available_biomes = []
+    test_random = None  # Random instance for test selections
+    
+    if schemas_loaded and PromptGenerator:
+        try:
+            data_path = Path(os.path.dirname(__file__)) / '..' / 'data'
+            # Get seed from args if provided
+            prompt_seed = getattr(args, 'seed', None)
+            prompt_gen = PromptGenerator(data_path, seed=prompt_seed)
+            available_eras = prompt_gen.get_available_eras()
+            available_biomes = prompt_gen.get_available_biomes()
+            
+            # Create a separate random instance for test selections with the same seed
+            if prompt_seed is not None:
+                test_random = random.Random(prompt_seed)
+            
+            seed_info = f" (seed: {prompt_seed})" if prompt_seed is not None else " (random seed)"
+            print(f"🎨 Using prompt generator with {len(available_eras)} eras and {len(available_biomes)} biomes{seed_info}")
+        except Exception as e:
+            print(f"⚠️  Could not initialize prompt generator: {e}")
+            print("   Falling back to test prompts")
+            prompt_gen = None
+    
+    # Create output directory for generated images
+    script_dir = os.path.dirname(__file__)
+    project_root = os.path.join(script_dir, '..')
+    output_dir = os.path.join(project_root, 'media', 'images', 'generated')
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"💾 Generated images will be saved to: {output_dir}")
+    
+    # Load depth image from media/images/mocks/depth/
+    depth_map_b64 = None
+    depth_dir = os.path.join(project_root, 'media', 'images', 'mocks', 'depth')
+    if os.path.exists(depth_dir):
+        depth_files = [f for f in os.listdir(depth_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
+        if depth_files:
+            # Use the first available depth image
+            depth_file = depth_files[0]
+            depth_path = os.path.join(depth_dir, depth_file)
+            try:
+                depth_image = Image.open(depth_path)
+                depth_map_b64 = png_to_base64url(depth_image)
+                print(f"🗺️  Using depth map: {depth_file}")
+            except Exception as e:
+                print(f"⚠️  Could not load depth image {depth_file}: {e}")
+                print("   Falling back to server mock depth generation")
+    else:
+        print(f"⚠️  Depth directory not found: {depth_dir}")
+        print("   Falling back to server mock depth generation")
+    
+    print()
+    
+    # Test prompts to use (fallback if prompt generator fails)
+    fallback_prompts = [
+        "A serene mountain landscape with snow-capped peaks",
+        "A futuristic cityscape with flying vehicles",
+        "An ancient forest with mystical atmosphere",
+        "A bustling medieval marketplace",
+        "A peaceful lake at sunset with golden reflections"
+    ]
+    
+    def get_test_prompt(i: int) -> tuple[str, str, Optional[str]]:
+        """Get a test prompt (positive, negative, era_used)."""
+        if prompt_gen and available_eras and available_biomes:
+            try:
+                # Use actual prompt generator
+                # When using a seed, use seeded random for era/biome selection too
+                if test_random is not None:
+                    # Use seeded random for reproducible selection
+                    era = test_random.choice(available_eras)
+                    biome = test_random.choice(available_biomes)
+                else:
+                    # Random selection when no seed provided
+                    era = random.choice(available_eras)
+                    biome = random.choice(available_biomes)
+                prompt_result = prompt_gen.generate_prompt(era, biome)
+                era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
+                return prompt_result[0], prompt_result[1], era_str
+            except Exception as e:
+                print(f"   ⚠️  Error generating prompt: {e}")
+        
+        # Fallback to test prompts
+        prompt = fallback_prompts[i % len(fallback_prompts)]
+        return prompt, "blurry, low quality, artifacts, distorted", None
+    
+    # Configuration for test
+    num_tests = getattr(args, 'count', 10)
+    model = getattr(args, 'model', 'lightning')
+    use_loras = getattr(args, 'loras', False)
+    steps = getattr(args, 'steps', None)
+    
+    print(f"🧪 Testing image generation on instance {instance_id}")
+    print(f"📊 Running {num_tests} generation(s) with model '{model}'")
+    print(f"🎨 LoRAs: {'enabled' if use_loras else 'disabled'}")
+    print(f"🔗 Endpoint: {endpoint.url}")
+    print()
+    
+    results = []
+    total_start_time = time.time()
+    test_start_time = time.time()
+
+
+    for i in range(num_tests):
+        # Get prompt from generator or fallback
+        prompt, negative_prompt_generated, era_used = get_test_prompt(i)
+        print(f"🎯 Test {i+1}/{num_tests}: {prompt[:50]}...")
+        
+        # Use generated negative prompt or override
+        actual_negative = negative_prompt_generated
+        
+        # Prepare LoRAs - either from --loras flag or auto-determined from era
+        loras = []
+        if use_loras:
+            # Manual LoRA configuration when --loras flag is used
+            loras = [
+                LoraData(name="experimance", strength=0.8),
+                LoraData(name="drone", strength=0.5)
+            ]
+            print(f"     🎨 Manual LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+        elif era_used:
+            # Auto-determine LoRAs based on era (like image_server does)
+            loras = era_to_loras(era_used)
+            print(f"     🎨 Auto LoRAs for era {era_used}: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+        
+        # Always apply at least default LoRAs if none were set
+        if not loras:
+            loras = [LoraData(name="experimance", strength=1.0)]
+            print(f"     🎨 Default LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+        
+        # Create generation request
+        data = ControlNetGenerateData(
+            prompt=prompt,
+            negative_prompt=actual_negative,
+            depth_map_b64=depth_map_b64,  # Use loaded depth image or None
+            mock_depth=depth_map_b64 is None,  # Only use mock if no real depth image
+            model=model,
+            controlnet="sdxl_small",
+            loras=loras,
+            steps=steps,  # Use model defaults if None
+            cfg=None,     # Use model defaults
+            seed=1,    # Same seed
+            scheduler="auto",
+            use_karras_sigmas=None,
+            controlnet_strength=0.8,
+            control_guidance_start=0.0,
+            control_guidance_end=0.8,
+            width=1024,
+            height=1024,
+            enable_deepcache=False  # Use DeepCache for speed
+        )
+        
+        # Convert to JSON payload
+        payload = data.generate_payload_json()
+        
+        # Time the request
+        start_time = time.time()
+        
+        try:
+            response = requests.post(
+                f"{endpoint.url}/generate",
+                json=payload,
+                timeout=120  # 2 minute timeout
+            )
+            
+            total_time = time.time() - start_time
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success", True):
+                    generation_time = result.get("generation_time", 0)
+                    network_time = total_time - generation_time
+                    seed_used = result.get("seed_used", "unknown")
+                    
+                    # Save the generated image
+                    image_b64 = result.get("image_b64")
+                    image_saved = False
+                    if image_b64:
+                        try:
+                            generated_image = base64url_to_png(image_b64)
+                            if generated_image:
+                                # Create filename with test info
+                                filename = f"{test_start_time:.0f}_test_{i+1:02d}_{model}_{seed_used}.png"
+                                if use_loras:
+                                    filename = f"{test_start_time}_test_{i+1:02d}_{model}_loras_{seed_used}.png"
+                                image_path = os.path.join(output_dir, filename)
+                                generated_image.save(image_path)
+                                image_saved = True
+                                print(f"     💾 Saved: {filename}")
+                            else:
+                                print(f"     ⚠️  Failed to decode image data")
+                        except Exception as e:
+                            print(f"     ⚠️  Failed to save image: {e}")
+                    
+                    print(f"  ✅ Success in {total_time:.2f}s (generation: {generation_time:.2f}s, network: {network_time:.2f}s)")
+                    print(f"     Seed: {seed_used}")
+                    
+                    results.append({
+                        'success': True,
+                        'total_time': total_time,
+                        'generation_time': generation_time,
+                        'network_time': network_time,
+                        'seed': seed_used,
+                        'prompt': prompt,
+                        'image_saved': image_saved
+                    })
+                else:
+                    error_msg = result.get("error_message", "Unknown error")
+                    print(f"  ❌ Generation failed: {error_msg}")
+                    results.append({'success': False, 'error': error_msg, 'prompt': prompt})
+            else:
+                error_text = response.text[:200] + ("..." if len(response.text) > 200 else "")
+                print(f"  ❌ HTTP {response.status_code}: {error_text}")
+                results.append({'success': False, 'error': f"HTTP {response.status_code}", 'prompt': prompt})
+                
+        except requests.RequestException as e:
+            total_time = time.time() - start_time
+            print(f"  ❌ Request failed after {total_time:.2f}s: {e}")
+            results.append({'success': False, 'error': str(e), 'prompt': prompt})
+        
+        print()
+    
+    # Calculate and display summary statistics
+    total_test_time = time.time() - total_start_time
+    successful_results = [r for r in results if r['success']]
+    failed_results = [r for r in results if not r['success']]
+    
+    print("=" * 60)
+    print("📈 TEST SUMMARY")
+    print("=" * 60)
+    print(f"Total tests: {num_tests}")
+    print(f"Successful: {len(successful_results)}")
+    print(f"Failed: {len(failed_results)}")
+    print(f"Success rate: {len(successful_results)/num_tests*100:.1f}%")
+    print(f"Total test time: {total_test_time:.2f}s")
+    print()
+    
+    if successful_results:
+        generation_times = [r['generation_time'] for r in successful_results]
+        total_times = [r['total_time'] for r in successful_results]
+        network_times = [r['network_time'] for r in successful_results]
+        
+        print("⚡ TIMING STATISTICS (successful tests only)")
+        print("-" * 50)
+        print(f"Generation time - Avg: {sum(generation_times)/len(generation_times):.2f}s, "
+              f"Min: {min(generation_times):.2f}s, Max: {max(generation_times):.2f}s")
+        print(f"Total time      - Avg: {sum(total_times)/len(total_times):.2f}s, "
+              f"Min: {min(total_times):.2f}s, Max: {max(total_times):.2f}s")
+        print(f"Network overhead- Avg: {sum(network_times)/len(network_times):.2f}s, "
+              f"Min: {min(network_times):.2f}s, Max: {max(network_times):.2f}s")
+        print()
+    
+    if failed_results:
+        print("❌ FAILED TESTS")
+        print("-" * 30)
+        for i, result in enumerate(failed_results, 1):
+            print(f"{i}. {result['prompt'][:40]}...")
+            print(f"   Error: {result['error']}")
+        print()
+    
+    if successful_results:
+        throughput = len(successful_results) / total_test_time * 3600  # images per hour
+        images_saved = sum(1 for r in successful_results if r.get('image_saved', False))
+        print(f"🚀 Estimated throughput: {throughput:.1f} images/hour")
+        print(f"💾 Images saved: {images_saved}/{len(successful_results)} in {output_dir}")
+    
+    print("=" * 60)
+
+
 def main():
     setup_logging()
     parser = argparse.ArgumentParser(
@@ -682,10 +1000,19 @@ def main():
     p_ep = subparsers.add_parser('endpoint', help='Get model server endpoint for an instance')
     p_ep.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
 
-    # stop/start/restart/destroy/health/test-markers
+    # stop/start/restart/destroy/health/test-markers/test
     for cmd in ('stop', 'start', 'restart', 'destroy', 'health', 'test-markers'):
         p = subparsers.add_parser(cmd, help=f'{cmd.capitalize()} an instance')
         p.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
+
+    # test - image generation testing with additional options
+    p_test = subparsers.add_parser('test', help='Test image generation on model server')
+    p_test.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
+    p_test.add_argument('--count', type=int, default=10, help='Number of test generations to run (default: 3)')
+    p_test.add_argument('--model', type=str, default='lightning', choices=['lightning', 'hyper', 'base'], help='Model to use for testing (default: lightning)')
+    p_test.add_argument('--loras', action='store_true', help='Enable LoRAs for testing')
+    p_test.add_argument('--steps', type=int, help='Override number of inference steps (uses model default if not specified)')
+    p_test.add_argument('--seed', type=int, help='Random seed for reproducible prompt generation (default: random)')
 
     args = parser.parse_args()
     
@@ -722,6 +1049,8 @@ def main():
         health_check(manager, args)
     elif args.command == 'test-markers':
         test_provisioning_markers(manager, args)
+    elif args.command == 'test':
+        test_generation(manager, args)
     else:
         parser.print_help()
 

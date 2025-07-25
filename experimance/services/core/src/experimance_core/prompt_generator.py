@@ -33,7 +33,8 @@ class PromptComponent:
                  prompt: Union[str, List[str]] = "", 
                  style: Union[str, List[str]] = "",
                  negative: Union[str, List[str]] = "",
-                 strategy: RandomStrategy = RandomStrategy.SHUFFLE):
+                 strategy: RandomStrategy = RandomStrategy.SHUFFLE,
+                 rng: Optional[random.Random] = None):
         """Initialize a prompt component.
         
         Args:
@@ -41,11 +42,13 @@ class PromptComponent:
             style: Style modifier text(s)
             negative: Negative prompt text(s)
             strategy: How to select from multiple options
+            rng: Random number generator instance for reproducible results
         """
         self.prompt_options = self._normalize_to_list(prompt)
         self.style_options = self._normalize_to_list(style)
         self.negative_options = self._normalize_to_list(negative)
         self.strategy = strategy
+        self.rng = rng or random.Random()
         
         # State for deterministic/shuffle strategies
         self._prompt_index = 0
@@ -54,9 +57,9 @@ class PromptComponent:
         
         # Shuffle if needed
         if strategy == RandomStrategy.SHUFFLE or strategy == RandomStrategy.REPEAT:
-            random.shuffle(self.prompt_options)
-            random.shuffle(self.style_options)
-            random.shuffle(self.negative_options)
+            self.rng.shuffle(self.prompt_options)
+            self.rng.shuffle(self.style_options)
+            self.rng.shuffle(self.negative_options)
     
     def _normalize_to_list(self, value: Union[str, List[str]]) -> List[str]:
         """Convert string or list to list, filtering empty strings."""
@@ -76,7 +79,7 @@ class PromptComponent:
             return options[0]
         
         if self.strategy == RandomStrategy.CHOICE:
-            return random.choice(options)
+            return self.rng.choice(options)
         
         current_index = getattr(self, index_attr)
 
@@ -90,11 +93,11 @@ class PromptComponent:
             # If we completed a cycle with shuffle, reshuffle and avoid repeats
             if next_index == 0 and self.strategy == RandomStrategy.SHUFFLE and len(options) > 2:
                 last_item = options[0]
-                random.shuffle(options)
+                self.rng.shuffle(options)
                 # Avoid immediate repeat
                 if options[0] == last_item:
                     # Swap first with a random other position
-                    swap_idx = random.randint(1, len(options) - 1)
+                    swap_idx = self.rng.randint(1, len(options) - 1)
                     options[0], options[swap_idx] = options[swap_idx], options[0]
 
         return options[next_index]
@@ -115,23 +118,25 @@ class PromptComponent:
 class SectorCombiner:
     """Handles combining development sectors into prompts."""
     
-    def __init__(self, sector_data: Dict[str, List[str]], strategy: RandomStrategy = RandomStrategy.SHUFFLE):
+    def __init__(self, sector_data: Dict[str, List[str]], strategy: RandomStrategy = RandomStrategy.SHUFFLE, rng: Optional[random.Random] = None):
         """Initialize with sector data.
         
         Args:
             sector_data: Dict mapping sector names to lists of options
             strategy: How to select combinations
+            rng: Random number generator instance for reproducible results
         """
         self.sectors = list(sector_data.keys())
         self.sector_options = {k: [opt for opt in v if opt.strip()] for k, v in sector_data.items()}
         self.strategy = strategy
+        self.rng = rng or random.Random()
         
         # Generate all combinations
         self.combinations = self._generate_combinations()
         self._index = 0
         
         if strategy == RandomStrategy.SHUFFLE:
-            random.shuffle(self.combinations)
+            self.rng.shuffle(self.combinations)
     
     def _generate_combinations(self) -> List[str]:
         """Generate all possible sector combinations."""
@@ -156,7 +161,7 @@ class SectorCombiner:
             return ""
         
         if self.strategy == RandomStrategy.CHOICE:
-            return random.choice(self.combinations)
+            return self.rng.choice(self.combinations)
         
         # Deterministic or shuffle cycling
         result = self.combinations[self._index]
@@ -165,10 +170,10 @@ class SectorCombiner:
         # Reshuffle if we completed a cycle
         if self._index == 0 and self.strategy == RandomStrategy.SHUFFLE and len(self.combinations) > 1:
             last_item = self.combinations[0]
-            random.shuffle(self.combinations)
+            self.rng.shuffle(self.combinations)
             # Avoid immediate repeat
             if self.combinations[0] == last_item and len(self.combinations) > 2:
-                swap_idx = random.randint(1, len(self.combinations) - 1)
+                swap_idx = self.rng.randint(1, len(self.combinations) - 1)
                 self.combinations[0], self.combinations[swap_idx] = self.combinations[swap_idx], self.combinations[0]
         
         return result
@@ -181,7 +186,8 @@ class PromptGenerator:
                  data_path: Path,
                  locations_file: str = "locations.json",
                  developments_file: str = "anthropocene.json",
-                 strategy: RandomStrategy = RandomStrategy.SHUFFLE):
+                 strategy: RandomStrategy = RandomStrategy.SHUFFLE,
+                 seed: Optional[int] = None):
         """Initialize the prompt generator.
         
         Args:
@@ -189,9 +195,14 @@ class PromptGenerator:
             locations_file: Name of locations JSON file
             developments_file: Name of developments JSON file
             strategy: Default strategy for randomization
+            seed: Random seed for reproducible results
         """
         self.data_path = Path(data_path)
         self.strategy = strategy
+        self.seed = seed
+        
+        # Create seeded random number generator
+        self.rng = random.Random(seed)
         
         # Load data
         self.locations_data = self._load_json(locations_file)
@@ -200,7 +211,8 @@ class PromptGenerator:
         # Create base components
         self.base_component = PromptComponent(
             **self.developments_data.get("base_prompt", {}),
-            strategy=strategy
+            strategy=strategy,
+            rng=self.rng
         )
         
         # Create era components
@@ -208,7 +220,7 @@ class PromptGenerator:
         for era_name, era_data in self.developments_data.get("eras", {}).items():
             # Remove lora field if present
             era_prompt_data = {k: v for k, v in era_data.items() if k != "lora"}
-            self.era_components[era_name] = PromptComponent(**era_prompt_data, strategy=strategy)
+            self.era_components[era_name] = PromptComponent(**era_prompt_data, strategy=strategy, rng=self.rng)
         
         # Create biome components
         self.biome_components = {}
@@ -217,7 +229,7 @@ class PromptGenerator:
             if "locations" in biome_data:
                 biome_data = dict(biome_data)
                 biome_data["style"] = biome_data.pop("locations")
-            self.biome_components[biome_name] = PromptComponent(**biome_data, strategy=strategy)
+            self.biome_components[biome_name] = PromptComponent(**biome_data, strategy=strategy, rng=self.rng)
         
         # Prepare sector data
         self._prepare_sector_data()
@@ -282,7 +294,7 @@ class PromptGenerator:
             else:
                 sector_options = self.sector_data[biome_key][era_key]
             
-            self._sector_combiners[key] = SectorCombiner(sector_options, self.strategy)
+            self._sector_combiners[key] = SectorCombiner(sector_options, self.strategy, self.rng)
         
         return self._sector_combiners[key]
     
@@ -336,6 +348,8 @@ class PromptGenerator:
             biome_negative = biome_component.get_negative()
             if prev_strategy is not None:
                 biome_component.strategy = prev_strategy  # Restore original strategy
+        else:
+            biome_prompt = biome_style = biome_negative = ""
         
         # Sector combination
         sector_combiner = self._get_sector_combiner(biome, era)
@@ -520,6 +534,7 @@ def _demo_cli():
     parser.add_argument("--output-file", type=str, default=None, help="Output file to write prompts (one per line)")
     parser.add_argument("--strategy", choices=["deterministic", "shuffle", "choice"], 
                        default="shuffle", help="Selection strategy")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible results")
     parser.add_argument("--test-manager", action="store_true", 
                        help="Test PromptManager state management")
     args = parser.parse_args()
@@ -530,7 +545,8 @@ def _demo_cli():
             args.data_path, 
             args.locations, 
             args.developments,
-            RandomStrategy(args.strategy)
+            RandomStrategy(args.strategy),
+            seed=args.seed
         )
 
         available_eras = generator.get_available_eras()

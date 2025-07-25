@@ -69,6 +69,10 @@ $PIP_CMD install --root-user-action=ignore diffusers transformers accelerate saf
 $PIP_CMD install --root-user-action=ignore controlnet-aux peft || echo "⚠️ Some auxiliary packages failed to install"
 $PIP_CMD install --root-user-action=ignore fastapi uvicorn pydantic python-multipart || echo "⚠️ Some web server packages failed to install"
 
+# Install DeepCache for acceleration (separate package)
+echo "Installing DeepCache for performance acceleration..."
+$PIP_CMD install --root-user-action=ignore DeepCache || echo "⚠️ DeepCache installation failed, acceleration will be disabled"
+
 # Install xformers for current PyTorch version
 PYTORCH_VERSION=$($PYTHON_CMD -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
 CUDA_VERSION=$($PYTHON_CMD -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown")

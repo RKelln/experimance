@@ -27,7 +27,7 @@ import requests  # Keep requests for quick health checks
 from image_server.generators.generator import ImageGenerator, mock_depth_map
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.vastai.vastai_manager import VastAIManager, InstanceEndpoint
-from image_server.generators.vastai.server.data_types import ControlNetGenerateData, LoraData
+from image_server.generators.vastai.server.data_types import ControlNetGenerateData, LoraData, era_to_loras
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,8 @@ class VastAIGenerator(ImageGenerator):
             
             try:
                 await self.generate_image(
-                    prompt=test_prompt,
+                    prompt=test_prompt, 
+                    era="late_industrial",  # Use a known era for LoRA mapping (has both loras)
                     mock_depth=True  # Use server's built-in mock depth generation
                 )
                 logger.info("VastAI generator pre-warming completed successfully")
@@ -141,78 +142,7 @@ class VastAIGenerator(ImageGenerator):
             logger.warning(f"Health check failed for instance {endpoint.instance_id}: {e}")
             return False
     
-    def _era_to_loras(self, era: Optional[Union[str, Any]]) -> List[LoraData]:
-        """
-        Convert an era to the appropriate LoRA configuration.
-        
-        This mapping defines which LoRAs should be applied for each era.
-        Can be extended with additional LoRAs or custom configurations.
-        
-        Args:
-            era: The era from the render request (string or enum value)
-            
-        Returns:
-            List of LoraData objects to apply
-        """
-        if not era:
-            # Default: experimance LoRA for general art generation
-            return [LoraData(name="experimance", strength=1.0)]
-        
-        # Convert era to string for comparison (handles both string and enum values)
-        era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
-        
-        # Era to LoRA mapping (using string comparisons for flexibility)
-        era_lora_map = {
-            "wilderness": [
-                LoraData(name="drone", strength=0.8),
-                LoraData(name="experimance", strength=0.3)  # Blend with base style
-            ],
-            "pre_industrial": [
-                LoraData(name="drone", strength=0.8),
-                LoraData(name="experimance", strength=0.3)
-            ],
-            "early_industrial": [
-                LoraData(name="drone", strength=0.8),
-                LoraData(name="experimance", strength=0.4)
-            ],
-            "late_industrial": [
-                LoraData(name="drone", strength=0.6),
-                LoraData(name="experimance", strength=0.5)
-            ],
-            "industrial": [
-                LoraData(name="drone", strength=0.3),
-                LoraData(name="experimance", strength=0.7)
-            ],
-            "modern": [
-                LoraData(name="drone", strength=0.2),
-                LoraData(name="experimance", strength=0.8)
-            ],
-            "current": [
-                LoraData(name="experimance", strength=1.0) 
-            ],
-            "future": [
-                LoraData(name="experimance", strength=1.2) 
-            ],
-            "dystopia": [
-                LoraData(name="experimance", strength=1.2) 
-            ],
-            "ruins": [
-                LoraData(name="drone", strength=0.8)
-            ]
-        }
-        
-        return era_lora_map.get(era_str, [LoraData(name="experimance", strength=1.0)])
     
-    def _encode_image_to_base64(self, image: Image.Image, format: str = "PNG") -> str:
-        """Encode PIL Image to base64 string."""
-        buffer = io.BytesIO()
-        image.save(buffer, format=format)
-        return base64.b64encode(buffer.getvalue()).decode()
-    
-    def _decode_base64_to_image(self, base64_string: str) -> Image.Image:
-        """Decode base64 string to PIL Image."""
-        image_data = base64.b64decode(base64_string)
-        return Image.open(io.BytesIO(image_data))
     
     async def generate_image(
         self,
@@ -259,7 +189,7 @@ class VastAIGenerator(ImageGenerator):
         if depth_map_b64:
             logger.info(f"📷 VastAI: Using provided depth map (length: {len(depth_map_b64)} chars)")
             # Validate the depth map format on client side
-            if not depth_map_b64.startswith(("data:image/", "iVBORw0KGgo")):  # Common base64 image prefixes
+            if not depth_map_b64.startswith(("data:image/")):  # Common base64 image prefixes
                 logger.warning(f"⚠️  VastAI: Depth map doesn't look like valid base64 image data. Prefix: {depth_map_b64[:50]}...")
         elif mock_depth:
             logger.info("🎭 VastAI: Using mock depth map")
@@ -269,12 +199,12 @@ class VastAIGenerator(ImageGenerator):
         # Handle LoRA configuration
         loras = kwargs.get("loras", [])
         if not loras and kwargs.get("era"):
-            # Convert era to LoRAs using mapping
-            loras = self._era_to_loras(kwargs["era"])
+            # Convert era to LoRAs using centralized mapping
+            loras = era_to_loras(kwargs["era"])
             logger.info(f"🎨 Converted era {kwargs['era']} to LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
         elif not loras:
             # Default LoRAs if none specified
-            loras = self._era_to_loras(None)
+            loras = era_to_loras(None)
             logger.info(f"🎨 Using default LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
 
         try:
@@ -299,14 +229,15 @@ class VastAIGenerator(ImageGenerator):
                 control_guidance_end=kwargs.get("control_guidance_end", self.config.control_guidance_end),
                 width=self.config.width,
                 height=self.config.height,
+                enable_deepcache=False
             )
+            logger.info(data)
             
             # Pydantic validation is automatic, no need for manual validation
             
             # Convert to JSON payload
             payload = data.generate_payload_json()
             
-            logger.info(f"Payload keys: {list(payload.keys())}, mock_depth: {payload.get('mock_depth')}")
             
             # Send generation request (no health check for speed)
             logger.debug(f"Sending generation request to {endpoint.url}/generate")

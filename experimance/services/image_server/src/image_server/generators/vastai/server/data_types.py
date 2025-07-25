@@ -7,7 +7,7 @@ This module defines the request and response data structures for ControlNet-base
 import base64
 import logging
 import random
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from io import BytesIO
 from PIL import Image
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -34,6 +34,71 @@ class LoraData(BaseModel):
     name: str
     strength: float = Field(default=1.0, ge=0.0, le=2.0, description="LoRA strength between 0.0 and 2.0")
 
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return f"{self.name}:{self.strength}"
+
+
+ERA_LORA_MAP = {
+    "wilderness": [
+        LoraData(name="drone",       strength=0.8),
+        LoraData(name="experimance", strength=0.3)  # Blend with base style
+    ],
+    "pre_industrial": [
+        LoraData(name="drone",       strength=0.8),
+        LoraData(name="experimance", strength=0.3)
+    ],
+    "early_industrial": [
+        LoraData(name="drone",       strength=0.8),
+        LoraData(name="experimance", strength=0.4)
+    ],
+    "late_industrial": [
+        LoraData(name="drone",        strength=0.6),
+        LoraData(name="experimance", strength=0.5)
+    ],
+    "industrial": [
+        LoraData(name="drone",       strength=0.3),
+        LoraData(name="experimance", strength=0.7)
+    ],
+    "modern": [
+        LoraData(name="drone",       strength=0.2),
+        LoraData(name="experimance", strength=0.8)
+    ],
+    "current": [
+        LoraData(name="experimance", strength=1.0) 
+    ],
+    "future": [
+        LoraData(name="experimance", strength=1.2) 
+    ],
+    "dystopia": [
+        LoraData(name="experimance", strength=1.2) 
+    ],
+    "ruins": [
+        LoraData(name="drone", strength=0.8)
+    ]
+}
+
+def era_to_loras(era: Optional[Union[str, Any]]) -> List[LoraData]:
+    """
+    Convert an era to the appropriate LoRA configuration.
+    
+    This mapping defines which LoRAs should be applied for each era.
+    Can be extended with additional LoRAs or custom configurations.
+    
+    Args:
+        era: The era from the render request (string or enum value)
+        
+    Returns:
+        List of LoraData objects to apply
+    """
+    if not era:
+        # Default: experimance LoRA for general art generation
+        return [LoraData(name="experimance", strength=1.0)]
+    
+    # Convert era to string for comparison (handles both string and enum values)
+    era_str = str(era).lower() if hasattr(era, 'value') else str(era).lower()
+    
+    return ERA_LORA_MAP.get(era_str, [LoraData(name="experimance", strength=1.0)])
 
 class ControlNetGenerateData(BaseModel):
     """
@@ -59,6 +124,7 @@ class ControlNetGenerateData(BaseModel):
     use_karras_sigmas: Optional[bool] = Field(None, description="Override Karras sigma setting for scheduler")
     width: int = Field(1024, ge=256, le=2048, description="Output image width")
     height: int = Field(1024, ge=256, le=2048, description="Output image height")
+    enable_deepcache: bool = Field(False, description="Enable DeepCache acceleration for faster inference (may reduce quality)")
     
     @field_validator('width', 'height')
     @classmethod
@@ -82,6 +148,14 @@ class ControlNetGenerateData(BaseModel):
             raise ValueError(f"control_guidance_start ({self.control_guidance_start}) must be <= control_guidance_end ({self.control_guidance_end})")
         return self
     
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        if not self.loras:
+            loras_str = "None"
+        else:
+            loras_str = ', '.join(str(lora) for lora in self.loras)
+        return f"GenData(prompt={self.prompt[:50]}, model={self.model}, steps={self.steps}, seed={self.seed}, loras={loras_str}, cfg={self.cfg}, controlnet_strength={self.controlnet_strength})"
+
     @classmethod
     def for_test(cls) -> "ControlNetGenerateData":
         """Create a test payload for development and testing."""
@@ -107,7 +181,8 @@ class ControlNetGenerateData(BaseModel):
             scheduler="auto",
             use_karras_sigmas=None,
             width=1024,
-            height=1024
+            height=1024,
+            enable_deepcache=True
         )
     
     def generate_payload_json(self) -> Dict[str, Any]:
@@ -130,7 +205,7 @@ class ControlNetGenerateData(BaseModel):
         
         try:
             image_data = base64.b64decode(base64_data)
-            depth_image = Image.open(BytesIO(image_data)).convert('RGB')
+            depth_image = Image.open(BytesIO(image_data)).convert('L')  # Convert to grayscale like mock depth
             # Log successful decode with image info
             logging.getLogger(__name__).debug(f"✅ Depth map decoded successfully: {depth_image.size}, mode: {depth_image.mode}")
             return depth_image

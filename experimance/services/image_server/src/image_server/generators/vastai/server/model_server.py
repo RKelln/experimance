@@ -28,6 +28,14 @@ from fastapi.responses import JSONResponse # type: ignore (loaded on server not 
 from PIL import Image
 from pydantic import BaseModel, Field
 
+# Try to import DeepCache - it requires separate installation
+try:
+    from DeepCache import DeepCacheSDHelper
+    DEEPCACHE_AVAILABLE = True
+except ImportError:
+    DeepCacheSDHelper = None
+    DEEPCACHE_AVAILABLE = False
+
 from diffusers import ( # type: ignore (loaded on server not locally)
     StableDiffusionXLPipeline,
     StableDiffusionXLControlNetPipeline,
@@ -60,10 +68,17 @@ def decode_base64_image(base64_string: str) -> Image.Image:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Log DeepCache availability
+if DEEPCACHE_AVAILABLE:
+    logger.info("DeepCache is available for acceleration")
+else:
+    logger.info("DeepCache not available - install with 'pip install DeepCache' for acceleration")
+
 # Global variables for model management
 loaded_models: Dict[str, Any] = {}
 loaded_controlnets: Dict[str, ControlNetModel] = {}
 loaded_loras: Dict[str, List[LoraData]] = {}  # Track loaded LoRAs per model
+deepcache_state: Dict[str, Dict[str, Any]] = {}  # Track DeepCache state per model
 startup_time = None
 
 # Model configuration with optimized scheduler settings
@@ -89,7 +104,7 @@ MODEL_CONFIG = {
             "use_karras_sigmas": False
         },
         "steps": 6,  # Creator recommends 6 steps for Lightning models
-        "cfg": 1.0  # Lightning models often work better with lower CFG
+        "cfg": 1.5  # Increased from 1.0 for better quality (compromise between speed and quality)
     },
     "hyper": {
         "repo_id": "https://storage.googleapis.com/experimance_models/Juggernaut_X_RunDiffusion_Hyper.safetensors",
@@ -144,6 +159,13 @@ CONTROLNET_CONFIG = {
         "filename": "controllllite_v01032064e_sdxl_depth_500-1000.safetensors"
     }
 }
+
+# ——— PERFORMANCE TWEAKS ———
+# 1) Allow TF32 on Ampere+ and enable cudnn autotuner
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.benchmark = True
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -268,6 +290,9 @@ def unload_model(cache_key: Optional[str] = None):
         # Also clear LoRA cache for this model
         if cache_key in loaded_loras:
             del loaded_loras[cache_key]
+        # Also clear DeepCache state for this model
+        if cache_key in deepcache_state:
+            del deepcache_state[cache_key]
     elif cache_key is None:
         # Unload all models
         for model_key in list(loaded_models.keys()):
@@ -275,12 +300,86 @@ def unload_model(cache_key: Optional[str] = None):
             del loaded_models[model_key]
         # Clear all LoRA caches
         loaded_loras.clear()
+        # Clear all DeepCache states
+        deepcache_state.clear()
     
     # Force garbage collection and clear CUDA cache
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         logger.info("CUDA cache cleared")
+
+
+def manage_deepcache(pipe: StableDiffusionXLControlNetPipeline, 
+                    model_cache_key: str,
+                    enable_deepcache: bool, 
+                    steps: int) -> Optional[Any]:
+    """
+    Efficiently manage DeepCache state - only enable/disable when settings change.
+    
+    Returns:
+        DeepCache helper instance if enabled, None otherwise
+    """
+    if not DEEPCACHE_AVAILABLE or DeepCacheSDHelper is None:
+        if enable_deepcache:
+            logger.warning("DeepCache requested but not available - install with 'pip install DeepCache'")
+        return None
+    
+    # Calculate optimal cache interval based on step count
+    if steps <= 8:
+        cache_interval = 2  # Cache every 2nd step for 6-8 step models
+    elif steps <= 15:
+        cache_interval = 3  # Cache every 3rd step for medium step models
+    else:
+        cache_interval = 4  # Cache every 4th step for high step models
+    
+    # Get current DeepCache state for this model
+    current_state = deepcache_state.get(model_cache_key, {})
+    current_enabled = current_state.get("enabled", False)
+    current_interval = current_state.get("cache_interval", None)
+    current_helper = current_state.get("helper", None)
+    
+    # Check if we need to change the state
+    if enable_deepcache:
+        if current_enabled and current_interval == cache_interval and current_helper is not None:
+            # DeepCache is already enabled with the right settings
+            logger.debug(f"DeepCache already enabled with interval {cache_interval}")
+            return current_helper
+        else:
+            # Need to enable or reconfigure DeepCache
+            if current_enabled and current_helper is not None:
+                # Disable existing DeepCache before reconfiguring
+                current_helper.disable()
+                logger.info("Disabled existing DeepCache for reconfiguration")
+            
+            # Create and enable new DeepCache
+            logger.info(f"Enabling DeepCache acceleration with interval {cache_interval} for {steps} steps...")
+            deepcache_helper = DeepCacheSDHelper(pipe=pipe)
+            deepcache_helper.set_params(
+                cache_interval=cache_interval,
+                cache_branch_id=0  # Use shallow branch for caching
+            )
+            deepcache_helper.enable()
+            
+            # Update state
+            deepcache_state[model_cache_key] = {
+                "enabled": True,
+                "cache_interval": cache_interval,
+                "helper": deepcache_helper
+            }
+            
+            return deepcache_helper
+    else:
+        # DeepCache should be disabled
+        if current_enabled and current_helper is not None:
+            logger.info("Disabling DeepCache as requested")
+            current_helper.disable()
+            deepcache_state[model_cache_key] = {
+                "enabled": False,
+                "cache_interval": None,
+                "helper": None
+            }
+        return None
 
 
 def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiffusionXLControlNetPipeline:
@@ -324,6 +423,15 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             use_safetensors=True
         )
     
+    # Force consistent dtype for all pipeline components to avoid mixed precision errors
+    pipe.unet.to(torch.float16)  # Run UNet in fp16 
+    pipe.vae.to(torch.float16)   # Keep VAE in fp16 for consistency
+    pipe.controlnet.to(torch.float16)  # Ensure ControlNet is also fp16
+    if hasattr(pipe, 'text_encoder'):
+        pipe.text_encoder.to(torch.float16)
+    if hasattr(pipe, 'text_encoder_2'):
+        pipe.text_encoder_2.to(torch.float16)
+
     # Set up scheduler with optimized settings
     scheduler_name = config["scheduler"]
     scheduler_config = config.get("scheduler_config", {})
@@ -370,7 +478,15 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
     # Move to GPU for maximum performance (no CPU offloading for production speed)
     if torch.cuda.is_available():
         pipe = pipe.to("cuda")
-        logger.info("Pipeline moved to GPU for maximum performance")
+        # Ensure all components are consistently in float16 after GPU move
+        pipe.unet.to(device="cuda", dtype=torch.float16)
+        pipe.vae.to(device="cuda", dtype=torch.float16)
+        pipe.controlnet.to(device="cuda", dtype=torch.float16)
+        if hasattr(pipe, 'text_encoder'):
+            pipe.text_encoder.to(device="cuda", dtype=torch.float16)
+        if hasattr(pipe, 'text_encoder_2'):
+            pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
+        logger.info("Pipeline moved to GPU with consistent float16 precision")
     
     loaded_models[cache_key] = pipe
     logger.info(f"Model {cache_key} loaded successfully")
@@ -518,6 +634,22 @@ def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData])
     models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
     
     try:
+        def set_adapters(pipe: StableDiffusionXLControlNetPipeline, adapter_names: List[str], adapter_weights: List[float], loras: List[LoraData]):
+            """Set multiple LoRA adapters at once."""
+            if adapter_names:
+                # if len(adapter_names) > 1:
+                #     # Process all LoRAs in a single forward pass
+                #     pipe.set_adapters(adapter_names, adapter_weights=adapter_weights, 
+                #                     combine_in_one_forward=True)
+                #     logger.info("Using merged LoRA processing for higher throughput") 
+                # else:
+                #     pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
+                pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
+
+                logger.info(f"Activated {len(adapter_names)} LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+                # Cache the loaded LoRAs for this model
+                loaded_loras[model_cache_key] = loras.copy()
+
         if need_full_reload:
             # Load all LoRAs (known + custom)
             adapter_names = []
@@ -551,13 +683,8 @@ def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData])
                 
                 logger.info(f"Loaded LoRA {lora.name} with strength {lora.strength} as adapter {adapter_name}")
             
-            # Set all adapters at once if any were loaded
-            if adapter_names:
-                pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
-                logger.info(f"Activated {len(adapter_names)} LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
-                
-                # Cache the loaded LoRAs for this model
-                loaded_loras[model_cache_key] = loras.copy()
+            set_adapters(pipe, adapter_names, adapter_weights, loras)
+
         else:
             # Only update strengths for known LoRAs (no custom LoRAs changed)
             logger.info("Only known LoRA strengths changed, updating weights without reloading files")
@@ -572,11 +699,7 @@ def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData])
                 adapter_names = [f"lora_{i}" for i in range(len(loras))]
                 adapter_weights = [lora.strength for lora in loras]
                 
-                pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
-                logger.info(f"Updated LoRA strengths: {[f'{lora.name}({lora.strength})' for lora in loras]}")
-                
-                # Cache the updated LoRAs
-                loaded_loras[model_cache_key] = loras.copy()
+                set_adapters(pipe, adapter_names, adapter_weights, loras)
             
             # If we discovered we need a full reload, do it now
             if need_full_reload:
@@ -617,13 +740,7 @@ def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData])
                     
                     logger.info(f"Loaded LoRA {lora.name} with strength {lora.strength} as adapter {adapter_name}")
                 
-                # Set all adapters at once if any were loaded
-                if adapter_names:
-                    pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
-                    logger.info(f"Activated {len(adapter_names)} LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
-                    
-                    # Cache the loaded LoRAs for this model
-                    loaded_loras[model_cache_key] = loras.copy()
+                set_adapters(pipe, adapter_names, adapter_weights, loras)
         
         # Handle the case where no LoRAs are requested
         if not loras and current_loras:
@@ -815,19 +932,29 @@ async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
         # Generate the image
         logger.info(f"Generating image with prompt: {data.prompt[:50]}...")
         
-        result = pipe(
-            prompt=data.prompt,
-            negative_prompt=data.negative_prompt,
-            image=depth_image,
-            num_inference_steps=data.steps,
-            guidance_scale=data.cfg,
-            controlnet_conditioning_scale=data.controlnet_strength,
-            control_guidance_start=data.control_guidance_start,
-            control_guidance_end=data.control_guidance_end,
-            width=data.width,
-            height=data.height,
-            generator=generator
-        )
+        # Get model cache key for DeepCache management
+        model_cache_key = f"{data.model}_{data.controlnet}"
+        
+        # Efficiently manage DeepCache state - only change when settings change
+        deepcache_helper = manage_deepcache(pipe, model_cache_key, data.enable_deepcache, data.steps)
+        
+        with torch.inference_mode():
+            result = pipe(
+                prompt=data.prompt,
+                negative_prompt=data.negative_prompt,
+                image=depth_image,
+                num_inference_steps=data.steps,
+                guidance_scale=data.cfg,
+                controlnet_conditioning_scale=data.controlnet_strength,
+                control_guidance_start=data.control_guidance_start,
+                control_guidance_end=data.control_guidance_end,
+                width=data.width,
+                height=data.height,
+                generator=generator
+            )
+        
+        # Note: We don't disable DeepCache here anymore - it stays enabled for subsequent generations
+        # until the setting changes or the model is unloaded
         
         generation_time = time.time() - start_time
         
