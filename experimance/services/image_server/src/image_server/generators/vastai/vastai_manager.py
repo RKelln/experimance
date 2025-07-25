@@ -1058,7 +1058,10 @@ class VastAIManager:
                                create_if_none: bool = True,
                                wait_for_ready: bool = True,
                                provision_existing: bool = False,
-                               disable_scp_provisioning: bool = False) -> Optional[InstanceEndpoint]:
+                               disable_scp_provisioning: bool = False,
+                               min_gpu_ram: int = 16,
+                               max_price: float = 0.5,
+                               dlperf: float = 32.0) -> Optional[InstanceEndpoint]:
         """
         Find an existing experimance instance or create a new one.
         
@@ -1067,6 +1070,9 @@ class VastAIManager:
             wait_for_ready: Wait for the instance to be fully ready
             provision_existing: Whether to run SCP provisioning on existing instances
             disable_scp_provisioning: If True, skip SCP provisioning fallback (useful for testing PROVISIONING_SCRIPT env var)
+            min_gpu_ram: Minimum GPU RAM in GB for new instances
+            max_price: Maximum price per hour for new instances
+            dlperf: Minimum DLPerf score for new instances
             
         Returns:
             InstanceEndpoint for the ready instance, or None
@@ -1110,8 +1116,12 @@ class VastAIManager:
         # Create a new instance
         logger.info("No existing instances found, creating new one...")
         
-        # Search for offers
-        offers = self.search_offers()
+        # Search for offers with specified criteria
+        offers = self.search_offers(
+            min_gpu_ram=min_gpu_ram,
+            max_price=max_price,
+            dlperf=dlperf
+        )
         if not offers:
             logger.error("No suitable offers found")
             return None

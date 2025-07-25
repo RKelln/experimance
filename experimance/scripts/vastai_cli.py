@@ -186,6 +186,7 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
     else:
         # No existing instance - create and provision a new one
         print("No existing Experimance instances found, creating new one...")
+        print(f"Search criteria: min GPU RAM: {args.min_gpu_ram}GB, max price: ${args.max_price}/hr, min DLPerf: {args.dlperf}")
         
         # Disable SCP provisioning if we have a custom provisioning script
         # to test if PROVISIONING_SCRIPT environment variable works
@@ -197,7 +198,10 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
             create_if_none=True,  # Always create since we confirmed none exist
             wait_for_ready=not args.no_wait,
             provision_existing=False,  # Not needed since it's a new instance
-            disable_scp_provisioning=disable_scp
+            disable_scp_provisioning=disable_scp,
+            min_gpu_ram=args.min_gpu_ram,
+            max_price=args.max_price,
+            dlperf=args.dlperf
         )
         if endpoint:
             print(f"✅ New instance created successfully!")
@@ -976,6 +980,9 @@ def main():
     p_prov.add_argument('--no-wait', action='store_true', dest='no_wait', help='Do not wait for instance ready')
     p_prov.add_argument('--verbose', action='store_true', help='Show provisioning script output in real-time')
     p_prov.add_argument('--provision-script', type=str, metavar='URL', help='Custom provisioning script URL to use')
+    p_prov.add_argument('--min-gpu-ram', type=int, default=16, help='Minimum GPU RAM (GB)')
+    p_prov.add_argument('--max-price', type=float, default=0.5, help='Max price ($/hr)')
+    p_prov.add_argument('--dlperf', type=float, default=32.0, help='Minimum DLPerf score')
 
     # fix
     p_fix = subparsers.add_parser('fix', help='Fix an instance using SCP provisioning')
