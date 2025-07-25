@@ -153,10 +153,6 @@ CONTROLNET_CONFIG = {
     "sdxl_small": {
         "repo_id": "diffusers/controlnet-depth-sdxl-1.0-small",
         "filename": "controlnet-depth-sdxl-1.0-small.safetensors"
-    },
-    "llite": {
-        "repo_id": "https://storage.googleapis.com/experimance_models/controllllite_v01032064e_sdxl_depth_500-1000.safetensors",
-        "filename": "controllllite_v01032064e_sdxl_depth_500-1000.safetensors"
     }
 }
 
