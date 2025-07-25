@@ -1038,8 +1038,22 @@ class VastAIManager:
         Returns:
             Restart result
         """
-        cmd = ["restart", "instance", str(instance_id)]
-        return self._run_vastai_command(cmd)
+        logger.info(f"Restarting instance {instance_id} (stop then start)")
+        
+        # Stop the instance first
+        logger.info(f"Stopping instance {instance_id}...")
+        stop_result = self.stop_instance(instance_id)
+        
+        # Wait a moment for the stop to take effect
+        import time
+        time.sleep(5)
+        
+        # Start the instance
+        logger.info(f"Starting instance {instance_id}...")
+        start_result = self.start_instance(instance_id)
+        
+        # Return the start result as it's the final operation
+        return start_result
     
     def destroy_instance(self, instance_id: int) -> Dict[str, Any]:
         """
