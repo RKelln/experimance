@@ -212,7 +212,20 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
     
     if file_path.exists():
         logger.info(f"Model {filename} already exists at {file_path}")
-        return file_path
+        
+        # Verify the file is not corrupted by trying to read the safetensors header
+        try:
+            import safetensors
+            # Try to load just the metadata to verify file integrity
+            with safetensors.safe_open(str(file_path), framework="pt", device="cpu") as f:
+                # If we can read the metadata, file is likely OK
+                pass
+            logger.info(f"Model {filename} verified as valid")
+            return file_path
+        except Exception as e:
+            logger.warning(f"Model {filename} appears corrupted ({e}), re-downloading...")
+            # Remove the corrupted file
+            file_path.unlink()
     
     logger.info(f"Downloading {filename} from {url}")
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -221,14 +234,37 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
         response = requests.get(url, stream=True)
         response.raise_for_status()
         
-        with open(file_path, 'wb') as f:
+        # Download to a temporary file first, then rename when complete
+        temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        
+        with open(temp_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         
+        # Verify the downloaded file
+        try:
+            import safetensors
+            with safetensors.safe_open(str(temp_path), framework="pt", device="cpu") as f:
+                pass  # Just verify we can read the metadata
+            logger.info(f"Downloaded file {filename} verified as valid")
+            
+            # Move temp file to final location
+            temp_path.rename(file_path)
+            
+        except Exception as e:
+            logger.error(f"Downloaded {filename} is corrupted: {e}")
+            temp_path.unlink()  # Remove corrupted temp file
+            raise RuntimeError(f"Downloaded file {filename} is corrupted and unusable")
+        
         logger.info(f"Successfully downloaded {filename}")
         return file_path
+        
     except Exception as e:
         logger.error(f"Failed to download {filename}: {e}")
+        # Clean up any partial files
+        temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        if temp_path.exists():
+            temp_path.unlink()
         raise
 
 
@@ -419,10 +455,10 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             use_safetensors=True
         )
     
-    # Force consistent dtype for all pipeline components to avoid mixed precision errors
-    pipe.unet.to(torch.float16)  # Run UNet in fp16 
-    pipe.vae.to(torch.float16)   # Keep VAE in fp16 for consistency
-    pipe.controlnet.to(torch.float16)  # Ensure ControlNet is also fp16
+    # Force consistent dtype for all pipeline components 
+    pipe.unet.to(torch.float16)
+    pipe.vae.to(torch.float16)
+    pipe.controlnet.to(torch.float16)
     if hasattr(pipe, 'text_encoder'):
         pipe.text_encoder.to(torch.float16)
     if hasattr(pipe, 'text_encoder_2'):
