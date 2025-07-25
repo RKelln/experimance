@@ -285,6 +285,7 @@ class ModelListResponse(BaseModel):
     available_models: List[str]
     available_controlnets: List[str]
     available_schedulers: List[str]
+    available_loras: List[str] = Field(default_factory=list, description="Available LoRA models")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert response to dictionary for JSON serialization."""

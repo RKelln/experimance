@@ -488,6 +488,9 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
         logger.info("Pipeline moved to GPU with consistent float16 precision")
     
+    # Preload all known LoRAs for this model to avoid loading delays during generation
+    preload_known_loras(pipe, cache_key)
+    
     loaded_models[cache_key] = pipe
     logger.info(f"Model {cache_key} loaded successfully")
     return pipe
@@ -589,10 +592,44 @@ def setup_scheduler(pipe: StableDiffusionXLControlNetPipeline,
         logger.warning(f"Unknown scheduler: {scheduler_name}, keeping default")
 
 
-def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData]):
-    """Load multiple LoRA weights, optimized for known LoRAs that stay loaded."""
+def preload_known_loras(pipe: StableDiffusionXLControlNetPipeline, model_cache_key: str):
+    """
+    Preload all known LoRAs when a model is loaded to avoid generation delays.
+    This function loads all LoRAs from KNOWN_LORAS with weight 0.0 (disabled).
+    """
+    logger.info("Preloading all known LoRAs for instant weight switching...")
+    models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
     
-    # Create a cache key for the current model
+    adapter_names = []
+    
+    for lora_name in KNOWN_LORAS.keys():
+        # Download the LoRA if needed
+        lora_url = KNOWN_LORAS[lora_name]
+        lora_filename = f"experimance_{lora_name}_sdxl.safetensors"
+        lora_path = download_model(lora_url, lora_filename, models_dir)
+        
+        # Load the LoRA with a predictable adapter name
+        adapter_name = f"lora_{lora_name}"
+        pipe.load_lora_weights(str(lora_path), adapter_name=adapter_name)
+        adapter_names.append(adapter_name)
+        
+        logger.info(f"Preloaded LoRA {lora_name} as adapter {adapter_name}")
+    
+    # Set all LoRAs to weight 0.0 (disabled) initially
+    if adapter_names:
+        pipe.set_adapters(adapter_names, adapter_weights=[0.0] * len(adapter_names))
+        logger.info(f"All {len(adapter_names)} known LoRAs preloaded and disabled")
+    
+    # Track that all known LoRAs are loaded for this model
+    loaded_loras[model_cache_key] = []  # Empty list means no active LoRAs
+
+
+def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData]):
+    """
+    Simplified LoRA loading that only accepts known LoRAs and adjusts weights instantly.
+    All known LoRAs should already be preloaded, so this just sets their weights.
+    """
+    # Find the model cache key
     model_cache_key = None
     for key, model in loaded_models.items():
         if model is pipe:
@@ -600,160 +637,45 @@ def load_loras(pipe: StableDiffusionXLControlNetPipeline, loras: List[LoraData])
             break
     
     if model_cache_key is None:
-        logger.warning("Could not find model cache key for LoRA optimization")
-        model_cache_key = "unknown"
-    
-    # Get currently loaded LoRAs
-    current_loras = loaded_loras.get(model_cache_key, [])
-    
-    # Check if the LoRA set is exactly the same as last time (including strengths)
-    if current_loras == loras:
-        logger.info(f"LoRA set unchanged, skipping reload: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+        logger.warning("Could not find model cache key for LoRA management")
         return
     
-    # Check if we have any custom LoRAs (not in KNOWN_LORAS)
-    custom_loras = [lora for lora in loras if lora.name not in KNOWN_LORAS]
-    current_custom_loras = [lora for lora in current_loras if lora.name not in KNOWN_LORAS]
+    # Validate that all requested LoRAs are known
+    unknown_loras = [lora.name for lora in loras if lora.name not in KNOWN_LORAS]
+    if unknown_loras:
+        logger.error(f"Unknown LoRAs requested (only known LoRAs supported): {unknown_loras}")
+        logger.info(f"Available LoRAs: {list(KNOWN_LORAS.keys())}")
+        raise ValueError(f"Unknown LoRAs: {unknown_loras}. Only known LoRAs are supported.")
     
-    # If custom LoRAs changed, we need to unload and reload everything
-    if custom_loras != current_custom_loras:
-        logger.info(f"Custom LoRAs changed, full reload required")
-        if hasattr(pipe, 'unload_lora_weights') and current_loras:
-            pipe.unload_lora_weights()
-            logger.info("Unloaded all LoRAs for custom LoRA change")
-        need_full_reload = True
-    else:
-        # Only known LoRAs, check if we can just update strengths
-        need_full_reload = False
-        
-        # If no LoRAs are currently loaded, we need to load them
-        if not current_loras:
-            need_full_reload = True
-            logger.info("No LoRAs currently loaded, loading known LoRAs")
+    # Check if this is the exact same request as last time
+    current_loras = loaded_loras.get(model_cache_key, [])
+    if current_loras == loras:
+        logger.debug(f"LoRA configuration unchanged: {[f'{lora.name}({lora.strength})' for lora in loras]}")
+        return
     
-    models_dir = Path(os.getenv("MODELS_DIR", "/workspace/models"))
+    # Build adapter configuration
+    # All known LoRAs are always loaded, we just set their weights
+    adapter_names = [f"lora_{lora_name}" for lora_name in KNOWN_LORAS.keys()]
+    adapter_weights = []
     
-    try:
-        def set_adapters(pipe: StableDiffusionXLControlNetPipeline, adapter_names: List[str], adapter_weights: List[float], loras: List[LoraData]):
-            """Set multiple LoRA adapters at once."""
-            if adapter_names:
-                # if len(adapter_names) > 1:
-                #     # Process all LoRAs in a single forward pass
-                #     pipe.set_adapters(adapter_names, adapter_weights=adapter_weights, 
-                #                     combine_in_one_forward=True)
-                #     logger.info("Using merged LoRA processing for higher throughput") 
-                # else:
-                #     pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
-                pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
-
-                logger.info(f"Activated {len(adapter_names)} LoRAs: {[f'{lora.name}({lora.strength})' for lora in loras]}")
-                # Cache the loaded LoRAs for this model
-                loaded_loras[model_cache_key] = loras.copy()
-
-        if need_full_reload:
-            # Load all LoRAs (known + custom)
-            adapter_names = []
-            adapter_weights = []
-            
-            for lora in loras:
-                # Check if this is a known LoRA or a custom one
-                if lora.name in KNOWN_LORAS:
-                    # Known LoRA
-                    lora_url = KNOWN_LORAS[lora.name]
-                    lora_filename = f"experimance_{lora.name}_sdxl.safetensors"
-                    lora_path = download_model(lora_url, lora_filename, models_dir)
-                else:
-                    # Custom LoRA
-                    if lora.name.startswith("http"):
-                        # Download from URL
-                        lora_filename = f"custom_{lora.name.split('/')[-1]}"
-                        lora_path = download_model(lora.name, lora_filename, models_dir)
-                    else:
-                        # Assume it's a local file path
-                        lora_path = Path(lora.name)
-                        if not lora_path.exists():
-                            logger.error(f"LoRA file not found: {lora_path}")
-                            continue
-                
-                # Load the LoRA
-                adapter_name = f"lora_{len(adapter_names)}"
-                pipe.load_lora_weights(str(lora_path), adapter_name=adapter_name)
-                adapter_names.append(adapter_name)
-                adapter_weights.append(lora.strength)
-                
-                logger.info(f"Loaded LoRA {lora.name} with strength {lora.strength} as adapter {adapter_name}")
-            
-            set_adapters(pipe, adapter_names, adapter_weights, loras)
-
-        else:
-            # Only update strengths for known LoRAs (no custom LoRAs changed)
-            logger.info("Only known LoRA strengths changed, updating weights without reloading files")
-            
-            # We can only do strength-only updates if we have the same number of LoRAs
-            # and they're in the same order (since adapter names are sequential)
-            if len(loras) != len(current_loras):
-                logger.info(f"LoRA count changed ({len(current_loras)} -> {len(loras)}), need full reload")
-                need_full_reload = True
-            else:
-                # Build adapter names and weights for current LoRAs
-                adapter_names = [f"lora_{i}" for i in range(len(loras))]
-                adapter_weights = [lora.strength for lora in loras]
-                
-                set_adapters(pipe, adapter_names, adapter_weights, loras)
-            
-            # If we discovered we need a full reload, do it now
-            if need_full_reload:
-                logger.info("Falling back to full reload due to LoRA count/order change")
-                if hasattr(pipe, 'unload_lora_weights') and current_loras:
-                    pipe.unload_lora_weights()
-                    logger.info("Unloaded all LoRAs for full reload")
-                
-                # Load all LoRAs (known + custom)
-                adapter_names = []
-                adapter_weights = []
-                
-                for lora in loras:
-                    # Check if this is a known LoRA or a custom one
-                    if lora.name in KNOWN_LORAS:
-                        # Known LoRA
-                        lora_url = KNOWN_LORAS[lora.name]
-                        lora_filename = f"experimance_{lora.name}_sdxl.safetensors"
-                        lora_path = download_model(lora_url, lora_filename, models_dir)
-                    else:
-                        # Custom LoRA
-                        if lora.name.startswith("http"):
-                            # Download from URL
-                            lora_filename = f"custom_{lora.name.split('/')[-1]}"
-                            lora_path = download_model(lora.name, lora_filename, models_dir)
-                        else:
-                            # Assume it's a local file path
-                            lora_path = Path(lora.name)
-                            if not lora_path.exists():
-                                logger.error(f"LoRA file not found: {lora_path}")
-                                continue
-                    
-                    # Load the LoRA
-                    adapter_name = f"lora_{len(adapter_names)}"
-                    pipe.load_lora_weights(str(lora_path), adapter_name=adapter_name)
-                    adapter_names.append(adapter_name)
-                    adapter_weights.append(lora.strength)
-                    
-                    logger.info(f"Loaded LoRA {lora.name} with strength {lora.strength} as adapter {adapter_name}")
-                
-                set_adapters(pipe, adapter_names, adapter_weights, loras)
-        
-        # Handle the case where no LoRAs are requested
-        if not loras and current_loras:
-            logger.info("No LoRAs requested, unloading existing LoRAs")
-            if hasattr(pipe, 'unload_lora_weights'):
-                pipe.unload_lora_weights()
-            loaded_loras[model_cache_key] = []
-        elif not loras:
-            logger.info("No LoRAs to load")
-        
-    except Exception as e:
-        logger.error(f"Failed to load LoRAs: {e}")
-        raise
+    # Default all weights to 0.0 (disabled)
+    lora_weights_map = {lora_name: 0.0 for lora_name in KNOWN_LORAS.keys()}
+    
+    # Set requested weights
+    for lora in loras:
+        lora_weights_map[lora.name] = lora.strength
+    
+    # Build the final weights list in the same order as adapter_names
+    adapter_weights = [lora_weights_map[lora_name] for lora_name in KNOWN_LORAS.keys()]
+    
+    # Apply the weights (this is very fast since LoRAs are already loaded)
+    pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
+    
+    logger.info(f"LoRA weights updated: {[f'{lora.name}({lora.strength})' for lora in loras]} "
+                f"(others disabled)")
+    
+    # Cache the current configuration
+    loaded_loras[model_cache_key] = loras.copy()
 
 
 def load_loras_legacy(pipe: StableDiffusionXLControlNetPipeline, lora_id: str, strength: float):
@@ -818,7 +740,8 @@ async def list_models() -> Dict[str, Any]:
     response = ModelListResponse(
         available_models=list(MODEL_CONFIG.keys()),
         available_controlnets=list(CONTROLNET_CONFIG.keys()),
-        available_schedulers=["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"]
+        available_schedulers=["auto", "euler", "euler_a", "dpm_multi", "dpm_single", "ddim", "lcm"],
+        available_loras=list(KNOWN_LORAS.keys())
     )
     return response.to_dict()
 
