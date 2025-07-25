@@ -39,14 +39,14 @@
             "negative": "pollution, smog, traffic"
         },
         "dystopia": {
-            "prompt": "dystopia, post-apocalyptic city, bombed, destroyed",
-            "style": "burnt and damaged buildings, wartorn, craters, destroyed vehicles, debris, rubble",
-            "negative": "people"
+            "prompt": "dystopia, post-apocalyptic city, bombed, destroyed, polluted",
+            "style": "burnt and damaged buildings, wartorn, craters, destroyed vehicles, debris, rubble, dirty",
+            "negative": "people, trees, greenery, clean"
         },
         "ruins": {
-            "prompt": "ruins for modern city, abandoned, overgrown, rubble, debris",
-            "style": "abandoned buildings, parking lots, decay, rust, ruin, flooded",
-            "negative": "people, vehicles"
+            "prompt": "ruins, abandoned, overgrown, rubble, debris, broken walls",
+            "style": "decay, ruin, flooded, ponds, streams, collapsed structures, broken roads",
+            "negative": "people, vehicles, buildings, clean"
         }
     },
     "sectors": [
