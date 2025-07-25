@@ -26,7 +26,8 @@ dependencies = [
     "requests",
     "fal-client",
     "openai",
-    "python-dotenv"
+    "python-dotenv",
+    "tenacity"
 ]
 
 [project.optional-dependencies]

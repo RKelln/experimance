@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.constants import (
     DEFAULT_PORTS, IMAGE_SERVER_SERVICE_DIR, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX,
-    get_project_config_path
+    get_project_config_path, GENERATED_IMAGES_DIR
 )
 from experimance_common.zmq.config import (
     WorkerServiceConfig, PublisherConfig, SubscriberConfig, 
@@ -55,7 +55,7 @@ class ImageServerConfig(BaseServiceConfig):
     
     # Cache configuration
     cache_dir: Path = Field(
-        default=Path("images"),
+        default=GENERATED_IMAGES_DIR,
         description="Directory to store generated images"
     )
     

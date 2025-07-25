@@ -7,10 +7,13 @@ This module defines the request and response data structures for ControlNet-base
 import base64
 import logging
 import random
+import time
 from typing import Optional, Dict, Any, List, Union
 from io import BytesIO
 from PIL import Image
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 # Sample prompts for testing
@@ -42,39 +45,42 @@ class LoraData(BaseModel):
 ERA_LORA_MAP = {
     "wilderness": [
         LoraData(name="drone",       strength=0.8),
-        LoraData(name="experimance", strength=0.3)  # Blend with base style
+        LoraData(name="experimance", strength=0.4)
     ],
     "pre_industrial": [
         LoraData(name="drone",       strength=0.8),
-        LoraData(name="experimance", strength=0.3)
+        LoraData(name="experimance", strength=0.4)
     ],
     "early_industrial": [
         LoraData(name="drone",       strength=0.8),
         LoraData(name="experimance", strength=0.4)
     ],
     "late_industrial": [
-        LoraData(name="drone",        strength=0.6),
+        LoraData(name="drone",       strength=0.6),
         LoraData(name="experimance", strength=0.5)
     ],
     "industrial": [
         LoraData(name="drone",       strength=0.3),
-        LoraData(name="experimance", strength=0.7)
+        LoraData(name="experimance", strength=0.6)
     ],
     "modern": [
-        LoraData(name="drone",       strength=0.2),
-        LoraData(name="experimance", strength=0.8)
+        LoraData(name="drone",       strength=0.3),
+        LoraData(name="experimance", strength=0.6)
     ],
     "current": [
-        LoraData(name="experimance", strength=1.0) 
+        LoraData(name="drone",       strength=0.3),
+        LoraData(name="experimance", strength=0.9) 
     ],
     "future": [
-        LoraData(name="experimance", strength=1.2) 
+        LoraData(name="experimance", strength=1.1) 
     ],
     "dystopia": [
-        LoraData(name="experimance", strength=1.2) 
+        LoraData(name="drone",       strength=0.6),
+        LoraData(name="experimance", strength=0.5) 
     ],
     "ruins": [
-        LoraData(name="drone", strength=0.8)
+        LoraData(name="drone",       strength=0.8),
+        LoraData(name="experimance", strength=0.3) 
     ]
 }
 
@@ -125,6 +131,7 @@ class ControlNetGenerateData(BaseModel):
     width: int = Field(1024, ge=256, le=2048, description="Output image width")
     height: int = Field(1024, ge=256, le=2048, description="Output image height")
     enable_deepcache: bool = Field(False, description="Enable DeepCache acceleration for faster inference (may reduce quality)")
+    use_jpeg: bool = Field(True, description="Use JPEG encoding for faster response (lossy compression, smaller file size)")
     
     @field_validator('width', 'height')
     @classmethod
@@ -182,7 +189,8 @@ class ControlNetGenerateData(BaseModel):
             use_karras_sigmas=None,
             width=1024,
             height=1024,
-            enable_deepcache=True
+            enable_deepcache=True,
+            use_jpeg=False
         )
     
     def generate_payload_json(self) -> Dict[str, Any]:
@@ -237,13 +245,38 @@ class ControlNetGenerateResponse(BaseModel):
         generation_time: float,
         seed_used: int,
         model_used: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        use_jpeg: bool = False
     ) -> "ControlNetGenerateResponse":
         """Create a successful response with the generated image."""
-        # Convert PIL Image to base64
+        # Convert PIL Image to base64 with optimized settings for speed
+        encode_start = time.time()
+        
         buffered = BytesIO()
-        image.save(buffered, format="PNG")
+        
+        # Time the image save operation
+        save_start = time.time()
+        if use_jpeg:
+            # JPEG is much faster to encode and smaller file size
+            # Quality 95 provides excellent quality with good compression
+            image.save(buffered, format="JPEG", quality=95, optimize=False)
+        else:
+            # PNG with fast settings (lossless but slower and larger)
+            # compress_level=1 is much faster than default (6)
+            # optimize=False skips additional optimization passes
+            image.save(buffered, format="PNG", optimize=False, compress_level=1)
+        save_time = time.time() - save_start
+        
+        # Time the base64 encoding
+        b64_start = time.time()
+        # Use base64.b64encode directly - it's faster than alternatives
         image_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        b64_time = time.time() - b64_start
+        
+        total_encode_time = time.time() - encode_start
+        format_used = "JPEG" if use_jpeg else "PNG"
+        
+        logger.info(f"Image encoding ({format_used}): total={total_encode_time:.3f}s (save={save_time:.3f}s, b64={b64_time:.3f}s, size={len(image_b64)} chars)")
         
         return cls(
             success=True,

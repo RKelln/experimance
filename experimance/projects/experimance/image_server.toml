@@ -1,7 +1,7 @@
 ## Image server configuration
 
 # General settings
-cache_dir = "images"         # Directory to cache generated images
+cache_dir = "media/images/generated"         # Directory to cache generated images
 max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # ZeroMQ configuration
@@ -21,24 +21,13 @@ lora_url = "https://civitai.com/api/download/models/152309?type=Model&format=Saf
 lora_strength = 1.0
 timeout = 120
 
-# OpenAI configuration (DALLE)
-[openai]
-model = "dall-e-3"
-dimensions = [1024, 1024]
-quality = "standard"
-
-# Local SDXL configuration  
-[sdxl]
-model_path = "models/sdxl-base"
-device = "cuda"
-dimensions = [1024, 1024]
-num_inference_steps = 30
-
 # VastAI configuration
 [vastai]
+model_name="lightning"
 pre_warm = true           # Pre-warm the generator on startup
 create_if_none = true     # Create instance if none exists
 wait_for_ready = true     # Wait for instance to be ready
+control_guidance_end = 0.8
 
 # Fake image generator
 [mock]

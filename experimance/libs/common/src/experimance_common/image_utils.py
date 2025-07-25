@@ -63,34 +63,28 @@ def base64url_to_png(base64url):
         PIL.Image: The decoded image.
     """
     if base64url is None:
-        logger.debug("base64url_to_png: Input is None")
         return None
         
     # Remove any data URL prefix if present (handles any image format)
     # Examples: "data:image/png;base64,", "data:image/jpeg;base64,", etc.
-    original_length = len(base64url)
     if base64url.startswith("data:image/"):
         # Find the comma that separates the prefix from the actual base64 data
         comma_index = base64url.find(",")
         if comma_index != -1:
             base64url = base64url[comma_index + 1:]
-            logger.debug(f"base64url_to_png: Removed data URL prefix, length {original_length} -> {len(base64url)}")
         else:
             logger.warning(f"base64url_to_png: Found data URL prefix but no comma separator in: {base64url[:100]}...")
     
     try:
-        # Decode the base64url string
+        # Decode the base64url string - this is the main bottleneck
         image_data = base64.b64decode(base64url)
-        logger.debug(f"base64url_to_png: Decoded {len(base64url)} chars -> {len(image_data)} bytes")
         
-        # Create a BytesIO stream and open it as an image
-        image_stream = io.BytesIO(image_data)
-        image = Image.open(image_stream)
-        logger.debug(f"base64url_to_png: Successfully created PIL image: {image.size}, mode: {image.mode}")
+        # Create PIL image directly from bytes - avoid intermediate BytesIO for better performance
+        image = Image.open(io.BytesIO(image_data))
         return image
     except Exception as e:
         logger.error(f"base64url_to_png: Failed to decode base64 image data: {e}")
-        logger.error(f"base64url_to_png: Input length: {original_length}, processed length: {len(base64url)}")
+        logger.error(f"base64url_to_png: Input length: {len(base64url)}")
         logger.error(f"base64url_to_png: Input prefix: {base64url[:100]}..." if len(base64url) > 100 else f"base64url_to_png: Full input: {base64url}")
         return None
 

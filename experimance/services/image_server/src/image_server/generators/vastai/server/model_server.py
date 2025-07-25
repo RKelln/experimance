@@ -914,6 +914,7 @@ async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
         generation_time = time.time() - start_time
         
         # Create response with LoRA metadata
+        response_start = time.time()
         lora_metadata = []
         if data.loras:
             lora_metadata = [{"name": lora.name, "strength": lora.strength} for lora in data.loras]
@@ -932,10 +933,15 @@ async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
                 "control_guidance_start": data.control_guidance_start,
                 "control_guidance_end": data.control_guidance_end,
                 "loras": lora_metadata
-            }
+            },
+            use_jpeg=data.use_jpeg
         )
+        response_time = time.time() - response_start
         
-        logger.info(f"Image generated successfully in {generation_time:.2f}s")
+        total_time = time.time() - start_time
+        processing_overhead = total_time - generation_time
+        
+        logger.info(f"Image generated successfully in {generation_time:.2f}s (total: {total_time:.2f}s, response: {response_time:.2f}s, overhead: {processing_overhead:.2f}s)")
         return response.to_dict()
         
     except HTTPException:

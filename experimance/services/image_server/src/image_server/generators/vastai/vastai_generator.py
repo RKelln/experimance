@@ -24,6 +24,15 @@ from experimance_common.image_utils import base64url_to_png, png_to_base64url
 import aiohttp
 import requests  # Keep requests for quick health checks
 
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
+
+
 from image_server.generators.generator import ImageGenerator, mock_depth_map
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.vastai.vastai_manager import VastAIManager, InstanceEndpoint
@@ -143,7 +152,18 @@ class VastAIGenerator(ImageGenerator):
             return False
     
     
-    
+    @retry(
+        stop=stop_after_attempt(2),  # Try twice: original + 1 retry
+        wait=wait_exponential(multiplier=1, min=2, max=10),  # Exponential backoff  
+        retry=retry_if_exception_type((
+            aiohttp.ClientConnectorError,
+            aiohttp.ServerTimeoutError, 
+            ConnectionError,
+            TimeoutError
+        )),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True
+    )
     async def generate_image(
         self,
         prompt: str,
@@ -211,6 +231,8 @@ class VastAIGenerator(ImageGenerator):
             endpoint = self.current_endpoint  # Use pre-initialized endpoint
             
             # Create the generation request using ControlNetGenerateData
+            payload_start = time.time()
+            # Create the generation request using ControlNetGenerateData
             data = ControlNetGenerateData(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -229,18 +251,18 @@ class VastAIGenerator(ImageGenerator):
                 control_guidance_end=kwargs.get("control_guidance_end", self.config.control_guidance_end),
                 width=self.config.width,
                 height=self.config.height,
-                enable_deepcache=False
+                enable_deepcache=False,
+                use_jpeg=self.config.use_jpeg
             )
             logger.info(data)
             
-            # Pydantic validation is automatic, no need for manual validation
-            
             # Convert to JSON payload
             payload = data.generate_payload_json()
-            
+            payload_time = time.time() - payload_start
             
             # Send generation request (no health check for speed)
             logger.debug(f"Sending generation request to {endpoint.url}/generate")
+            request_start = time.time()
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{endpoint.url}/generate",
@@ -254,32 +276,56 @@ class VastAIGenerator(ImageGenerator):
                         raise RuntimeError(f"Generation request failed: {response.status} - {error_text}")
                     
                     result = await response.json()
+            request_time = time.time() - request_start
             
             if not result.get("success", True):
                 error_msg = result.get("error_message", "Unknown error")
                 raise RuntimeError(f"Generation failed on remote server: {error_msg}")
             
             # Decode the generated image
+            decode_start = time.time()
             image_b64 = result.get("image_b64")
             if not image_b64:
                 raise RuntimeError("No image data received from remote server")
             
-            generated_image = base64url_to_png(image_b64)
+            generated_image = base64url_to_png(image_b64) # if use_jpg = true (by default) this is actually a jpg
+            decode_time = time.time() - decode_start
+            
             if generated_image is None:
                 logger.error("🚨 Failed to decode generated image from server!")
                 logger.error(f"Image data prefix: {image_b64[:50]}..." if len(image_b64) > 50 else f"Full image data: {image_b64}")
                 raise RuntimeError("Failed to decode generated image from remote server")
             
-            # Save the image and return the path
+            # Save the image and return the path (async to avoid blocking)
+            sub_dirs = []
+            if era := kwargs.get("era"):
+                sub_dirs.append(era.replace(" ", "_").lower())
+            if biome := kwargs.get("biome"):
+                sub_dirs.append(biome.replace(" ", "_").lower())
+
+            save_start = time.time()
             request_id = kwargs.get('request_id')
-            output_path = self._get_output_path("png", request_id=request_id)
-            generated_image.save(output_path)
+            if self.config.use_jpeg:
+                output_path = self._get_output_path("jpg", request_id=request_id, sub_dir="/".join(sub_dirs))
+                await asyncio.to_thread(
+                    lambda: generated_image.save(output_path, "JPEG", optimize=False, quality=95)
+                )
+            else:
+                output_path = self._get_output_path("png", request_id=request_id, sub_dir="")
+                # Use asyncio.to_thread to avoid blocking the event loop with I/O
+                await asyncio.to_thread(
+                    lambda: generated_image.save(output_path, "PNG", optimize=False, compress_level=1)
+                )
+
+            save_time = time.time() - save_start
             
             # Calculate total time (including network overhead)
             total_time = time.time() - start_time
             model_time = result.get("generation_time", 0)
+            processing_time = request_time - model_time  # Time for request processing on server
+            network_time = total_time - request_time - decode_time - save_time - payload_time  # Pure network latency and other overhead
             
-            logger.info(f"Image generated successfully in {total_time:.2f}s (model: {model_time:.2f}s)")
+            logger.info(f"Image generated successfully in {total_time:.2f}s (model: {model_time:.2f}s, request: {request_time:.2f}s, processing: {processing_time:.2f}s, payload: {payload_time:.3f}s, decode: {decode_time:.3f}s, save: {save_time:.3f}s, network+misc: {network_time:.2f}s)")
             logger.debug(f"Image saved to: {output_path}")
             
             return output_path

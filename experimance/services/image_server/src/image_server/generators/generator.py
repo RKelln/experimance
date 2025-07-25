@@ -77,12 +77,13 @@ class ImageGenerator(ABC):
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
     
-    def _get_output_path(self, file_or_extension: str = "png", request_id: Optional[str] = None) -> str:
+    def _get_output_path(self, file_or_extension: str = "png", request_id: Optional[str] = None, sub_dir: str = "") -> str:
         """Generate a unique output path for an image.
         
         Args:
             file_or_extension: File extension or full filename
             request_id: Optional request ID to include in filename for traceability
+            sub_dir: Optional subdirectory within the output directory
         """
         name = None
         if file_or_extension in VALID_EXTENSIONS:
@@ -103,6 +104,12 @@ class ImageGenerator(ABC):
             image_id += f"_{request_id}"
         if name:
             image_id += f"_{name}"
+
+        if sub_dir:
+            sub_dir_path = self.output_dir / sub_dir
+            sub_dir_path.mkdir(parents=True, exist_ok=True)
+            return str(sub_dir_path / f"{image_id}{extension}")
+
         return str(self.output_dir / f"{image_id}{extension}")
         
     async def _download_image(self, image_url: str, request_id: Optional[str] = None) -> str:

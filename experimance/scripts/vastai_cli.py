@@ -936,7 +936,8 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
             control_guidance_end=0.8,
             width=1024,
             height=1024,
-            enable_deepcache=False  # Use DeepCache for speed
+            enable_deepcache=False,  # Use DeepCache for speed,
+            use_jpeg=True,  # Use JPEG for faster transfer (74% smaller, 84% faster encoding)
         )
         
         # Convert to JSON payload

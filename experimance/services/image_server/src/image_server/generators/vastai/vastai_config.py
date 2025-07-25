@@ -114,6 +114,11 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
         le=2048
     )
     
+    use_jpeg: bool = Field(
+        default=True,
+        description="Use JPEG encoding for faster response (74% smaller file, 84% faster encoding)"
+    )
+    
     def model_post_init(self, __context):
         """Validate configuration after initialization."""
         if self.control_guidance_start > self.control_guidance_end:
