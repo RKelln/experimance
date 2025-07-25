@@ -66,6 +66,11 @@ class DepthProcessor:
         self.mask_history: List[np.ndarray] = []  # Store recent masks for stability analysis
         self.frames_since_mask_update = 0
         self.previous_hand_detected = False  # Use previous frame's hand detection
+
+        # check if mask locks within a reasonable time and die if not
+        self.mask_lock_timeout = config.mask_lock_timeout
+        self.started_time = time.time()
+        self.mask_lock_succeeded = False
         
     async def initialize(self) -> bool:
         """Initialize the depth processor."""
@@ -257,6 +262,7 @@ class DepthProcessor:
                 return
         
         logger.info("Starting depth frame stream")
+        self.started_time = time.time()  # Reset start time for mask lock tracking
         
         try:
             target_frame_time = 1.0 / self.config.fps
@@ -353,6 +359,11 @@ class DepthProcessor:
                 print("reset mask lock")
                 self.mask_locked = False  # Reset lock if no stable mask available
                 self.frames_since_mask_update = 0
+        elif not self.mask_locked and not self.mask_lock_succeeded:
+            # check if its been too long since we started
+            if time.time() - self.started_time > self.mask_lock_timeout:
+                logger.error(f"Mask lock timeout exceeded ({self.mask_lock_timeout}s)")
+                raise TimeoutError("Mask lock timeout exceeded")
         
         # track how long since we checked for mask updates
         if self.config.mask_allow_updates:
@@ -360,7 +371,6 @@ class DepthProcessor:
 
         # Determine if we should update our mask
         should_update = self._should_update_mask(hand_detected)
-
 
         if should_update:
             # Generate current mask
@@ -389,6 +399,7 @@ class DepthProcessor:
                     self.stable_mask = current_mask.copy()
                     self.mask_locked = True
                     logger.info(f"🔒 Mask locked after {len(self.mask_history)} stable frames")
+                    self.mask_lock_succeeded = True
                     return self.stable_mask
             
             # Update stable mask if not locked or if significant change detected

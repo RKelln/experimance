@@ -345,7 +345,9 @@ class ExperimanceCoreService(BaseService):
                     # first depth map recieved use it
                     self.last_significant_depth_map = depth_image.copy()
                     # use for first generation
-                    await self._publish_render_request()
+                    logger.debug("First depth map received, using it for initial processing")
+                    #await self._publish_render_request()
+                    self.pending_render_request = True
 
             # Initialize change score for this frame
             raw_change_score = 0.0
@@ -403,7 +405,8 @@ class ExperimanceCoreService(BaseService):
                 self.calculate_interaction_score(interaction_intensity)
 
                 # Request a render update (throttled) when there's significant interaction
-                await self._publish_render_request()
+                #await self._publish_render_request()
+                self.pending_render_request = True
 
                 # Publish change map to display service (with smoothed score)
                 await self._publish_change_map(change_map, smoothed_change_score)
@@ -616,9 +619,6 @@ class ExperimanceCoreService(BaseService):
         era_changed = self.advance_era(Era(new_era))
         if era_changed:
             self.era_progression_timer = 0.0
-            
-            # Publish EraChanged event
-            await self._publish_space_time_update_event()
 
             # Publish render request
             await self._publish_render_request(force=True)
@@ -1215,6 +1215,7 @@ class ExperimanceCoreService(BaseService):
     async def _check_pending_render_request(self):
         """Check if we have a pending render request that can now be sent."""
         if self.pending_render_request and self._should_send_render_request():
+            logger.debug("Pending render request ready to be sent")
             await self._publish_render_request()
             
     def _generate_prompt_for_era_biome(self, era: Era, biome: Biome) -> Tuple[str, str]:
@@ -1256,36 +1257,27 @@ class ExperimanceCoreService(BaseService):
             True if era changed, False otherwise
         """
         old_era = self.current_era
-        
+        progress = False
         if new_era is not None:
             # Set specific era
             if new_era != self.current_era:
-                self.current_era = new_era
-                self._last_era = old_era
-                
-                # Update prompt manager
-                if self.prompt_manager is not None:
-                    self.prompt_manager.advance_era(new_era)
-                
-                logger.info(f"Era advanced from {old_era.value} to {new_era.value}")
-                return True
+                progress = True
         else:
             # Automatic progression
             possible_eras = ERA_PROGRESSION.get(self.current_era, [])
             if possible_eras:
                 new_era = random.choice(possible_eras)
                 if new_era != self.current_era:
-                    self.current_era = new_era
-                    self._last_era = old_era
-                    
-                    # Update prompt manager
-                    if self.prompt_manager is not None:
-                        self.prompt_manager.advance_era(new_era)
-                    
-                    logger.info(f"Era advanced from {old_era.value} to {new_era.value}")
-                    return True
-        
-        return False
+                    progress = True
+        if progress:
+            self.current_era = new_era
+            self._last_era = old_era
+            
+            # Update prompt manager
+            if self.prompt_manager is not None:
+                self.prompt_manager.advance_era(new_era)
+            logger.info(f"Era advanced from {old_era.value} to {new_era.value} ({self.current_biome.value})")
+        return progress
     
     def switch_biome(self, new_biome: Optional[Biome] = None) -> bool:
         """Switch to a new biome.

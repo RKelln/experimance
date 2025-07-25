@@ -72,6 +72,8 @@ class PresenceManager:
         self.updated : bool = False  # Flag to track if presence state has changed
         
         logger.info("PresenceManager initialized")
+        if self.config.always_present:
+            logger.info("Always present mode enabled, presence will always be True")
     
     # Property-based interface matching schema fields
     @property
@@ -162,7 +164,7 @@ class PresenceManager:
             absence_duration = (now - self._last_absence_time).total_seconds()
             if absence_duration >= self.config.idle_threshold and not self._current_status.idle:
                 # Absence has been long enough and not currently idle, entering idle state
-                logger.info("Absence stable for threshold duration, updating status")
+                logger.debug("Absence stable for threshold duration, going idle")
                 self._current_status.idle = True
                 return True
         
@@ -195,7 +197,7 @@ class PresenceManager:
             presence_duration = (now - self._presence_start_time).total_seconds()
             if presence_duration >= self.config.presence_threshold:
                 if not self._current_status.present:
-                    logger.info("Audience presence confirmed (hysteresis threshold met)")
+                    logger.debug("Audience presence confirmed (hysteresis threshold met)")
                     self._last_present_time = self._presence_start_time + timedelta(seconds=self.config.presence_threshold)
                 self._update_current_status(present=True)
         else:
@@ -211,7 +213,8 @@ class PresenceManager:
             absence_duration = (now - self._absence_start_time).total_seconds()
             if absence_duration >= self.config.absence_threshold:
                 if self._current_status.present:
-                    logger.info("Audience absence confirmed (hysteresis threshold met)")
+                    if not self.config.always_present:
+                        logger.debug("Audience absence confirmed (hysteresis threshold met)")
                     # Set _last_absence_time to when absence was first confirmed, not now
                     self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
                 elif self._last_absence_time is None:
@@ -223,6 +226,10 @@ class PresenceManager:
     def _update_current_status(self, present: bool) -> None:
         """Update the current stable presence status."""
         now = datetime.now()
+
+        if self.config.always_present:
+            # If always_present is enabled, we treat presence as always true
+            present = True
         
         if present and self._current_status.idle:
             # Reset idle state if presence is detected

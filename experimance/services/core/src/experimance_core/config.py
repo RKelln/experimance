@@ -114,6 +114,11 @@ class PresenceConfig(BaseModel):
         description="Seconds after speech ends before conversation is considered inactive"
     )
 
+    always_present: bool = Field(
+        default=False,
+        description="If True, presence is always considered true, useful for testing or specific scenarios"
+    )
+
 
 class ColorizerScheme(Enum):
     """Colorizer schemes for depth visualization."""
@@ -252,6 +257,11 @@ class CameraConfig(BaseModel):
     mask_update_threshold: float = Field(
         default=0.7,
         description="Threshold for detecting bowl movement"
+    )
+
+    mask_lock_timeout: float = Field(
+        default=10.0,
+        description="Timeout in seconds for mask lock to succeed before erroring"
     )
     
     # Change detection parameters for core service filtering
@@ -448,7 +458,7 @@ class DepthFrame:
     cropped_before_resize: Optional[np.ndarray] = None
     change_diff_image: Optional[np.ndarray] = None
     hand_detection_image: Optional[np.ndarray] = None
-    
+
     @property
     def has_interaction(self) -> bool:
         """Check if frame shows user interaction."""
