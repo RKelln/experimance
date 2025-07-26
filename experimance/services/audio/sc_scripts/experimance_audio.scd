@@ -665,7 +665,8 @@ s.waitForBoot {
                                 \amp, volume,
                                 \masterVolume, masterVolume,
                                 \sfxVolume, sfxVolume,
-                                \fadeTime, 0.5,  // Quick fade in
+                                \fadeInTime, 0.5,   // Quick fade in
+                                \fadeOutTime, 3.0,  // Longer fade out
                                 \gate, 1  // Explicitly set gate to 1
                             ], fxGroup);
                         } {
@@ -1514,10 +1515,10 @@ s.waitForBoot {
         }).add;
 
         // Looping transition effect player
-        SynthDef(\transitionLooper, { |buf, amp=1.0, masterVolume=1.0, sfxVolume=1.0, fadeTime=0.5, gate=1|
+        SynthDef(\transitionLooper, { |buf, amp=1.0, masterVolume=1.0, sfxVolume=1.0, fadeInTime=0.5, fadeOutTime=2.0, gate=1|
             var sig, env;
-            // Attack-sustain-release envelope controlled by gate
-            env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
+            // Attack-sustain-release envelope with separate fade in/out times
+            env = EnvGen.kr(Env.asr(fadeInTime, 1, fadeOutTime), gate, doneAction: 2);
             // Loop the buffer continuously
             sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
             sig = sig * env * amp * sfxVolume * masterVolume;
