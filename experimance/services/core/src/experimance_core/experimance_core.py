@@ -598,7 +598,7 @@ class ExperimanceCoreService(BaseService):
 
     # State Management Methods
     
-    async def transition_to_era(self, new_era: str|Era) -> bool:
+    async def transition_to_era(self, new_era: str|Era, force: bool = False) -> bool:
         """
         Transition to a new era and publish EraChanged event.
         
@@ -611,8 +611,8 @@ class ExperimanceCoreService(BaseService):
         if not self.is_valid_era(new_era):
             logger.warning(f"Invalid era: {new_era}")
             return False
-            
-        if not self.can_transition_to_era(new_era):
+
+        if not force and not self.can_transition_to_era(new_era):
             logger.warning(f"Cannot transition from {self.current_era} to {new_era}")
             return False
             
@@ -702,7 +702,7 @@ class ExperimanceCoreService(BaseService):
         """Reset the system to wilderness state."""
         # Use the advance_era and switch_biome methods for prompt manager consistency
         self.switch_biome(random.choice(self.AVAILABLE_BIOMES))
-        await self.transition_to_era(Era.WILDERNESS)
+        await self.transition_to_era(Era.WILDERNESS, force=True)
         
         logger.info("System reset to wilderness due to idle timeout")
     
