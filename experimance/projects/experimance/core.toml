@@ -9,26 +9,27 @@ change_smoothing_queue_size = 4   # size of change score queue for smoothing (re
 render_request_cooldown = 2.0     # minimum interval between render requests in seconds (throttling)
 
 [state_machine]
-idle_timeout = 300.0         # seconds
-wilderness_reset = 600.0     # seconds to full reset
-interaction_threshold = 0.1  # threshold for user interaction detection
+entire_surface_intensity = 0.7 
+interaction_threshold = 0.9  # threshold for user interaction detection (1.0 = the entire surface area once)
+interaction_modifier = 0.1   # added to each interaction
 era_min_duration = 0         # minimum time in seconds before era can change
-era_max_duration = 120       # maximum time in seconds before era can change
+era_max_duration = 180       # maximum time in seconds before era will change
 
 [presence]
 # Hysteresis/debouncing thresholds for presence detection
 presence_threshold = 0.5     # seconds of presence detection before considering audience present
 absence_threshold = 5.0      # seconds of no presence detection before considering audience gone
 idle_threshold = 30.0        # seconds of no presence detection before considering audience gone
-presence_publish_interval = 10.0  # interval in seconds to publish presence status updates
-conversation_timeout = 5.0  # time after a agent or human speaker finishes that conversation is considered complete
+presence_publish_interval = 300.0  # interval in seconds to publish presence status updates
+conversation_timeout = 5.0   # time after a agent or human speaker finishes that conversation is considered complete
+always_present=true          # for debugging, to keep presence alive
 
 [camera]
 # Core camera settings
 resolution = [1280, 720]     # depth camera resolution (width, height)
 fps = 30                    # camera frames per second 
 # for sand a range of about 7 cm works well
-min_depth = 0.50            # minimum depth value in meters
+min_depth = 0.49            # minimum depth value in meters
 max_depth = 0.56            # maximum depth value in meters
 align_frames = true         # use color frames to help align the depth frames
 colorizer_scheme = 2        # white to black
@@ -42,9 +43,9 @@ circular_crop = true
 blur_depth = true
 
 # Processing parameters
-output_resolution = [1024, 1024]     # processed output size (width, height)
-change_threshold = 10                # threshold for depth differences per pixel
-significant_change_threshold = 0.01  # threshold for depth change detection per image
+output_resolution = [1024, 1024]      # processed output size (width, height)
+change_threshold = 7                  # threshold for depth differences per pixel
+significant_change_threshold = 0.005  # threshold for depth change detection per image
 detect_hands = true          # enable hand detection
 crop_to_content = true       # crop output to content area
 lightweight_mode = false     # skip some processing for higher FPS
@@ -52,7 +53,7 @@ verbose_performance = false   # show detailed performance timing
 debug_mode = false           # include intermediate images for visualization
 
 # Mask stability and bowl detection
-mask_stability_frames = 20      # frames to analyze for mask stability
+mask_stability_frames = 10      # frames to analyze for mask stability
 mask_stability_threshold = 0.95 # similarity threshold for mask stability (0.0-1.0)
 mask_lock_after_stable = true   # lock mask once it becomes stable
 mask_allow_updates = false      # allow mask updates when bowl moves significantly
