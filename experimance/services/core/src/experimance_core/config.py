@@ -54,6 +54,11 @@ class ExperimanceCoreConfig(BaseModel):
         description="Minimum interval between render requests in seconds (throttling)"
     )
 
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for reproducibility. If None, a random seed will be generated."
+    )
+
 
 class StateMachineConfig(BaseModel):
     """State machine configuration."""

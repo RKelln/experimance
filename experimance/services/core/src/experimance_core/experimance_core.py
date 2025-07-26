@@ -99,6 +99,7 @@ class ExperimanceCoreService(BaseService):
         self.AVAILABLE_BIOMES = list(Biome)
         self.Era = Era  # Expose enum class
         self.Biome = Biome  # Expose enum class
+        self.seed = self.config.experimance_core.seed or random.randint(0, 2**31 - 1)
 
         # State machine variables
         self.current_era: Era = Era.WILDERNESS
@@ -162,14 +163,15 @@ class ExperimanceCoreService(BaseService):
             
             self.prompt_generator = PromptGenerator(
                 data_path=data_path,
-                strategy=RandomStrategy.SHUFFLE
+                strategy=RandomStrategy.SHUFFLE,
+                seed=self.seed,
             )
             
             # Initialize prompt manager with current state
             self.prompt_manager = PromptManager(
                 generator=self.prompt_generator,
                 initial_era=self.current_era,
-                initial_biome=self.current_biome
+                initial_biome=self.current_biome,
             )
             
             logger.info("Prompt generation system initialized successfully")
@@ -617,6 +619,10 @@ class ExperimanceCoreService(BaseService):
         if Era(new_era) != self.current_era:
             self._last_era = self.current_era
             self.current_era = Era(new_era)
+            if self.seed < int(2**31 - 2):  # max int
+                self.seed += 1
+            else:
+                self.seed = 0
 
             # resets
             self.era_progression_timer = 0.0
@@ -1170,13 +1176,13 @@ class ExperimanceCoreService(BaseService):
                 biome=self.current_biome,
                 prompt=positive_prompt,
                 negative_prompt=negative_prompt,
-                seed=int(time.time()),  # Use timestamp as seed for variability TODO: retain same seed during an era?
+                seed=self.seed,
                 depth_map=image_source
             )
         else:
             request = message
         
-        logger.info(f"Publishing render request id: {request.request_id}")
+        logger.info(f"Publishing render request id: {request.request_id}, era: {request.era}, biome: {request.biome}")
         
         try:
             # Send the task to the image server worker via PUSH socket with timeout
