@@ -102,6 +102,10 @@ class AgentService(BaseService):
         # ALWAYS call super().stop() FIRST - this stops health monitoring automatically
         await super().stop()
         
+        # Send person count 0 to ensure presence system is updated
+        if self._person_count != 0:
+            await self._publish_audience_present(person_count=0)
+
         # Stop agent backend using coordinated approach if it exists
         if self.current_backend:
             await self._stop_backend_with_coordination()
