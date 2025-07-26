@@ -58,29 +58,40 @@ class ExperimanceCoreConfig(BaseModel):
 class StateMachineConfig(BaseModel):
     """State machine configuration."""
     
-    idle_timeout: float = Field(
-        default=45.0,
-        description="Idle timeout in seconds before state changes"
-    )
-    
-    wilderness_reset: float = Field(
-        default=300.0,
-        description="Time in seconds for full reset to wilderness"
-    )
-    
     interaction_threshold: float = Field(
-        default=0.3,
+        default=0.9,
+        ge=0.0, le=1.0,
         description="Threshold for user interaction detection"
-    )
+    )   
     
+    entire_surface_intensity: float = Field(
+        default=0.7,
+        ge=0.0,
+        description="Intensity value when the entire surface is interacted with (test to find the value)"
+    )
+
+    interaction_modifier: float = Field(
+        default=0.1,
+        ge=0.0, le=1.0,
+        description="Added to every interaction score"
+    )
+
     era_min_duration: float = Field(
         default=60.0,
+        ge=0.0,
         description="Minimum time in seconds before era can change: 0 = disable"
     )
 
     era_max_duration: float = Field(
         default=120.0,
+        ge=0.0,
         description="Maximum time in seconds before era can change: 0 = disable"
+    )
+
+    future_threshold: float = Field(
+        default=0.5,
+        ge=0.0, le=1.0,
+        description="Threshold for progression to future era interaction detection (0.0-1.0)"
     )
 
 

@@ -104,7 +104,7 @@ class ExperimanceCoreService(BaseService):
         self.current_era: Era = Era.WILDERNESS
         self.current_biome: Biome = random.choice(self.AVAILABLE_BIOMES)
         self.user_interaction_score: float = 0.0
-        self.audience_present: bool = False
+        self.user_interaction_intensities: List[float] = []  # Store interaction intensities for analysis
         self.era_progression_timer: float = 0.0
         self.session_start_time: datetime = datetime.now()
         
@@ -596,7 +596,7 @@ class ExperimanceCoreService(BaseService):
 
     # State Management Methods
     
-    async def transition_to_era(self, new_era: str) -> bool:
+    async def transition_to_era(self, new_era: str|Era) -> bool:
         """
         Transition to a new era and publish EraChanged event.
         
@@ -614,16 +614,24 @@ class ExperimanceCoreService(BaseService):
             logger.warning(f"Cannot transition from {self.current_era} to {new_era}")
             return False
             
-        old_era = self.current_era
-        # Use the advance_era method which handles prompt manager updates
-        era_changed = self.advance_era(Era(new_era))
-        if era_changed:
+        if Era(new_era) != self.current_era:
+            self._last_era = self.current_era
+            self.current_era = Era(new_era)
+
+            # resets
             self.era_progression_timer = 0.0
+            self.user_interaction_score = 0.0
+            if self.current_era == Era.WILDERNESS:
+                self.user_interaction_intensities.clear()
+
+            # Update prompt manager
+            if self.prompt_manager is not None:
+                self.prompt_manager.advance_era(self.current_era)
 
             # Publish render request
             await self._publish_render_request(force=True)
             
-            logger.info(f"Transitioned from {old_era} to {self.current_era}")
+            logger.info(f"Transitioned from {self._last_era} to {self.current_era}")
             return True
         
         return False
@@ -645,11 +653,20 @@ class ExperimanceCoreService(BaseService):
         
         # reset interaction score and idle timer on era change
         self.user_interaction_score = 0.0
-            
-        # For Future era, use probability to decide between looping and progressing
-        if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
-            # 70% chance to stay in Future, 30% to progress to dystopia
-            next_era = random.choices(possible_next_eras, weights=[0.7, 0.3])[0]
+        
+        if current_era_enum == Era.CURRENT:
+            # Special case for CURRENT era - transition to FUTURE or DYSTOPIA
+            # calculate average interaction score over the session
+            average_interaction_score = (
+                sum(self.user_interaction_intensities) / len(self.user_interaction_intensities)
+                if self.user_interaction_intensities else 0.0
+            )
+            if average_interaction_score <= self.config.state_machine.future_threshold: # small touches === future
+                next_era = Era.FUTURE
+            else: # larger changes == dystopia
+                next_era = Era.DYSTOPIA
+        elif current_era_enum == Era.FUTURE:
+            next_era = random.choice([Era.FUTURE, Era.DYSTOPIA])
         else:
             # Simple progression for other eras
             next_era = possible_next_eras[0]
@@ -678,32 +695,27 @@ class ExperimanceCoreService(BaseService):
     async def reset_to_wilderness(self):
         """Reset the system to wilderness state."""
         # Use the advance_era and switch_biome methods for prompt manager consistency
-        self.advance_era(Era.WILDERNESS)
         self.switch_biome(random.choice(self.AVAILABLE_BIOMES))
-        self.user_interaction_score = 0.0
-        self.audience_present = False
-        
-        await self._publish_render_request(force=True)
+        await self.transition_to_era(Era.WILDERNESS)
         
         logger.info("System reset to wilderness due to idle timeout")
     
     def calculate_interaction_score(self, interaction_intensity: float):
         """Calculate and update user interaction score."""
-        # Simple scoring: weight recent interactions more heavily
-        # decay_factor = 0.9
-        # self.user_interaction_score = (self.user_interaction_score * decay_factor + 
-        #                              interaction_intensity * (1 - decay_factor))
-        
-        # Clamp to [0, 1] range
-        #self.user_interaction_score = max(0.0, min(1.0, self.user_interaction_score))
-        
+        if interaction_intensity <= 0:
+            return
+
+        # Normalize to [0, 1] range based on expected max interaction intensity
+        interaction_intensity /= max(0.1, self.config.state_machine.entire_surface_intensity)
+
+        interaction_intensity += self.config.state_machine.interaction_modifier
+
         # for testing just add up all the intensities
         self.user_interaction_score += interaction_intensity
+        logger.info(f"{self.user_interaction_score} += {interaction_intensity}")
 
-        # Reset idle timer on interaction
-        if interaction_intensity > 0.1:
-            self.idle_timer = 0.0
-            
+        self.user_interaction_intensities.append(interaction_intensity)
+
         logger.debug(f"Updated interaction score: {self.user_interaction_score:.3f}")
     
     def save_state(self) -> Dict[str, Any]:
@@ -712,7 +724,6 @@ class ExperimanceCoreService(BaseService):
             "current_era": self.current_era,
             "current_biome": self.current_biome,
             "user_interaction_score": self.user_interaction_score,
-            "idle_timer": self.idle_timer,
             "audience_present": self.audience_present,
             "era_progression_timer": self.era_progression_timer,
             "session_start_time": self.session_start_time.isoformat()
@@ -727,12 +738,11 @@ class ExperimanceCoreService(BaseService):
         biome_str = state_data.get("current_biome", Biome.TEMPERATE_FOREST.value)
         biome = Biome(biome_str) if isinstance(biome_str, str) else biome_str
         
-        # Use advance_era and switch_biome to maintain prompt manager consistency
-        self.advance_era(era)
         self.switch_biome(biome)
+        self.current_era = era
+        self.pending_render_request = True  # Ensure render request is sent after loading state
         
         self.user_interaction_score = state_data.get("user_interaction_score", 0.0)
-        self.idle_timer = state_data.get("idle_timer", 0.0)
         self.audience_present = state_data.get("audience_present", False)
         self.era_progression_timer = state_data.get("era_progression_timer", 0.0)
         
@@ -766,7 +776,7 @@ class ExperimanceCoreService(BaseService):
         # Validate era
         if not self.is_valid_era(self.current_era):
             logger.warning(f"Invalid era {self.current_era}, resetting to wilderness")
-            self.advance_era(Era.WILDERNESS)
+            self.current_era = Era.WILDERNESS
         
         # Validate biome
         if not self.is_valid_biome(self.current_biome):
@@ -775,8 +785,7 @@ class ExperimanceCoreService(BaseService):
             self.switch_biome(random_biome)
         
         # Validate numeric ranges
-        self.user_interaction_score = max(0.0, min(1.0, self.user_interaction_score))
-        self.idle_timer = max(0.0, self.idle_timer)
+        self.user_interaction_score = max(0.0, self.user_interaction_score)
         self.era_progression_timer = max(0.0, self.era_progression_timer)
     
     def _extract_tags(self, prompt: str) -> List[str]:
@@ -1247,37 +1256,6 @@ class ExperimanceCoreService(BaseService):
             )
         return "", ""
 
-    def advance_era(self, new_era: Optional[Era] = None) -> bool:
-        """Advance to the next era or set a specific era.
-        
-        Args:
-            new_era: Specific era to advance to, or None for automatic progression
-            
-        Returns:
-            True if era changed, False otherwise
-        """
-        old_era = self.current_era
-        progress = False
-        if new_era is not None:
-            # Set specific era
-            if new_era != self.current_era:
-                progress = True
-        else:
-            # Automatic progression
-            possible_eras = ERA_PROGRESSION.get(self.current_era, [])
-            if possible_eras:
-                new_era = random.choice(possible_eras)
-                if new_era != self.current_era:
-                    progress = True
-        if progress:
-            self.current_era = new_era
-            self._last_era = old_era
-            
-            # Update prompt manager
-            if self.prompt_manager is not None:
-                self.prompt_manager.advance_era(new_era)
-            logger.info(f"Era advanced from {old_era.value} to {new_era.value} ({self.current_biome.value})")
-        return progress
     
     def switch_biome(self, new_biome: Optional[Biome] = None) -> bool:
         """Switch to a new biome.
