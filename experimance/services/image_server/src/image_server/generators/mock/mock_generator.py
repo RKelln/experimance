@@ -58,7 +58,7 @@ class MockImageGenerator(ImageGenerator):
         logger.info(f"MockImageGenerator: Generating image for prompt: {prompt[:50]}...")
         
         # Simulate some processing time
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(random.uniform(0.5, 2.5))
         
         # If we have existing images and are configured to use them, pick one randomly
         if self.config.use_existing_images and self._existing_images:
