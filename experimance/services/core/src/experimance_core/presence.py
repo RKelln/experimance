@@ -101,7 +101,7 @@ class PresenceManager:
             self._voice_detected = value
             self._last_voice_time = datetime.now() # last time we heard a voice (starting or ending)
             self._update_presence_state()
-            self.updated = True
+            #self.updated = True don't inform everyone con voice changes, only on conversation state change
     
     @property
     def agent_speaking(self) -> bool:
@@ -115,8 +115,8 @@ class PresenceManager:
             self._agent_speaking = value
             self._last_voice_time = datetime.now() # last time we heard the agent speaking (starting or ending)
             self._update_presence_state()
-            self.updated = True
-    
+            #self.updated = True don't inform everyone con voice changes, only on conversation state change
+
     @property
     def hand(self) -> bool:
         """Hand detected over the bowl."""
