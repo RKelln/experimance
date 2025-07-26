@@ -1182,7 +1182,7 @@ class ExperimanceCoreService(BaseService):
         else:
             request = message
         
-        logger.info(f"Publishing render request id: {request.request_id}, era: {request.era}, biome: {request.biome}")
+        logger.info(f"Render request id: {request.request_id}, era: {request.era}, biome: {request.biome}")
         
         try:
             # Send the task to the image server worker via PUSH socket with timeout
@@ -1194,13 +1194,16 @@ class ExperimanceCoreService(BaseService):
             
             # Update throttling state
             self.last_render_request_time = current_time
-            self.pending_render_request = False
             
         except asyncio.TimeoutError:
             logger.warning(f"Timeout sending render request {request.request_id} - image server may not be running")
         except Exception as e:
             logger.error(f"Error sending render request {request.request_id}: {e}")
-    
+        finally:
+            # abandon request if it fails, we'll just move on
+            if not force:
+                self.pending_render_request = False
+            
     def _process_image(self, image: np.ndarray, flip=True, crop=True, blur=True) -> np.ndarray:
         """Process the image for display, applying any necessary transformations."""
         if flip and self.config.camera.flip_horizontal:
