@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, Type, List
@@ -147,12 +148,21 @@ class GeneratorManager:
         self.timeout = timeout
         self.default_configs = default_configs or {}
         self._generators: Dict[str, ImageGenerator] = {}
+        self.started = False
+
+        # init default generator
+        self.get_generator(self.default_strategy)
         
         logger.info(f"GeneratorManager initialized with default strategy: {default_strategy}")
-        
-        # Pre-warm generators that have pre_warm=True in their configuration
-        self._pre_warm_generators()
     
+
+    async def start(self):
+        """Start all generators."""
+        if self.started: return
+        self.started = True
+        await asyncio.gather(*(gen.start() for gen in self._generators.values()), return_exceptions=True)
+
+
     def get_generator(self, strategy: Optional[str] = None, 
                      config_overrides: Optional[Dict[str, Any]] = None) -> ImageGenerator:
         """Get or create a generator for the specified strategy.
@@ -244,17 +254,3 @@ class GeneratorManager:
         
         self._generators.clear()
         logger.info("All generators stopped and cache cleared")
-    
-    def _pre_warm_generators(self):
-        """Pre-warm generators that have pre_warm=True in their configuration."""
-        for strategy, config_data in self.default_configs.items():
-            # Check if this strategy should be pre-warmed
-            if config_data.get("pre_warm", False):
-                logger.info(f"Pre-warming generator for strategy: {strategy}")
-                try:
-                    # Create the generator immediately (this will trigger pre-warming)
-                    self.get_generator(strategy)
-                    logger.info(f"Successfully initiated pre-warming for strategy: {strategy}")
-                except Exception as e:
-                    logger.warning(f"Failed to pre-warm generator for strategy {strategy}: {e}")
-                    # Don't fail startup just because pre-warming failed

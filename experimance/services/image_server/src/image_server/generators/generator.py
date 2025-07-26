@@ -44,7 +44,7 @@ class ImageGenerator(ABC):
         Subclasses can override this to handle their specific configuration.
         """
         pass
-    
+
     @abstractmethod
     async def generate_image(self, prompt: str, **kwargs) -> str:
         """Generate an image based on the given prompt and optional depth map.
@@ -63,7 +63,14 @@ class ImageGenerator(ABC):
             RuntimeError: If generation fails
         """
         pass
-    
+
+    async def start(self):
+        """Start the generator and optionally pre-warm.
+        
+        This method can be overridden by subclasses to implement pre-warming logic.
+        """
+        pass
+
     @abstractmethod
     async def stop(self):
         """Stop any ongoing generation processes.

@@ -39,7 +39,7 @@ class GeneratorConfig(BaseModel):
     strategy: Annotated[GENERATOR_NAMES,
                         StringConstraints(to_lower=True)] = Field(
         default="vastai",
-        description="Image generation strategy to use (mock, sdxl, falai, openai, vastai)"
+        description="Image generation strategy to use."
     )
     timeout: int = Field(
         default=60,
@@ -155,7 +155,7 @@ class ImageServerConfig(BaseServiceConfig):
 def create_image_server_config(
     service_name: str = "image-server",
     cache_dir: str = "images",
-    default_strategy: Literal["mock", "sdxl", "falai", "openai"] = "falai"
+    default_strategy: GENERATOR_NAMES = "mock"
 ) -> ImageServerConfig:
     """
     Create an ImageServerConfig for quick setup and convenience.
@@ -183,5 +183,5 @@ def create_image_server_config(
     return ImageServerConfig(
         service_name=service_name,
         cache_dir=Path(cache_dir),
-        generator=GeneratorConfig(strategy=default_strategy)
+        generator=GeneratorConfig(strategy=default_strategy),
     )

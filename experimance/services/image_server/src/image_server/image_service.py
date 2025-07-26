@@ -96,7 +96,10 @@ class ImageServerService(BaseService):
             
             # Start the ZMQ service
             await self.zmq_service.start()
-            
+
+            # Start any generators that need to be pre-warmed
+            await self.generator_manager.start()
+
             # Register periodic cache cleanup task (run every 10 minutes)
             self.add_task(self._periodic_cache_cleanup(600))
             
@@ -320,6 +323,7 @@ class ImageServerService(BaseService):
         elif reference_image_b64:
             logger.warning(f"Reference image provided but strategy {strategy} doesn't support image-to-image generation")
         
+        error_msg = False
         # Generate the image with timeout
         try:
             image_path = await asyncio.wait_for(
@@ -329,11 +333,16 @@ class ImageServerService(BaseService):
             return image_path
         except asyncio.TimeoutError:
             error_msg = f"Image generation timed out after {self.config.generator.timeout} seconds"
-            raise RuntimeError(error_msg)
         except Exception as e:
             error_msg = f"Image generation failed: {e}"
-            raise RuntimeError(error_msg) from e
-    
+        finally:
+            if error_msg:
+                mock_generator = self.generator_manager.get_generator("mock")
+                if mock_generator:
+                    # Fallback to mock generator if available
+                    logger.warning(f"Timeout occurred, falling back to mock generator for request {request_id}")
+                    return await mock_generator.generate_image(prompt, **generation_kwargs)
+                raise RuntimeError(error_msg)
     
     async def _publish_image_ready(
         self, 

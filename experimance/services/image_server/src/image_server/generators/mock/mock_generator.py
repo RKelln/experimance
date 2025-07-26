@@ -43,7 +43,7 @@ class MockImageGenerator(ImageGenerator):
         # Find all image files (common formats)
         image_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.bmp'}
         self._existing_images = [
-            f for f in self.config.existing_images_dir.rglob("*")
+            f.relative_to(self.config.existing_images_dir) for f in self.config.existing_images_dir.rglob("*")
             if f.suffix.lower() in image_extensions and f.is_file()
         ]
         
@@ -68,14 +68,33 @@ class MockImageGenerator(ImageGenerator):
     
     async def _copy_existing_image(self, prompt: str, **kwargs) -> str:
         """Copy a random existing image to the output location."""
-        # Pick a random existing image
-        source_image = random.choice(self._existing_images)
+        match_paths = []
         
+        if era := kwargs.get('era', None):
+            match_paths.append(era.lower())
+
+        if biome := kwargs.get('biome', None):
+            match_paths.append(biome.lower())
+
+        if len(match_paths) == 0:
+            # Pick a random existing image
+            source_image = random.choice(self._existing_images)
+        else:
+            # Pick a random existing image that matches paths 
+            # images stored as era/biome/filename
+            matching_images = [
+                img for img in self._existing_images if all(part in img.parts for part in match_paths)
+            ]
+            logger.debug(f"Matching images for {match_paths}: {len(matching_images)} found")
+            source_image = random.choice(matching_images or self._existing_images)
+
         # Determine output format based on source image
         output_ext = source_image.suffix.lower()
         if output_ext == '.jpeg':
             output_ext = '.jpg'
-        
+
+        source_image = (self.config.existing_images_dir or Path(".")) / source_image
+
         # Create output path with request_id if provided
         request_id = kwargs.get('request_id')
         output_path = self._get_output_path(output_ext.lstrip('.'), request_id=request_id)

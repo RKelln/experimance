@@ -52,16 +52,17 @@ class VastAIGenerator(ImageGenerator):
         self._instance_ready = False
         self._initialized = False
         
-        # Pre-warm the generator if enabled
-        if self.config.pre_warm:
-            asyncio.create_task(self._pre_warm())
-        
     def _configure(self, config: VastAIGeneratorConfig, **kwargs):
         """Configure the generator with VastAI-specific settings."""
         logger.info(f"Configuring VastAI generator with model: {config.model_name}")
         logger.info(f"Steps: {config.steps}, CFG: {config.cfg}")
         logger.info(f"Scheduler: {config.scheduler}, ControlNet strength: {config.controlnet_strength}")
     
+    async def start(self):
+        """Start the generator and optionally pre-warm."""
+        if self.config.pre_warm:
+            asyncio.create_task(self._pre_warm())
+
     async def _pre_warm(self):
         """Pre-warm the generator by sending a test generation request.
         
