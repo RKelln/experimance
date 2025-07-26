@@ -57,6 +57,7 @@ s.waitForBoot {
     var triggers;              // Dictionary of trigger samples
     var configurations;        // All configuration data
     var preloadedBuffers;      // Dictionary of preloaded music buffers
+    var preloadedTriggers;     // Dictionary of preloaded trigger buffers
     var musicGlobalStartTime;  // Global reference time for all music loops across all eras
                               // This is set once when music first plays and serves as the
                               // single source of truth for synchronizing loops across era transitions
@@ -73,21 +74,55 @@ s.waitForBoot {
     var isListening = false;   // Is agent listening?
     var isSpeaking = false;    // Is agent speaking?
     var isTransitioning = false;  // Is scene transitioning?
+    var transitionSynth = nil; // Active transition effect synth
 
     // Setup directories
-    // Check if we have a valid script path (might be nil if running in IDE)
-    // if(scriptDir.notNil) {
-    //     "Script directory: %".format(scriptDir).postln;
-    //     configDir = scriptDir +/+ "../config";  // Config dir relative to script location
-    //     audioDir = scriptDir +/+ "../audio";    // Audio dir relative to script location
-    // } {
-    //     "Script directory not found, using default paths.".postln;
-    //     configDir = "../config";  // Default config directory
-    //     audioDir = "../audio";    // Default audio directory
-    // };
+    // Try multiple approaches to find the correct paths
+    if(scriptDir.notNil) {
+        // Running from file - script is in sc_scripts/, so config is ../config and audio is ../../../media/audio
+        "Script directory found: %".format(scriptDir).postln;
+        configDir = scriptDir +/+ "../config";
+        audioDir = scriptDir +/+ "../../../media/audio";
+    } {
+        // Running in IDE or other context - try global variables first, then fallback
+        "Script directory not found, using global variables.".postln;
+        configDir = ~configDir ? "services/audio/config";
+        audioDir = ~audioDir ? "media/audio";
+    };
 
-    "Config directory: %".format(~configDir).postln;
-    "Audio directory: %".format(~audioDir).postln;
+    // Debug: Print current working directory and test paths
+    "Current working directory: %".format(File.getcwd).postln;
+    "Config directory: %".format(configDir).postln;
+    "Audio directory: %".format(audioDir).postln;
+    
+    // Test if config directory exists, if not try alternative paths
+    if(File.exists(configDir +/+ "layers.json").not) {
+        "Config path doesn't exist, trying alternative paths...".postln;
+        
+        // Try from current working directory
+        if(File.exists("services/audio/config/layers.json")) {
+            configDir = "services/audio/config";
+            audioDir = "media/audio";
+            "Found config using working directory relative paths".postln;
+        } {
+            // Try absolute path construction
+            var cwd = File.getcwd;
+            var testConfigDir = cwd +/+ "services/audio/config";
+            var testAudioDir = cwd +/+ "media/audio";
+            
+            if(File.exists(testConfigDir +/+ "layers.json")) {
+                configDir = testConfigDir;
+                audioDir = testAudioDir;
+                "Found config using absolute paths from working directory".postln;
+            } {
+                "ERROR: Cannot find config files. Please check paths.".error;
+                "Tried: %, %, %".format(configDir, "services/audio/config", testConfigDir).postln;
+            };
+        };
+    };
+
+    "Final config directory: %".format(configDir).postln;
+    "Final audio directory: %".format(audioDir).postln;
 
     // -----------------------------------------------------
     // Surround Sound Helper Functions
@@ -204,7 +239,7 @@ s.waitForBoot {
 
     // Load JSON config file
     ~loadJsonConfig = { |filename|
-        var path = ~configDir +/+ filename;
+        var path = configDir +/+ filename;
         var file, data, result = nil;
 
         // Check if file exists
@@ -260,7 +295,7 @@ s.waitForBoot {
             configurations[\layers].do { |layer, i|
                 path = layer[\path];
                 if(path.notNil) {
-                    layer[\exists] = File.exists(~audioDir +/+ path);
+                    layer[\exists] = File.exists(audioDir +/+ path);
                     if(layer[\exists].not) {
                         "Environmental audio file not found: %".format(path).warn;
                     } {
@@ -279,7 +314,7 @@ s.waitForBoot {
             configurations[\triggers].do { |trigger, i|
                 path = trigger[\path];
                 if(path.notNil) {
-                    trigger[\exists] = File.exists(~audioDir +/+ path);
+                    trigger[\exists] = File.exists(audioDir +/+ path);
                     if(trigger[\exists].not) {
                         "Trigger audio file not found: %".format(path).warn;
                     } {
@@ -310,7 +345,7 @@ s.waitForBoot {
                     loops.do { |loop, i|
                         path = loop[\path];
                         if(path.notNil) {
-                            loop[\exists] = File.exists(~audioDir +/+ path);
+                            loop[\exists] = File.exists(audioDir +/+ path);
                             if(loop[\exists].not) {
                                 "Music loop file not found: % for era: %".format(path, era).warn;
                             } {
@@ -380,7 +415,7 @@ s.waitForBoot {
 
         if(fileExists) {
             // Load audio file if it exists
-            buffer = Buffer.read(s, ~audioDir +/+ path);
+            buffer = Buffer.read(s, audioDir +/+ path);
 
             // Handle different interval types
             case { interval == "loop" } {
@@ -570,31 +605,91 @@ s.waitForBoot {
 
     // Play a trigger sound (one-shot)
     ~playTrigger = { |triggerData|
-        var path, buffer, synth, volume;
-        var fileExists;
+        var triggerName, volume, preloadedTrigger, buffer, synth;
 
-        path = triggerData[\path];
-        volume = (triggerData[\volume] ? 1.0).asFloat;  // Ensure volume is a float
-        fileExists = triggerData[\exists] ? false;  // Use the precomputed exists field, default to false if not set
+        triggerName = triggerData[\trigger];
+        volume = (triggerData[\volume] ? 1.0).asFloat;
 
-        if(fileExists) {
-            // Load audio file if it exists
-            buffer = Buffer.read(s, ~audioDir +/+ path);
+        "Playing trigger: %".format(triggerName).postln;
 
-            // Create synth for one-shot playback
-            synth = Synth(\triggerPlayer, [
-                \buf, buffer,
-                \amp, volume,
-                \masterVolume, masterVolume,  // Apply current master volume
-                \sfxVolume, sfxVolume  // Apply current sfx volume
-            ], fxGroup);
+        // Look up preloaded trigger buffer
+        preloadedTrigger = preloadedTriggers[triggerName.asSymbol];
 
-            // Return the synth
-            synth;
+        if(preloadedTrigger.notNil) {
+            buffer = preloadedTrigger[\buffer];
+            
+            if(buffer.notNil && buffer.numFrames > 0) {
+                "Using preloaded trigger buffer: % (% frames)".format(triggerName, buffer.numFrames).postln;
+                
+                // Create synth for one-shot playback immediately with preloaded buffer
+                synth = Synth(\triggerPlayer, [
+                    \buf, buffer,
+                    \amp, volume,
+                    \masterVolume, masterVolume,  // Apply current master volume
+                    \sfxVolume, sfxVolume  // Apply current sfx volume
+                ], fxGroup);
+                
+                // Return the synth
+                synth;
+            } {
+                "Preloaded trigger buffer is invalid for: %".format(triggerName).error;
+                nil;
+            };
         } {
-            // Return nil for non-existing file (no placeholder for triggers)
-            "Skipping non-existent trigger audio file: %".format(path).warn;
+            "No preloaded trigger buffer found for: %".format(triggerName).warn;
             nil;
+        };
+    };
+
+    // Play a looping transition effect (starts/stops based on transition state)
+    ~playTransitionEffect = { |start|
+        if(start) {
+            // Start the transition effect if not already playing
+            if(transitionSynth.isNil) {
+                var transitionTrigger = configurations[\triggers].detect { |t| t[\trigger] == "transition" };
+                
+                if(transitionTrigger.notNil && (transitionTrigger[\exists] ? false)) {
+                    var triggerName = transitionTrigger[\trigger];
+                    var volume = (transitionTrigger[\volume] ? 1.0).asFloat;
+                    var preloadedTrigger = preloadedTriggers[triggerName.asSymbol];
+                    
+                    if(preloadedTrigger.notNil) {
+                        var buffer = preloadedTrigger[\buffer];
+                        
+                        if(buffer.notNil && buffer.numFrames > 0) {
+                            "Starting looping transition effect: % (% frames)".format(triggerName, buffer.numFrames).postln;
+                            
+                            // Create looping synth for transition effect
+                            transitionSynth = Synth(\transitionLooper, [
+                                \buf, buffer,
+                                \amp, volume,
+                                \masterVolume, masterVolume,
+                                \sfxVolume, sfxVolume,
+                                \fadeTime, 0.5,  // Quick fade in
+                                \gate, 1  // Explicitly set gate to 1
+                            ], fxGroup);
+                        } {
+                            "Preloaded transition buffer is invalid".error;
+                        };
+                    } {
+                        "No preloaded transition buffer found".warn;
+                    };
+                } {
+                    "No valid transition trigger audio found".warn;
+                };
+            } {
+                "Transition effect already playing - ignoring start request".postln;
+            };
+        } {
+            // Stop the transition effect
+            if(transitionSynth.notNil) {
+                "Stopping looping transition effect".postln;
+                // Trigger fade out - the synth will free itself after fadeTime due to doneAction: 2
+                transitionSynth.set(\gate, 0);
+                transitionSynth = nil;  // Clear reference immediately
+            } {
+                "No transition effect to stop".postln;
+            };
         };
     };
 
@@ -1044,20 +1139,12 @@ s.waitForBoot {
         // Transition cue: /transition <start|stop>
         OSCdef(\transition, { |msg, time, addr, recvPort|
             var status = msg[1].asString;
-            var transitionTrigger;
 
             isTransitioning = (status == "start");
             "Transition: %".format(isTransitioning).postln;
 
-            // Play transition effect if starting
-            if(isTransitioning) {
-                transitionTrigger = configurations[\triggers].detect { |t| t[\trigger] == "transition" };
-                if(transitionTrigger.notNil && (transitionTrigger[\exists] ? false)) {
-                    ~playTrigger.(transitionTrigger);
-                } {
-                    "No valid transition trigger audio found.".postln;
-                };
-            };
+            // Start or stop the looping transition effect
+            ~playTransitionEffect.(isTransitioning);
 
         }, '/transition', nil, oscRecvPort);
 
@@ -1425,6 +1512,19 @@ s.waitForBoot {
             // Route to SFX channels (front speakers in surround setup)
             ~outputToChannels.(sig, ~sfxChannels);
         }).add;
+
+        // Looping transition effect player
+        SynthDef(\transitionLooper, { |buf, amp=1.0, masterVolume=1.0, sfxVolume=1.0, fadeTime=0.5, gate=1|
+            var sig, env;
+            // Attack-sustain-release envelope controlled by gate
+            env = EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: 2);
+            // Loop the buffer continuously
+            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1);
+            sig = sig * env * amp * sfxVolume * masterVolume;
+            
+            // Route to SFX channels (front speakers in surround setup)
+            ~outputToChannels.(sig, ~sfxChannels);
+        }).add;
     };
 
     // -----------------------------------------------------
@@ -1433,9 +1533,7 @@ s.waitForBoot {
 
     // Main initialization function
     ~init = {
-        // Create a condition variable for synchronization
-        var condition = Condition.new;
-        var readyFlag = false;
+        var bufferLoadingComplete = false;
 
         "Initializing Experimance Audio System...".postln;
         
@@ -1460,40 +1558,88 @@ s.waitForBoot {
         // Define synthesizers
         ~defineSynths.();
 
-        // Preload all music buffers first, and then continue with initialization
-        "Starting music buffer preloading... System will wait until complete.".postln;
+        // Preload all buffers first, and then continue with initialization
+        "Starting buffer preloading... System will wait until complete.".postln;
 
-        // Use fork instead of Routine for better exception handling
-        fork {
-            // Preload all buffers
+        // Preload trigger buffers first (quick and essential for immediate playback)
+        try {
+            preloadedTriggers = ~preloadTriggerBuffers.();
+            // Ensure server has processed all buffer operations
+            s.sync;
+            
+            // Verify trigger buffers are loaded
+            if(preloadedTriggers.notNil) {
+                var loadedTriggers = 0;
+                "Verifying preloaded trigger buffers...".postln;
+                preloadedTriggers.keysValuesDo { |triggerName, triggerInfo|
+                    if(triggerInfo.notNil and: { triggerInfo[\buffer].notNil }) {
+                        var buffer = triggerInfo[\buffer];
+                        if(buffer.numFrames > 0) {
+                            loadedTriggers = loadedTriggers + 1;
+                        } {
+                            "Trigger buffer % not yet loaded, waiting...".format(triggerName).warn;
+                            0.1.wait;
+                            if(buffer.numFrames <= 0) {
+                                "Trigger buffer % failed to load properly".format(triggerName).error;
+                            } {
+                                loadedTriggers = loadedTriggers + 1;
+                            };
+                        };
+                    };
+                };
+                "Trigger verification complete: % trigger buffers loaded".format(loadedTriggers).postln;
+            };
+        } { |error|
+            "ERROR during trigger buffer preloading: %".format(error.errorString).error;
+        };
+        
+        // Preload all music buffers
+        try {
             ~preloadMusicBuffers.();
+            // Ensure server has processed all buffer operations
+            s.sync;
             "Buffer preloading complete. Continuing initialization...".postln;
-
-            // Notify the condition that we're done
-            condition.unhang;
+        } { |error|
+            "ERROR during music buffer preloading: %".format(error.errorString).error;
+            "Continuing with limited buffer support...".warn;
         };
 
-        // Wait for preloading to finish before proceeding
-        condition.hang;
-
         if(preloadedBuffers.notNil) {
-            //"Checking preloaded music buffers...".postln;
+            var totalBuffers = 0, loadedBuffers = 0;
+            
+            "Verifying preloaded music buffers...".postln;
             preloadedBuffers.keysValuesDo { |era, eraBuffers|
-                eraBuffers.do { |bufferInfo, i|
-                    if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
-                        //"Preloaded buffer % for era %: %".format(i, era, bufferInfo[\path]).postln;
-                    } {
-                        "Missing buffer % for era %".format(i, era).warn;
+                if(eraBuffers.notNil) {
+                    eraBuffers.do { |bufferInfo, i|
+                        totalBuffers = totalBuffers + 1;
+                        if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
+                            var buffer = bufferInfo[\buffer];
+                            // Wait for buffer to be fully loaded
+                            if(buffer.numFrames > 0) {
+                                loadedBuffers = loadedBuffers + 1;
+                            } {
+                                "Buffer % for era % not yet loaded, waiting...".format(i, era).warn;
+                                // Give a brief moment for the buffer to finish loading
+                                0.1.wait;
+                                if(buffer.numFrames > 0) {
+                                    loadedBuffers = loadedBuffers + 1;
+                                } {
+                                    "Buffer % for era % failed to load properly".format(i, era).error;
+                                };
+                            };
+                        } {
+                            "Missing buffer % for era %".format(i, era).warn;
+                        };
                     };
                 };
             };
+            "Buffer verification complete: %/% buffers loaded successfully".format(loadedBuffers, totalBuffers).postln;
         };
 
         // Set up OSC responders (only after buffers are loaded)
         ~setupOSC.();
 
         // Apply initial volume settings to all groups
-        //"Setting up initial volume controls...".postln;
         mainGroup.set(\masterVolume, masterVolume);
         "Master volume set to: %".format(masterVolume).postln;
         envGroup.set(\envVolume, environmentVolume);
@@ -1590,6 +1736,12 @@ s.waitForBoot {
         // Release all OSC handlers
         OSCdef.all.do { |def| def.free };
 
+        // Stop any active transition effect
+        if(transitionSynth.notNil) {
+            transitionSynth.free;
+            transitionSynth = nil;
+        };
+
         ~stopMusic.();
 
         // Free all environment buffers
@@ -1643,9 +1795,63 @@ s.waitForBoot {
         "Cleanup complete - JACK resources should be properly released.".postln;
     };
 
+    // Preload all trigger buffers on initialization for instant playback
+    ~preloadTriggerBuffers = {
+        var triggerBuffers = Dictionary.new;
+        var triggerCount = 0;
+
+        "Preloading trigger buffers...".postln;
+
+        if(configurations[\triggers].notNil) {
+            configurations[\triggers].do { |triggerData|
+                var path, buffer, triggerName;
+                var fileExists = triggerData[\exists] ? false;
+
+                triggerName = triggerData[\trigger];
+                path = triggerData[\path];
+
+                if(fileExists && path.notNil) {
+                    "Preloading trigger buffer: % -> %".format(triggerName, path).postln;
+                    buffer = Buffer.read(s, audioDir +/+ path);
+                    
+                    // Store buffer info immediately - don't wait inside the loop
+                    triggerBuffers[triggerName.asSymbol] = (
+                        \buffer: buffer,
+                        \volume: triggerData[\volume] ? 1.0,
+                        \path: path
+                    );
+                    triggerCount = triggerCount + 1;
+                    "Initiated loading of trigger buffer: %".format(triggerName).postln;
+                } {
+                    "Skipping missing trigger file: %".format(path).warn;
+                };
+            };
+            
+            // Single sync after all buffers are initiated
+            if(triggerCount > 0) {
+                "Waiting for % trigger buffers to complete loading...".format(triggerCount).postln;
+                s.sync;
+                
+                // Now verify that buffers loaded successfully
+                triggerBuffers.keysValuesDo { |triggerName, triggerInfo|
+                    var buffer = triggerInfo[\buffer];
+                    if(buffer.notNil && buffer.numFrames > 0) {
+                        "Loaded trigger buffer: % (% frames)".format(triggerName, buffer.numFrames).postln;
+                    } {
+                        "Failed to load trigger buffer: %".format(triggerName).error;
+                    };
+                };
+            };
+        };
+
+        "Preloaded % trigger buffers successfully.".format(triggerCount).postln;
+        triggerBuffers; // Return without caret - this should work better
+    };
+
     // Preload all music buffers on initialization to improve reliability
     ~preloadMusicBuffers = {
         var bufferCount = 0;
+        var totalBuffersInitiated = 0;
 
         "Preloading all music buffers...".postln;
         preloadedBuffers = Dictionary.new;
@@ -1668,7 +1874,7 @@ s.waitForBoot {
                     preloadedBuffers[eraKey] = eraBuffers; // Store using symbol
 
                     loops.do { |loopData, slotIndex|
-                        var path, buffer, duration, fileExists, bufferInfo;
+                        var path, buffer, fileExists, bufferInfo;
 
                         // Skip if loopData is nil
                         if(loopData.isNil) {
@@ -1680,35 +1886,59 @@ s.waitForBoot {
                             // Fix the boolean comparison by checking explicitly if fileExists is true
                             // Convert fileExists to a proper Boolean to avoid comparison issues
                             if(path.notNil && (fileExists == true)) {
-                                // Load audio file into buffer
-                                "Preloading buffer for era % slot %: %".format(era, slotIndex, path).postln;
-                                buffer = Buffer.read(s, ~audioDir +/+ path);
+                                try {
+                                    // Load audio file into buffer
+                                    "Preloading buffer for era % slot %: %".format(era, slotIndex, path).postln;
+                                    buffer = Buffer.read(s, audioDir +/+ path);
 
-                                // Wait for buffer info to be available
-                                s.sync;
+                                    // Store buffer info immediately - don't wait inside loop
+                                    bufferInfo = (
+                                        \buffer: buffer,
+                                        \path: path,
+                                        \volume: (loopData[\volume] ? 1.0).asFloat
+                                    );
 
-                                // Store buffer info
-                                duration = buffer.duration;
-                                bufferInfo = (
-                                    \buffer: buffer,
-                                    \path: path,
-                                    \numFrames: buffer.numFrames,
-                                    \duration: duration,
-                                    \volume: (loopData[\volume] ? 1.0).asFloat
-                                );
+                                    // Store in preloaded buffers array for this era using the symbol key
+                                    preloadedBuffers[eraKey][slotIndex] = bufferInfo;
+                                    totalBuffersInitiated = totalBuffersInitiated + 1;
 
-                                // Store in preloaded buffers array for this era using the symbol key
-                                //eraBuffers[slotIndex] = bufferInfo;
-                                preloadedBuffers[eraKey][slotIndex] = bufferInfo; // Fixed: Use consistent eraKey (symbol)
-                                bufferCount = bufferCount + 1;
-
-                                "Loaded buffer for % slot %: % frames, % seconds".format(
-                                    era, slotIndex, buffer.numFrames, duration.round(0.01)).postln;
+                                    "Initiated loading of buffer for % slot %".format(era, slotIndex).postln;
+                                } { |error|
+                                    "ERROR loading buffer for era % slot % (%): %".format(era, slotIndex, path, error.errorString).error;
+                                    // Store nil for failed buffer
+                                    preloadedBuffers[eraKey][slotIndex] = nil;
+                                };
                             } {
                                 // Store nil for unavailable buffer
                                 "No valid buffer found for era % slot %, will use placeholder".format(era, slotIndex).warn;
-                                //eraBuffers[slotIndex] = nil;
-                                preloadedBuffers[eraKey][slotIndex] = nil; // Fixed: Use consistent eraKey (symbol)
+                                preloadedBuffers[eraKey][slotIndex] = nil;
+                            };
+                        };
+                    };
+                };
+            };
+            
+            // Single sync after all buffers are initiated
+            if(totalBuffersInitiated > 0) {
+                "Waiting for % music buffers to complete loading...".format(totalBuffersInitiated).postln;
+                s.sync;
+                
+                // Now verify and update buffer info with loaded data
+                preloadedBuffers.keysValuesDo { |era, eraBuffers|
+                    if(eraBuffers.notNil) {
+                        eraBuffers.do { |bufferInfo, slotIndex|
+                            if(bufferInfo.notNil and: { bufferInfo[\buffer].notNil }) {
+                                var buffer = bufferInfo[\buffer];
+                                if(buffer.numFrames > 0) {
+                                    // Update buffer info with loaded data
+                                    bufferInfo[\numFrames] = buffer.numFrames;
+                                    bufferInfo[\duration] = buffer.duration;
+                                    bufferCount = bufferCount + 1;
+                                    "Loaded buffer for % slot %: % frames, % seconds".format(
+                                        era, slotIndex, buffer.numFrames, buffer.duration.round(0.01)).postln;
+                                } {
+                                    "Failed to load buffer for era % slot %".format(era, slotIndex).error;
+                                };
                             };
                         };
                     };

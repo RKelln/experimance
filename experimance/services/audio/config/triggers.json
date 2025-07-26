@@ -1,7 +1,7 @@
 [
     {
         "trigger": "transition",
-        "path": "sfx/transition.mp3",
+        "path": "sfx/sound_fx_transition.wav",
         "volume": 1.0
     },
     {

@@ -871,6 +871,7 @@ class AudioService(BaseService):
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
         self.zmq_service.add_message_handler(MessageType.PRESENCE_STATUS, self._handle_presence_status)
         self.zmq_service.add_message_handler(MessageType.SPEECH_DETECTED, self._handle_speech_detected)
+        self.zmq_service.add_message_handler(MessageType.CHANGE_MAP, self._handle_change_map)
 
         # Resolve SuperCollider script path if auto-start is enabled
         if self.config.supercollider.auto_start:
@@ -1111,20 +1112,23 @@ class AudioService(BaseService):
                 for tag in update.tags:
                     self.active_tags.add(tag)
             
-            # Include the default tags
-            # for tag in self.active_tags:
-            #     self.osc.include_tag(tag)
-                
-            # Signal a transition is happening
-            # self.osc.transition(True)
-            
-            # Schedule transition end after a delay using BaseService task management
-            #transition_task = self._end_transition_after_delay(5.0)  # 5 second transition
-            #self.add_task(transition_task)
+            # end the transition sound (played during the change map)
+            self.osc.transition(False)
                 
         except Exception as e:
             logger.error(f"Error handling era changed event: {e}")
     
+
+    async def _handle_change_map(self, message_data: MessageDataType):
+        """Handle change map events from the coordinator.
+        
+        Args:
+            message_data: CHANGE_MAP event data
+        """
+        # we don't care whats in the message, it just starts the transition sound (that ends on the next spacetime update)
+        # technically this isn't the transition sound, but we're hijacking the transition sound to play during the change map
+        self.osc.transition(True)
+
     async def _end_transition_after_delay(self, delay_seconds: float):
         """End a transition after a specified delay.
         
