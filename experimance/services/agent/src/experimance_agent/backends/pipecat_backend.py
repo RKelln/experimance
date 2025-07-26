@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 import importlib.util
 from typing import Any, Dict, List, Optional, AsyncGenerator, Callable
 from pathlib import Path
@@ -61,6 +62,11 @@ class PipecatEventProcessor(FrameProcessor):
         self.bot_speaking = False
         self._conversation_ending = False  # Track if we're in normal conversation end sequence
         
+        # Audio output monitoring
+        self._last_tts_start_time = None
+        self._expected_audio_output = False
+        self._audio_output_timeout = 10.0  # seconds to wait for audio after TTS starts
+        
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Process frames and extract conversation events."""
         
@@ -68,9 +74,8 @@ class PipecatEventProcessor(FrameProcessor):
         await super().process_frame(frame, direction)
         
         # Skip event processing if backend is shutting down (except for shutdown frames)
-        if (self.backend._stopping and 
+        if (self.backend._shutdown_state != "running" and 
             not isinstance(frame, (EndFrame, CancelFrame))):
-            logger.debug(f"Skipping frame processing during shutdown: {type(frame).__name__}")
             await self.push_frame(frame, direction)
             return
         
@@ -80,33 +85,45 @@ class PipecatEventProcessor(FrameProcessor):
             await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED, {
                 "speaker": "user"
             })
-            logger.debug("User started speaking")
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self.user_speaking = False
             await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED, {
                 "speaker": "user"
             })
-            logger.debug("User stopped speaking")
             
         # Handle bot speaking state  
         elif isinstance(frame, TTSStartedFrame):
             self.bot_speaking = True
+            self._last_tts_start_time = time.time()
+            self._expected_audio_output = True
             await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING, {
                 "speaker": "agent"
             })
-            logger.debug("Bot started speaking")
             
         elif isinstance(frame, TTSStoppedFrame):
             self.bot_speaking = False
+            self._expected_audio_output = False
             await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
-                "speaker": "agent"})
-            logger.debug("Bot stopped speaking")
+                "speaker": "agent"
+            })
             
+            # Check if we had a reasonable TTS duration (audio output health check)
+            if self._last_tts_start_time:
+                tts_duration = time.time() - self._last_tts_start_time
+                if tts_duration < 0.1:  # Very short TTS might indicate audio output issues
+                    logger.warning(f"Very short TTS duration: {tts_duration:.2f}s - possible audio output issue")
+                    await self.backend.emit_event(AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, {
+                        "tts_duration": tts_duration,
+                        "timestamp": time.time()
+                    })
+                self._last_tts_start_time = None
         # Handle pipeline shutdown - EndFrame → CancelFrame sequence
         elif isinstance(frame, EndFrame):
             logger.info("Pipeline EndFrame received, starting conversation end sequence")
             self._conversation_ending = True
+            # Mark this as a natural shutdown in the backend
+            self.backend._shutdown_reason = "natural"
             await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
                 "reason": "pipeline_ended"
             })
@@ -114,14 +131,30 @@ class PipecatEventProcessor(FrameProcessor):
         elif isinstance(frame, CancelFrame):
             if self._conversation_ending:
                 logger.info("Pipeline CancelFrame received after EndFrame (normal conversation end)")
-                # This is the expected CancelFrame after EndFrame - just cleanup, no event needed
                 self._conversation_ending = False
             else:
                 logger.info("Pipeline CancelFrame received without EndFrame (forced shutdown)")
-                # This is a forced shutdown (Ctrl-C) - trigger shutdown coordination
                 await self.backend.emit_event(AgentBackendEvent.CANCEL, {
                     "reason": "pipeline_cancelled"
                 })
+        
+        # Handle transcription frames
+        # elif isinstance(frame, TranscriptionFrame):
+        #     if frame.text and frame.text.strip():
+        #         await self.backend.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
+        #             "content": frame.text,
+        #             "speaker": "user",  # TranscriptionFrame is typically from user speech
+        #             "is_partial": getattr(frame, 'is_partial', False)
+        #         })
+        
+        # # Handle agent text responses for transcription
+        # elif isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
+        #     if frame.text and frame.text.strip():
+        #         await self.backend.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
+        #             "content": frame.text,
+        #             "speaker": "agent",  # TextFrame from LLM is agent response
+        #             "is_partial": False
+        #         })
             
         # Forward the frame to the next processor
         await self.push_frame(frame, direction)
@@ -145,7 +178,11 @@ class PipecatBackend(AgentBackend):
         self.flow_manager: Optional[FlowManager] = None
         self._pipeline_task: Optional[asyncio.Task] = None
         self._flow_config: Optional[FlowConfig] = None
-        self._stopping = False  # Flag to prevent multiple stop calls
+        
+        # Shutdown state management
+        self._shutdown_state = "running"  # "running", "stopping", "stopped"
+        self._shutdown_reason = None  # "natural", "forced", "error"
+        self._shutdown_lock = asyncio.Lock()  # Prevent concurrent shutdown operations
         
         # Event handling
         self.event_processor: Optional[PipecatEventProcessor] = None
@@ -222,91 +259,208 @@ class PipecatBackend(AgentBackend):
     async def _on_transcript_update(self, processor, frame):
         """Handle transcript updates from Pipecat's TranscriptProcessor."""
         # Skip processing if we're shutting down or not connected
-        if self._stopping or not self.is_connected:
-            logger.debug("Skipping transcript update - backend is shutting down")
+        if self._shutdown_state != "running" or not self.is_connected:
             return
             
+        try:
+            # Add timeout to prevent hanging during shutdown
+            async with asyncio.timeout(2.0):
+                await self._process_transcript_frame(frame)
+        except asyncio.TimeoutError:
+            logger.warning("Transcript update timed out during shutdown")
+        except Exception as e:
+            logger.error(f"Error processing transcript update: {e}")
+    
+    async def _process_transcript_frame(self, frame):
+        """Process transcript frame messages."""
         if hasattr(frame, 'messages'):
             for message in frame.messages:
-                # TranscriptionMessage has role, content, timestamp
                 if hasattr(message, 'role') and hasattr(message, 'content'):
                     if message.role == "user":
                         await self.add_user_speech(message.content)
                         await self.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
                             "text": message.content
                         })
-                        logger.debug(f"User transcription: {message.content}")
                     elif message.role == "assistant":
                         await self.add_agent_response(message.content)
                         await self.emit_event(AgentBackendEvent.RESPONSE_GENERATED, {
                             "text": message.content
                         })
-                        logger.debug(f"Assistant response: {message.content}")
 
     async def disconnect(self) -> None:
-        """Disconnect the Pipecat backend."""
-        if not self.is_connected:
-            logger.debug("Backend already disconnected, skipping")
-            return
+        """Disconnect the Pipecat backend gracefully."""
+        async with self._shutdown_lock:
+            if self._shutdown_state != "running":
+                return
+                
+            self._shutdown_state = "stopping"
+            logger.info("Disconnecting Pipecat backend...")
             
-        self._stopping = True  # Set flag to prevent event processing during shutdown
-        logger.info("Disconnecting Pipecat backend v2...")
-        
+            try:
+                # Check if this is a natural conversation end (flow triggered)
+                is_natural_end = self._shutdown_reason == "natural"
+                
+                if is_natural_end and self._pipeline_task and not self._pipeline_task.done():
+                    logger.debug("Natural conversation end - waiting for pipeline to complete")
+                    try:
+                        await asyncio.wait_for(self._pipeline_task, timeout=5.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("Pipeline graceful shutdown timed out, forcing cancellation")
+                        await self._force_cancel_pipeline()
+                    except Exception as e:
+                        logger.debug(f"Pipeline completed with error: {e}")
+                else:
+                    # Forced shutdown or error - cancel immediately
+                    await self._force_cancel_pipeline()
+                
+                # Cleanup transport
+                if self.transport:
+                    try:
+                        await self.transport.cleanup()
+                        
+                        # Clean up transport streams if available
+                        transport_input = getattr(self.transport, '_input', None)
+                        transport_output = getattr(self.transport, '_output', None)
+                        
+                        if transport_input and hasattr(transport_input, 'cleanup'):
+                            await transport_input.cleanup()
+                        if transport_output and hasattr(transport_output, 'cleanup'):
+                            await transport_output.cleanup()
+                            
+                    except Exception as e:
+                        logger.debug(f"Transport cleanup error: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Error during disconnect: {e}")
+                self._shutdown_reason = "error"
+            finally:
+                self._shutdown_state = "stopped"
+                # Call parent class to disconnect transcript manager
+                await super().disconnect()
+                logger.info("Pipecat backend disconnected successfully")
+
+    async def _force_cancel_pipeline(self) -> None:
+        """Force cancel the pipeline and runner without waiting to prevent recursion."""
         try:
-            # Cancel the runner - this is the proper Pipecat way
-            if self.runner and self._pipeline_task and not self._pipeline_task.done():
-                logger.debug("Cancelling pipeline runner...")
-                await self.runner.cancel()
-            
-            # Cancel our background pipeline task runner - don't wait for it
+            # Check if pipeline task is already done - if so, skip cancellation
+            if self._pipeline_task and self._pipeline_task.done():
+                return
+                
+            # Cancel our pipeline task and wait for it to finish
             if self._pipeline_task and not self._pipeline_task.done():
-                logger.debug("Cancelling pipeline runner task...")
                 self._pipeline_task.cancel()
-                # Don't wait - let the task finish in the background
-                logger.debug("Pipeline runner task cancellation initiated")
-            
-        finally:
-            # Call parent class to disconnect transcript manager
-            await super().disconnect()
-            logger.info("Pipecat backend v2 disconnected successfully")
+                
+                # Wait for the cancelled task to actually finish
+                try:
+                    await asyncio.wait_for(self._pipeline_task, timeout=3.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError, Exception) as e:
+                    logger.debug(f"Pipeline task cancellation: {e}")
+                
+        except Exception as e:
+            logger.debug(f"Error during force cancel: {e}")
 
     async def stop(self) -> None:
         """Stop the Pipecat backend."""
-        if self._stopping or not self.is_connected:
-            logger.debug("Backend already stopping or stopped, skipping")
+        if self._shutdown_state != "running":
             return
             
-        self._stopping = True  # Set flag to prevent multiple calls
-        logger.info("Stopping Pipecat backend v2...")
-
+        logger.info("Stopping Pipecat backend...")
+        
+        # Mark as forced shutdown if not already set
+        if self._shutdown_reason is None:
+            self._shutdown_reason = "forced"
+        
         try:
-            await self.disconnect()  # Ensure we disconnect first
-                
-            # Stop the transport
-            if self.transport:
-                await self.transport.cleanup()
-
-            logger.info("Pipecat backend v2 stopped successfully")
+            await self.disconnect()  # This handles the actual shutdown logic
+            logger.info("Pipecat backend stopped successfully")
             
         except Exception as e:
             logger.error(f"Error stopping Pipecat backend: {e}")
         finally:
+            # Always call parent class stop
             await super().stop()
-            
     
     def _create_transport(self) -> LocalAudioTransport:
-
-        # Resolve audio device indices
-        audio_in_device = resolve_audio_device_index(
-            self.pipecat_config.audio_input_device_index,
-            self.pipecat_config.audio_input_device_name,
-            input_device=True
-        )
-        audio_out_device = resolve_audio_device_index(
-            self.pipecat_config.audio_output_device_index,
-            self.pipecat_config.audio_output_device_name,
-            input_device=False
-        )
+        """Create audio transport with retry logic for device resolution."""
+        import time
+        
+        # Retry audio device resolution with backoff
+        max_attempts = getattr(self.pipecat_config, 'audio_device_retry_attempts', 3)
+        retry_delay = getattr(self.pipecat_config, 'audio_device_retry_delay', 1.0)
+        
+        audio_in_device = None
+        audio_out_device = None
+        
+        for attempt in range(max_attempts):
+            try:
+                logger.info(f"Resolving audio devices (attempt {attempt + 1}/{max_attempts})...")
+                
+                # Use fast mode if we have device indices to avoid slow enumeration
+                use_fast_mode = (
+                    self.pipecat_config.audio_input_device_index is not None and 
+                    self.pipecat_config.audio_output_device_index is not None and
+                    not self.pipecat_config.audio_input_device_name and
+                    not self.pipecat_config.audio_output_device_name
+                )
+                
+                if use_fast_mode:
+                    logger.info("Using fast mode - bypassing device enumeration")
+                
+                # Time the resolution process to detect issues
+                start_time = time.time()
+                
+                # Resolve audio device indices
+                audio_in_device = resolve_audio_device_index(
+                    self.pipecat_config.audio_input_device_index,
+                    self.pipecat_config.audio_input_device_name,
+                    input_device=True,
+                    fast_mode=use_fast_mode
+                )
+                audio_out_device = resolve_audio_device_index(
+                    self.pipecat_config.audio_output_device_index,
+                    self.pipecat_config.audio_output_device_name,
+                    input_device=False,
+                    fast_mode=use_fast_mode
+                )
+                
+                resolution_time = time.time() - start_time
+                
+                # If resolution was slow and we're not in fast mode, it might indicate a problem
+                if resolution_time > 2.0 and not use_fast_mode:
+                    logger.warning(f"Audio device resolution was slow ({resolution_time:.2f}s), system may need recovery")
+                    # Could trigger recovery here if needed
+                
+                logger.info(f"Audio devices resolved: input={audio_in_device}, output={audio_out_device} (took {resolution_time:.2f}s)")
+                break
+                
+            except Exception as e:
+                logger.warning(f"Audio device resolution attempt {attempt + 1} failed: {e}")
+                if attempt < max_attempts - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error("All audio device resolution attempts failed")
+                    # On final failure, try a recovery if we have specific device indices
+                    if (self.pipecat_config.audio_input_device_index is not None and 
+                        self.pipecat_config.audio_output_device_index is not None):
+                        
+                        logger.info("Attempting audio recovery before using default devices...")
+                        try:
+                            from experimance_common.audio_utils import reset_audio_device_by_name
+                            reset_audio_device_by_name("Yealink")
+                            time.sleep(3)
+                            
+                            # Try one more time with the expected indices
+                            audio_in_device = self.pipecat_config.audio_input_device_index
+                            audio_out_device = self.pipecat_config.audio_output_device_index
+                            logger.info(f"Using device indices after recovery: input={audio_in_device}, output={audio_out_device}")
+                        except Exception as recovery_error:
+                            logger.error(f"Audio recovery failed: {recovery_error}")
+                            audio_in_device = None
+                            audio_out_device = None
+                    else:
+                        audio_in_device = None
+                        audio_out_device = None
         
         # Create transport
         transport_params = LocalAudioTransportParams(
@@ -385,7 +539,7 @@ class PipecatBackend(AgentBackend):
         stt_mute_processor = STTMuteFilter(
             config=STTMuteConfig(
                 strategies={
-                    # STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
+                    STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
                     STTMuteStrategy.FUNCTION_CALL,
                 }
             ),
@@ -437,12 +591,10 @@ class PipecatBackend(AgentBackend):
             raise ValueError("OpenAI API key is required for realtime mode")
         
         if self.config.backend_config.prompt_path is not None:
-            # Load prompt from file if specified
             prompt = load_prompt(self.config.backend_config.prompt_path)
         else:   
             prompt = "Tell the user something has gone wrong with loading the agent configuration."
 
-        # TODO: get prompt 
         realtime_service = OpenAIRealtimeBetaLLMService(
             api_key=os.getenv("OPENAI_API_KEY", "failed"),
             session_properties=SessionProperties(

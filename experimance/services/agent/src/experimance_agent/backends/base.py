@@ -37,7 +37,7 @@ class AgentBackendEvent(str, Enum):
     PERSONA_SWITCHED = "persona_switched"
     ERROR = "error"
     CANCEL = "cancel"  # For graceful shutdowns or interruptions
-
+    AUDIO_OUTPUT_ISSUE_DETECTED = "audio_output_issue_detected"  # New event for audio output issues
 
 @dataclass
 class ConversationTurn:

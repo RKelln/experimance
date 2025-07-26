@@ -113,6 +113,10 @@ MOCK_IMAGES_DIR_ABS = MOCK_IMAGES_DIR.absolute()
 AUDIO_DIR_ABS = AUDIO_DIR.absolute()
 VIDEOS_DIR_ABS = VIDEOS_DIR.absolute()
 
+# other directories
+LOGS_DIR = PROJECT_ROOT / "logs"
+DATA_DIR = PROJECT_ROOT / "data"
+
 def get_project_config_path(service_name: str, fallback_dir: Path | None = None) -> Path:
     """
     Get the configuration path for a service, with project-aware defaults.
@@ -207,6 +211,9 @@ __all__ = [
     "AGENT_SERVICE_DIR",
     "DISPLAY_SERVICE_DIR",
     "HEALTH_SERVICE_DIR",
+    # Other directories
+    "LOGS_DIR",
+    "DATA_DIR",
     # Config helpers
     "get_project_config_path"
 ]

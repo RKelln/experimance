@@ -12,7 +12,7 @@ from experimance_common.config import BaseServiceConfig
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.schemas import MessageType
 from experimance_common.constants import (
-    DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX, AGENT_SERVICE_DIR,
+    DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX, AGENT_SERVICE_DIR, LOGS_DIR,
     get_project_config_path
 )
 
@@ -69,6 +69,11 @@ class PipecatBackendConfig(BaseModel):
     # Audio device selection by name (alternative to index, takes precedence if both are set)
     audio_input_device_name: Optional[str] = Field(default=None, description="Partial name match for input device (e.g., 'Yealink', 'USB'). Takes precedence over index.")
     audio_output_device_name: Optional[str] = Field(default=None, description="Partial name match for output device (e.g., 'Yealink', 'USB'). Takes precedence over index.")
+    
+    # Audio error suppression and device handling
+    suppress_audio_errors: bool = Field(default=True, description="Suppress ALSA/JACK error messages during audio initialization")
+    audio_device_retry_attempts: int = Field(default=3, description="Number of times to retry audio device initialization on failure")
+    audio_device_retry_delay: float = Field(default=1.0, description="Delay between audio device retry attempts (seconds)")
     
     # Voice Activity Detection settings
     vad_enabled: bool = Field(default=True, description="Enable voice activity detection using Silero VAD")
@@ -208,7 +213,7 @@ class TranscriptConfig(BaseModel):
     
     # Transcript archival
     save_transcripts: bool = Field(default=True, description="Save conversation transcripts to files")
-    transcript_directory: str = Field(default_factory=lambda: str(AGENT_SERVICE_DIR / "transcripts"), description="Directory to save transcript files")
+    transcript_directory: str = Field(default_factory=lambda: str(LOGS_DIR / "transcripts"), description="Directory to save transcript files")
 
 
 class AgentServiceConfig(BaseServiceConfig):

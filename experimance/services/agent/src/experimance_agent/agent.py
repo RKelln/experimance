@@ -7,17 +7,26 @@ controlling other services.
 """
 
 import asyncio
-import time
+import gc
 import json
 import logging
+import os
+import threading
+import time
+import uuid
 from typing import Dict, Any, Optional, List
 from pathlib import Path
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from experimance_common.base_service import BaseService
 from experimance_common.health import HealthStatus
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
-    RequestBiome, AudiencePresent, SpeechDetected,
+    AudiencePresent, SpeechDetected,
     DisplayText, RemoveText, MessageType, Biome
 )
 from experimance_common.constants import TICK, DEFAULT_PORTS
@@ -51,6 +60,12 @@ class AgentService(BaseService):
         self.is_conversation_active = False
         self.agent_speaking = False
         
+        # Audio output monitoring
+        self._audio_output_issues_count = 0
+        self._last_audio_issue_time = None
+        self._audio_issue_threshold = 3  # Number of issues before attempting recovery
+        self._audio_issue_window = 300  # 5 minutes window for counting issues
+        
         # Display text tracking (for transcript display)
         self.displayed_text_ids: set[str] = set()
         
@@ -66,6 +81,9 @@ class AgentService(BaseService):
         
         # Transcript display handler (will be initialized if enabled)
         self.transcript_display_handler = None
+        
+        # Pipeline task reference (not managed by service, just for monitoring)
+        self._pipeline_task_ref = None
         
     async def start(self):
         """Initialize and start the agent service."""
@@ -99,71 +117,128 @@ class AgentService(BaseService):
         """Clean up resources and stop the agent service."""
         logger.info(f"Stopping {self.service_name}")
         
-        # ALWAYS call super().stop() FIRST - this stops health monitoring automatically
+        # Call super().stop() FIRST - this cancels vision loops immediately
         await super().stop()
-        
-        # Send person count 0 to ensure presence system is updated
-        if self._person_count != 0:
-            await self._publish_audience_present(person_count=0)
 
-        # Stop agent backend using coordinated approach if it exists
+        # Stop agent backend if it exists
         if self.current_backend:
-            await self._stop_backend_with_coordination()
-        
-        # Stop ZMQ service
-        await self.zmq_service.stop()
-        
+            try:
+                await self.current_backend.stop()
+            except Exception as e:
+                logger.error(f"Error stopping backend: {e}")
+            finally:
+                # Always clear references
+                self.current_backend = None
+                self._pipeline_task_ref = None
+
         # Clean up vision components
         if self.audience_detector:
             await self.audience_detector.stop()
-        
         if self.vlm_processor:
             await self.vlm_processor.stop()
-            
         if self.webcam_manager:
             await self.webcam_manager.stop()
         
         # Clear any displayed text
         await self._clear_all_displayed_text()
+
+        # Stop ZMQ service
+        await self.zmq_service.stop()
+        
+        # Clean up audio resources
+        try:
+            from experimance_common.audio_utils import cleanup_audio_resources
+            cleanup_audio_resources()
+            logger.debug("Audio resources cleaned up")
+        except Exception as e:
+            logger.debug(f"Error cleaning up audio resources: {e}")
         
         logger.info(f"{self.service_name} stopped")
+        
+        # Shutdown diagnostics and aggressive cleanup
+        #await self._perform_shutdown_diagnostics()
+        await self._perform_aggressive_cleanup()
 
-    async def _stop_backend_with_coordination(self):
-        """Stop the backend with proper pipeline coordination."""
-        if not self.current_backend:
-            return
+    async def _perform_shutdown_diagnostics(self):
+        """Perform diagnostic logging before shutdown."""
+        logger.info("=== SHUTDOWN DIAGNOSTICS ===")
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Show running asyncio tasks
+        try:
+            running_tasks = [task for task in asyncio.all_tasks() if not task.done()]
+            logger.info(f"Active asyncio tasks: {len(running_tasks)}")
+            for i, task in enumerate(running_tasks[:5]):  # Show first 5 tasks
+                task_name = getattr(task, 'get_name', lambda: 'unnamed')()
+                logger.info(f"  Task {i+1}: {task_name}")
+            if len(running_tasks) > 5:
+                logger.info(f"  ... and {len(running_tasks) - 5} more tasks")
+        except Exception as e:
+            logger.info(f"Could not get asyncio tasks: {e}")
+        
+        # Show active threads
+        try:
+            active_threads = threading.enumerate()
+            logger.info(f"Active threads: {len(active_threads)}")
+            for thread in active_threads:
+                logger.info(f"  Thread: {thread.name} (daemon: {thread.daemon})")
+        except Exception as e:
+            logger.info(f"Could not get thread info: {e}")
+        
+        # Show process info if psutil is available
+        if psutil:
+            try:
+                process = psutil.Process(os.getpid())
+                memory_info = process.memory_info()
+                logger.info(f"Memory usage: RSS={memory_info.rss // 1024 // 1024}MB")
+                
+                children = process.children(recursive=True)
+                if children:
+                    logger.info(f"Child processes: {len(children)}")
+                else:
+                    logger.info("No child processes")
+            except Exception as e:
+                logger.info(f"Could not get process info: {e}")
+        
+        logger.info("=== END DIAGNOSTICS ===")
+
+    async def _perform_aggressive_cleanup(self):
+        """Perform aggressive cleanup of hanging tasks."""
+        logger.info("Performing aggressive cleanup...")
         
         try:
-            #await self.current_backend.disconnect()  # Ensure backend is disconnected
-
-            # If backend has a pipeline task, wait for it to finish cleanly first
-            # if hasattr(self.current_backend, 'get_pipeline_task'):
-            #     pipeline_task = self.current_backend.get_pipeline_task()  # type: ignore
-            #     if pipeline_task and not pipeline_task.done():
-            #         logger.debug("Waiting for pipeline cleanup before backend stop...")
-            #         try:
-            #             pipeline_task.cancel()  # Cancel the pipeline task if needed
-            #             await asyncio.wait_for(pipeline_task, timeout=5.0)
-            #             logger.debug("Pipeline task completed before backend stop")
-            #         except asyncio.TimeoutError:
-            #             logger.warning("Pipeline cleanup timed out, proceeding with backend stop")
-            #         except Exception as e:
-            #             logger.debug(f"Pipeline task finished with: {e}")
+            # Get current task to avoid cancelling the shutdown sequence itself
+            current_task = asyncio.current_task()
+            remaining_tasks = [
+                task for task in asyncio.all_tasks() 
+                if not task.done() and task != current_task
+            ]
             
-            # Now stop the backend normally
-            await self.current_backend.stop()
-            
+            if remaining_tasks:
+                logger.info(f"Force-cancelling {len(remaining_tasks)} remaining tasks (excluding current shutdown task)")
+                for task in remaining_tasks:
+                    if not task.cancelled():
+                        task.cancel()
+                
+                # Give tasks a brief moment to cancel
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*remaining_tasks, return_exceptions=True),
+                        timeout=0.5
+                    )
+                except asyncio.TimeoutError:
+                    logger.info("Some tasks didn't cancel in time")
+                except Exception as e:
+                    logger.info(f"Task cancellation error: {e}")
+            else:
+                logger.info("No tasks to cancel (excluding current shutdown task)")
         except Exception as e:
-            logger.error(f"Error during coordinated backend stop: {e}")
-            # Always try to stop the backend even if coordination fails
-            try:
-                if self.current_backend:
-                    await self.current_backend.stop()
-            except Exception as e2:
-                logger.error(f"Failed to stop backend after coordination error: {e2}")
-        finally:
-            # Always clear the backend reference, regardless of success or failure
-            self.current_backend = None
+            logger.info(f"Aggressive cleanup error: {e}")
+        
+        # Give logs a moment to flush
+        await asyncio.sleep(0.1)
     
     # =========================================================================
     # Backend Management
@@ -213,6 +288,9 @@ class AgentService(BaseService):
                 backend.add_event_callback(
                     AgentBackendEvent.CANCEL, self._on_cancel_backend_pipeline
                 )
+                backend.add_event_callback(
+                    AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, self._on_audio_output_issue
+                )
 
                 # Start the backend
                 await backend.start()  # type: ignore
@@ -221,13 +299,8 @@ class AgentService(BaseService):
                 if hasattr(backend, 'get_pipeline_task'):
                     pipeline_task = backend.get_pipeline_task()
                     if pipeline_task:
-                        self.add_task(pipeline_task)
-                        logger.info("Added pipeline task to service task management")
+                        self._pipeline_task_ref = pipeline_task
                 
-                # Debug output
-                if hasattr(backend, 'get_debug_status'):
-                    print(json.dumps(backend.get_debug_status(), indent=2))
-                                
                 logger.info(f"Successfully initialized {backend_name} backend")
             else:
                 logger.info(f"Agent service started in placeholder mode (no {backend_name} backend)")
@@ -239,15 +312,14 @@ class AgentService(BaseService):
     async def _start_backend_for_conversation(self):
         """Start the agent backend when a person is detected."""
         if self.current_backend is not None:
-            logger.debug("Backend already running, skipping startup")
             return True
         
-        if not self.running: return
+        if not self.running: 
+            return False
 
         logger.info("Person detected, starting conversation backend...")
         
         try:
-            # Initialize the backend
             await self._initialize_backend()
             
             # Initialize transcript handling if enabled
@@ -265,18 +337,24 @@ class AgentService(BaseService):
     async def _stop_backend_after_conversation(self):
         """Stop the agent backend after conversation ends."""
         if self.current_backend is None:
-            logger.debug("Backend already stopped, skipping shutdown")
             return
         
-        if not self.running: return
+        # Check if backend is already shutting down
+        if (hasattr(self.current_backend, '_shutdown_state') and 
+            getattr(self.current_backend, '_shutdown_state') != "running"):
+            self.current_backend = None
+            self._pipeline_task_ref = None
+            return
+        
+        if not self.running: 
+            return
 
         logger.info("Conversation ended, stopping backend...")
         
         try:
-            # Use coordinated stop approach that handles pipeline task lifecycle
-            #await self._stop_backend_with_coordination()
-            await self.current_backend.stop()  # Ensure backend is disconnected
+            await self.current_backend.stop()
             self.current_backend = None
+            self._pipeline_task_ref = None
 
             # Clear any displayed text
             await self._clear_all_displayed_text()
@@ -404,6 +482,9 @@ class AgentService(BaseService):
         last_publish_time = time.monotonic() # used to ensure we report at least every report_min_interval seconds
         report_min_interval = 30.0  # used so if core service restarts we update it every 30 seconds regardless of changes
 
+        # send 0 people detected to start
+        await self._publish_audience_present(person_count=0)
+
         while self.running:
             try:
                 if (self.config.vision.audience_detection_enabled and 
@@ -449,14 +530,23 @@ class AgentService(BaseService):
                 if not await self._sleep_if_running(current_interval):
                     break
                 
+            except asyncio.CancelledError:
+                # Task was cancelled during shutdown - exit gracefully
+                logger.debug("Audience detection loop cancelled")
+                
+                break
             except Exception as e:
                 self.record_error(e, is_fatal=False)
                 # Reset to normal interval on error and back off more
                 current_interval = normal_interval
                 await self._sleep_if_running(10.0)  # Back off on error
-    
+
+        # report 0 on shutdown
+        await self._publish_audience_present(person_count=0) 
+
     async def _vision_analysis_loop(self):
         """Perform periodic vision analysis for scene understanding."""
+
         while self.running:
             try:
                 if (self.config.vision.vlm_enabled and 
@@ -481,6 +571,10 @@ class AgentService(BaseService):
                 
                 await self._sleep_if_running(self.config.vision.vlm_analysis_interval)
                 
+            except asyncio.CancelledError:
+                # Task was cancelled during shutdown - exit gracefully
+                logger.debug("Vision analysis loop cancelled")
+                break
             except Exception as e:
                 self.record_error(e, is_fatal=False)
                 await self._sleep_if_running(30.0)  # Back off on error
@@ -521,12 +615,36 @@ class AgentService(BaseService):
         """Handle conversation ended event."""
         logger.info("Conversation ended")
         self.is_conversation_active = False
-        await self._stop_backend_after_conversation()
+        
+        # Check if this is a natural shutdown (flow ended gracefully)
+        reason = data.get("reason", "unknown") if data else "unknown"
+        if reason == "pipeline_ended":
+            # This is a natural shutdown from the flow ending (goodbye node)
+            # The backend will handle its own shutdown gracefully
+            logger.info("Natural conversation end detected, backend will handle shutdown")
+            
+            # Clear displayed text after a short delay
+            if self.displayed_text_ids and len(self.displayed_text_ids) > 0:
+                await asyncio.sleep(2.0)
+                await self._clear_all_displayed_text()
+                
+            # Wait a moment for the backend to finish naturally, then clean up reference
+            await asyncio.sleep(1.0)
+            if (self.current_backend and 
+                hasattr(self.current_backend, '_shutdown_reason') and 
+                getattr(self.current_backend, '_shutdown_reason') == "natural"):
+                # Backend is shutting down naturally, just clear our reference
+                self.current_backend = None
+                self._pipeline_task_ref = None
+                logger.info("Cleared backend reference after natural shutdown")
+        else:
+            # This is a forced or unexpected shutdown, stop the backend normally
+            await self._stop_backend_after_conversation()
 
-        if self.displayed_text_ids and len(self.displayed_text_ids) > 0:
-            # Clear displayed transcripts after a delay
-            await asyncio.sleep(2.0)
-            await self._clear_all_displayed_text()
+            if self.displayed_text_ids and len(self.displayed_text_ids) > 0:
+                # Clear displayed transcripts after a delay
+                await asyncio.sleep(2.0)
+                await self._clear_all_displayed_text()
 
     async def _backend_update_person_count(self, person_count: int):
         """Send audience presence update to the LLM service."""
@@ -545,8 +663,6 @@ class AgentService(BaseService):
     
     async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech detection event from pipecat backend."""
-        logger.debug("_on_speech_detected: event=%s, data=%s", event, data)
-
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
         # Update internal state
@@ -557,11 +673,9 @@ class AgentService(BaseService):
         if self.config.speech_detection_enabled:
             speaker_type = "agent" if speaker == "agent" else "human"
             await self._publish_speech_detected(is_speaking=True, speaker_type=speaker_type)
-            logger.debug(f"Speech detected: {speaker_type}")
     
     async def _on_speech_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle speech ended event from pipecat backend."""
-        logger.debug("_on_speech_ended: event=%s, data=%s", event, data)
         speaker = data.get("speaker", "unknown") if data else "unknown"
         
         # Update internal state
@@ -572,7 +686,6 @@ class AgentService(BaseService):
         if self.config.speech_detection_enabled:
             speaker_type = "agent" if speaker == "agent" else "human"
             await self._publish_speech_detected(is_speaking=False, speaker_type=speaker_type)
-            logger.debug(f"Speech ended: {speaker_type}")
     
     async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle new transcription data."""
@@ -605,6 +718,53 @@ class AgentService(BaseService):
         
         # Trigger immediate service shutdown - stop() method will coordinate with pipeline
         asyncio.create_task(self.stop())
+
+    async def _on_audio_output_issue(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle audio output issues detected by the backend.
+        
+        This is triggered when the backend detects potential audio output failures,
+        such as TTS duration anomalies or other audio pipeline issues.
+        """
+        if not self.current_backend or not self.running:
+            return
+            
+        self._audio_output_issues_count += 1
+        issue_type = data.get('issue_type', 'unknown')
+        details = data.get('details', {})
+        
+        logger.warning(
+            f"Audio output issue detected (#{self._audio_output_issues_count}): {issue_type}",
+            extra={"details": details}
+        )
+        
+        # If we've had multiple issues in a short period, attempt recovery
+        if self._audio_output_issues_count >= self._audio_issue_threshold:
+            logger.error(
+                f"Multiple audio output issues ({self._audio_output_issues_count}), attempting recovery..."
+            )
+            
+            try:
+                # Import here to avoid circular imports
+                from experimance_common.audio_utils import reset_audio_device_by_name
+                
+                # Get the current audio device from config
+                audio_device = self.config.backend_config.pipecat.audio_input_device_name
+                if audio_device:
+                    logger.info(f"Attempting to reset audio device: {audio_device}")
+                    success = reset_audio_device_by_name(audio_device)
+                    
+                    if success:
+                        # Reset the counter after successful recovery
+                        self._audio_output_issues_count = 0
+                        logger.info("Audio device reset completed, counter reset")
+                    else:
+                        logger.warning("Audio device reset failed")
+                else:
+                    logger.warning("No audio device name configured for reset")
+                    
+            except Exception as e:
+                logger.error(f"Failed to reset audio device: {e}")
+                # Don't reset counter if recovery failed - let it accumulate
 
     # =========================================================================
     # Tool Implementation
@@ -798,25 +958,24 @@ class AgentService(BaseService):
     
     async def _publish_suggest_biome(self, suggested_biome: str, confidence: float = 0.8):
         """Publish biome suggestion based on conversation context."""
-        try:
-            # Convert string to Biome enum if needed
-            if isinstance(suggested_biome, str):
-                biome_enum = Biome(suggested_biome.lower())
-            else:
-                biome_enum = suggested_biome
-                
-            message = RequestBiome(
-                biome=biome_enum.value  # Field name expected by core service
-            )
-            await self.zmq_service.publish(message.model_dump(), MessageType.REQUEST_BIOME)
-            logger.info(f"Published biome suggestion: {biome_enum.value}")
-        except ValueError as e:
-            logger.warning(f"Invalid biome suggestion '{suggested_biome}': {e}")
-    
-    async def _publish_audience_status(self, present: bool):
-        """Publish audience presence status."""
-        # This is kept for backward compatibility but redirects to new method
-        await self._publish_audience_present(present)
+        # TODO: Fix schema import issue - temporarily disabled
+        logger.info(f"Biome suggestion (not published due to schema issue): {suggested_biome}")
+        return
+        
+        # try:
+        #     # Convert string to Biome enum if needed
+        #     if isinstance(suggested_biome, str):
+        #         biome_enum = Biome(suggested_biome.lower())
+        #     else:
+        #         biome_enum = suggested_biome
+        #         
+        #     message = RequestBiome(
+        #         biome=biome_enum.value  # Field name expected by core service
+        #     )
+        #     await self.zmq_service.publish(message.model_dump(), MessageType.REQUEST_BIOME)
+        #     logger.info(f"Published biome suggestion: {biome_enum.value}")
+        # except ValueError as e:
+        #     logger.warning(f"Invalid biome suggestion '{suggested_biome}': {e}")
     
     async def get_debug_status(self) -> Dict[str, Any]:
         """Get comprehensive debug status from the agent service."""

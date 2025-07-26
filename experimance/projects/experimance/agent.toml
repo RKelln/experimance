@@ -28,10 +28,19 @@ audio_in_sample_rate = 16000
 audio_out_sample_rate = 16000
 
 # Audio device selection (comment out to use default devices)
-# Use `uv run python scripts/list_audio_devices.py` to list available devices
+# Use `uv run python scripts/audio_recovery.py list` to list available devices
 # Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
+# For better performance, you can also specify device indices directly:
 audio_input_device_name = "Yealink"   # USB Conference microphone
 audio_output_device_name = "Yealink"  # USB Conference speaker
+# Alternatively, use indices for faster startup (uncomment to use):
+# audio_input_device_index = 6   # Yealink device index
+# audio_output_device_index = 6  # Yealink device index
+
+# Audio error handling
+suppress_audio_errors = true         # Suppress ALSA/JACK error messages
+audio_device_retry_attempts = 3      # Retry attempts for device initialization
+audio_device_retry_delay = 1.0       # Delay between retries (seconds)
 
 # Voice Activity Detection
 vad_enabled = true
@@ -82,4 +91,4 @@ human_speaker_name = "Visitor"
 
 # Transcript archival
 save_transcripts = true
-transcript_directory = "transcripts"
+transcript_directory = "logs/transcripts"

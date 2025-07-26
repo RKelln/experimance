@@ -83,6 +83,9 @@ from experimance_common.constants_base import (
     AGENT_SERVICE_DIR,
     DISPLAY_SERVICE_DIR,
 
+    # Other directories
+    LOGS_DIR,
+    DATA_DIR,
 )
 
 # PROJECT constant that's set dynamically
@@ -177,4 +180,7 @@ __all__: list[str] = [
     "AGENT_SERVICE_DIR",
     "DISPLAY_SERVICE_DIR",
 
+    # Other directories
+    "LOGS_DIR",
+    "DATA_DIR",
 ]
