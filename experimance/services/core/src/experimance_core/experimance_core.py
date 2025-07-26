@@ -977,21 +977,13 @@ class ExperimanceCoreService(BaseService):
 
     async def _handle_audience_present(self, topic: str, message: MessageDataType):
         """Handle AudiencePresent messages from agent service."""
-        status = message.get('status', False)
-        logger.debug(f"Received AudiencePresent message: {status}")
+
+        logger.debug(f"Received AudiencePresent message: {message}")
         
         try:
             # Agent vision detection - just use person_count (simpler and more informative)
             person_count = message.get('person_count', 0)
-            # If status is False but person_count > 0, trust the count. If status is True but count is 0, set count to 1
-            if not status and person_count > 0:
-                # Trust the count over the boolean
-                pass
-            elif status and person_count == 0:
-                # Set count to 1 if status indicates present but no count provided
-                person_count = 1
-            elif not status:
-                # Ensure count is 0 if not present
+            if person_count < 0:
                 person_count = 0
                 
             self.presence_manager.person_count = person_count
