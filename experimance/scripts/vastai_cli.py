@@ -43,9 +43,9 @@ from image_server.generators.vastai.vastai_manager import VastAIManager
 from image_server.generators.vastai.vastai_manager import VastAIManager
 
 
-def setup_logging():
+def setup_logging(level=logging.INFO):
     logging.basicConfig(
-        level=logging.INFO,
+        level=level,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
@@ -166,7 +166,7 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
             if manager.wait_for_ssh_ready(instance_id, timeout=180):
                 success = manager.provision_instance_via_scp(
                     instance_id,
-                    verbose=getattr(args, 'verbose', False)
+                    verbose=getattr(args, 'show_output', False)
                 )
                 if success:
                     endpoint = manager.get_model_server_endpoint(instance_id)
@@ -232,7 +232,7 @@ def update_instance(manager: VastAIManager, args: argparse.Namespace):
     success = manager.update_server_code(
         instance_id, 
         timeout=args.timeout,
-        verbose=args.verbose
+        verbose=args.show_output
     )
     if success:
         print(f"✅ Instance {instance_id} updated successfully!")
@@ -270,7 +270,7 @@ def fix_instance(manager: VastAIManager, args: argparse.Namespace):
     success = manager.provision_instance_via_scp(
         instance_id, 
         timeout=args.timeout,
-        verbose=args.verbose
+        verbose=args.show_output
     )
     if success:
         print(f"✅ Instance {instance_id} fixed successfully!")
@@ -640,7 +640,12 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
     try:
         url = f"{endpoint.url}/healthcheck"
         resp = requests.get(url, timeout=10)
-        print(f"Healthcheck {resp.status_code}: {resp.text}")
+        try:
+            resp_json = resp.json()
+            print(f"Healthcheck {resp.status_code}:")
+            print(json.dumps(resp_json, indent=2))
+        except Exception:
+            print(f"Healthcheck {resp.status_code}: {resp.text}")
     except requests.RequestException as e:
         print(f"Healthcheck request failed: {e}")
 
@@ -1073,10 +1078,12 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
 
 
 def main():
-    setup_logging()
     parser = argparse.ArgumentParser(
         description="Manage Vast.ai instances for Experimance image_server",
     )
+
+    parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
+
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     # list
@@ -1093,7 +1100,7 @@ def main():
     p_prov = subparsers.add_parser('provision', help='Find or create an instance (always provisions)')
     p_prov.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
     p_prov.add_argument('--no-wait', action='store_true', dest='no_wait', help='Do not wait for instance ready')
-    p_prov.add_argument('--verbose', action='store_true', help='Show provisioning script output in real-time')
+    p_prov.add_argument('--show-output', action='store_true', help='Show provisioning script output in real-time')
     p_prov.add_argument('--provision-script', type=str, metavar='URL', help='Custom provisioning script URL to use')
     p_prov.add_argument('--min-gpu-ram', type=int, default=16, help='Minimum GPU RAM (GB)')
     p_prov.add_argument('--max-price', type=float, default=0.5, help='Max price ($/hr)')
@@ -1104,14 +1111,14 @@ def main():
     p_fix.add_argument('instance_id', type=int, nargs='?', help='Instance ID to fix (uses active instance if not provided)')
     p_fix.add_argument('--timeout', type=int, default=300, help='Timeout for provisioning (seconds)')
     p_fix.add_argument('--debug', action='store_true', help='Enable debug logging')
-    p_fix.add_argument('--verbose', action='store_true', help='Show provisioning script output in real-time')
+    p_fix.add_argument('--show-output', action='store_true', help='Show provisioning script output in real-time')
 
     # update
     p_update = subparsers.add_parser('update', help='Update server code on instance and restart service')
     p_update.add_argument('instance_id', type=int, nargs='?', help='Instance ID to update (uses active instance if not provided)')
     p_update.add_argument('--timeout', type=int, default=120, help='Timeout for update operations (seconds)')
     p_update.add_argument('--debug', action='store_true', help='Enable debug logging')
-    p_update.add_argument('--verbose', action='store_true', help='Show update output in real-time')
+    p_update.add_argument('--show-output', action='store_true', help='Show update output in real-time')
 
     # ssh
     p_ssh = subparsers.add_parser('ssh', help='Get SSH command for an instance')
@@ -1141,6 +1148,8 @@ def main():
 
     args = parser.parse_args()
     
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+
     # Create manager with custom provisioning script if provided for provision command
     if args.command == 'provision' and hasattr(args, 'provision_script') and args.provision_script:
         manager = VastAIManager(provisioning_script_url=args.provision_script)

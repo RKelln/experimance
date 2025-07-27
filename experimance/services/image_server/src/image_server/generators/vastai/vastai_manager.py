@@ -565,21 +565,40 @@ class VastAIManager:
                 logger.debug(f"Could not get endpoint for instance {instance_id}")
                 return False
             
-            import requests
-            response = requests.get(f"{endpoint.url}/healthcheck", timeout=timeout)
+            health_url = f"{endpoint.url}/healthcheck"
+            logger.debug(f"Checking health at: {health_url}")
+            
+            response = requests.get(health_url, timeout=timeout)
+            logger.debug(f"Health check response: HTTP {response.status_code}")
+            
             if response.status_code == 200:
-                health_data = response.json()
-                if health_data.get('status') == 'healthy':
-                    logger.debug(f"Health check passed for instance {instance_id}")
-                    return True
-                else:
-                    logger.debug(f"Health check failed: service not healthy")
+                try:
+                    health_data = response.json()
+                    logger.debug(f"Health data: {health_data}")
+                    
+                    if health_data.get('status') == 'healthy':
+                        logger.debug(f"Health check passed for instance {instance_id}")
+                        return True
+                    else:
+                        logger.warning(f"Health check failed for instance {instance_id}: service reports status '{health_data.get('status')}' - {health_data}")
+                        return False
+                except ValueError as json_err:
+                    logger.warning(f"Health check failed for instance {instance_id}: invalid JSON response - {response.text[:200]}")
                     return False
             else:
-                logger.debug(f"Health check failed: HTTP {response.status_code}")
+                logger.warning(f"Health check failed for instance {instance_id}: HTTP {response.status_code} - {response.text[:200]}")
                 return False
+        except requests.exceptions.ConnectTimeout:
+            logger.debug(f"Health check failed for instance {instance_id}: connection timeout after {timeout}s")
+            return False
+        except requests.exceptions.ReadTimeout:
+            logger.debug(f"Health check failed for instance {instance_id}: read timeout after {timeout}s")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.debug(f"Health check failed for instance {instance_id}: connection error - {e}")
+            return False
         except Exception as e:
-            logger.debug(f"Health check failed for instance {instance_id}: {e}")
+            logger.warning(f"Health check failed for instance {instance_id}: unexpected error - {e}")
             return False
 
     def _wait_for_service_healthy(self, instance_id: int, timeout: int = 180) -> bool:
@@ -596,6 +615,7 @@ class VastAIManager:
         logger.info(f"Waiting for service to become healthy on instance {instance_id} (timeout: {timeout}s)...")
         start_time = time.time()
         endpoint_url = None
+        last_check_time = 0
         
         while time.time() - start_time < timeout:
             # Try to get endpoint each iteration - it might not be available initially
@@ -605,23 +625,25 @@ class VastAIManager:
                     endpoint_url = endpoint.url
                     logger.info(f"Endpoint now available, checking health at: {endpoint_url}/healthcheck")
                 
-                # Now try health check
-                if self._check_service_health(instance_id, timeout=10):
+                # Now try health check with a reasonable timeout
+                if self._check_service_health(instance_id, timeout=15):
                     logger.info(f"Service is healthy on instance {instance_id}")
                     return True
             else:
                 # Endpoint not available yet - this is normal early in instance lifecycle
                 elapsed = int(time.time() - start_time)
-                if elapsed % 30 == 0:  # Log every 30 seconds
+                if elapsed >= 30 and elapsed % 30 == 0:  # Log every 30 seconds after first 30s
                     logger.info(f"Endpoint not available yet, waiting for port mappings... ({elapsed}s elapsed)")
-                else:
+                elif elapsed < 30:
                     logger.debug(f"Endpoint not available yet, waiting for port mappings... ({elapsed}s elapsed)")
             
             elapsed = int(time.time() - start_time)
-            if elapsed % 30 == 0 and endpoint:  # Log every 30 seconds when we have endpoint
+            # Only log health check status if we have an endpoint and some time has passed
+            if endpoint and elapsed >= 30 and elapsed % 30 == 0:  # Log every 30 seconds after first 30s
                 logger.info(f"Service not healthy yet, waiting... ({elapsed}s elapsed)")
-            elif endpoint:
+            elif endpoint and time.time() - last_check_time >= 10:  # Debug log every 10s when we have endpoint
                 logger.debug(f"Service not healthy yet, waiting... ({elapsed}s elapsed)")
+                last_check_time = time.time()
                 
             time.sleep(5)  # Check every 5 seconds
         
@@ -630,6 +652,9 @@ class VastAIManager:
             logger.warning(f"Endpoint never became available within {timeout} seconds on instance {instance_id} (waited {elapsed}s)")
         else:
             logger.warning(f"Service did not become healthy within {timeout} seconds on instance {instance_id} (waited {elapsed}s)")
+            logger.info(f"Final health check attempt...")
+            # Try one final health check with more verbose logging
+            self._check_service_health(instance_id, timeout=30)
         return False
 
     def update_server_code(self, instance_id: int, timeout: int = 120, verbose: bool = False) -> bool:
@@ -1208,6 +1233,8 @@ def main():
                        help="Force provisioning of existing instances")
     parser.add_argument("--provision-instance", type=int, metavar="INSTANCE_ID",
                        help="Manually provision a specific instance by ID")
+    parser.add_argument("--test-health", type=int, metavar="INSTANCE_ID",
+                       help="Test health check on a specific instance by ID")
     parser.add_argument("--create", action="store_true",
                        help="Create new instance if none found")
     parser.add_argument("--provision-script", type=str, metavar="URL",
@@ -1223,6 +1250,33 @@ def main():
             print("✅ Provisioning completed successfully")
         else:
             print("❌ Provisioning failed")
+        return
+
+    if args.test_health:
+        print(f"Testing health check on instance {args.test_health}...")
+        endpoint = manager.get_model_server_endpoint(args.test_health)
+        if endpoint:
+            print(f"Endpoint: {endpoint.url}")
+            print(f"Testing health check...")
+            is_healthy = manager._check_service_health(args.test_health, timeout=30)
+            if is_healthy:
+                print("✅ Service is healthy")
+            else:
+                print("❌ Service is not healthy")
+                
+            # Also try a raw request to see what we get
+            try:
+                import requests
+                health_url = f"{endpoint.url}/healthcheck"
+                print(f"\n🔍 Raw health check request to: {health_url}")
+                response = requests.get(health_url, timeout=30)
+                print(f"Status Code: {response.status_code}")
+                print(f"Response Headers: {dict(response.headers)}")
+                print(f"Response Body: {response.text}")
+            except Exception as e:
+                print(f"❌ Raw request failed: {e}")
+        else:
+            print("❌ Could not get endpoint for instance")
         return
 
     # Find or create an instance
