@@ -30,9 +30,11 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Backup system**: Configuration and state backups before changes
 - **Git integration**: Simple `git pull` workflow with safety checks
 
-### 5. **Kiosk-Style Display Support**
+### 5. **Kiosk-Style Display Support & Robust Service Management**
 - **Wayland compatibility**: Automatic detection and configuration for Ubuntu 24.04+ Wayland sessions
-- **Desktop session waiting**: Services wait for user login before starting
+- **Desktop session dependency**: Uses systemd's `graphical-session.target` for clean desktop readiness
+- **Independent service control**: Services can restart individually without affecting others
+- **No cascade failures**: Fixed systemd configuration prevents one service failure from stopping all services
 - **Xwayland integration**: Seamless fallback to X11 applications on Wayland
 - **Auto-recovery**: Display service automatically adapts to desktop environment changes
 
@@ -52,7 +54,7 @@ infra/
 │   ├── deploy.sh              # Main deployment script (simplified, no special cases)
 │   ├── get_project_services.py # Dynamic service detection
 │   ├── setup_display_env.sh   # Wayland/Xwayland display environment detection
-│   ├── wait_for_desktop_session.sh # Wait for user login before display service
+│   ├── wait_for_desktop_session.sh # Wait for user login (used by target, not individual services)
 │   └── (other utility scripts)
 └── docs/                      # Documentation
     ├── deployment.md          # Complete deployment guide
@@ -106,13 +108,16 @@ sudo systemctl list-units "*@experimance*" --no-pager
 # Individual service control (new format: service_type@project)
 sudo systemctl status core@experimance
 sudo systemctl status display@experimance  # Includes Wayland support
-sudo systemctl restart agent@experimance
+sudo systemctl restart agent@experimance   # Services restart independently
+
+# Services can now be started individually without requiring the target
+sudo systemctl start agent@experimance     # Start just the agent service
+sudo systemctl stop display@experimance    # Stop just the display service
 
 # follow logs
 sudo journalctl -u image_server@experimance.service -f
 
 # logs since last started target service (all services at once!)
-
 sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" -o cat  # clean, human-readable
 
 # other output formats
@@ -161,6 +166,38 @@ ls -la /etc/systemd/system/*@.target
 # See all instances for a project
 sudo systemctl status "*@experimance"
 ```
+
+## Systemd Configuration Improvements
+
+### Independent Service Management ✅
+Recent improvements to the systemd configuration provide better service isolation:
+
+- **No cascade failures**: Services use `Wants` + `PartOf` instead of `BindsTo` to prevent one service failure from stopping all others
+- **Independent restarts**: Individual services can restart without affecting the target or other services
+- **Desktop session dependency**: Uses systemd's native `graphical-session.target` instead of custom scripts per service
+- **Clean startup/shutdown**: Services start when target starts, stop when target stops, but can operate independently
+
+### Service Dependencies
+```ini
+# Each service now uses this pattern:
+[Unit]
+After=experimance@%i.target graphical-session.target
+Wants=experimance@%i.target graphical-session.target  
+PartOf=experimance@%i.target
+
+# Target depends on desktop readiness:
+[Unit]  
+After=network.target user@1000.service graphical-session.target
+Wants=network.target user@1000.service graphical-session.target
+```
+
+### Benefits
+- ✅ Start all services: `sudo systemctl start experimance@experimance.target`
+- ✅ Stop all services: `sudo systemctl stop experimance@experimance.target`  
+- ✅ Start individual service: `sudo systemctl start core@experimance.service`
+- ✅ Restart individual service: `sudo systemctl restart display@experimance.service`
+- ✅ Service failures don't cascade to other services
+- ✅ No rapid cycling or race conditions
 
 ### Development (Testing on Any Machine)
 ```bash
@@ -230,6 +267,26 @@ cd /path/to/experimance
 uv run python infra/scripts/get_project_services.py experimance
 # or if uv not in PATH:
 ~/.local/bin/uv run python infra/scripts/get_project_services.py experimance
+```
+
+### Systemd Issues
+```bash
+# Check for old/duplicate systemd files
+sudo find /etc/systemd/system -name "*experimance*" | sort
+
+# Clean state should show:
+# /etc/systemd/system/experimance@.target
+# /etc/systemd/system/experimance@.target.wants/
+# /etc/systemd/system/experimance@.target.wants/[service]@experimance.service
+# /etc/systemd/system/multi-user.target.wants/experimance@experimance.target
+# /etc/systemd/system/[service]@.service (template files)
+
+# Remove old duplicate files if found:
+sudo rm /etc/systemd/system/multi-user.target.wants/*-health@*.service  # Old naming
+sudo systemctl daemon-reload
+
+# Check target status for cycling issues:
+sudo journalctl -u experimance@experimance.target --since "10 minutes ago"
 ```
 
 ### View Logs

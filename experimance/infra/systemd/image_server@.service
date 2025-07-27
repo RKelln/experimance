@@ -1,7 +1,7 @@
 [Unit]
 Description=Image Server Service (%i project)
-After=experimance@%i.target
-Wants=experimance@%i.target
+After=experimance@%i.target network.target
+Wants=experimance@%i.target network.target
 PartOf=experimance@%i.target
 
 [Service]
@@ -13,7 +13,6 @@ Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Dynamic display environment detection via wrapper script
-ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/opt/experimance/infra/scripts/setup_display_env.sh /home/experimance/.local/bin/uv run -m image_server
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure

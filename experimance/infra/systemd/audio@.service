@@ -1,7 +1,7 @@
 [Unit]
 Description=Audio Service (%i project)
-After=experimance@%i.target
-Wants=experimance@%i.target
+After=experimance@%i.target graphical-session.target
+Wants=experimance@%i.target graphical-session.target
 PartOf=experimance@%i.target
 
 [Service]
@@ -17,8 +17,6 @@ Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
 Environment=DISPLAY=:0
 Environment=WAYLAND_DISPLAY=wayland-0
-# Wait for user session before starting audio (JACK needs user session)
-ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_audio
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure

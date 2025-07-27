@@ -1,7 +1,7 @@
 [Unit]
 Description=Agent Service (%i project)
-After=experimance@%i.target
-Wants=experimance@%i.target
+After=experimance@%i.target graphical-session.target
+Wants=experimance@%i.target graphical-session.target
 PartOf=experimance@%i.target
 
 [Service]
@@ -12,8 +12,6 @@ WorkingDirectory=/opt/experimance
 Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
-# Wait for user session before starting agent service (camera/vision access)
-ExecStartPre=/opt/experimance/infra/scripts/wait_for_desktop_session.sh experimance
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_agent
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
