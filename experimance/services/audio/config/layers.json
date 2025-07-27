@@ -807,13 +807,6 @@
         "prompt": "restaurant ambience: silverware clinks, soft ambient chatter, order calls from kitchen"
     },
     {
-        "path": "environment/river.mp3",
-        "tags": [
-            "river"
-        ],
-        "prompt": "river ambience: flowing water over rocks, occasional splash or wildlife call, and ambient forest or grassland rustle"
-    },
-    {
         "path": "environment/roller_rink.mp3",
         "tags": [
             "roller_rink"
