@@ -12,7 +12,10 @@
   - [x] convert from prototype
 - [] add sensors
 - [x] convert renderrequest to file uri 
-- [ ] more/better blur on depth map
+- [x] more/better blur on depth map
+- [x] era progression
+  - [x] future vs dystopia
+  - [x] interaction 
 
 ### Sand Sensors
 - [] add prototype code
@@ -36,10 +39,11 @@
 - [x] create supercollider prototype 
   - [x] integrate ZMQ
   - [x] add surround sound (agent, environment and music)
-- [ ] fix scd script 
-  - [ ] so it works without USB audio device 
-  - [ ] works in scide (audio paths)
-
+- [x] fix scd script
+  - [x] so it works without USB audio device 
+  - [x] works in scide (audio paths)
+- [ ] music ducking
+- 
 ### Image server
 - [x] convert prototype to production code
   - [x] integrate ZMQ
@@ -47,18 +51,26 @@
 - [ ] write tests
 - [ ] test runware and vast.ai and other cloud options
   - [x] vastai
-    - [ ] fix provisioning or workaround
-    - [ ] allow for multiple loras
+    - [x] fix provisioning or workaround
+    - [x] allow for multiple loras
     - [x] helper script
-- [ ] diffusers speed-ups tests
+- [x] diffusers speed-ups tests
 
 ### Voice Agent
 
 - [x] convert prototype to production code
-- [] research mem0 memory integration
+- [ ] research mem0 memory integration
+- [ ] handle hand too long
+- [ ] handle more than 1 person too long
+- [x] investigate no sound, detect and restart
+- [x] end conversation on idle
+- [x] ask if anyone there on presence lost
+- [ ] handle multiple people switching conversations
+- [x] handle goodbye and new person arriving
 
 ### Infrastructure
-- [ ] test production deploy
+- [x] test production deploy
+  - [ ] remote starting
 
 ## ZMQ
 - [] services -> core comms
