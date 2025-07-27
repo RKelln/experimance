@@ -24,7 +24,11 @@ from experimance_common.health import HealthStatus
 from experimance_common.notifications import create_notification_handlers
 from .config import HealthServiceConfig, DEFAULT_CONFIG_PATH
 
-logger = logging.getLogger(__name__)
+from experimance_common.logger import setup_logging
+
+SERVICE_TYPE = "health"
+
+logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
 
 
 class HealthService(BaseService):
@@ -36,8 +40,8 @@ class HealthService(BaseService):
     def __init__(self, config: HealthServiceConfig):
         """Initialize the health service."""
         # Initialize BaseService first
-        super().__init__(service_name=config.service_name, service_type="health")
-        
+        super().__init__(service_name=config.service_name, service_type=SERVICE_TYPE)
+
         self.config = config
         self.health_dir = config.get_effective_health_dir()
         self.last_notifications = {}  # Track last notification time per service

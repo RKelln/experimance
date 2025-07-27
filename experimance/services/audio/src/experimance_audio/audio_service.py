@@ -23,6 +23,7 @@ from typing import Dict, List, Any, Optional, Union
 from experimance_common.constants import DEFAULT_PORTS
 from experimance_common.base_service import BaseService
 from experimance_common.health import HealthStatus
+from experimance_common.logger import get_log_file_path
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
@@ -33,9 +34,11 @@ from pydantic import ValidationError
 from .config import AudioServiceConfig, DEFAULT_CONFIG_PATH
 from .config_loader import AudioConfigLoader
 from .osc_bridge import OscBridge, DEFAULT_SCLANG_PATH
+from experimance_common.logger import setup_logging, get_log_file_path
 
-# Configure logging
-logger = logging.getLogger(__name__)
+SERVICE_TYPE = "audio"
+
+logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
 
 class AudioService(BaseService):
     """
@@ -54,8 +57,8 @@ class AudioService(BaseService):
         self.config = config
             
         # Initialize base service
-        super().__init__(service_name=self.config.service_name, service_type="audio")
-        
+        super().__init__(service_name=self.config.service_name, service_type=SERVICE_TYPE)
+
         # Use ZMQ configuration from config, updating the service name to match
         self.zmq_config = self.config.zmq
         self.zmq_config.name = f"{self.config.service_name}-pubsub"
@@ -64,9 +67,17 @@ class AudioService(BaseService):
         self.zmq_service = PubSubService(self.zmq_config)
         
         # Initialize OSC bridge for communication with SuperCollider
+        log_path = None
+        # Use log path from config if specified, otherwise default to logs/
+        if self.config.supercollider.log_path:
+            log_path = Path(self.config.supercollider.log_path)
+        else:
+            log_path = get_log_file_path("supercollider.log")
+
         self.osc = OscBridge(
             host=self.config.osc.host, 
-            port=self.config.osc.send_port
+            port=self.config.osc.send_port,
+            log_path=log_path
         )
         
         # Initialize configuration loader
@@ -993,7 +1004,7 @@ class AudioService(BaseService):
                     
                     if self.osc.start_supercollider(
                         str(self.tmp_script_path), 
-                        self.config.supercollider.sclang_path
+                        self.config.supercollider.sclang_path,
                     ):
                         logger.info("SuperCollider started successfully")
                         self.record_health_check(

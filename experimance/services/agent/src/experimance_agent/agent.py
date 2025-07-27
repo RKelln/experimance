@@ -35,7 +35,11 @@ from experimance_common.zmq.config import MessageDataType
 from .config import AgentServiceConfig
 from .backends.base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall
 
-logger = logging.getLogger(__name__)
+from experimance_common.logger import setup_logging
+
+SERVICE_TYPE = "agent"
+
+logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
 
 
 class AgentService(BaseService):
@@ -50,8 +54,8 @@ class AgentService(BaseService):
     """
     
     def __init__(self, config: AgentServiceConfig):
-        super().__init__(service_type="agent", service_name=config.service_name)
-        
+        super().__init__(service_type=SERVICE_TYPE, service_name=config.service_name)
+
         # Store immutable config
         self.config = config
         

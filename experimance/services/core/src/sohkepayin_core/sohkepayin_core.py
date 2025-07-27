@@ -37,7 +37,11 @@ from .llm import LLMProvider, get_llm_provider
 from .llm_prompt_builder import LLMPromptBuilder
 from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
 
-logger = logging.getLogger(__name__)
+from experimance_common.logger import setup_logging
+
+SERVICE_TYPE = "core"
+
+logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
 
 
 class CoreState(Enum):
@@ -76,7 +80,7 @@ class SohkepayinCoreService(BaseService):
         """Initialize the Sohkepayin core service."""
         super().__init__(
             service_name=config.service_name,
-            service_type="core"
+            service_type=SERVICE_TYPE
         )
         
         self.config = config

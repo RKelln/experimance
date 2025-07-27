@@ -9,6 +9,7 @@ from pydantic import field_validator
 from pydantic.types import StringConstraints
 
 from experimance_common.config import BaseServiceConfig
+from experimance_common.logger import get_log_directory
 from experimance_common.zmq.config import PubSubServiceConfig, PublisherConfig, SubscriberConfig
 from experimance_common.schemas import MessageType
 from experimance_common.constants import (
@@ -216,7 +217,7 @@ class TranscriptConfig(BaseModel):
     
     # Transcript archival
     save_transcripts: bool = Field(default=True, description="Save conversation transcripts to files")
-    transcript_directory: str = Field(default_factory=lambda: str(LOGS_DIR / "transcripts"), description="Directory to save transcript files")
+    transcript_directory: str = Field(default_factory=lambda: str(get_log_directory() / "transcripts"), description="Directory to save transcript files")
 
 
 class AgentServiceConfig(BaseServiceConfig):

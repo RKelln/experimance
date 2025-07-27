@@ -334,7 +334,7 @@ logger = logging.getLogger(__name__)
 ### Environment Detection
 
 The system automatically detects the environment:
-- **Production**: Running as root, `EXPERIMANCE_ENVIRONMENT=production`, or `/etc/experimance` exists
+- **Production**: Running as root, `EXPERIMANCE_ENV=production`, or `/etc/experimance` exists
 - **Development**: All other cases
 
 ### External Library Logging

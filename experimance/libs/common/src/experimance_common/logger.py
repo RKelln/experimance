@@ -3,6 +3,52 @@ import os
 from pathlib import Path
 from typing import Optional
 
+
+def get_log_directory() -> Path:    
+    """
+    Determine the appropriate log directory based on environment.
+    
+    Returns:
+        Path to log directory - uses /var/log/experimance/ in production,
+        logs/ directory in development
+    """
+    # Check if we're in a production environment (systemd service or root)
+    is_production = (
+        os.geteuid() == 0 or  # Running as root
+        os.environ.get("EXPERIMANCE_ENV") == "production" or
+        Path("/etc/experimance").exists()  # Production marker
+    )
+    
+    if is_production:
+        log_dir = Path("/var/log/experimance")
+    else:
+        # Development environment - use local logs directory
+        try:
+            from experimance_common.constants import PROJECT_ROOT
+            log_dir = PROJECT_ROOT / "logs"
+        except ImportError:
+            # Fallback if constants not available
+            log_dir = Path.cwd() / "logs"
+        
+    # Create log directory if it doesn't exist
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError) as e:
+        # Only fall back to local logs if we're not in production or if the directory doesn't exist yet
+        # In production, the deploy script should have created /var/log/experimance
+        if is_production:
+            # In production, this is likely a deployment issue - fail with clear error
+            raise RuntimeError(
+                f"Cannot create production log directory {log_dir}. "
+                f"Run 'sudo ./infra/scripts/deploy.sh {os.environ.get('PROJECT', 'experimance')} install prod' "
+                f"to set up system directories. Error: {e}"
+            )
+        else:
+            # Fallback to local logs in development
+            log_dir = Path.cwd() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
 def get_log_file_path(log_filename: str = "application.log") -> str:
     """
     Determine the appropriate log file path based on environment.
@@ -14,35 +60,18 @@ def get_log_file_path(log_filename: str = "application.log") -> str:
         Path to log file - uses /var/log/experimance/ in production,
         logs/ directory in development
     """
-    # Check if we're in a production environment (systemd service or root)
-    is_production = (
-        os.geteuid() == 0 or  # Running as root
-        os.environ.get("EXPERIMANCE_ENVIRONMENT") == "production" or
-        Path("/etc/experimance").exists()  # Production marker
-    )
-    
-    if is_production:
-        log_dir = Path("/var/log/experimance")
-        log_file = log_dir / log_filename
-    else:
-        # Development environment - use local logs directory
+    log_file = get_log_directory() / log_filename
+    if not log_file.exists():
+        # Create the log file if it doesn't exist
         try:
-            from experimance_common.constants import PROJECT_ROOT
-            log_dir = PROJECT_ROOT / "logs"
-        except ImportError:
-            # Fallback if constants not available
+            log_file.touch(exist_ok=True)
+        except OSError as e:
+            # If we can't create the file in the production directory, fall back to local logs
+            # This handles read-only filesystem issues
             log_dir = Path.cwd() / "logs"
-        log_file = log_dir / log_filename
-    
-    # Create log directory if it doesn't exist
-    try:
-        log_dir.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        # Fallback to local logs if we can't create system logs
-        log_dir = Path.cwd() / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / log_filename
-    
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / log_filename
+            log_file.touch(exist_ok=True)
     return str(log_file)
 
 def setup_logging(
@@ -72,7 +101,7 @@ def setup_logging(
         # Check if we're in a production environment
         is_production = (
             os.geteuid() == 0 or  # Running as root
-            os.environ.get("EXPERIMANCE_ENVIRONMENT") == "production" or
+            os.environ.get("EXPERIMANCE_ENV") == "production" or
             Path("/etc/experimance").exists()  # Production marker
         )
         # In production, let systemd handle console output (file-only logging)

@@ -18,6 +18,7 @@ from pythonosc import udp_client
 from typing import Any, Dict, List, Optional, Union
 
 from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.logger import get_log_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class OscBridge:
     client: Optional[udp_client.SimpleUDPClient] = None
     sc_process: Optional[subprocess.Popen] = None
 
-    def __init__(self, host: str = "localhost", port: int = DEFAULT_PORTS["audio_osc_send_port"]):
+    def __init__(self, host: str = "localhost", port: int = DEFAULT_PORTS["audio_osc_send_port"], log_path: Optional[Path] = None):
         """Initialize the OSC bridge.
         
         Args:
@@ -44,6 +45,7 @@ class OscBridge:
         self.port = port
         self.client = None
         self.sc_process = None
+        self.log_path = log_path
         self._connect()
     
     def _connect(self) -> bool:
@@ -296,13 +298,21 @@ class OscBridge:
                 return None
 
             # Prepare command with headless option - force no GUI
-            cmd = [sclang_path, "-D", str(script_path)]  # -D flag runs without GUI
+            cmd = [sclang_path, "-D", str(script_path)]  # -D daemon mode, path to script
             
             # Set up environment for headless operation
             env = os.environ.copy()
             
             # Force headless mode - no GUI components at all
             env['QT_QPA_PLATFORM'] = 'offscreen'
+            # Didn't help prevent the Qt web engine from trying to start:
+            # # Disable Qt web engine and other GUI components
+            # env['QTWEBENGINE_DISABLE_SANDBOX'] = '1'
+            # env['QT_LOGGING_RULES'] = 'qt.webenginecontext.debug=false'
+            # env['QT_QPA_PLATFORMTHEME'] = 'generic'
+            # # Disable WebEngine completely
+            # env['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-web-security --disable-features=TranslateUI --no-sandbox'
+            # env['QT_WEBENGINE_DISABLE_DESKTOP_NOTIFICATIONS'] = '1'
             # Remove any display to ensure truly headless operation
             if 'DISPLAY' in env:
                 del env['DISPLAY']
@@ -352,15 +362,16 @@ class OscBridge:
         
         if log_to_file:
             # Create log directory
-            script_dir = Path(__file__).parent.parent.parent  # Go up from src/experimance_audio to services/audio
-            log_dir = script_dir / "logs"
-            log_dir.mkdir(exist_ok=True)
-            
-            # Create log file with timestamp
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_file_path = log_dir / f"supercollider_{timestamp}.log"
-            log_file = open(log_file_path, "w", encoding="utf-8", buffering=1)  # Line buffered
+            if self.log_path:
+                log_file_path = self.log_path
+                if isinstance(log_file_path, str):
+                    log_file_path = Path(log_file_path)
+            else:
+                log_file_path = Path(get_log_file_path("supercollider.log"))
+
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
             logger.info(f"SuperCollider logs will be saved to: {log_file_path}")
+            log_file = open(log_file_path, "w", encoding="utf-8", buffering=1)  # Line buffered
         
         def _process_stream(stream, prefix):
             """Process each line from a stream and log it."""

@@ -257,17 +257,12 @@ install_systemd_files() {
     
     log "Installing systemd service files..."
     
-    # Debug: Show what files we're looking for
-    log "Looking for service files in: $SCRIPT_DIR/../systemd/"
-    ls -la "$SCRIPT_DIR/../systemd/"*.service 2>&1 | while read line; do log "  $line"; done || log "  No service files found"
-    
     # Copy all template service files (e.g., core@.service, display@.service)
     # These are TEMPLATES that systemd uses to create instances like core@experimance.service
     local files_copied=0
     for service_file in "$SCRIPT_DIR"/../systemd/*.service; do
         if [[ -f "$service_file" ]]; then
             local basename_file=$(basename "$service_file")
-            log "Copying $basename_file..."
             if cp "$service_file" "$SYSTEMD_DIR/"; then
                 log "✓ Copied $basename_file"
                 files_copied=$((files_copied + 1))
@@ -279,7 +274,6 @@ install_systemd_files() {
     
     # Copy target template file (e.g., experimance@.target)
     if [[ -f "$SCRIPT_DIR/../systemd/experimance@.target" ]]; then
-        log "Copying experimance@.target..."
         if cp "$SCRIPT_DIR/../systemd/experimance@.target" "$SYSTEMD_DIR/"; then
             log "✓ Copied experimance@.target"
             files_copied=$((files_copied + 1))
@@ -405,6 +399,12 @@ setup_directories() {
         mkdir -p /var/cache/experimance
         chown "$RUNTIME_USER:$RUNTIME_USER" /var/cache/experimance
         log "Created production cache directory: /var/cache/experimance"
+        
+        # Production: use /var/log/experimance
+        mkdir -p /var/log/experimance
+        chown "$RUNTIME_USER:$RUNTIME_USER" /var/log/experimance
+        chmod 775 /var/log/experimance
+        log "Created production log directory: /var/log/experimance"
     else
         # Development: use local cache directory
         mkdir -p "$REPO_DIR/cache"
@@ -1055,8 +1055,6 @@ start_services() {
             fi
         else
             error "Service template file not found: $template_file"
-            log "Available service templates matching pattern:"
-            ls -la "$SYSTEMD_DIR" | grep "@\.service" || log "  No template service files found"
         fi
     done
     
@@ -1100,8 +1098,6 @@ start_services() {
         fi
     else
         error "Target template file not found: $SYSTEMD_DIR/experimance@.target"
-        log "Available target templates matching 'experimance':"
-        ls -la "$SYSTEMD_DIR" | grep experimance | grep target || log "  No experimance target files found"
     fi
     
     log "Start operation complete"
@@ -1449,6 +1445,7 @@ main() {
             else
                 log "Production installation complete!"
                 log "To start services: sudo ./deploy.sh $PROJECT start"
+                log "You may want to run 'sudo systemctl daemon-reload' if you made changes to systemd files"
             fi
             ;;
         start)
@@ -1560,8 +1557,8 @@ main() {
             
             echo -e "\n${BLUE}=== Systemd Files ===${NC}"
             echo "Systemd directory: $SYSTEMD_DIR"
-            echo "Available experimance systemd files:"
-            ls -la "$SYSTEMD_DIR" | grep experimance || echo "  No experimance files found"
+            local file_count=$(ls -1 "$SYSTEMD_DIR" | grep experimance | wc -l)
+            echo "Experimance systemd files installed: $file_count"
             
             echo -e "\n${BLUE}=== Unit Files Check ===${NC}"
             local target="experimance@${PROJECT}.target"
@@ -1569,7 +1566,6 @@ main() {
             echo "Target template file: $SYSTEMD_DIR/experimance@.target"
             if [ -f "$SYSTEMD_DIR/experimance@.target" ]; then
                 echo -e "${GREEN}✓${NC} Target template file exists"
-                echo "Target file permissions: $(ls -la "$SYSTEMD_DIR/experimance@.target")"
             else
                 echo -e "${RED}✗${NC} Target template file missing"
             fi
@@ -1623,8 +1619,8 @@ main() {
             systemctl list-units --all | grep experimance || echo "  No experimance units found"
             
             echo -e "\n${BLUE}=== Unit File Status ===${NC}"
-            echo "Unit files:"
-            systemctl list-unit-files | grep experimance || echo "  No experimance unit files found"
+            local unit_count=$(systemctl list-unit-files | grep experimance | wc -l)
+            echo "Experimance unit files registered: $unit_count"
             
             if systemctl list-unit-files | grep -q "$target"; then
                 echo -e "\n${BLUE}=== Target Dependencies ===${NC}"

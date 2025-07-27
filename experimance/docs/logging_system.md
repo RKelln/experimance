@@ -43,7 +43,7 @@ class MyService(BaseService):
 ### **Environment Detection**
 Production mode when:
 - Running as root (`os.geteuid() == 0`)
-- `EXPERIMANCE_ENVIRONMENT=production`
+- `EXPERIMANCE_ENV=production`
 - `/etc/experimance` directory exists
 
 ## 📁 **File Locations**

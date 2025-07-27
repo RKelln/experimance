@@ -99,4 +99,4 @@ human_speaker_name = "Visitor"
 
 # Transcript archival
 save_transcripts = true
-transcript_directory = "logs/transcripts"
+

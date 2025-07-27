@@ -62,9 +62,9 @@ class SuperColliderConfig(BaseModel):
         description="Timeout in seconds for SuperCollider startup"
     )
 
-    log_dir: Optional[str] = Field(
-        default=str(Path(AUDIO_SERVICE_DIR) / "logs"),
-        description="Directory to write SuperCollider logs"
+    log_path: Optional[str | Path] = Field(
+        default=None,  # use default configured logs for environment
+        description="File path to write SuperCollider logs"
     )
 
     output_channels: Optional[int] = Field(

@@ -41,7 +41,7 @@ NoNewPrivileges=true
 PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv /tmp
+ReadWritePaths=/opt/experimance /var/cache/experimance /var/log/experimance /home/experimance/.local /home/experimance/.pyenv /tmp
 
 # Audio and video access for camera
 SupplementaryGroups=video

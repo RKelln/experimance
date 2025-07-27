@@ -27,7 +27,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /home/experimance/.local /home/experimance/.pyenv
+ReadWritePaths=/opt/experimance /var/cache/experimance /var/log/experimance /home/experimance/.local /home/experimance/.pyenv
 
 [Install]
 WantedBy=experimance@.target

@@ -29,13 +29,16 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, Coroutine
 
-from experimance_common.logger import setup_logging
 from experimance_common.service_state import ServiceState, StateManager
 from experimance_common.service_decorators import lifecycle_service
 from experimance_common.health import HealthStatus, HealthReporter, create_health_reporter
 
-# Configure logging with adaptive file location and console handling
-logger = setup_logging(__name__)  # Auto-detects: console in dev, file-only in production
+# Note: Individual services should set up their own logging using:
+# from experimance_common.logger import setup_logging
+# logger = setup_logging(__name__, log_filename="service_name.log")
+
+# BaseService uses a simple module-level logger for its own internal logging
+logger = logging.getLogger(__name__)
 
 
 @lifecycle_service

@@ -12,7 +12,6 @@ auto_start = true            # Automatically start SuperCollider on service laun
 sclang_path = "sclang"       # Path to SuperCollider language interpreter
 script_path = "experimance_audio.scd"  # Path to SuperCollider script (leave null to auto-discover)
 startup_timeout = 10.0       # Seconds to wait for SuperCollider startup
-log_dir = "services/audio/logs"  # Directory where SuperCollider log files are written
 output_channels=6            # 5.1 surround: L, R, C, LFE, LS, RS
 input_channels=2
 device="ICUSBAUDIO7D"        # USB audio interface (will resolve to hw:X,Y automatically)
