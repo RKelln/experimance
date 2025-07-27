@@ -1,8 +1,8 @@
 [Unit]
 Description=Display Service (%i project)
 After=experimance@%i.target
-BindsTo=experimance@%i.target
-# Target handles network and user session dependencies
+Wants=experimance@%i.target
+PartOf=experimance@%i.target
 
 [Service]
 Type=simple

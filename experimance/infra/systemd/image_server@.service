@@ -1,12 +1,8 @@
 [Unit]
 Description=Image Server Service (%i project)
 After=experimance@%i.target
-BindsTo=experimance@%i.target
-# Target handles network and user session dependencies]
-Description=Image Server (%i project)
-After=network.target user@1000.service experimance@%i.target
-Wants=network.target user@1000.service
-BindsTo=experimance@%i.target
+Wants=experimance@%i.target
+PartOf=experimance@%i.target
 
 [Service]
 Type=simple
