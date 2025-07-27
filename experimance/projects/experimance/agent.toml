@@ -13,7 +13,7 @@ speech_detection_enabled = true
 
 # Conversation cooldown settings
 # After a conversation ends (e.g., saying goodbye), wait this long before starting a new one
-conversation_cooldown_duration = 30.0  # seconds
+conversation_cooldown_duration = 12.0  # seconds
 
 # End cooldown early if audience leaves and returns (allows immediate restart on audience change)
 # This prevents the same person from immediately restarting, but allows new people to start immediately
