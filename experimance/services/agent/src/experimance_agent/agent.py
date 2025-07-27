@@ -967,15 +967,32 @@ class AgentService(BaseService):
         
         # TODO: Update agent context with current era/biome information
         if self.current_backend and self.current_backend.is_connected:
-            context_msg = f"<projection: currently displaying a {biome} biome in the {era} era in .>"
+            context_msg = f"<projection: currently displaying a {era_to_description(biome, era)}.>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
+
+    def era_to_description(era: str) -> str:
+        """Convert era string to human-readable description."""
+        str_biome = str(biome).replace("_", " ").lower()
+        era_descriptions = {
+            "wilderness": f"a {str_biome} landscape untouched by humans",
+            "pre_industrial": f"a {str_biome} landscape long before industrialization",
+            "early_industrial": f"a {str_biome} landscape as industry begins to emerge",
+            "industrial": f"a {str_biome} landscape dominated by industry",
+            "modern": f"a {str_biome} landscape in late 20th century",
+            "current": f"a {str_biome} landscape in the present day",
+            "future": f"a {str_biome} landscape in the near future if things go well",
+            "dystopia": f"a {str_biome} landscape in a dystopian future where things have gone wrong",
+            "ruins": f"a future {str_biome} landscape with remnants of our civilization",
+        }
+        return era_descriptions.get(era, f"a {str_biome} landscape")
+
     async def _handle_audience_present(self, message_data: MessageDataType):
         """Handle audience presence updates."""
         # Don't process presence updates if service is shutting down
         if not self.running: return
             
-        logger.info(f"Audience presence update received: {message_data}")
+        logger.debug(f"Audience presence update received: {message_data}")
 
         audience_present = message_data.get("present", True)
         idle = message_data.get("idle", False)
