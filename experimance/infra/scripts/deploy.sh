@@ -14,6 +14,25 @@
 
 set -euo pipefail
 
+# Trap function to show big error on any script failure
+trap_error() {
+    local exit_code=$?
+    local line_number=$1
+    echo ""
+    echo -e "${RED}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║                                  CRITICAL ERROR                               ║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] SCRIPT FAILED: Unexpected error on line $line_number${NC}"
+    echo -e "${RED}Exit code: $exit_code${NC}"
+    echo -e "${RED}This could be due to a pipeline failure, command error, or unset variable.${NC}"
+    echo -e "${RED}Script execution FAILED and will exit.${NC}"
+    echo ""
+    exit $exit_code
+}
+
+# Set trap to catch any error
+trap 'trap_error ${LINENO}' ERR
+
 # Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -31,7 +50,13 @@ warn() {
 }
 
 error() {
+    echo ""
+    echo -e "${RED}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║                                  CRITICAL ERROR                                ║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
+    echo -e "${RED}Script execution FAILED and will exit.${NC}"
+    echo ""
     exit 1
 }
 
@@ -232,22 +257,37 @@ install_systemd_files() {
     
     log "Installing systemd service files..."
     
+    # Debug: Show what files we're looking for
+    log "Looking for service files in: $SCRIPT_DIR/../systemd/"
+    ls -la "$SCRIPT_DIR/../systemd/"*.service 2>&1 | while read line; do log "  $line"; done || log "  No service files found"
+    
     # Copy all template service files (e.g., core@.service, display@.service)
     # These are TEMPLATES that systemd uses to create instances like core@experimance.service
     local files_copied=0
     for service_file in "$SCRIPT_DIR"/../systemd/*.service; do
         if [[ -f "$service_file" ]]; then
-            cp "$service_file" "$SYSTEMD_DIR/"
-            log "Copied $(basename "$service_file")"
-            ((files_copied++))
+            local basename_file=$(basename "$service_file")
+            log "Copying $basename_file..."
+            if cp "$service_file" "$SYSTEMD_DIR/"; then
+                log "✓ Copied $basename_file"
+                files_copied=$((files_copied + 1))
+            else
+                error "✗ Failed to copy $basename_file"
+            fi
         fi
     done
     
     # Copy target template file (e.g., experimance@.target)
     if [[ -f "$SCRIPT_DIR/../systemd/experimance@.target" ]]; then
-        cp "$SCRIPT_DIR/../systemd/experimance@.target" "$SYSTEMD_DIR/"
-        log "Copied experimance@.target"
-        ((files_copied++))
+        log "Copying experimance@.target..."
+        if cp "$SCRIPT_DIR/../systemd/experimance@.target" "$SYSTEMD_DIR/"; then
+            log "✓ Copied experimance@.target"
+            files_copied=$((files_copied + 1))
+        else
+            error "✗ Failed to copy experimance@.target"
+        fi
+    else
+        warn "Target template file not found: $SCRIPT_DIR/../systemd/experimance@.target"
     fi
     
     if [[ $files_copied -eq 0 ]]; then
@@ -276,7 +316,7 @@ install_systemd_files() {
             log "Enabling $full_service_name..."
             if systemctl enable "$full_service_name"; then
                 log "✓ Enabled $full_service_name"
-                ((services_enabled++))
+                services_enabled=$((services_enabled + 1))
             else
                 warn "Failed to enable $full_service_name"
             fi
@@ -301,15 +341,23 @@ install_systemd_files() {
     # Verify service linking
     log "Verifying service linking to target..."
     local linked_services=0
-    for service in "${SERVICES[@]}"; do
-        local full_service_name="$service.service"
-        if systemctl list-dependencies "$target" 2>/dev/null | grep -q "$full_service_name"; then
-            log "✓ $full_service_name is linked to $target"
-            ((linked_services++))
-        else
-            warn "✗ $full_service_name is NOT linked to $target"
-        fi
-    done
+    local deps_output
+    
+    # Get dependencies once to avoid multiple calls
+    if deps_output=$(systemctl list-dependencies "$target" 2>/dev/null); then
+        for service in "${SERVICES[@]}"; do
+            local full_service_name="$service.service"
+            if echo "$deps_output" | grep -q "$full_service_name"; then
+                log "✓ $full_service_name is linked to $target"
+                linked_services=$((linked_services + 1))
+            else
+                warn "✗ $full_service_name is NOT linked to $target"
+            fi
+        done
+    else
+        warn "Could not retrieve dependencies for $target"
+        log "This may indicate the target is not properly configured or systemd needs to be reloaded"
+    fi
     
     log "Installation summary:"
     log "  Template files copied: $files_copied"

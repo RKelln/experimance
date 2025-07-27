@@ -1,8 +1,8 @@
 [Unit]
 Description=Experimance Target (%i project)
-After=network.target user@1000.service graphical-session.target
-Wants=network.target user@1000.service graphical-session.target
-Requires=network.target user@1000.service graphical-session.target
+After=network.target user@1000.service graphical.target
+Wants=network.target user@1000.service graphical.target
+Requires=network.target user@1000.service
 # Target ensures fundamental dependencies are met before any services start
 # Services bind to this target and will start after it's ready
 

@@ -1,7 +1,7 @@
 [Unit]
 Description=Agent Service (%i project)
-After=experimance@%i.target graphical-session.target
-Wants=experimance@%i.target graphical-session.target
+After=experimance@%i.target graphical.target
+Wants=experimance@%i.target graphical.target
 PartOf=experimance@%i.target
 
 [Service]
