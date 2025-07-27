@@ -37,7 +37,7 @@ webcam_height = 480
 # Audience detection with detector profiles
 audience_detection_enabled = true
 audience_detection_interval = 2.0
-audience_detection_threshold = 0.5
+stable_readings_required = 3
 detector_profile = "face_detection"  # Use optimized detector profile
 
 # VLM settings
@@ -422,7 +422,6 @@ v4l2-ctl --device=/dev/video0 --set-ctrl=saturation=45
    - Check internet connection for model downloads
 
 3. **Poor detection accuracy**:
-   - Adjust `audience_detection_threshold`
    - Increase `motion_threshold` in code for less sensitive motion detection
    - Ensure good lighting conditions
 

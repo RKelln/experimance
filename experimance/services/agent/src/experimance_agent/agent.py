@@ -516,8 +516,9 @@ class AgentService(BaseService):
         """Monitor audience presence and publish to presence system."""
         # Adaptive timing: faster checks when detector reports instability
         normal_interval = self.config.vision.audience_detection_interval
-        frame_duration = 1.0 / self.config.vision.webcam_fps
-        rapid_interval = max(frame_duration, normal_interval / 5)  # 5x faster, but at least 1 frame
+        # frame_duration = 1.0 / self.config.vision.webcam_fps
+        # rapid_interval = max(frame_duration, normal_interval / 5)  # 5x faster, but at least 1 frame
+        rapid_interval = max(0.2, 0.8 / self.config.vision.stable_readings_required)  # try to get stable readings every second
         current_interval = normal_interval
         last_publish_time = time.monotonic() # used to ensure we report at least every report_min_interval seconds
         report_min_interval = 30.0  # used so if core service restarts we update it every 30 seconds regardless of changes

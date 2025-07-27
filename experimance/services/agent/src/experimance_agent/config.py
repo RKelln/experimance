@@ -126,8 +126,11 @@ class VisionConfig(BaseModel):
     # Audience detection configuration
     audience_detection_enabled: bool = Field(default=True, description="Enable audience presence detection")
     audience_detection_interval: float = Field(default=2.0, description="Interval between audience detection checks (seconds)")
-    audience_detection_threshold: float = Field(default=0.5, description="Confidence threshold for audience detection")
-    
+    stable_readings_required: int = Field(
+        default=3,
+        description="Number of stable readings required before confirming audience presence"
+    )
+
     # Detection method selection
     detection_method: Annotated[Literal["cpu", "vlm", "hybrid"], 
                                StringConstraints(to_lower=True)] = Field(

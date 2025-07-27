@@ -53,7 +53,7 @@ class CPUAudienceDetector:
         self.previous_state = False
         self.state_change_count = 0
         self.confidence_history = []
-        self.stable_readings_required = 2  # Configurable stability requirement
+        self.stable_readings_required = self.config.stable_readings_required
         
         # Precompute scaling factors to avoid division in hot path
         self.scale_factor = self.profile.detection.detection_scale_factor
