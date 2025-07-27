@@ -276,3 +276,13 @@ class AgentServiceConfig(BaseServiceConfig):
     tool_calling_enabled: bool = Field(default=True, description="Enable tool calling capabilities")
     biome_suggestions_enabled: bool = Field(default=True, description="Enable biome suggestion tool")
     speech_detection_enabled: bool = Field(default=True, description="Enable speech detection events")
+    
+    # Conversation cooldown settings
+    conversation_cooldown_duration: float = Field(
+        default=30.0, 
+        description="Cooldown period after conversation ends before new one can start (seconds)"
+    )
+    cancel_cooldown_on_absence: bool = Field(
+        default=True,
+        description="End cooldown early if audience leaves and returns (allows immediate restart on audience change)"
+    )

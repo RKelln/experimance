@@ -60,6 +60,10 @@ class AgentService(BaseService):
         self.is_conversation_active = False
         self.agent_speaking = False
         
+        # Conversation cooldown state
+        self.conversation_end_time: Optional[float] = None
+        self.audience_went_to_zero_after_conversation = False
+        
         # Audio output monitoring
         self._audio_output_issues_count = 0
         self._last_audio_issue_time = None
@@ -244,6 +248,29 @@ class AgentService(BaseService):
     # Backend Management
     # =========================================================================
     
+    def _is_in_conversation_cooldown(self) -> bool:
+        """Check if we're currently in a conversation cooldown period."""
+        if self.conversation_end_time is None:
+            return False
+            
+        # Check if cooldown time has passed
+        time_elapsed = time.time() - self.conversation_end_time
+        cooldown_expired = time_elapsed >= self.config.conversation_cooldown_duration
+        
+        # If audience absence override is enabled and audience left and returned, end cooldown early
+        if (self.config.cancel_cooldown_on_absence and 
+            self.audience_went_to_zero_after_conversation):
+            return False  # Cooldown ends early when audience changes
+        
+        # Otherwise, cooldown continues until time expires
+        return not cooldown_expired
+    
+    def _clear_conversation_cooldown(self):
+        """Clear the conversation cooldown state."""
+        self.conversation_end_time = None
+        self.audience_went_to_zero_after_conversation = False
+        logger.debug("Conversation cooldown cleared")
+    
     async def _initialize_backend(self):
         """Initialize the selected agent backend."""
         backend_name = self.config.agent_backend.lower()
@@ -317,14 +344,27 @@ class AgentService(BaseService):
         if not self.running: 
             return False
 
+        # Check if we're in cooldown period
+        if self._is_in_conversation_cooldown():
+            cooldown_remaining = max(0, (self.conversation_end_time + self.config.conversation_cooldown_duration) - time.time()) if self.conversation_end_time else 0
+            
+            if self.config.cancel_cooldown_on_absence:
+                logger.info(f"Person detected but conversation cooldown active ({cooldown_remaining:.1f}s remaining, or until audience changes)")
+            else:
+                logger.info(f"Person detected but conversation cooldown active ({cooldown_remaining:.1f}s remaining)")
+            return False
+
         logger.info("Person detected, starting conversation backend...")
         
         try:
             await self._initialize_backend()
             
             # Initialize transcript handling if enabled
-            if self.config.transcript.display_transcripts:
-                await self._initialize_transcript_display_handler()
+            # if self.config.transcript.display_transcripts:
+            #     await self._initialize_transcript_display_handler()
+                
+            # Clear cooldown state when successfully starting a new conversation
+            self._clear_conversation_cooldown()
                 
             logger.info("Conversation backend started successfully")
             return True
@@ -510,7 +550,24 @@ class AgentService(BaseService):
                                 # Only publish if we have a significant change or it's time to report
                                 if self._person_count != person_count or now - last_publish_time > report_min_interval:
                                     if self._person_count != person_count:
+                                        old_count = self._person_count
                                         self._person_count = person_count
+                                        
+                                        # Track audience absence during cooldown for early cooldown end
+                                        if (self.conversation_end_time is not None and 
+                                            self.config.cancel_cooldown_on_absence and
+                                            old_count > 0 and person_count == 0):
+                                            self.audience_went_to_zero_after_conversation = True
+                                            logger.info("Audience left during cooldown - cooldown will end when someone returns")
+                                        
+                                        # If audience returns after leaving during cooldown, end cooldown early
+                                        if (self.conversation_end_time is not None and 
+                                            self.config.cancel_cooldown_on_absence and
+                                            self.audience_went_to_zero_after_conversation and
+                                            old_count == 0 and person_count > 0):
+                                            logger.info("Audience returned after leaving - ending cooldown early")
+                                            # The cooldown check will handle this automatically
+                                        
                                         # update the LLM backend
                                         await self._backend_update_person_count(person_count)
 
@@ -518,6 +575,14 @@ class AgentService(BaseService):
                                     await self._publish_audience_present(
                                         person_count=person_count
                                     )
+                                    
+                                    # Check if cooldown just ended and we should start a conversation
+                                    if (person_count > 0 and 
+                                        not self.current_backend and 
+                                        not self._is_in_conversation_cooldown()):
+                                        logger.info("Cooldown ended with audience present - starting conversation")
+                                        await self._start_backend_for_conversation()
+
                             else:
                                 current_interval = rapid_interval
                                 logger.debug(f"Detector reports instability, using rapid checks ({rapid_interval}s)")
@@ -615,6 +680,14 @@ class AgentService(BaseService):
         """Handle conversation ended event."""
         logger.info("Conversation ended")
         self.is_conversation_active = False
+        
+        # Start cooldown timer
+        self.conversation_end_time = time.time()
+        if self.config.cancel_cooldown_on_absence:
+            self.audience_went_to_zero_after_conversation = False
+            logger.info(f"Conversation cooldown started ({self.config.conversation_cooldown_duration}s, or until audience changes)")
+        else:
+            logger.info(f"Conversation cooldown started ({self.config.conversation_cooldown_duration}s)")
         
         # Check if this is a natural shutdown (flow ended gracefully)
         reason = data.get("reason", "unknown") if data else "unknown"
@@ -986,7 +1059,14 @@ class AgentService(BaseService):
                 "is_conversation_active": self.is_conversation_active,
                 "agent_speaking": self.agent_speaking,
                 "displayed_text_count": len(self.displayed_text_ids),
-                "note": "audience_present is now managed by the core service presence system"
+                "note": "audience_present is now managed by the core service presence system",
+                "cooldown": {
+                    "active": self._is_in_conversation_cooldown(),
+                    "end_time": self.conversation_end_time,
+                    "audience_went_to_zero": self.audience_went_to_zero_after_conversation,
+                    "cooldown_duration": self.config.conversation_cooldown_duration,
+                    "cancel_cooldown_on_absence": self.config.cancel_cooldown_on_absence
+                }
             },
             "backend": None,
             "vision": {},
@@ -996,6 +1076,8 @@ class AgentService(BaseService):
                 "transcript_enabled": self.config.transcript.display_transcripts,
                 "tool_calling_enabled": self.config.tool_calling_enabled,
                 "biome_suggestions_enabled": self.config.biome_suggestions_enabled,
+                "conversation_cooldown_duration": self.config.conversation_cooldown_duration,
+                "cancel_cooldown_on_absence": self.config.cancel_cooldown_on_absence,
             }
         }
         
