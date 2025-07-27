@@ -86,8 +86,7 @@ class PresenceManager:
         if self._agent_people_count != value:
             logger.debug(f"People count changed: {value}")
             self._agent_people_count = value
-            self._update_presence_state()
-            self.updated = True
+            self._update_presence_state(request_update=True)
     
     @property
     def voice(self) -> bool:
@@ -100,8 +99,7 @@ class PresenceManager:
             logger.debug(f"Voice detection changed: {value}")
             self._voice_detected = value
             self._last_voice_time = datetime.now() # last time we heard a voice (starting or ending)
-            self._update_presence_state()
-            #self.updated = True don't inform everyone con voice changes, only on conversation state change
+            self._update_presence_state(request_update=False)
     
     @property
     def agent_speaking(self) -> bool:
@@ -114,8 +112,7 @@ class PresenceManager:
             logger.debug(f"Agent speaking changed: {value}")
             self._agent_speaking = value
             self._last_voice_time = datetime.now() # last time we heard the agent speaking (starting or ending)
-            self._update_presence_state()
-            #self.updated = True don't inform everyone con voice changes, only on conversation state change
+            self._update_presence_state(request_update=False)
 
     @property
     def hand(self) -> bool:
@@ -128,8 +125,8 @@ class PresenceManager:
             logger.debug(f"Hand detection changed: {value}")
             self._hand_detected = value
             self._last_hand_time = datetime.now() # last time we detected a hand (starting or ending)
-            self._update_presence_state()
-            self.updated = True
+            self._update_presence_state(request_update=True)
+            #self.updated = True  # Force publish on hand detection change (currently no one-shot SFX for hand)
 
     @property
     def touch(self) -> bool:
@@ -147,8 +144,8 @@ class PresenceManager:
             logger.debug("Touch interaction detected")
             self._touch_triggered = True
             self._last_touch_time = datetime.now()
-            self._update_presence_state()
-            self.updated = True
+            self._update_presence_state(request_update=True)
+            self.updated = True  # Force publish on touch event
 
     def update(self) -> bool:
         """Updates timers and checks presence state.
@@ -170,7 +167,7 @@ class PresenceManager:
         
         return self.should_publish()
 
-    def _update_presence_state(self) -> None:
+    def _update_presence_state(self, request_update: bool = False) -> None:
         """Update the internal presence state based on current inputs."""
         now = datetime.now()
 
@@ -199,6 +196,7 @@ class PresenceManager:
                 if not self._current_status.present:
                     logger.debug("Audience presence confirmed (hysteresis threshold met)")
                     self._last_present_time = self._presence_start_time + timedelta(seconds=self.config.presence_threshold)
+                    self.updated = True # send out presence update
                 self._update_current_status(present=True)
         else:
             # Start tracking absence if not already
@@ -217,11 +215,13 @@ class PresenceManager:
                         logger.debug("Audience absence confirmed (hysteresis threshold met)")
                     # Set _last_absence_time to when absence was first confirmed, not now
                     self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
+                    self.updated = True # send out presence update
                 elif self._last_absence_time is None:
                     # Ensure _last_absence_time is set even if absence was already confirmed
                     # This handles the case where we're past the threshold but haven't set it yet
                     self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
                 self._update_current_status(present=False)
+                
     
     def _update_current_status(self, present: bool) -> None:
         """Update the current stable presence status."""
