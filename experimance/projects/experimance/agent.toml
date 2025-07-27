@@ -11,6 +11,14 @@ tool_calling_enabled = true
 biome_suggestions_enabled = true
 speech_detection_enabled = true
 
+# Conversation cooldown settings
+# After a conversation ends (e.g., saying goodbye), wait this long before starting a new one
+conversation_cooldown_duration = 30.0  # seconds
+
+# End cooldown early if audience leaves and returns (allows immediate restart on audience change)
+# This prevents the same person from immediately restarting, but allows new people to start immediately
+cancel_cooldown_on_absence = true
+
 [backend_config.pipecat]
 # Pipecat-specific configuration
 system_prompt = "prompt.md"
