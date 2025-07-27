@@ -284,7 +284,8 @@ class AgentService(BaseService):
         try:
             if backend_name == "pipecat":
                 from .backends.pipecat_backend import PipecatBackend
-                self.current_backend = PipecatBackend(self.config)
+                # Pass self (agent service) to backend
+                self.current_backend = PipecatBackend(self.config, agent_service=self)
             else:
                 raise ValueError(f"Unknown agent backend: {backend_name}")
             
@@ -845,35 +846,6 @@ class AgentService(BaseService):
                 # Don't reset counter if recovery failed - let it accumulate
 
     # =========================================================================
-    # Tool Implementation
-    # =========================================================================
-    
-    async def _suggest_biome_tool(self, biome_name: str, reason: str = "") -> Dict[str, Any]:
-        """Tool for suggesting biome changes."""
-        try:
-            # Validate biome name
-            biome = Biome(biome_name.lower())
-            
-            # Publish biome suggestion using new schema
-            await self._publish_suggest_biome(biome, confidence=0.8)
-            
-            logger.info(f"Agent suggested biome change to: {biome}")
-            return {"success": True, "biome": biome, "reason": reason}
-            
-        except ValueError as e:
-            logger.error(f"Invalid biome suggestion: {biome_name}")
-            return {"success": False, "error": f"Invalid biome: {biome_name}"}
-    
-    async def _get_audience_status_tool(self) -> Dict[str, Any]:
-        """Tool for checking conversation and agent status."""
-        # Note: We no longer track audience_present directly - that's handled by the presence system
-        return {
-            "conversation_active": self.is_conversation_active,
-            "agent_speaking": self.agent_speaking,
-            "note": "Audience presence is now managed by the core service presence system"
-        }
-    
-    # =========================================================================
     # Message Processing
     # =========================================================================
     
@@ -1051,26 +1023,28 @@ class AgentService(BaseService):
         await self.zmq_service.publish(message, MessageType.SPEECH_DETECTED)
         logger.debug(f"Published speech detected: {speaker_type} speaking={is_speaking}")
     
-    async def _publish_suggest_biome(self, suggested_biome: str, confidence: float = 0.8):
-        """Publish biome suggestion based on conversation context."""
-        # TODO: Fix schema import issue - temporarily disabled
-        logger.info(f"Biome suggestion (not published due to schema issue): {suggested_biome}")
-        return
-        
-        # try:
-        #     # Convert string to Biome enum if needed
-        #     if isinstance(suggested_biome, str):
-        #         biome_enum = Biome(suggested_biome.lower())
-        #     else:
-        #         biome_enum = suggested_biome
-        #         
-        #     message = RequestBiome(
-        #         biome=biome_enum.value  # Field name expected by core service
-        #     )
-        #     await self.zmq_service.publish(message.model_dump(), MessageType.REQUEST_BIOME)
-        #     logger.info(f"Published biome suggestion: {biome_enum.value}")
-        # except ValueError as e:
-        #     logger.warning(f"Invalid biome suggestion '{suggested_biome}': {e}")
+    async def _publish_request_biome(self, requested_biome: str):
+        """Publish biome change request based on conversation context."""
+        try:
+            # Convert string to Biome enum if needed
+            if isinstance(requested_biome, str):
+                # Handle both underscore and space formats
+                biome_value = requested_biome.lower().replace(" ", "_")
+                biome_enum = Biome(biome_value)
+            else:
+                biome_enum = requested_biome
+                
+            # Create RequestBiome message - using dynamic import to avoid linter errors
+            from experimance_common.schemas import RequestBiome, MessageType
+            message = RequestBiome(
+                biome=biome_enum.value  # Field name expected by core service
+            )
+            await self.zmq_service.publish(message.model_dump(), MessageType.REQUEST_BIOME)
+            logger.info(f"Published biome request: {biome_enum.value}")
+        except ValueError as e:
+            logger.warning(f"Invalid biome request '{requested_biome}': {e}")
+        except Exception as e:
+            logger.error(f"Failed to publish biome request: {e}")
     
     async def get_debug_status(self) -> Dict[str, Any]:
         """Get comprehensive debug status from the agent service."""

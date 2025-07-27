@@ -6,6 +6,7 @@ This module contains the flow configuration and function handlers for testing
 Pipecat flows with the Experimance art installation conversation system.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -15,6 +16,7 @@ from experimance_common.schemas import Biome
 
 logger = logging.getLogger(__name__)
 
+AVAILABLE_BIOMES = [biome.value.replace("_", " ") for biome in Biome]
 
 # Function handlers for the flows
 async def collect_info_and_move_to_explorer(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -270,27 +272,47 @@ async def get_artist_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Op
     return result, None
 
 
-async def suggest_biome(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Suggest a biome for the visitor to explore."""
-    logger.info(f"[FUNCTION CALL] suggest_biome with args: {args}")
+async def request_biome(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Request a biome change to the system when the user / visitor requests it."""
+    logger.info(f"[FUNCTION CALL] request_biome with args: {args}")
+
+    preference = args.get("preference", None)
     
-    preference = args.get("preference", "any")
+    # Get agent service from flow manager state
+    agent_service = flow_manager.state.get("_agent_service")
+    if not agent_service:
+        logger.error("Agent service not available in flow manager")
+        return {"status": "error", "message": "Service unavailable"}, None
     
-    biomes = {
-        "forest": "A lush forest biome with deep greens and the sounds of rustling leaves.",
-        "ocean": "An oceanic biome with flowing blues and the rhythm of waves.",
-        "desert": "A desert biome with warm earth tones and the whisper of wind through sand.",
-        "arctic": "An arctic biome with cool blues and whites and the crystalline sound of ice.",
-        "any": "How about exploring a forest biome? It's peaceful with deep greens and natural sounds."
-    }
-    
-    biome_suggestion = biomes.get(preference, biomes["any"])
-    
-    result = {
-        "status": "success",
-        "preference": preference,
-        "suggestion": biome_suggestion
-    }
+    if not preference or preference not in AVAILABLE_BIOMES:
+        biome_suggestion = "Please choose from the available biomes: " + ", ".join(AVAILABLE_BIOMES)
+        result = {
+            "status": "info",
+            "suggestion": biome_suggestion
+        }
+    else:
+        # Call the agent service method directly (non-blocking)
+        try:
+            # Ensure we're not calling during shutdown
+            if not agent_service.running:
+                logger.warning("Agent service is shutting down, skipping biome request")
+                return {"status": "error", "message": "Service is shutting down"}, None
+            
+            # Fire-and-forget to avoid blocking the pipeline
+            asyncio.create_task(agent_service._publish_request_biome(preference))
+            biome_suggestion = f"OK, changing to the {preference} biome."
+            result = {
+                "status": "success",
+                "preference": preference,
+                "suggestion": biome_suggestion
+            }
+        except Exception as e:
+            logger.error(f"Failed to request biome change: {e}")
+            result = {
+                "status": "error", 
+                "message": "Failed to change biome",
+                "preference": preference
+            }
     
     return result, None
 
@@ -299,11 +321,9 @@ async def get_biomes(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optiona
     """Returns the biomes available for the visitor to explore."""
     logger.info(f"[FUNCTION CALL] get_biomes with args: {args}")
     
-    biomes = [biome.value for biome in Biome]
-    
     result = {
         "status": "success",
-        "biomes": biomes
+        "biomes": AVAILABLE_BIOMES,
     }
     
     return result, None
@@ -465,7 +485,9 @@ You can't do human things in the real world.
    - get_technical_info: general, sensors, ai, audio, images, software, sand, collaborators
    - get_biomes: returns the list biomes that can be displayed
    - move_to_goodbye: if the user says goodbye or wants to end the conversation
+   - request_biome: if the user asks to change the biome, call this function with their choice
 """
+f"     (available biomes: {', '.join(AVAILABLE_BIOMES)})"
                     )
                 }
             ],
@@ -545,6 +567,25 @@ Example:
                             "type": "object",
                             "properties": {},
                             "required": []
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "request_biome",
+                        "handler": request_biome,
+                        "description": "Request a biome change when the visitor asks for a specific landscape or biome",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "preference": {
+                                    "type": "string", 
+                                    "enum": AVAILABLE_BIOMES,
+                                    "description": "The biome the visitor wants to see"
+                                }
+                            },
+                            "required": ["preference"]
                         }
                     }
                 },

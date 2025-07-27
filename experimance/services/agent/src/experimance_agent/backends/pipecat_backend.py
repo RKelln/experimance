@@ -165,10 +165,11 @@ class PipecatBackend(AgentBackend):
     Pipecat backend implementation using the working ensemble approach from flows_test.py.
     """
     
-    def __init__(self, config: AgentServiceConfig, user_context: Optional[UserContext] = None):
+    def __init__(self, config: AgentServiceConfig, user_context: Optional[UserContext] = None, agent_service=None):
         super().__init__(config)
         self.pipecat_config = self.config.backend_config.pipecat
         self.user_context = user_context or UserContext()
+        self.agent_service = agent_service  # Store reference to the main service
         
         # Pipeline components
         self.pipeline: Optional[Pipeline] = None
@@ -575,6 +576,13 @@ class PipecatBackend(AgentBackend):
             context_aggregator=context_aggregator,
             flow_config=flow_config
         )
+
+        # Store agent service reference in flow manager state for flow functions to access
+        if hasattr(self, 'agent_service') and self.agent_service:
+            self.flow_manager.state["_agent_service"] = self.agent_service
+            logger.debug("Agent service reference stored in flow manager state")
+        else:
+            logger.warning("No agent service reference available for flow manager")
 
         # Initialize the flow manager with the initial node
         try:

@@ -968,12 +968,24 @@ class ExperimanceCoreService(BaseService):
 
     async def _handle_request_biome(self, topic: str, message: MessageDataType):
         """Handle RequestBiome messages from agent service."""
-        biome_name = message.get('biome', '')
+        biome_name = message.get('biome', None)
         logger.debug(f"Received RequestBiome message: {biome_name}")
-        
+
+        if not biome_name:
+            logger.warning(f"Null biome requested: {biome_name}")
+            return
+
+        biome_name = biome_name.lower().replace(" ", "_")
+
+        if not self.is_valid_biome(biome_name):
+            logger.warning(f"Invalid biome requested: {biome_name}")
+            return
+
         try:
-            # TODO: Implement biome switching logic
             logger.info(f"Agent requested biome: {biome_name}")
+            self.switch_biome(Biome(biome_name))
+            self.pending_render_request = True  # Ensure render request is sent after biome change
+
         except Exception as e:
             logger.error(f"Error processing suggest biome message: {e}")
 
