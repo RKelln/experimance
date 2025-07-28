@@ -416,3 +416,95 @@ The deploy script now fails explicitly instead of making assumptions:
 - **Infrastructure**: $0 (using existing hardware)
 - **Monitoring services**: $0 (ntfy.sh)
 - **Time investment**: 2-3 hours initial, 1-2 hours monthly
+
+
+## Remote access with Tailscale
+
+Assuming you have already set up local passwordless access over ssh for a user `experimance`. 
+Tailscale allows use of your existing key‑only OpenSSH over a private WireGuard network. 
+No port‑forwarding, no public exposure. MagicDNS lets you `ssh` by hostname.
+
+---
+
+### 1) Install Tailscale (Ubuntu 24.04) — on **both** machines
+```bash
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+
+sudo apt-get update && sudo apt-get install -y tailscale
+```
+
+### 2) Join the tailnet
+
+Local dev machine (interactive login):
+```bash
+sudo tailscale up --accept-dns=true
+# Follow the browser link to authenticate
+```
+
+Gallery machine (headless): create a pre‑auth key in the Tailscale admin, then:
+```bash
+sudo tailscale up --accept-dns=true --hostname=experimance-pc --advertise-tags=tag:experimance
+```
+Settings persist. You can re-run tailscale up ... later to change flags.
+
+You may need to use the Tailscale admin to turn off key expiry on the tagged machine, although tagging is supposed to do that automatically.
+
+### 3) Enable and use MagicDNS
+
+In the Tailscale admin: *Admin → DNS*, ensure MagicDNS is enabled (usually on by default).
+
+Verify on a node:
+```bash
+tailscale dns status             # shows MagicDNS suffix & resolvers
+tailscale dns query experimance
+```
+
+SSH with MagicDNS short name:
+```bash
+ssh experimance@experimance-pc
+```
+
+### 1) Keep OpenSSH locked down (recommended)
+
+Your existing sshd continues to listen on port 22 locally, but it’s only reachable over Tailscale. 
+Keep key‑only auth and disable passwords:
+```bash
+# /etc/ssh/sshd_config (essentials)
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+
+sudo systemctl restart ssh
+```
+
+### 5) (Optional) Restrict tailnet access to just you and just SSH
+
+Use tags + a minimal policy (new “grants” style).
+
+*Admin → Access controls → Edit* policy (replace placeholders):
+```json
+{
+  "tagOwners": { "tag:gallery": ["you@example.com"] },
+  "grants": [
+    { "src": ["you@example.com"], "dst": ["tag:experimance"], "ip": ["tcp:22"] }
+  ]
+}
+```
+Remove the default “allow all” grant if it’s present. Only tag owners can apply tag:gallery.
+
+### 6) Sanity checks & useful commands
+
+tailscale status                    # see nodes, names, IPs, tags
+tailscale ping experimance-pc       # connectivity; shows the 100.x address
+tailscale ip -4 experimance-pc      # print its Tailscale IPv4
+ssh -v experimance@experimance-pc   # verbose SSH if troubleshooting
+systemctl status ssh                # confirm OpenSSH is running (gallery)
+
+### 7) Notes
+
+No router changes: NAT traversal is automatic.
+End‑to‑end encryption: traffic rides an authenticated WireGuard tunnel.
+No change to SSH workflow: same keys, same users—just a private path.
+Autostart: tailscaled is enabled; tailscale up settings persist across reboots.
