@@ -1,8 +1,7 @@
 [Unit]
 Description=Experimance Reset on Input - Keyboard/Controller Listener
-After=graphical.target experimance@experimance.target
-Wants=graphical.target
-# Don't require experimance target - we want this to start even if experimance isn't running
+After=graphical.target
+# Independent service - does not start or depend on experimance services
 
 [Service]
 Type=simple
@@ -15,8 +14,18 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
+# Logging
+SyslogIdentifier=experimance-reset-on-input
+
 # Allow access to input devices
 SupplementaryGroups=input
 
+# Security
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/opt/experimance /var/log/experimance
+
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
