@@ -3,6 +3,15 @@
 
 ## Testing
 
+### Projector
+- [ ] keystone
+- [ ] zoom
+- [ ] colors
+- [ ] brightness
+- [ ] keeps settings after restart
+- [ ] focus
+
+
 ### Settings
 
 #### core:
