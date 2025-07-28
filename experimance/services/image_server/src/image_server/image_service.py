@@ -344,7 +344,7 @@ class ImageServerService(BaseService):
                 mock_generator = self.generator_manager.get_generator("mock")
                 if mock_generator:
                     # Fallback to mock generator if available
-                    logger.warning(f"Timeout occurred, falling back to mock generator for request {request_id}")
+                    logger.warning(f"Timeout occurred, falling back to mock generator")
                     return await mock_generator.generate_image(prompt, **generation_kwargs)
                 raise RuntimeError(error_msg)
     
