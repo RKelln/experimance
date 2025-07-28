@@ -38,8 +38,8 @@ colorizer_scheme = 2        # white to black
 debug_depth = true
 
 # Depth map settings
-flip_horizontal = false
-flip_vertical = false
+flip_horizontal = true
+flip_vertical = true
 circular_crop = true
 blur_depth = true
 

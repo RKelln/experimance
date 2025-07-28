@@ -10,7 +10,7 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 # Generator configuration
 [generator]
 strategy = "vastai"     # Options: "falai", "openai", "sdxl", "mock", "vastai"
-timeout = 120
+timeout = 12
 
 # FAL.AI configuration
 [fal_comfy]
