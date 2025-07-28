@@ -218,6 +218,10 @@ class DisplayService(BaseService):
                     vsync=self.config.display.vsync
                 )
             
+            # Hide the mouse cursor
+            logger.info("Hiding mouse cursor")
+            self.window.set_mouse_visible(False)
+            
             # Register window event handlers
             self.window.on_draw = self._on_draw
             self.window.on_key_press = self._on_key_press
