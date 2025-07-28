@@ -337,15 +337,20 @@ class ImageServerService(BaseService):
             return image_path
         except asyncio.TimeoutError:
             error_msg = f"Image generation timed out after {self.config.generator.timeout} seconds"
+            logger.warning(f"Image generation timeout: {error_msg}")
         except Exception as e:
             error_msg = f"Image generation failed: {e}"
+            logger.warning(f"Image generation exception: {error_msg}")
         finally:
             if error_msg:
                 mock_generator = self.generator_manager.get_generator("mock")
                 if mock_generator:
                     # Fallback to mock generator if available
                     logger.warning(f"Timeout occurred, falling back to mock generator")
+                    generation_kwargs['immediate'] = True  # Use immediate mode for mock
                     return await mock_generator.generate_image(prompt, **generation_kwargs)
+                else:
+                    logger.error("No mock generator available for fallback")
                 raise RuntimeError(error_msg)
     
     async def _publish_image_ready(

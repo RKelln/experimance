@@ -659,7 +659,8 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
                     print(f"❌ Healthcheck failed with status {resp.status_code}: {resp.text}")
             except requests.RequestException as e:
                 print(f"❌ Healthcheck request failed: {e}") 
-        time.sleep(5)
+            finally:
+                time.sleep(5)
     except KeyboardInterrupt:
         print("\nStopping health check")
 

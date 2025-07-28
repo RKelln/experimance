@@ -25,7 +25,7 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
     instance_timeout: int = Field(
         default=600, 
         description="Timeout for VastAI instance operations in seconds",
-        ge=30
+        ge=12
     )
     
     pre_warm_timeout: int = Field(
@@ -42,6 +42,19 @@ class VastAIGeneratorConfig(BaseGeneratorConfig):
     wait_for_ready: bool = Field(
         default=True, 
         description="Whether to wait for instances to be ready before using them"
+    )
+    
+    # Health tracking and recovery settings
+    max_consecutive_failures: int = Field(
+        default=3,
+        description="Destroy instance after this many consecutive failures (only applies after first success)",
+        ge=1
+    )
+    
+    max_time_without_success: int = Field(
+        default=360,
+        description="Destroy instance if no success for this many seconds during startup (only when _successful_requests == 0)",
+        ge=60
     )
     
     # Model server configuration

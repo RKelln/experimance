@@ -52,6 +52,17 @@ class VastAIGenerator(ImageGenerator):
         self._instance_ready = False
         self._initialized = False
         
+        # Health tracking for automatic recovery
+        self._consecutive_failures = 0
+        self._total_requests = 0
+        self._successful_requests = 0
+        self._last_success_time = None
+        self._first_request_time = None
+        
+        # Recovery state
+        self._recovery_in_progress = False
+        self._recovery_task = None
+        
     def _configure(self, config: VastAIGeneratorConfig, **kwargs):
         """Configure the generator with VastAI-specific settings."""
         logger.info(f"Configuring VastAI generator with model: {config.model_name}")
@@ -60,6 +71,11 @@ class VastAIGenerator(ImageGenerator):
     
     async def start(self):
         """Start the generator and optionally pre-warm."""
+        # Set the first request time at startup to enable timeout detection
+        # even if the first real user request fails
+        self._first_request_time = time.time()
+        logger.info(f"VastAI generator starting - startup timeout detection enabled")
+        
         if self.config.pre_warm:
             asyncio.create_task(self._pre_warm())
 
@@ -152,6 +168,129 @@ class VastAIGenerator(ImageGenerator):
             logger.warning(f"Health check failed for instance {endpoint.instance_id}: {e}")
             return False
     
+    def _record_success(self):
+        """Record a successful generation request."""
+        self._consecutive_failures = 0
+        self._successful_requests += 1
+        self._total_requests += 1
+        self._last_success_time = time.time()
+        
+    def _record_failure(self):
+        """Record a failed generation request."""
+        self._consecutive_failures += 1
+        self._total_requests += 1
+        # Only set _first_request_time if not already set (e.g., during startup)
+        if self._first_request_time is None:
+            self._first_request_time = time.time()
+        
+    def _should_destroy_instance(self) -> bool:
+        """
+        Check if current instance should be destroyed due to poor health.
+        
+        Uses different criteria based on whether we've had successful requests:
+        - Startup phase (no successes): Use time-based threshold
+        - After first success: Use consecutive failure threshold
+        """
+        current_time = time.time()
+        
+        # Startup phase: no successful requests yet
+        if self._successful_requests == 0:
+            if (self._first_request_time is not None and 
+                current_time - self._first_request_time > self.config.max_time_without_success):
+                logger.warning(f"No successful requests for {current_time - self._first_request_time:.0f}s during startup (max: {self.config.max_time_without_success}s)")
+                return True
+                
+        # After first success: use consecutive failure threshold
+        else:
+            if self._consecutive_failures >= self.config.max_consecutive_failures:
+                logger.warning(f"Instance has {self._consecutive_failures} consecutive failures after {self._successful_requests} successful requests (max: {self.config.max_consecutive_failures})")
+                return True
+                
+        return False
+        
+    async def _destroy_and_recreate_instance(self):
+        """Start non-blocking instance recovery in the background."""
+        if self._recovery_in_progress:
+            logger.info("Recovery already in progress, skipping duplicate recovery request")
+            return
+            
+        if not self.current_endpoint:
+            logger.info("No current instance to destroy")
+            return
+            
+        logger.warning(f"Starting non-blocking recovery for unhealthy instance {self.current_endpoint.instance_id}")
+        
+        # Mark recovery as in progress and clear current state immediately
+        self._recovery_in_progress = True
+        old_endpoint = self.current_endpoint
+        self.current_endpoint = None
+        self._instance_ready = False
+        self._initialized = False
+        
+        # Start background recovery task
+        self._recovery_task = asyncio.create_task(self._background_recovery(old_endpoint))
+        
+    async def _background_recovery(self, old_endpoint: InstanceEndpoint):
+        """Background task to destroy old instance and create new one."""
+        try:
+            logger.info(f"Background recovery: Destroying instance {old_endpoint.instance_id}")
+            
+            # Destroy the old instance
+            try:
+                result = self.manager.destroy_instance(old_endpoint.instance_id)
+                logger.info(f"Background recovery: Destroyed instance {old_endpoint.instance_id}: {result}")
+            except Exception as e:
+                logger.error(f"Background recovery: Failed to destroy instance {old_endpoint.instance_id}: {e}")
+            
+            # Wait a bit before creating a new instance (temporarily extended for testing)
+            await asyncio.sleep(30)  # Extended from 5 to 30 seconds for testing
+            
+            # Try to create and initialize a new instance
+            logger.info("Background recovery: Creating new instance")
+            try:
+                # Run the synchronous find_or_create_instance in a thread executor
+                # to avoid blocking the event loop
+                loop = asyncio.get_event_loop()
+                new_endpoint = await loop.run_in_executor(
+                    None,
+                    lambda: self.manager.find_or_create_instance(
+                        create_if_none=self.config.create_if_none,
+                        wait_for_ready=self.config.wait_for_ready
+                    )
+                )
+                
+                if new_endpoint:
+                    # Verify the new instance is actually healthy before marking as successful
+                    logger.info(f"Background recovery: Verifying health of new instance {new_endpoint.instance_id}")
+                    is_healthy = self._health_check(new_endpoint)
+                    
+                    if is_healthy:
+                        self.current_endpoint = new_endpoint
+                        self._instance_ready = True
+                        self._initialized = True
+                        logger.info(f"Background recovery: Successfully created and verified new instance {new_endpoint.instance_id}")
+                        
+                        # Reset health tracking for fresh start
+                        self._consecutive_failures = 0
+                        self._total_requests = 0
+                        self._successful_requests = 0
+                        self._last_success_time = None
+                        self._first_request_time = None
+                    else:
+                        logger.warning(f"Background recovery: New instance {new_endpoint.instance_id} is not healthy, will be retried on next failure")
+                        # Don't set the endpoint - let the next request trigger recovery again
+                else:
+                    logger.error("Background recovery: Failed to create new instance")
+                    
+            except Exception as e:
+                logger.error(f"Background recovery: Failed to create new instance: {e}")
+                
+        finally:
+            # Always clear recovery state
+            self._recovery_in_progress = False
+            self._recovery_task = None
+            logger.info("Background recovery: Recovery task completed")
+    
     
     @retry(
         stop=stop_after_attempt(2),  # Try twice: original + 1 retry
@@ -192,12 +331,33 @@ class VastAIGenerator(ImageGenerator):
         self._validate_prompt(prompt)
         logger.info(f"Generating image with VastAI: {prompt[:50]}...")
         
+        # Check if we should destroy the current instance due to poor health
+        if self._should_destroy_instance():
+            await self._destroy_and_recreate_instance()
+        
+        # If recovery is in progress, fail fast to trigger fallback
+        if self._recovery_in_progress:
+            logger.info("VastAI recovery in progress, failing fast to trigger fallback to mock generator")
+            self._record_failure()
+            raise RuntimeError("VastAI instance recovery in progress. Using fallback generator.")
+        
+        # If we have no endpoint but have been trying for a while, trigger recovery
+        if not self.current_endpoint and self._first_request_time is not None:
+            current_time = time.time()
+            if current_time - self._first_request_time > self.config.max_time_without_success:
+                logger.warning(f"No working instance for {current_time - self._first_request_time:.0f}s (max: {self.config.max_time_without_success}s), triggering recovery")
+                await self._destroy_and_recreate_instance()
+                # Still fail fast to use fallback during recovery
+                self._record_failure()
+                raise RuntimeError("VastAI instance recovery triggered due to startup timeout. Using fallback generator.")
+        
         # Lazy initialization - ensure instance is ready on first call
         if not self._initialized:
             await self._initialize_instance()
         
         # Fast path: use pre-initialized instance
         if not self._instance_ready or not self.current_endpoint:
+            self._record_failure()
             raise RuntimeError("VastAI generator not ready. Instance is unavailable.")
         
         start_time = time.time()
@@ -274,6 +434,7 @@ class VastAIGenerator(ImageGenerator):
                         # Instance might be down, mark as not ready for next request
                         self._instance_ready = False
                         error_text = await response.text()
+                        self._record_failure()  # Record the failure
                         raise RuntimeError(f"Generation request failed: {response.status} - {error_text}")
                     
                     result = await response.json()
@@ -281,12 +442,14 @@ class VastAIGenerator(ImageGenerator):
             
             if not result.get("success", True):
                 error_msg = result.get("error_message", "Unknown error")
+                self._record_failure()  # Record the failure
                 raise RuntimeError(f"Generation failed on remote server: {error_msg}")
             
             # Decode the generated image
             decode_start = time.time()
             image_b64 = result.get("image_b64")
             if not image_b64:
+                self._record_failure()  # Record the failure
                 raise RuntimeError("No image data received from remote server")
             
             generated_image = base64url_to_png(image_b64) # if use_jpg = true (by default) this is actually a jpg
@@ -295,6 +458,7 @@ class VastAIGenerator(ImageGenerator):
             if generated_image is None:
                 logger.error("🚨 Failed to decode generated image from server!")
                 logger.error(f"Image data prefix: {image_b64[:50]}..." if len(image_b64) > 50 else f"Full image data: {image_b64}")
+                self._record_failure()  # Record the failure
                 raise RuntimeError("Failed to decode generated image from remote server")
             
             # Save the image and return the path (async to avoid blocking)
@@ -326,8 +490,16 @@ class VastAIGenerator(ImageGenerator):
             processing_time = request_time - model_time  # Time for request processing on server
             network_time = total_time - request_time - decode_time - save_time - payload_time  # Pure network latency and other overhead
             
+            # Record success only after everything completed successfully
+            self._record_success()
+            
             logger.info(f"Image generated successfully in {total_time:.2f}s (model: {model_time:.2f}s, request: {request_time:.2f}s, processing: {processing_time:.2f}s, payload: {payload_time:.3f}s, decode: {decode_time:.3f}s, save: {save_time:.3f}s, network+misc: {network_time:.2f}s)")
             logger.debug(f"Image saved to: {output_path}")
+            
+            # Log health stats periodically
+            if self._total_requests % 10 == 0:
+                success_rate = (self._successful_requests / self._total_requests * 100) if self._total_requests > 0 else 0
+                logger.info(f"Health: {self._successful_requests}/{self._total_requests} successful ({success_rate:.1f}%), {self._consecutive_failures} consecutive failures")
             
             return output_path
             
@@ -336,11 +508,26 @@ class VastAIGenerator(ImageGenerator):
             # Mark instance as not ready if there was a connection issue
             if "connection" in str(e).lower() or "timeout" in str(e).lower():
                 self._instance_ready = False
+            
+            # Record failure if not already recorded
+            if self._consecutive_failures == 0 or self._consecutive_failures < self.config.max_consecutive_failures:
+                self._record_failure()
+                
             raise RuntimeError(f"VastAI generation failed: {e}")
     
     async def stop(self):
         """Stop the generator and clean up resources."""
         logger.info("Stopping VastAI generator...")
+        
+        # Cancel recovery task if running
+        if self._recovery_task and not self._recovery_task.done():
+            logger.info("Cancelling background recovery task")
+            self._recovery_task.cancel()
+            try:
+                await self._recovery_task
+            except asyncio.CancelledError:
+                pass
+        
         self.cleanup()
         logger.info("VastAI generator stopped")
     

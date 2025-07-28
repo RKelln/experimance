@@ -18,6 +18,7 @@ import json
 import os
 import time
 import subprocess
+import asyncio
 import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -550,7 +551,7 @@ class VastAIManager:
     
     def _check_service_health(self, instance_id: int, timeout: int = 30) -> bool:
         """
-        Check if the Experimance image server is healthy on the given instance.
+        Check if the Experimance image server is healthy on the given instance (synchronous version).
         
         Args:
             instance_id: The Vast.ai instance ID
@@ -583,10 +584,12 @@ class VastAIManager:
                         logger.warning(f"Health check failed for instance {instance_id}: service reports status '{health_data.get('status')}' - {health_data}")
                         return False
                 except ValueError as json_err:
-                    logger.warning(f"Health check failed for instance {instance_id}: invalid JSON response - {response.text[:200]}")
+                    error_text = response.text
+                    logger.warning(f"Health check failed for instance {instance_id}: invalid JSON response - {error_text[:200]}")
                     return False
             else:
-                logger.warning(f"Health check failed for instance {instance_id}: HTTP {response.status_code} - {response.text[:200]}")
+                error_text = response.text
+                logger.warning(f"Health check failed for instance {instance_id}: HTTP {response.status_code} - {error_text[:200]}")
                 return False
         except requests.exceptions.ConnectTimeout:
             logger.debug(f"Health check failed for instance {instance_id}: connection timeout after {timeout}s")
@@ -595,6 +598,61 @@ class VastAIManager:
             logger.debug(f"Health check failed for instance {instance_id}: read timeout after {timeout}s")
             return False
         except requests.exceptions.ConnectionError as e:
+            logger.debug(f"Health check failed for instance {instance_id}: connection error - {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Health check failed for instance {instance_id}: unexpected error - {e}")
+            return False
+
+    async def _check_service_health_async(self, instance_id: int, timeout: int = 30) -> bool:
+        """
+        Check if the Experimance image server is healthy on the given instance (asynchronous version).
+        
+        Args:
+            instance_id: The Vast.ai instance ID
+            timeout: Timeout in seconds for health check
+            
+        Returns:
+            True if service is healthy, False otherwise
+        """
+        import aiohttp
+        
+        try:
+            endpoint = self.get_model_server_endpoint(instance_id)
+            if not endpoint:
+                logger.debug(f"Could not get endpoint for instance {instance_id}")
+                return False
+            
+            health_url = f"{endpoint.url}/healthcheck"
+            logger.debug(f"Checking health at: {health_url}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
+                    logger.debug(f"Health check response: HTTP {response.status}")
+                    
+                    if response.status == 200:
+                        try:
+                            health_data = await response.json()
+                            logger.debug(f"Health data: {health_data}")
+                            
+                            if health_data.get('status') == 'healthy':
+                                logger.debug(f"Health check passed for instance {instance_id}")
+                                return True
+                            else:
+                                logger.warning(f"Health check failed for instance {instance_id}: service reports status '{health_data.get('status')}' - {health_data}")
+                                return False
+                        except ValueError as json_err:
+                            error_text = await response.text()
+                            logger.warning(f"Health check failed for instance {instance_id}: invalid JSON response - {error_text[:200]}")
+                            return False
+                    else:
+                        error_text = await response.text()
+                        logger.warning(f"Health check failed for instance {instance_id}: HTTP {response.status} - {error_text[:200]}")
+                        return False
+        except asyncio.TimeoutError:
+            logger.debug(f"Health check failed for instance {instance_id}: timeout after {timeout}s")
+            return False
+        except aiohttp.ClientConnectorError as e:
             logger.debug(f"Health check failed for instance {instance_id}: connection error - {e}")
             return False
         except Exception as e:
