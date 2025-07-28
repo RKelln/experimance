@@ -35,7 +35,7 @@ max_depth = 0.56            # maximum depth value in meters
 align_frames = true         # use color frames to help align the depth frames
 colorizer_scheme = 2        # white to black
 #json_config_path = "depth_camera_config_v2.json"  # path to RealSense JSON config
-debug_depth = true
+#debug_depth = true
 
 # Depth map settings
 flip_horizontal = true
