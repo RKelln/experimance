@@ -137,10 +137,23 @@ class PipecatEventProcessor(FrameProcessor):
                 logger.info("Pipeline CancelFrame received after EndFrame (normal conversation end)")
                 self._conversation_ending = False
             else:
-                logger.info("Pipeline CancelFrame received without EndFrame (forced shutdown)")
-                await self.backend.emit_event(AgentBackendEvent.CANCEL, {
-                    "reason": "pipeline_cancelled"
-                })
+                # Check if this is an idle timeout cancellation (natural end) vs forced shutdown
+                # Idle timeouts should be treated as natural conversation ends, not service shutdowns
+                logger.info("Pipeline CancelFrame received without EndFrame - checking if idle timeout")
+                
+                # If the backend is still in running state, this is likely an idle timeout
+                # rather than a forced service shutdown
+                if self.backend._shutdown_state == "running":
+                    logger.info("Treating CancelFrame as idle timeout (natural conversation end)")
+                    self.backend._shutdown_reason = "natural"
+                    await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
+                        "reason": "idle_timeout"
+                    })
+                else:
+                    logger.info("Pipeline CancelFrame during service shutdown (forced)")
+                    await self.backend.emit_event(AgentBackendEvent.CANCEL, {
+                        "reason": "pipeline_cancelled"
+                    })
         
         # Handle transcription frames
         # elif isinstance(frame, TranscriptionFrame):

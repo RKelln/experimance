@@ -697,10 +697,13 @@ class AgentService(BaseService):
         
         # Check if this is a natural shutdown (flow ended gracefully)
         reason = data.get("reason", "unknown") if data else "unknown"
-        if reason == "pipeline_ended":
-            # This is a natural shutdown from the flow ending (goodbye node)
+        if reason in ["pipeline_ended", "idle_timeout"]:
+            # This is a natural shutdown from the flow ending (goodbye node) or idle timeout
             # The backend will handle its own shutdown gracefully
-            logger.info("Natural conversation end detected, backend will handle shutdown")
+            if reason == "idle_timeout":
+                logger.info("Idle timeout detected, treating as natural conversation end")
+            else:
+                logger.info("Natural conversation end detected, backend will handle shutdown")
             
             # Clear displayed text after a short delay
             if self.displayed_text_ids and len(self.displayed_text_ids) > 0:
