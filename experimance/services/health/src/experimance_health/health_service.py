@@ -45,6 +45,7 @@ class HealthService(BaseService):
         self.config = config
         self.health_dir = config.get_effective_health_dir()
         self.last_notifications = {}  # Track last notification time per service
+        self.last_service_status = {}  # Track last known status per service
         self.notification_handlers = []
         self.startup_time = datetime.now()
         self.initial_system_notification_sent = False  # Track if we've sent the post-grace-period notification
@@ -402,6 +403,9 @@ class HealthService(BaseService):
         """Check the health of all expected services."""
         current_time = datetime.now()
         
+        # Debug logging to track duplicate calls
+        logger.debug(f"_check_all_services called at {current_time.isoformat()}")
+        
         # Check if we're still in startup grace period
         time_since_startup = (current_time - self.startup_time).total_seconds()
         if time_since_startup < self.config.startup_grace_period:
@@ -494,6 +498,7 @@ class HealthService(BaseService):
             # Check if we should send a notification
             if self._should_notify(service_name, service_status):
                 notifications_sent += 1
+                logger.debug(f"Sending notification for {service_name}: {service_status}")
                 
                 # Send to all notification handlers
                 for handler in self.notification_handlers:
@@ -532,6 +537,8 @@ class HealthService(BaseService):
                 
                 # Update last notification time
                 self.last_notifications[service_name] = datetime.now()
+            else:
+                logger.debug(f"Skipping notification for {service_name}: {service_status} (no change or cooldown active)")
         
         if notifications_sent > 0:
             logger.info(f"Sent {notifications_sent} health notifications")
@@ -647,31 +654,62 @@ class HealthService(BaseService):
                 return False
         # For "info" level, notify for all statuses (handled below)
         
-        # Always notify for ERROR and FATAL (immediate problems)
-        if status_upper in ["ERROR", "FATAL"]:
-            return True
+        # Check if this is a status change
+        last_status = self.last_service_status.get(service_name)
+        status_changed = last_status != status_upper
         
-        # Check configuration for HEALTHY notifications
-        if status_upper == "HEALTHY":
-            return self.config.notify_on_healthy
+        # Update tracked status
+        self.last_service_status[service_name] = status_upper
         
-        # Check configuration for UNKNOWN notifications
-        if status_upper == "UNKNOWN":
-            if not self.config.notify_on_unknown:
+        # Always notify on status changes (but still respect other filters)
+        if status_changed:
+            logger.debug(f"Status change detected for {service_name}: {last_status} -> {status_upper}")
+            
+            # For HEALTHY notifications, check configuration
+            if status_upper == "HEALTHY":
+                return self.config.notify_on_healthy
+            
+            # For UNKNOWN notifications, check configuration
+            if status_upper == "UNKNOWN":
+                return self.config.notify_on_unknown
+            
+            # For WARNING - don't notify, just log (user preference)
+            if status_upper == "WARNING":
                 return False
-        
-        # For WARNING and UNKNOWN, only notify if we haven't notified recently
-        # This prevents spam while still alerting about ongoing issues
-        if status_upper in ["WARNING", "UNKNOWN"]:
-            if service_name in self.last_notifications:
-                time_since_last = (datetime.now() - self.last_notifications[service_name]).total_seconds()
-                # Only notify if cooldown has passed
-                return time_since_last >= self.config.notification_cooldown
-            else:
-                # First time seeing this status, notify
+            
+            # For ERROR, FATAL - always notify on status change
+            if status_upper in ["ERROR", "FATAL"]:
                 return True
         
-        # Default: don't notify for unknown statuses
+        # If status hasn't changed, apply cooldown logic for ongoing issues
+        if service_name in self.last_notifications:
+            time_since_last = (datetime.now() - self.last_notifications[service_name]).total_seconds()
+            
+            # Different cooldown for different severity levels
+            if status_upper in ["ERROR", "FATAL"]:
+                # For critical errors, use a longer cooldown to reduce spam
+                # but still remind periodically
+                cooldown_period = max(self.config.notification_cooldown, 300)  # At least 5 minutes
+            elif status_upper in ["UNKNOWN"]:
+                # Use configured cooldown for unknown (WARNING excluded per user preference)
+                cooldown_period = self.config.notification_cooldown
+            else:
+                # For healthy status, use configured cooldown
+                cooldown_period = self.config.notification_cooldown
+            
+            # Only notify if cooldown has passed
+            if time_since_last >= cooldown_period:
+                # Apply same configuration filters as for status changes
+                if status_upper == "HEALTHY":
+                    return self.config.notify_on_healthy
+                elif status_upper == "UNKNOWN":
+                    return self.config.notify_on_unknown
+                elif status_upper == "WARNING":
+                    return False  # Don't notify on WARNING per user preference
+                elif status_upper in ["ERROR", "FATAL"]:
+                    return True
+        
+        # Default: don't notify
         return False
     
     def _format_notification_message(self, service_name: str, status: Dict) -> str:
