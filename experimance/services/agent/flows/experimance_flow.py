@@ -127,15 +127,70 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
         "sand": (
             "The sand in the bowl represents the environment, and your interactions with it "
             "symbolize the delicate balance between human presence and environmental change. "
-            "As you manipulate the sand, you create new landscapes that reflect your interaction "
-            "with the environment. "
-            "Sand is a critical resource for technological development, and is widely used for construction, "
-            "electronics, and even in the production of glass. Sand is extracted from poorer parts of the world "
-            " and transported to wealthier countries, even just for recreation at man-made sand beaches. "
-            "The installation invites you to reflect "
-            "on the impact of human activity on the environment and the interconnectedness of all things."
             "The sand used in the installation is genuine marine Aragonite sourced from The Bahamas, "
-            "ethically harvested under lease of the government."
+            "ethically harvested under lease from the government. "
+            """
+# Human Use of Sand and Its Impacts
+
+## 1. Importance and Scale of Sand Use
+- Sand is the second-most consumed resource globally after water.
+- Annual global use: ~50 billion tonnes (tripled over two decades).
+- Extraction rate outpaces natural replenishment, causing scarcity.
+
+## 2. Main Human Uses of Sand
+
+### Construction and Infrastructure
+- Concrete, asphalt, glass rely on sand; foundational to modern infrastructure.
+- Urbanization drives massive global consumption; demand growing with city expansion.
+- Major cities (e.g., Dubai, Singapore) exhausted local sources, resorting to imports.
+- Large-scale land reclamation projects (e.g., Singapore expansion) significantly consume sand, impacting regional environments.
+
+### Technology and Industry
+- Silicon chips, essential for electronics and solar panels, made from silica sand.
+- Fiber optics, glass screens rely on high-quality sand.
+- Fracking uses massive amounts ("frac sand"); one shale well can use up to 10,000 tons.
+- Industrial casting (steel, automotive parts) historically uses sand molds.
+
+### Everyday Products and Cultural Uses
+- Sand used in household products: toothpaste, cosmetics, detergents, water filters.
+- Symbolic uses in culture (hourglasses, mandalas) signify time and impermanence.
+- Central to tourism and recreation (beaches, sand sculptures).
+
+## 3. Environmental and Social Consequences
+
+### Ecosystem Destruction
+- Riverbeds, coasts, ocean floors heavily mined; disrupting delicate ecosystems.
+- Erosion, habitat loss, biodiversity decline, groundwater salinization.
+- Sand mining reduces natural storm barriers, exacerbating climate vulnerability.
+- Major river deltas (Mekong, Yangtze) sinking due to reduced sediment deposits.
+
+### Climate Implications
+- Sand extraction linked indirectly to climate change (cement production emissions, habitat loss).
+- Increased vulnerability to climate-related disasters in coastal and delta regions.
+
+### Black Markets and Violence
+- Usable sand scarcity fuels illegal mining; emergence of global sand black markets.
+- Violent "sand mafias" prevalent in India, Africa, Southeast Asia; hundreds killed annually.
+- Weak regulation and oversight globally contribute to criminal activity.
+
+## 4. Towards Sustainable Sand Management
+- Recognition needed: sand is finite, strategic resource.
+- Alternative materials explored: recycled construction waste, crushed rock, recycled glass.
+- Innovations like satellite monitoring (Marine Sand Watch) improving oversight.
+- Urgent call for international governance, sustainable extraction practices.
+
+## 5. Canadian Context (Toronto & Hamilton)
+- Ontario consumes ~164 million tonnes/year of sand and gravel.
+- Greater Toronto Area consumes one-third of Ontario’s aggregates annually; fuels massive infrastructure and real estate growth.
+- Hamilton historically reliant on sand (foundry molds for steel industry); current growth drives substantial sand use in construction, infrastructure.
+- Local concerns include environmental impacts, transport emissions, land-use conflicts; calls for sustainable practices.
+
+## 6. Connection to Experimance Themes
+- Sand represents duality of human innovation and environmental recklessness.
+- Symbolizes unsustainable human ambition; parallels global issues like climate crisis.
+- Experimance’s satellite imagery metaphorically reflects sand mining’s flattened perspective and the illusion of omniscience, ignoring consequences.
+- Urgency in reconsidering our relationship with fundamental resources (sand), emphasizing thoughtful engagement rather than exploitation.
+"""
         ),
         "ai": (
             "AI is central to everything that happens in this piece, it is the inspiration and technology "
