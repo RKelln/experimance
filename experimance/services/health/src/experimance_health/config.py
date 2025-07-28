@@ -155,16 +155,27 @@ class HealthServiceConfig(BaseConfig):
     
     def get_effective_health_dir(self) -> Path:
         """Get the effective health directory based on environment."""
-        # Check for environment-specific overrides
         import os
-        env = os.environ.get("ENVIRONMENT", "development")
+        from pathlib import Path
         
-        if env == "production" and self.production_health_dir:
+        # Use the same production detection logic as the logger
+        is_production = (
+            os.geteuid() == 0 or  # Running as root
+            os.environ.get("EXPERIMANCE_ENV") == "production" or
+            Path("/etc/experimance").exists()  # Production marker
+        )
+        
+        # Check for environment-specific overrides
+        if is_production and self.production_health_dir:
             return self.production_health_dir
-        elif env == "development" and self.dev_health_dir:
+        elif not is_production and self.dev_health_dir:
             return self.dev_health_dir
         else:
-            return self.health_dir
+            # Use default based on environment detection
+            if is_production:
+                return Path("/var/cache/experimance/health")
+            else:
+                return Path("logs/health")
     
     def get_expected_services_for_project(self, project_name: str) -> List[str]:
         """Get expected service types for a specific project."""
