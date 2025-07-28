@@ -89,7 +89,7 @@ class TestAudioServiceRefactor:
         # Should subscribe to correct topics
         expected_topics = [
             MessageType.SPACE_TIME_UPDATE,
-            MessageType.IDLE_STATUS,
+            MessageType.PRESENCE_STATUS,
             MessageType.SPEECH_DETECTED,
         ]
         assert set(config.subscriber.topics) == set(expected_topics)
@@ -115,19 +115,19 @@ class TestAudioServiceRefactor:
         mock_osc_bridge.transition.assert_called()
         
         await audio_service.stop()
-    
-    async def test_idle_status_handler(self, audio_service):
-        """Test IDLE_STATUS message handling."""
+
+    async def test_presence_status_handler(self, audio_service):
+        """Test PRESENCE_STATUS message handling."""
         await audio_service.start()
-        
-        # Simulate IDLE_STATUS message
-        idle_message = {"status": True}
-        
-        await audio_service._handle_idle_status(idle_message)
-        
+
+        # Simulate PRESENCE_STATUS message
+        presence_message = {"status": True}
+
+        await audio_service._handle_presence_status(presence_message)
+
         # Handler should complete without error
-        # (Currently no specific action for idle status)
-        
+        # (Currently no specific action for presence status)
+
         await audio_service.stop()
 
     async def test_speech_detected_handler(self, audio_service, mock_osc_bridge):
