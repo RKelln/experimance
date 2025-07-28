@@ -637,17 +637,31 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
     if not endpoint:
         print("Endpoint not found for instance", instance_id)
         return
+    print(f"Checking health of model server at {endpoint.url}... (Ctrl+C to stop)")
     try:
-        url = f"{endpoint.url}/healthcheck"
-        resp = requests.get(url, timeout=10)
-        try:
-            resp_json = resp.json()
-            print(f"Healthcheck {resp.status_code}:")
-            print(json.dumps(resp_json, indent=2))
-        except Exception:
-            print(f"Healthcheck {resp.status_code}: {resp.text}")
-    except requests.RequestException as e:
-        print(f"Healthcheck request failed: {e}")
+        while True:
+            try:
+                url = f"{endpoint.url}/healthcheck"
+                resp = requests.get(url, timeout=5)
+                if resp.status_code == 200:
+                    try:
+                        resp_json = resp.json()
+                        print(f"Healthcheck {resp.status_code}:")
+                        print(json.dumps(resp_json, indent=2))
+                        if resp_json.get("status") == "healthy":
+                            print("✅ Model server is healthy!")
+                            return
+                        else:
+                            print("⚠️ Model server healthcheck returned non-ok status")
+                    except json.JSONDecodeError:
+                        print(f"Healthcheck {resp.status_code}: {resp.text}")
+                else:
+                    print(f"❌ Healthcheck failed with status {resp.status_code}: {resp.text}")
+            except requests.RequestException as e:
+                print(f"❌ Healthcheck request failed: {e}") 
+        time.sleep(5)
+    except KeyboardInterrupt:
+        print("\nStopping health check")
 
 
 def test_generation(manager: VastAIManager, args: argparse.Namespace):
