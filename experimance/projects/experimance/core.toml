@@ -7,7 +7,7 @@ visualize = false            # enable visual debugging - display depth image and
 name = "experimance_core"
 change_smoothing_queue_size = 4   # size of change score queue for smoothing (reduces hand artifacts)
 render_request_cooldown = 2.0     # minimum interval between render requests in seconds (throttling)
-seed = 1                          # start seed for image and prompt generation
+#seed = 1                          # start seed for image and prompt generation
 
 [state_machine]
 entire_surface_intensity = 0.7 
