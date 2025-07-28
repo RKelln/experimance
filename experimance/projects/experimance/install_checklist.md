@@ -33,7 +33,15 @@
    - [ ] brightness, etc in `profiles/face_detection.toml`
    - [ ] which detectors active (face only?)
    - [ ] cpu_audience_detector
-     - [ ] stability readings required
+     - [ ] `stable_readings_required`
+       - [ ] Time to get stable readings (currently hardcoded at 0.8s)
      - [ ] face detector settings
        - [ ] score_threshold, etc
        - [ ] `min_face_size` to limit range of detection
+ - [ ] conversation end/start
+   - [ ] says hi when approach
+   - [ ] search when leave
+     - [ ] then goodbye
+   - [ ] goodbye when goodbye
+   - [ ] goodbye then leave and return, should start a new
+   - [ ] goodbye, then say hello [todo]
