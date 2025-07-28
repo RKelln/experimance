@@ -1300,27 +1300,39 @@ setup_schedule() {
     
     # Create crontab entries
     local temp_cron=$(mktemp)
-    local startup_script="$SCRIPT_DIR/startup.sh"
+    local startup_script="$SCRIPT_DIR/reset.sh"    # Use reset.sh for startup (includes audio reset)
     local shutdown_script="$SCRIPT_DIR/shutdown.sh"
     
     # Get existing crontab (excluding our entries)
-    crontab -l 2>/dev/null | grep -v "experimance-auto" > "$temp_cron" || true
+    crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
     
     # Add startup schedule
-    echo "# experimance-auto-start" >> "$temp_cron"
-    echo "$start_schedule $startup_script --project $PROJECT >/dev/null 2>&1" >> "$temp_cron"
+    echo "# experimance-start" >> "$temp_cron"
+    echo "$start_schedule cd '$REPO_DIR' && '$startup_script' --project '$PROJECT' >/dev/null 2>&1" >> "$temp_cron"
     
     # Add shutdown schedule  
-    echo "# experimance-auto-stop" >> "$temp_cron"
-    echo "$stop_schedule $shutdown_script --project $PROJECT >/dev/null 2>&1" >> "$temp_cron"
+    echo "# experimance-stop" >> "$temp_cron"
+    echo "$stop_schedule cd '$REPO_DIR' && '$shutdown_script' --project '$PROJECT' >/dev/null 2>&1" >> "$temp_cron"
     
     # Install new crontab
     crontab "$temp_cron"
     rm "$temp_cron"
     
-    success "Schedule installed successfully"
+    log "✓ Schedule installed successfully"
+}
+
+show_schedule() {
     log "Current schedule:"
-    crontab -l | grep "experimance-auto" || true
+    local schedule_found=false
+    
+    if crontab -l 2>/dev/null | grep -q "experimance"; then
+        crontab -l | grep "experimance" -A1 -B0
+        schedule_found=true
+    fi
+    
+    if [ "$schedule_found" = false ]; then
+        log "No schedule currently set"
+    fi
 }
 
 remove_schedule() {
@@ -1332,48 +1344,16 @@ remove_schedule() {
     crontab "$temp_cron"
     rm "$temp_cron"
     
-    success "Schedule removed successfully"
-}
-
-show_schedule() {
-    log "Current schedule:"
-    local schedule_found=false
-    
-    if crontab -l 2>/dev/null | grep -q "experimance-auto"; then
-        crontab -l | grep "experimance-auto" -A1 -B0
-        schedule_found=true
-    fi
-    
-    if [ "$schedule_found" = false ]; then
-        log "No schedule currently set"
-    fi
+    log "✓ Schedule removed successfully"
 }
 
 # Preset schedules for common use cases
 setup_gallery_schedule() {
     # Gallery hours: Monday-Friday, 12PM-5PM
-    local start_schedule="0 12 * * 1-5"  # Start at 12:00 PM, Monday-Friday
-    local stop_schedule="0 17 * * 1-5"   # Stop at 5:00 PM, Monday-Friday
-    
+    local start_schedule="50 11 * * 1-5"  # Start at 11:50 AM, Monday-Friday
+    local stop_schedule="10 17 * * 1-5"   # Stop at 5:10 PM, Monday-Friday
+
     log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)..."
-    setup_schedule "$start_schedule" "$stop_schedule"
-}
-
-setup_demo_schedule() {
-    # Demo schedule: Every day, 9AM-6PM
-    local start_schedule="0 9 * * *"   # Start at 9:00 AM every day
-    local stop_schedule="0 18 * * *"   # Stop at 6:00 PM every day
-    
-    log "Setting up demo schedule (Daily, 9AM-6PM)..."
-    setup_schedule "$start_schedule" "$stop_schedule"
-}
-
-setup_weekend_schedule() {
-    # Weekend schedule: Saturday-Sunday, 10AM-4PM
-    local start_schedule="0 10 * * 6,0"  # Start at 10:00 AM, Saturday-Sunday
-    local stop_schedule="0 16 * * 6,0"   # Stop at 4:00 PM, Saturday-Sunday
-    
-    log "Setting up weekend schedule (Saturday-Sunday, 10AM-4PM)..."
     setup_schedule "$start_schedule" "$stop_schedule"
 }
 
@@ -1480,19 +1460,12 @@ main() {
         schedule-gallery)
             log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)"
             setup_gallery_schedule
-            ;;
-        schedule-demo)
-            log "Setting up demo schedule (Daily, 9AM-6PM)"
-            setup_demo_schedule
-            ;;
-        schedule-weekend)
-            log "Setting up weekend schedule (Saturday-Sunday, 10AM-4PM)"
-            setup_weekend_schedule
+            show_schedule
             ;;
         schedule-custom)
             # Expect start and stop schedules as additional arguments
-            local start_schedule="${4:-}"
-            local stop_schedule="${5:-}"
+            local start_schedule="${3:-}"
+            local stop_schedule="${4:-}"
             
             if [[ -z "$start_schedule" || -z "$stop_schedule" ]]; then
                 error "Custom schedule requires start and stop cron expressions"
@@ -1503,6 +1476,42 @@ main() {
             
             log "Setting up custom schedule"
             setup_schedule "$start_schedule" "$stop_schedule"
+            show_schedule
+            ;;
+        schedule-reset)
+            # Schedule a one-time reset for a specific time (uses reset.sh which does an audio reset)
+            local reset_time="${3:-}"
+            if [[ -z "$reset_time" ]]; then
+                error "Reset time required in format 'HH:MM' (24-hour format)"
+                error "Usage: $0 $PROJECT schedule-reset 'HH:MM'"
+                error "Example: $0 $PROJECT schedule-reset '12:00'"
+                exit 1
+            fi
+            
+            # Parse the time and create a cron expression for today
+            local hour="${reset_time%:*}"
+            local minute="${reset_time#*:}"
+            local today=$(date '+%d')
+            local month=$(date '+%m')
+            local reset_cron="$minute $hour $today $month *"
+
+            log "Scheduling one-time reset for today at $reset_time"
+            log "Cron expression: $reset_cron"
+
+            # Create a temporary cron entry that will be removed after execution
+            local temp_cron=$(mktemp)
+            crontab -l 2>/dev/null | grep -v "experimance-onetime-reset" > "$temp_cron" || true
+
+            echo "# experimance-onetime-reset" >> "$temp_cron"
+            echo "$reset_cron cd '$REPO_DIR' && '$SCRIPT_DIR/reset.sh' --project '$PROJECT' && (crontab -l 2>/dev/null | grep -v 'experimance-onetime-reset' | crontab -) >/dev/null 2>&1" >> "$temp_cron"
+
+            crontab "$temp_cron"
+            rm "$temp_cron"
+
+            log "✓ Scheduled one-time reset for $reset_time today"
+            log "The cron job will automatically remove itself after execution"
+            log "Note: Using reset.sh which will reset service instances"
+            show_schedule
             ;;
         schedule-shutdown)
             # Schedule a one-time shutdown for a specific time (uses shutdown.sh which destroys instances)
@@ -1529,7 +1538,7 @@ main() {
             crontab -l 2>/dev/null | grep -v "experimance-onetime-shutdown" > "$temp_cron" || true
             
             echo "# experimance-onetime-shutdown" >> "$temp_cron"
-            echo "$stop_cron $SCRIPT_DIR/shutdown.sh --project $PROJECT && (crontab -l 2>/dev/null | grep -v 'experimance-onetime-shutdown' | crontab -) >/dev/null 2>&1" >> "$temp_cron"
+            echo "$stop_cron cd '$REPO_DIR' && '$SCRIPT_DIR/shutdown.sh' --project '$PROJECT' && (crontab -l 2>/dev/null | grep -v 'experimance-onetime-shutdown' | crontab -) >/dev/null 2>&1" >> "$temp_cron"
             
             crontab "$temp_cron"
             rm "$temp_cron"
@@ -1537,10 +1546,12 @@ main() {
             log "✓ Scheduled one-time shutdown for $stop_time today"
             log "The cron job will automatically remove itself after execution"
             log "Note: Using shutdown.sh which will destroy service instances"
+            show_schedule
             ;;
         schedule-remove)
             log "Removing schedule"
             remove_schedule
+            show_schedule
             ;;
         schedule-show)
             show_schedule
@@ -1692,9 +1703,8 @@ if [[ $# -eq 0 ]]; then
     echo ""
     echo "Schedule Examples:"
     echo "  $0 experimance schedule-gallery      # Monday-Friday, 12PM-5PM"
-    echo "  $0 experimance schedule-demo         # Daily, 9AM-6PM"  
-    echo "  $0 experimance schedule-weekend      # Saturday-Sunday, 10AM-4PM"
     echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'  # Custom: Weekdays 8AM-8PM"
+    echo "  $0 experimance schedule-reset '11:30'    # Call shutdown.sh at 11:30 today"
     echo "  $0 experimance schedule-shutdown '12:30' # Call shutdown.sh at 12:30 today"
     echo "  $0 experimance schedule-show         # Show current schedule"
     echo "  $0 experimance schedule-remove       # Remove schedule"

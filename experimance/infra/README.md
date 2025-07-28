@@ -107,12 +107,18 @@ sudo systemctl list-units "*@experimance*" --no-pager
 
 # Individual service control (new format: service_type@project)
 sudo systemctl status core@experimance
-sudo systemctl status display@experimance  # Includes Wayland support
-sudo systemctl restart agent@experimance   # Services restart independently
 
-# Services can now be started individually without requiring the target
-sudo systemctl start agent@experimance     # Start just the agent service
-sudo systemctl stop display@experimance    # Stop just the display service
+# Individual service management:
+# - If target is active: starting/stopping individual services works as expected
+# - If target is inactive: starting any service will activate the target (starting all services)
+sudo systemctl start display@experimance    # Starts display (and target if inactive)
+sudo systemctl stop display@experimance     # Stops just display service
+sudo systemctl restart agent@experimance    # Restarts just agent service
+
+# To start individual services when target is inactive, start target first:
+sudo systemctl start experimance@experimance.target  # Start target (all services)
+sudo systemctl stop agent@experimance                # Then stop individual services
+sudo systemctl start agent@experimance               # Now starts just agent
 
 # follow logs
 sudo journalctl -u image_server@experimance.service -f
@@ -130,6 +136,23 @@ sudo journalctl -u experimance@experimance.target --no-pager -n 20
 # follow all service logs live (clean format)
 sudo journalctl -f -u "*@experimance.*" -o cat
 ```
+
+## Scheduled tasks
+
+```bash
+# Manual execution
+sudo ./infra/scripts/reset.sh --project experimance
+sudo ./infra/scripts/shutdown.sh --project experimance
+
+# Schedule via deploy script
+sudo ./infra/scripts/deploy.sh experimance schedule-reset '12:30'
+sudo ./infra/scripts/deploy.sh experimance schedule-shutdown '17:00'
+
+# Check logs
+sudo tail -f /var/log/experimance/daily-reset.log
+sudo tail -f /var/log/experimance/shutdown.log
+```
+
 
 ## Systemd Templates vs Instances (Important!)
 
@@ -194,8 +217,8 @@ Wants=network.target user@1000.service graphical-session.target
 ### Benefits
 - ✅ Start all services: `sudo systemctl start experimance@experimance.target`
 - ✅ Stop all services: `sudo systemctl stop experimance@experimance.target`  
-- ✅ Start individual service: `sudo systemctl start core@experimance.service`
-- ✅ Restart individual service: `sudo systemctl restart display@experimance.service`
+- ✅ Start individual service: `sudo systemctl start core@experimance.service` (activates target if needed)
+- ✅ Restart individual service: `sudo systemctl restart display@experimance.service` (if target active)
 - ✅ Service failures don't cascade to other services
 - ✅ No rapid cycling or race conditions
 
