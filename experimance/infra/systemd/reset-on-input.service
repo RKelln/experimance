@@ -1,0 +1,21 @@
+[Unit]
+Description=Experimance Reset on Input - Keyboard/Controller Listener
+After=graphical.target experimance@experimance.target
+Wants=graphical.target
+# Don't require experimance target - we want this to start even if experimance isn't running
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /home/ryankelln/Documents/Projects/Art/experimance/installation/software/experimance/infra/scripts/reset_on_input.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Allow access to input devices
+SupplementaryGroups=input
+
+[Install]
+WantedBy=graphical.target

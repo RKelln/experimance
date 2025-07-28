@@ -2,7 +2,9 @@
 
 # Experimance Deployment Script
 # Usage: ./deploy.sh [project_name] [action] [mode]
-# Actions: install, start, stop, restart, status
+# Actions: install, start, stop, restart, status, services, diagnose
+# USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test
+# Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show
 # Modes: dev, prod (only for install action)
 #
 # SYSTEMD TEMPLATE SYSTEM:
@@ -247,6 +249,36 @@ create_symlink() {
     ln -s "$install_dir" "$symlink_target"
     chown -h experimance:experimance "$symlink_target"
     log "Created symlink: $symlink_target -> $install_dir"
+}
+
+install_reset_on_input() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        log "Skipping reset on input installation in development mode"
+        return
+    fi
+    
+    log "Installing reset on input listener (keyboard/controller)..."
+    
+    # Copy the reset on input systemd service
+    local reset_service_file="$SCRIPT_DIR/../systemd/reset-on-input.service"
+    if [[ -f "$reset_service_file" ]]; then
+        cp "$reset_service_file" "$SYSTEMD_DIR/"
+        chmod 644 "$SYSTEMD_DIR/reset-on-input.service"
+        log "✓ Copied reset-on-input.service"
+        
+        # Enable the service
+        systemctl daemon-reload
+        systemctl enable reset-on-input.service
+        log "✓ Enabled reset-on-input.service"
+        
+        log "Reset on input listener installed successfully"
+        log "  Start: sudo systemctl start reset-on-input.service"
+        log "  Status: sudo systemctl status reset-on-input.service"
+        log "  Logs: sudo journalctl -u reset-on-input.service -f"
+    else
+        warn "Reset on input service file not found: $reset_service_file"
+        return 1
+    fi
 }
 
 install_systemd_files() {
@@ -532,6 +564,7 @@ get_required_packages() {
         "uvcdynctrl"       # UVC (USB Video Class) control tools
         "guvcview"         # GTK+ UVC Viewer and control tool (optional)
         "ffmpeg"           # FFmpeg for video/audio processing
+        "evtest"           # evtest for USB input monitoring
     )
     
     # Export arrays for use by calling functions
@@ -1377,6 +1410,7 @@ main() {
             readarray -t SERVICES < <(get_project_services "$PROJECT")
             check_project
             install_systemd_files
+            install_reset_on_input
             create_symlink "$(pwd)"
             setup_directories
 
@@ -1446,6 +1480,34 @@ main() {
         status)
             check_project
             status_services
+            ;;
+        reset-on-input-start)
+            check_root
+            log "Starting reset on input listener..."
+            systemctl start reset-on-input.service
+            systemctl status reset-on-input.service
+            ;;
+        reset-on-input-stop)
+            check_root
+            log "Stopping reset on input listener..."
+            systemctl stop reset-on-input.service
+            ;;
+        reset-on-input-status)
+            log "Reset on input listener status:"
+            systemctl status reset-on-input.service || true
+            echo ""
+            log "Recent logs:"
+            journalctl --no-pager -n 20 -u reset-on-input.service || true
+            ;;
+        reset-on-input-logs)
+            log "Following reset on input logs (Ctrl+C to exit):"
+            journalctl -f -u reset-on-input.service
+            ;;
+        reset-on-input-test)
+            log "Testing reset on input device detection..."
+            log "This will run the listener script manually for testing"
+            log "Note: Using --test-mode and --bypass-ssh-check for safe testing"
+            python3 "$REPO_DIR/infra/scripts/reset_on_input.py" --test-mode --bypass-ssh-check
             ;;
         services)
             # Don't require root for just listing services
@@ -1688,6 +1750,7 @@ if [[ $# -eq 0 ]]; then
     echo "Usage: $0 [project_name] [action] [mode]"
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
     echo "Actions: install, start, stop, restart, status, services, diagnose"
+    echo "USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test"
     echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-shutdown, schedule-remove, schedule-show"
     echo "Modes: dev, prod (only for install action)"
     echo ""
@@ -1717,6 +1780,18 @@ if [[ $# -eq 0 ]]; then
     echo "  sudo useradd -m -s /bin/bash experimance    # Create experimance user (first time)"
     echo "  sudo $0 experimance install prod            # Install for production"
     echo "  sudo $0 experimance start                   # Start all services"
+    echo ""
+    echo "Reset on Input (Gallery Staff):"
+    echo "  sudo $0 experimance reset-on-input-start   # Start input listener"
+    echo "  sudo $0 experimance reset-on-input-status  # Check listener status"
+    echo "  sudo $0 experimance reset-on-input-test    # Test listener manually"
+    echo "  sudo $0 experimance reset-on-input-logs    # View listener logs"
+    echo ""
+    echo "Reset on Input Safety Features:"
+    echo "  • Escape sequences: Ctrl+Alt+E or Escape key disables listener for 5 minutes (admin access)"
+    echo "  • SSH protection: Only works on local console, not remote sessions"
+    echo "  • Physical device priority: Prefers external USB controllers over built-in keyboards"
+    echo "  sudo $0 experimance reset-on-input-logs    # View listener logs"
     echo ""
     echo "Note: sudo is only needed for production systemd operations and system setup."
     exit 1
