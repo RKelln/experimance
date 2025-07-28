@@ -136,7 +136,6 @@ async def run_live_detection(performance_mode: str = "accurate"):
         webcam_fps=30,
         audience_detection_enabled=True,
         audience_detection_interval=0.5,  # Fast updates for live testing
-        audience_detection_threshold=0.5,
         vlm_enabled=False,  # CPU only
         cpu_performance_mode=performance_mode
     )

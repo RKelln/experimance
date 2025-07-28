@@ -9,7 +9,7 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock
 
 from experimance_common.zmq.mocks import MockPubSubService, mock_message_bus
-from experimance_common.schemas import MessageType
+from experimance_common.schemas import MessageType, SpeechDetected
 from experimance_common.service_state import ServiceState
 
 from experimance_audio.audio_service import AudioService
@@ -90,7 +90,7 @@ class TestAudioServiceRefactor:
         expected_topics = [
             MessageType.SPACE_TIME_UPDATE,
             MessageType.IDLE_STATUS,
-            MessageType.AGENT_CONTROL_EVENT,
+            MessageType.SPEECH_DETECTED,
         ]
         assert set(config.subscriber.topics) == set(expected_topics)
     
@@ -129,19 +129,20 @@ class TestAudioServiceRefactor:
         # (Currently no specific action for idle status)
         
         await audio_service.stop()
-    
-    async def test_agent_control_handler(self, audio_service, mock_osc_bridge):
-        """Test AGENT_CONTROL_EVENT message handling."""
+
+    async def test_speech_detected_handler(self, audio_service, mock_osc_bridge):
+        """Test SPEECH_DETECTED message handling."""
         await audio_service.start()
         
-        # Simulate AGENT_CONTROL_EVENT message
-        agent_message = {
-            "sub_type": "SpeechDetected",
-            "payload": {"status": True}
-        }
-        
-        await audio_service._handle_agent_control_event(agent_message)
-        
+        # Simulate SPEECH_DETECTED message
+        message = SpeechDetected(
+            type=MessageType.SPEECH_DETECTED,
+            is_speaking=True,
+            speaker="agent"
+        )
+
+        await audio_service._handle_speech_detected(message)
+
         # Verify OSC call was made
         mock_osc_bridge.speaking.assert_called_once_with(True)
         
