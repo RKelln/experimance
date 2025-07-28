@@ -939,11 +939,11 @@ class AgentService(BaseService):
         
         # TODO: Update agent context with current era/biome information
         if self.current_backend and self.current_backend.is_connected:
-            context_msg = f"<projection: currently displaying a {era_to_description(biome, era)}.>"
+            context_msg = f"<projection: currently displaying a {self.era_to_description(biome, era)}.>"
             await self.current_backend.send_message(context_msg, speaker="system")
     
 
-    def era_to_description(era: str) -> str:
+    def era_to_description(self, biome: str, era: str) -> str:
         """Convert era string to human-readable description."""
         str_biome = str(biome).replace("_", " ").lower()
         era_descriptions = {
