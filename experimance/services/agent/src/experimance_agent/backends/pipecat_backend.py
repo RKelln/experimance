@@ -5,6 +5,11 @@ This module implements the AgentBackend interface using Pipecat's local audio pi
 providing speech-to-text, LLM conversation, and text-to-speech capabilities in a single process.
 
 Based on the working ensemble implementation from flows_test.py with proper shutdown handling.
+
+Audio Health Monitoring:
+- If audio crashes occur, set `_enable_audio_health_monitoring = True` in __init__ method
+- This enables comprehensive health checks and recovery mechanisms
+- Default is False for production stability
 """
 import asyncio
 import logging
@@ -48,7 +53,6 @@ from experimance_common.constants import AGENT_SERVICE_DIR
 from .base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext, load_prompt
 
 logger = logging.getLogger(__name__)
-
 
 class PipecatEventProcessor(FrameProcessor):
     """
@@ -188,6 +192,175 @@ class PipecatBackend(AgentBackend):
         # Event handling
         self.event_processor: Optional[PipecatEventProcessor] = None
         
+        # Audio health monitoring - controlled by debug flag
+        self._enable_audio_health_monitoring = self.config.audio_health_monitoring  # Set to True if audio crashes occur again
+        self._audio_health_monitor_task: Optional[asyncio.Task] = None
+        self._last_audio_health_check = 0
+        self._audio_health_check_interval = 30  # seconds, 0 = off
+        
+
+    async def _log_system_resources(self, stage: str) -> None:
+        """Log system resource usage at different pipeline stages."""
+        try:
+            import psutil
+            
+            # Get memory info
+            memory = psutil.virtual_memory()
+            memory_mb = memory.used / (1024 * 1024)
+            memory_percent = memory.percent
+            
+            # Get CPU info
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            
+            # Get process info
+            process = psutil.Process()
+            process_memory = process.memory_info().rss / (1024 * 1024)
+            
+            logger.info(f"[{stage}] System: {memory_mb:.1f}MB ({memory_percent:.1f}%) RAM, {cpu_percent:.1f}% CPU | Process: {process_memory:.1f}MB")
+            
+        except ImportError:
+            # psutil not available, use basic logging
+            logger.debug(f"[{stage}] System resource monitoring unavailable (psutil not installed)")
+        except Exception as e:
+            logger.warning(f"[{stage}] Failed to log system resources: {e}")
+
+    async def _test_audio_output(self) -> bool:
+        """Test if audio output is working to detect conflicts before pipeline starts."""
+        try:
+            logger.info("Testing audio output availability...")
+            
+            # If we have a transport, try to access the audio output device
+            if self.transport:
+                transport_output = getattr(self.transport, '_output', None)
+                if transport_output:
+                    # Just check if the device is accessible, don't actually play anything
+                    logger.info("Audio output device appears accessible")
+                    return True
+                else:
+                    logger.warning("Transport created but no output device found")
+                    return False
+            else:
+                # No transport yet - this is expected during standalone testing
+                # Just return True since we can't test without a transport
+                logger.debug("No transport available for audio output test (expected during standalone testing)")
+                return True
+            
+        except Exception as e:
+            logger.error(f"Audio output test failed: {e}")
+            return False
+
+    async def _comprehensive_audio_health_check(self) -> bool:
+        """Comprehensive audio device health check to prevent crashes."""
+        try:
+            logger.info("Running comprehensive audio health check...")
+            
+            # Check 1: Device indices are valid
+            if hasattr(self.pipecat_config, 'audio_input_device_index') and self.pipecat_config.audio_input_device_index is not None:
+                input_idx = self.pipecat_config.audio_input_device_index
+                output_idx = self.pipecat_config.audio_output_device_index
+                logger.info(f"Checking configured device indices: input={input_idx}, output={output_idx}")
+            
+            # Check 2: Try to enumerate devices to see if USB devices are responsive
+            try:
+                from experimance_common.audio_utils import list_audio_devices
+                devices = list_audio_devices()
+                yealink_found = any("Yealink" in dev.get('name', '') for dev in devices)
+                logger.info(f"Audio device enumeration successful. Yealink found: {yealink_found}")
+            except Exception as enum_error:
+                logger.warning(f"Audio device enumeration failed: {enum_error}")
+                return False
+            
+            # Check 3: Basic transport accessibility
+            basic_test = await self._test_audio_output()
+            if not basic_test:
+                logger.warning("Basic audio output test failed")
+                return False
+            
+            logger.info("Audio health check passed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Audio health check failed: {e}")
+            return False
+
+    async def _attempt_audio_recovery(self) -> bool:
+        """Attempt to recover from audio issues before they cause crashes."""
+        try:
+            logger.warning("Attempting audio recovery...")
+            
+            # Try the audio reset utility
+            try:
+                from experimance_common.audio_utils import reset_audio_device_by_name
+                reset_audio_device_by_name("Yealink")
+                logger.info("Audio device reset completed")
+                
+                # Wait for device to stabilize
+                await asyncio.sleep(2)
+                
+                # Re-test after recovery
+                health_ok = await self._comprehensive_audio_health_check()
+                if health_ok:
+                    logger.info("Audio recovery successful")
+                    return True
+                else:
+                    logger.warning("Audio recovery attempted but health check still fails")
+                    return False
+                    
+            except Exception as recovery_error:
+                logger.error(f"Audio recovery failed: {recovery_error}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Audio recovery attempt failed: {e}")
+            return False
+
+    async def _audio_health_monitor(self) -> None:
+        """Periodic audio health monitoring to detect issues before they cause crashes."""
+        try:
+            while self._shutdown_state == "running":
+                await asyncio.sleep(self._audio_health_check_interval)
+                
+                if self._shutdown_state != "running":
+                    break
+                    
+                try:
+                    # Quick health check
+                    current_time = time.time()
+                    if self._audio_health_check_interval > 0 and current_time - self._last_audio_health_check > self._audio_health_check_interval:
+                        logger.debug("Running periodic audio health check...")
+                        
+                        # Basic check - just see if devices are still enumerable
+                        try:
+                            from experimance_common.audio_utils import list_audio_devices
+                            devices = list_audio_devices()
+                            yealink_found = any("Yealink" in dev.get('name', '') for dev in devices)
+                            
+                            if not yealink_found:
+                                logger.warning("Yealink device not found during health check - may need recovery")
+                                await self.emit_event(AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, {
+                                    "issue": "yealink_device_missing",
+                                    "timestamp": current_time
+                                })
+                            else:
+                                logger.debug("Audio health check passed")
+                                
+                        except Exception as health_error:
+                            logger.warning(f"Audio health check failed: {health_error}")
+                            await self.emit_event(AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, {
+                                "issue": "audio_health_check_error",
+                                "error": str(health_error),
+                                "timestamp": current_time
+                            })
+                        
+                        self._last_audio_health_check = current_time
+                        
+                except Exception as monitor_error:
+                    logger.error(f"Audio health monitor error: {monitor_error}")
+                    
+        except asyncio.CancelledError:
+            logger.debug("Audio health monitor cancelled")
+        except Exception as e:
+            logger.error(f"Audio health monitor failed: {e}")
 
     def _load_flow_config(self) -> FlowConfig:
         """Load flow configuration from the specified flow file."""
@@ -224,8 +397,14 @@ class PipecatBackend(AgentBackend):
             # Call parent class to initialize transcript manager
             await super().start()
 
-            self.transport = self._create_transport()
-            assert self.transport is not None, "Transport must be created successfully"
+            logger.debug("Creating audio transport...")
+            try:
+                self.transport = self._create_transport()
+                assert self.transport is not None, "Transport must be created successfully"
+                logger.info("Audio transport created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create transport: {e}")
+                raise
             
             # Create pipeline based on mode
             if self.config.backend_config.pipecat.mode == "realtime":
@@ -236,22 +415,58 @@ class PipecatBackend(AgentBackend):
             assert self.pipeline is not None, "Pipeline must be created successfully"
             assert self.task is not None, "Pipeline task must be created successfully"
 
+            logger.debug("Creating pipeline runner...")
+            
             # runner
             self.runner = PipelineRunner(
                 handle_sigint=False,  # handle these ourselves
                 #handle_sigterm=False, # handle these ourselves (newer version of pipecat)
             )
             
-            logger.info("Pipecat backend v2 started successfully")
+            logger.debug("Pipecat backend v2 started successfully")
 
             # Start the pipeline as a background task - this doesn't block
             if self.runner and self.task:
+                logger.debug("Starting pipeline task...")
+                
                 self._pipeline_task = asyncio.create_task(
                     self.runner.run(self.task),
                     name="pipecat-pipeline"
                 )
+                
+                logger.debug("Connecting to pipeline...")
+                
+                # Only run comprehensive audio health check if monitoring is enabled
+                if self._enable_audio_health_monitoring:
+                    logger.debug("Running pre-startup audio health check...")
+                    audio_health_ok = await self._comprehensive_audio_health_check()
+                    
+                    if not audio_health_ok:
+                        logger.warning("Audio health check failed - attempting recovery...")
+                        recovery_success = await self._attempt_audio_recovery()
+                        
+                        if not recovery_success:
+                            logger.error("Audio recovery failed - startup may be unstable")
+                            # Continue anyway but warn user
+                            await self.emit_event(AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, {
+                                "issue": "audio_health_check_failed",
+                                "recovery_attempted": True,
+                                "recovery_success": False
+                            })
+                        else:
+                            logger.info("Audio recovery successful - continuing startup")
+                
                 await self.connect()
-                logger.info("Pipecat pipeline started as background task")
+                
+                # Only start audio health monitoring if enabled
+                if self._enable_audio_health_monitoring and self._shutdown_state == "running":
+                    self._audio_health_monitor_task = asyncio.create_task(
+                        self._audio_health_monitor(),
+                        name="audio-health-monitor"
+                    )
+                    logger.info("Started audio health monitoring")
+                
+                logger.debug("Pipecat pipeline started as background task")
             
         except Exception as e:
             logger.error(f"Error starting Pipecat backend: {e}")
@@ -300,6 +515,15 @@ class PipecatBackend(AgentBackend):
             try:
                 # Check if this is a natural conversation end (flow triggered)
                 is_natural_end = self._shutdown_reason == "natural"
+                
+                # Stop audio health monitoring
+                if self._audio_health_monitor_task and not self._audio_health_monitor_task.done():
+                    logger.debug("Stopping audio health monitor...")
+                    self._audio_health_monitor_task.cancel()
+                    try:
+                        await asyncio.wait_for(self._audio_health_monitor_task, timeout=2.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass  # Expected when cancelling
                 
                 if is_natural_end and self._pipeline_task and not self._pipeline_task.done():
                     logger.debug("Natural conversation end - waiting for pipeline to complete")
@@ -503,10 +727,17 @@ class PipecatBackend(AgentBackend):
             if os.getenv("OPENAI_API_KEY") is None:
                 raise ValueError("OpenAI API key is required")
             
-            llm = OpenAILLMService(
-                api_key=os.getenv("OPENAI_API_KEY"),
-                model=self.pipecat_config.openai_model or "gpt-4o-mini"
-            )
+            logger.info("Creating OpenAI LLM service...")
+            
+            try:
+                llm = OpenAILLMService(
+                    api_key=os.getenv("OPENAI_API_KEY"),
+                    model=self.pipecat_config.openai_model or "gpt-4o-mini"
+                )
+                logger.info("OpenAI LLM service created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create OpenAI LLM service: {e}")
+                raise
 
             # Create context aggregator
             context = OpenAILLMContext()
@@ -517,15 +748,22 @@ class PipecatBackend(AgentBackend):
             if os.getenv("CARTESIA_API_KEY") is None:
                 raise ValueError("Cartesia API key is required for ensemble mode")
             
-            tts = CartesiaTTSService(
-                api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
-                voice_id=self.config.cartesia_voice_id,
-                model="sonic-2",
-                params=CartesiaTTSService.InputParams(
-                    language=Language.EN,
-                    speed="fast",  # Options: "fast", "normal", "slow"
+            logger.debug("Creating Cartesia TTS service...")
+            
+            try:
+                tts = CartesiaTTSService(
+                    api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
+                    voice_id=self.config.cartesia_voice_id,
+                    model="sonic-2",
+                    params=CartesiaTTSService.InputParams(
+                        language=Language.EN,
+                        speed="fast",  # Options: "fast", "normal", "slow"
+                    )
                 )
-            )
+                logger.debug("Cartesia TTS service created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create Cartesia TTS service: {e}")
+                raise
         
         # Create event processor
         self.event_processor = PipecatEventProcessor(self)
@@ -548,6 +786,8 @@ class PipecatBackend(AgentBackend):
 
         assert self.transport is not None, "Transport must be created successfully"
 
+        logger.info("Creating pipeline with audio components...")
+        
         # Create pipeline
         self.pipeline = Pipeline([
             self.transport.input(),
@@ -562,9 +802,13 @@ class PipecatBackend(AgentBackend):
             context_aggregator.assistant(),
             self.event_processor
         ])
+        
+        logger.info("Pipeline created successfully")
 
         # Create task and runner
+        logger.info("Creating pipeline task...")
         self.task = PipelineTask(self.pipeline)
+        logger.info("Pipeline task created successfully")
         
         # Create flow manager
         flow_config = self._load_flow_config()

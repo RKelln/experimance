@@ -290,3 +290,9 @@ class AgentServiceConfig(BaseServiceConfig):
         default=True,
         description="End cooldown early if audience leaves and returns (allows immediate restart on audience change)"
     )
+
+    # audio issues
+    audio_health_monitoring: bool = Field(
+        default=False,
+        description="Enable audio health monitoring and recovery mechanisms"
+    )
