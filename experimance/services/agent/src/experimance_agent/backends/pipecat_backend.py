@@ -893,30 +893,42 @@ class PipecatBackend(AgentBackend):
         # This method is no longer needed as we use the base class emit_event
         pass
     
-    async def send_message(self, text: str, speaker: str = "system") -> None:
-        """Send a message to the conversation."""
+    async def send_message(self, text: str, speaker: str = "system", say_tts: bool = False) -> None:
+        """Send a message to the conversation.
+        
+        Args:
+            text: The message text to send
+            speaker: The speaker role ("system", "user", "agent")
+            say_tts: If True, send as TextFrame for immediate TTS output instead of context message
+        """
         if not self.is_connected:
             logger.warning("Backend not connected, cannot send message")
             return
             
         try:
-            # Use LLMMessagesAppendFrame to add messages to the context
             if self.task:
-                from pipecat.frames.frames import LLMMessagesAppendFrame
-                
-                if speaker == "system":
-                    # Add system message to context
-                    message = {"role": "system", "content": text}
+                if say_tts:
+                    # Send directly to TTS for immediate speech output
+                    from pipecat.frames.frames import TextFrame
+                    tts_frame = TextFrame(text=text)
+                    await self.task.queue_frame(tts_frame)
+                    logger.debug(f"Sent TTS frame: {text}")
                 else:
-                    # Add user message to context
-                    message = {"role": "user", "content": text}
-                
-                # Send the message frame to the pipeline
-                append_frame = LLMMessagesAppendFrame(messages=[message])
-                await self.task.queue_frame(append_frame)
+                    # Use LLMMessagesAppendFrame to add messages to the context
+                    from pipecat.frames.frames import LLMMessagesAppendFrame
                     
-            logger.debug(f"Sent message from {speaker}: {text}")
-            
+                    if speaker == "system":
+                        # Add system message to context
+                        message = {"role": "system", "content": text}
+                    else:
+                        # Add user message to context
+                        message = {"role": "user", "content": text}
+                    
+                    # Send the message frame to the pipeline
+                    append_frame = LLMMessagesAppendFrame(messages=[message])
+                    await self.task.queue_frame(append_frame)
+                    logger.debug(f"Sent context message from {speaker}: {text}")
+                    
         except Exception as e:
             logger.error(f"Error sending message: {e}")
     

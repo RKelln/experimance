@@ -19,6 +19,8 @@ conversation_cooldown_duration = 12.0  # seconds
 # This prevents the same person from immediately restarting, but allows new people to start immediately
 cancel_cooldown_on_absence = true
 
+deep_thoughts_min_delay = 30 # second after conversation start will allow for deep thoughts
+
 [backend_config.pipecat]
 # Pipecat-specific configuration
 system_prompt = "prompt.md"

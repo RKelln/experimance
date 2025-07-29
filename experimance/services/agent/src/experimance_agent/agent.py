@@ -11,6 +11,7 @@ import gc
 import json
 import logging
 import os
+import random
 import threading
 import time
 import uuid
@@ -34,6 +35,7 @@ from experimance_common.zmq.config import MessageDataType
 
 from .config import AgentServiceConfig
 from .backends.base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall
+from .deep_thoughts import DEEP_THOUGHTS
 
 from experimance_common.logger import setup_logging
 
@@ -76,6 +78,15 @@ class AgentService(BaseService):
         
         # Display text tracking (for transcript display)
         self.displayed_text_ids: set[str] = set()
+        
+        # Deep thoughts state (per-conversation)
+        self._available_deep_thoughts: Dict[str, Dict[str, str]] = {}
+        self._conversation_start_time: Optional[float] = None
+        self._last_speech_end_time: Optional[float] = None  # Track when speech last ended
+        
+        # Space-time tracking (to avoid duplicate projection messages)
+        self._current_era: Optional[str] = None
+        self._current_biome: Optional[str] = None
         
         # ZMQ service for communication
         self.zmq_service = PubSubService(config.zmq)
@@ -293,9 +304,9 @@ class AgentService(BaseService):
             if self.current_backend is not None:
                 backend = self.current_backend  # For type checking
                 # Register event callbacks
-                backend.add_event_callback(
-                    AgentBackendEvent.CONVERSATION_STARTED, self._on_conversation_started
-                )
+                # backend.add_event_callback(
+                #     AgentBackendEvent.CONVERSATION_STARTED, self._on_conversation_started
+                # )
                 backend.add_event_callback(
                     AgentBackendEvent.CONVERSATION_ENDED, self._on_conversation_ended
                 )
@@ -370,8 +381,23 @@ class AgentService(BaseService):
                 
             # Clear cooldown state when successfully starting a new conversation
             self._clear_conversation_cooldown()
-                
-            logger.info("Conversation backend started successfully")
+            
+            # Initialize conversation state and deep thoughts
+            self.is_conversation_active = True
+            self._conversation_start_time = time.time()
+            
+            # Reset deep thoughts for this conversation - make a deep copy
+            import copy
+            self._available_deep_thoughts = copy.deepcopy(DEEP_THOUGHTS)
+            
+            # Reset speech tracking for quiet period detection
+            self._last_speech_end_time = None
+            
+            # Reset space-time tracking to ensure first projection message is sent
+            self._current_era = None
+            self._current_biome = None
+            
+            logger.info("Conversation backend started successfully - deep thoughts initialized")
             return True
             
         except Exception as e:
@@ -677,15 +703,22 @@ class AgentService(BaseService):
     # Event Handlers
     # =========================================================================
     
-    async def _on_conversation_started(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Handle conversation started event."""
-        self.is_conversation_active = True
-        logger.info("Conversation started with audience")
+    # async def _on_conversation_started(self, event: AgentBackendEvent, data: Dict[str, Any]):
+    #     """Handle conversation started event."""
+    #     self.is_conversation_active = True
+    #     self._conversation_start_time = time.time()
+        
+    #     # Reset deep thoughts for this conversation - make a deep copy
+    #     import copy
+    #     self._available_deep_thoughts = copy.deepcopy(DEEP_THOUGHTS)
+        
+    #     logger.info("Conversation started with audience - deep thoughts reset")
 
     async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle conversation ended event."""
         logger.info("Conversation ended")
         self.is_conversation_active = False
+        self._conversation_start_time = None  # Clear conversation start time
         
         # Start cooldown timer
         self.conversation_end_time = time.time()
@@ -751,6 +784,10 @@ class AgentService(BaseService):
         if speaker == "agent":
             self.agent_speaking = True
         
+        # Reset speech end time when new speech starts (interrupts quiet period)
+        self._last_speech_end_time = None
+        logger.debug(f"Speech detected for {speaker}, resetting quiet period")
+        
         # Publish to presence system for conversation tracking
         if self.config.speech_detection_enabled:
             speaker_type = "agent" if speaker == "agent" else "human"
@@ -763,6 +800,10 @@ class AgentService(BaseService):
         # Update internal state
         if speaker == "agent":
             self.agent_speaking = False
+        
+        # Track when speech ends for deep thoughts timing
+        self._last_speech_end_time = time.time()
+        logger.debug(f"Speech ended for {speaker}, tracking quiet period for deep thoughts")
         
         # Publish to presence system for conversation tracking
         if self.config.speech_detection_enabled:
@@ -940,27 +981,118 @@ class AgentService(BaseService):
         biome = data.get("biome")
         logger.debug(f"Received space-time update: era={era}, biome={biome}")
         
-        # TODO: Update agent context with current era/biome information
+        # Update agent context with current era/biome information
         if self.current_backend and self.current_backend.is_connected:
-            context_msg = f"<projection: currently displaying a {self.era_to_description(biome, era)}.>"
+            # Only send space-time updates when in explorer node
+            current_node = self.current_backend.get_current_node()
+            if current_node != "explorer":
+                logger.debug(f"Skipping space-time update - not in explorer node (current: {current_node})")
+                return
+            
+            # Check if era or biome has changed since last update
+            era_changed = era != self._current_era
+            biome_changed = biome != self._current_biome
+            
+            if not era_changed and not biome_changed:
+                logger.debug(f"No change in era/biome ({era}/{biome}), skipping projection message")
+                return
+            
+            # Update our tracking state
+            self._current_era = era
+            self._current_biome = biome
+            
+            # Send projection update since something changed
+            context_msg = f"<projection: currently displaying {self.era_to_description(biome, era)}.>"
+            
+            # Try to get a deep thought for this biome/era combination
+            deep_thought = self._get_deep_thought(biome, era)
+            if deep_thought:
+                context_msg += f"\n<thought: {deep_thought}>"
+                await self.current_backend.send_message(deep_thought, speaker="system", say_tts=True)
+                logger.debug(f"Sent deep thought: {deep_thought[:50]}...")
+            else:
+                logger.debug("No deep thought retrieved - check debug logs for reason")
+
+            logger.debug(f"Sent projection update for era/biome change: {era}/{biome}")
             await self.current_backend.send_message(context_msg, speaker="system")
-    
+
 
     def era_to_description(self, biome: str, era: str) -> str:
         """Convert era string to human-readable description."""
         str_biome = str(biome).replace("_", " ").lower()
         era_descriptions = {
             "wilderness": f"a {str_biome} landscape untouched by humans",
-            "pre_industrial": f"a {str_biome} landscape long before industrialization",
+            "pre_industrial": f"a {str_biome} landscape with an ancient civilization",
             "early_industrial": f"a {str_biome} landscape as industry begins to emerge",
-            "industrial": f"a {str_biome} landscape dominated by industry",
+            "late_industrial": f"a {str_biome} landscape dominated by industry",
             "modern": f"a {str_biome} landscape in late 20th century",
             "current": f"a {str_biome} landscape in the present day",
             "future": f"a {str_biome} landscape in the near future if things go well",
             "dystopia": f"a {str_biome} landscape in a dystopian future where things have gone wrong",
             "ruins": f"a future {str_biome} landscape with remnants of our civilization",
         }
+        if era is None or era == "":
+            logger.warning(f"Received empty era in space-time update: {era}")
+        if era not in era_descriptions:
+            logger.warning(f"Unknown era '{era}' in space-time update, using default description")
+            # Fallback to a generic description if era is unknown
         return era_descriptions.get(era, f"a {str_biome} landscape")
+    
+    def _get_deep_thought(self, biome: str, era: str) -> Optional[str]:
+        """Get a deep thought for the given biome and era, removing it from available thoughts.
+        
+        Returns None if no thought available or if it's too early in the conversation.
+        """
+        logger.info(f"Retrieving deep thought for {era}/{biome}...")
+
+        # Check if we're in a conversation and if enough time has passed
+        if not self._conversation_start_time:
+            # If no conversation start time is set, return None
+            logger.debug("No conversation start time set, skipping deep thought")
+            return None
+        
+        now = time.time()
+        time_elapsed = now - self._conversation_start_time
+        if time_elapsed < self.config.deep_thoughts_min_delay:
+            logger.debug(f"Too soon: {time_elapsed:.2f}s since start, waiting for {self.config.deep_thoughts_min_delay}s")
+            return None
+        
+        # Check for quiet period - only share deep thoughts during reflection time
+        if not self._last_speech_end_time:
+            logger.debug("No quiet period detected (speech may be active), skipping deep thought")
+            return None
+
+        # Calculate quiet time since last speech ended
+        quiet_elapsed = now - self._last_speech_end_time
+        if quiet_elapsed < self.config.deep_thoughts_quiet_delay:
+            logger.debug(f"Not quiet long enough: {quiet_elapsed:.2f}s since speech ended, waiting for {self.config.deep_thoughts_quiet_delay}s")
+            return None
+        
+        # Check if we have thoughts available for this era
+        if era not in self._available_deep_thoughts:
+            logger.debug(f"No deep thoughts available for era: {era}")
+            return None
+            
+        # Check if we have thoughts available for this biome within the era
+        era_thoughts = self._available_deep_thoughts[era]
+        if biome not in era_thoughts:
+            logger.debug(f"No deep thoughts available for biome: {biome} in era: {era}")
+            return None
+
+        # random chance to not give a thought
+        if random.random() > self.config.deep_thoughts_chance:
+            logger.debug(f"Skipping deep thought for {era}/{biome} due to random chance")
+            return None
+        
+        # Get the thought and remove it from available thoughts
+        thought = era_thoughts.pop(biome)
+        
+        # Clean up empty era if no more thoughts remain
+        if not era_thoughts:
+            del self._available_deep_thoughts[era]
+        
+        logger.info(f"Retrieved deep thought after {quiet_elapsed:.1f}s of quiet time: {thought[:50]}...")
+        return thought
 
     async def _handle_audience_present(self, message_data: MessageDataType):
         """Handle audience presence updates."""
