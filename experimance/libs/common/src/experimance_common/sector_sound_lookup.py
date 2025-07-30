@@ -406,7 +406,8 @@ SECTOR_SOUND_LOOKUP = {
     "temple": "church",
     "monastery": "church",
     
-    # Add more as needed from the missing list...
+    # Other
+    "wartorn": "wartorn",
 }
 
 
