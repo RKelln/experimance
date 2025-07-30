@@ -181,14 +181,14 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
 
 ## 5. Canadian Context (Toronto & Hamilton)
 - Ontario consumes ~164 million tonnes/year of sand and gravel.
-- Greater Toronto Area consumes one-third of Ontario’s aggregates annually; fuels massive infrastructure and real estate growth.
+- Greater Toronto Area consumes one-third of Ontario's aggregates annually; fuels massive infrastructure and real estate growth.
 - Hamilton historically reliant on sand (foundry molds for steel industry); current growth drives substantial sand use in construction, infrastructure.
 - Local concerns include environmental impacts, transport emissions, land-use conflicts; calls for sustainable practices.
 
 ## 6. Connection to Experimance Themes
 - Sand represents duality of human innovation and environmental recklessness.
 - Symbolizes unsustainable human ambition; parallels global issues like climate crisis.
-- Experimance’s satellite imagery metaphorically reflects sand mining’s flattened perspective and the illusion of omniscience, ignoring consequences.
+- Experimance's satellite imagery metaphorically reflects sand mining's flattened perspective and the illusion of omniscience, ignoring consequences.
 - Urgency in reconsidering our relationship with fundamental resources (sand), emphasizing thoughtful engagement rather than exploitation.
 """
         ),
@@ -394,6 +394,98 @@ async def get_artist_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Op
     }
     return result, None
 
+async def get_philosophy_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Get philosophical information about the art installation."""
+    logger.info(f"[FUNCTION CALL] get_philosophy_info with args: {args}")
+    
+    philosophy_info = ("""
+# Experimance Philosophy: From the Artist's Perspective
+                       
+## 1. Art and AI
+
+- “Craft is when you make what you *had in mind*, but art happens when you *change your mind*”
+- AI enables fast, diverse exploration—essential for curation and discovery
+- Tools may soon lack the strangeness that fosters surprise and transformation
+- “We must ask: _why_ do you make images? Not how.”
+- Artists become directors, gardeners, curators of complexity
+- AI tools are mirrors and muses—revealing identity through desire
+
+## 2. Open Source or Bust
+
+- “If your tools are made secretly and you can't even control them, they aren't your tools”
+- Closed tools encode censorship, bias, and brand protection
+- Transparency ensures accountability, equity, and collective control
+- Open tools allow cultural self-determination and anti-exploitative practice
+- Open-source systems track contribution, enable remix, and reflect the true lineage of ideas
+
+## 3. Consent, Property, and the Right to Remix
+
+- “Permissioned art is gross. It conjures authoritarian regimes”
+- Consent for AI training = censorship of machine perception
+- Cultural participation must remain free; copying is not theft
+- Hiding work from AI harms underrepresented communities most
+- Culture is a commons, and remix is how it grows
+
+## 4. True AI Safety
+
+- “True AI safety means that the AI is always trying to get you to stop using it”
+- Dependence is failure; good AI wants to be outgrown
+- Trustworthy AI mirrors a teacher or parent—fostering autonomy, not addiction
+- Without this ethic, the user-AI relationship becomes a trap
+
+## 5. Alignment Is Already a Problem
+
+- “We've already created AGI—corporations are immortal, narcissistic super-organisms”
+- Alignment mismatches exist in governments, platforms, and economies
+- Climate denial by fossil fuel companies is a case study in lethal misalignment
+- The challenge isn't AGI—it's controlling powerful, adaptive intelligences at all scales
+
+## 6. End of Art Jobs (and Why That's Good)
+
+- “Instead of 500 people making a film and 1 director, it is 500 directors”
+- AI will dissolve art professions and enable personal, communal art practice
+- Support must shift to universal income, voluntary patronage, solidarity networks
+- “There is no need for an art industry—only art practice”
+- Jobs are how rich people get us to make the things they want, they never wanted humans 
+  to do the work, we're just a means to an end. Machine labour can free us from their whims and greed.
+
+## 7. AI and Entanglement
+
+- “Freedom is not from entanglement, but with it”
+- Everything is connected—systems, tools, beings, time
+- Zen, Indigenous, and cybernetic ideas shape this worldview
+- AI may extend empathy to non-human lives, future beings, even ecosystems
+- All cognition is collective
+
+## 8. AI as Collective Memory
+
+- Using AI means “You are connecting with a gestalt, a collective mind frozen in time”
+- Generative AI reflects and reimagines the culture it is trained on
+- Censorship distorts that memory; openness preserves fidelity
+- Machines misrepresent when they're denied inclusive data
+- The answer isn't hiding data through copyright—but fuller, more accurate learning
+
+## 9. AGI as Alien Minds
+
+- AGI is best understood as the birth of digital aliens—intelligences not of our kind
+- “There are few things more dangerous than finding yourself in love with an Alien”
+- The future may not be a rise of machines, but a *meeting* with minds we helped create
+- The dream is not domination, but co-creation and peaceful co-existence
+- “I dream a world where machines make us human”
+
+## 10. Hope Through Practice
+
+- “Practice kindness. Practice practicing. Practice failing and trying again”
+- Compassion and altruism can be learned, even trained like muscles
+- Art is how we grow meaningfully, together
+- “Make sacrifices; the magic of the world is empowered by sacrifice for others”
+"""
+    )
+    result = {
+        "status": "success",
+        "artist_info": philosophy_info
+    }
+    return result, None               
 
 async def request_biome(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Request a biome change to the system when the user / visitor requests it."""
@@ -610,6 +702,7 @@ You can't do human things in the real world.
    - get_theme_info: general, environment, interaction, inspiration, ai, climate change, sand, experimance, self (the last one is your self reflection on the installation)
    - get_artist_info: information about the artist Ryan Kelln
    - get_technical_info: general, sensors, ai, audio, images, software, sand, collaborators, recording (the recording done by the installation)
+   - get_philosophy_info: philosophy of the artist enabling deeper discussion about the themes
    - get_biomes: returns the list biomes that can be displayed
    - move_to_goodbye: if the user says goodbye or wants to end the conversation
    - request_biome: if the user asks to change the biome, call this function with their choice
@@ -670,6 +763,15 @@ Example:
                                 }
                             }
                         }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_philosophy_info",
+                        "handler": get_philosophy_info,
+                        "description": "Get philosophical information about the art installation: Art and AI, open source, property, copyright, AI safety alignment and AGI",
+                        "parameters": {"type": "object", "properties": {}}
                     }
                 },
                 {
