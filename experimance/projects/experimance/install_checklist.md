@@ -54,3 +54,21 @@
    - [ ] goodbye when goodbye
    - [ ] goodbye then leave and return, should start a new
    - [ ] goodbye, then say hello [todo]
+
+
+# Kiosk mode for gnome
+
+Run `sudo infra/scripts/kiosk_mode.sh enable`
+
+This adds and removes:
+
+Disable unattended upgrades:
+```bash
+sudo systemctl disable unattended-upgrades
+sudo systemctl stop unattended-upgrades
+```
+
+Disable banners and pop-ups
+```
+gsettings set org.gnome.desktop.notifications show-banners false
+```

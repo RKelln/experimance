@@ -30,7 +30,11 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Backup system**: Configuration and state backups before changes
 - **Git integration**: Simple `git pull` workflow with safety checks
 
-### 5. **Kiosk-Style Display Support & Robust Service Management**
+### 5. **Kiosk Mode & Display Support**
+- **Kiosk mode management**: Safe, reversible kiosk mode for Ubuntu 24.04 installations
+- **Settings-based approach**: No package installation, uses only GNOME settings changes
+- **Automatic backups**: Creates backups before any changes with easy restore functionality
+- **Gallery-ready features**: Disables screen lock, notifications, unattended upgrades, and sleep
 - **Wayland compatibility**: Automatic detection and configuration for Ubuntu 24.04+ Wayland sessions
 - **Desktop session dependency**: Uses systemd's `graphical-session.target` for clean desktop readiness
 - **Independent service control**: Services can restart individually without affecting others
@@ -42,7 +46,8 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 
 ```
 infra/
-├── systemd/                    # Service definitions (updated for standardized naming)
+├── README.md                  # This summary
+├── systemd/                   # Service definitions (updated for standardized naming)
 │   ├── core@.service          # Core service (service_type@project format)
 │   ├── display@.service       # Display service with Wayland support
 │   ├── health@.service        # Health monitoring service
@@ -50,16 +55,20 @@ infra/
 │   ├── audio@.service         # Audio service
 │   ├── image_server@.service  # Image generation service
 │   └── experimance@.target    # Service group target
-├── scripts/                    # Management automation
-│   ├── deploy.sh              # Main deployment script (simplified, no special cases)
+├── scripts/                   # Management automation
+│   ├── deploy.sh              # Main deployment script (install, start, stop, setup schedules)
 │   ├── get_project_services.py # Dynamic service detection
-│   ├── setup_display_env.sh   # Wayland/Xwayland display environment detection
-│   ├── wait_for_desktop_session.sh # Wait for user login (used by target, not individual services)
-│   └── (other utility scripts)
-└── docs/                      # Documentation
-    ├── deployment.md          # Complete deployment guide
-    └── README.md              # This summary
-
+│   ├── healthcheck.py         # Health monitoring script
+│   ├── kiosk_mode.sh          # Enable/disable kiosk mode for art installation
+│   ├── reset.sh               # System/service reset functionality
+│   ├── reset_on_input.py      # Interactive reset trigger script
+│   ├── shutdown.sh            # Graceful system shutdown
+│   ├── startup.sh             # System startup script (for cron/systemd)
+│   ├── status.sh              # Service status checking
+│   ├── switch-project.sh      # Switch between different project configurations
+│   └── update.sh              # Safe update script with rollback capability
+├── docs/                      # Documentation
+│   
 scripts/                       # Development tools
 └── dev                        # Development service runner
 
@@ -151,6 +160,31 @@ sudo ./infra/scripts/deploy.sh experimance schedule-shutdown '17:00'
 # Check logs
 sudo tail -f /var/log/experimance/daily-reset.log
 sudo tail -f /var/log/experimance/shutdown.log
+```
+
+## Kiosk Mode Management
+
+```bash
+# Enable kiosk mode for gallery installation (production)
+sudo ./infra/scripts/kiosk_mode.sh enable
+
+# Disable kiosk mode (restore normal desktop)
+sudo ./infra/scripts/kiosk_mode.sh disable
+
+# Check kiosk mode status and current settings
+sudo ./infra/scripts/kiosk_mode.sh status
+
+# Create backup of current settings (automatic with enable/disable)
+sudo ./infra/scripts/kiosk_mode.sh backup
+
+# Restore from a specific backup
+sudo ./infra/scripts/kiosk_mode.sh restore /var/backups/experimance/kiosk-settings/backup_file.json
+
+# List available backups
+sudo ./infra/scripts/kiosk_mode.sh list-backups
+
+# Get help
+sudo ./infra/scripts/kiosk_mode.sh --help
 ```
 
 
