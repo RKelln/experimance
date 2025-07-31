@@ -100,7 +100,7 @@
             ]
         },
         "tropical_island": {
-            "prompt": "tropical island, ocean",
+            "prompt": "tropical island, beaches, ocean",
             "locations": [
                 "Borneo",
                 "Hawaiian Islands",
@@ -113,7 +113,7 @@
             ]
         },
         "river": {
-            "prompt": "river",
+            "prompt": "large river, river delta",
             "locations": [
                 "Nile River",
                 "Amazon River",
@@ -142,7 +142,7 @@
             ]
         },
         "steppe": {
-            "prompt": "steppe",
+            "prompt": "steppe, grassland",
             "style": [
                 "summer",
                 "winter"
@@ -156,7 +156,7 @@
             ]
         },
         "coastal": {
-            "prompt": "coastal",
+            "prompt": "coastal, ocean",
             "locations": [
                 "New Zealand Fjords",
                 "Norwegian Fjords",
@@ -169,7 +169,7 @@
             ]
         },
         "swamp": {
-            "prompt": "swamp",
+            "prompt": "swamp, water",
             "locations": [
                 "Everglades",
                 "Okefenokee Swamp",
@@ -179,7 +179,7 @@
             ]
         },
         "plains": {
-            "prompt": "plains",
+            "prompt": "plains, grassland",
             "locations": [
                 "Serengeti Plains",
                 "Great Plains",
@@ -189,7 +189,7 @@
             ]
         },
         "arctic": {
-            "prompt": "arctic",
+            "prompt": "arctic, polar",
             "locations": [
                 "Antarctic",
                 "Greenland Ice Sheet",

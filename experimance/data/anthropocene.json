@@ -1,13 +1,13 @@
 {
     "base_prompt": {
-        "prompt": "colorful satellite image",
+        "prompt": "aerial photography",
         "style": "rivers, water, hills, valleys, vibrant hyper detailed photorealistic",
-        "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens, vein, tentacle"
+        "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens"
     },
     "eras": {
         "wilderness": {
             "prompt": "pre-industrial wilderness",
-            "negative": "modern, plastic, path, road, roads, buildings, humans"
+            "negative": "modern, plastic, path, road, roads, buildings, humans, vein, tentacle"
         },
         "pre_industrial": {
             "prompt": "pre-industrial, 1600s, subsistence agriculture",
@@ -29,7 +29,7 @@
             "negative": ""
         },
         "current": {
-            "prompt": "dense urban metropolis, 2020s",
+            "prompt": "Jeffrey Milstein style, dense urban metropolis, 2020s",
             "style": "busy roads and highways, colorful, entangled, chaotic, dense, crowded, traffic",
             "negative": ""
         },
