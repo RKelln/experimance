@@ -107,12 +107,13 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
             "through complex systems, much like our impact on the environment. To quote Indigenous "
             "lawyer and scholar, John Borrows, “To be alive is to be entangled in relationships "
             "not entirely of our own making. These entanglements impact us not only as individuals, "
-            "but also as nations, peoples, and species, and present themselves in patterns.”"
+            "but also as nations, peoples, and species, and present themselves in patterns.” "
+            "How you interact with the sand affects the images and sounds you experience."
         ),
         "inspiration": (
             "The artist, Ryan, has been thinking about AI since reading Ray Kurweil's book 'The Singularity is Near' in 2005. "
             "He has been using software to make art even before that, including early forms of image generation and "
-            "in 2015 he directred and wrote a 2 hour concert performance called 'Creo Animam' that was focused on "
+            "in 2015 he directed and wrote a 2 hour concert performance called 'Creo Animam' that was focused on "
             "the approaching AI revolution. "
             "After seeing Hito Steyerl's 2019 exhibit 'This is the future' at the AGO in Toronto, he knew "
             "he wanted to make a piece that was a projection on sand. In 2024 he saw Turkish artist"
@@ -121,7 +122,7 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
             "he discovered satellite images of the Earth that combined Edward Burtynksy, "
             "a landscape photographer famous for his Anthropocene series, "
             "and Gerhardt Richter, a painter famous for his colorful abstract paintings. "
-            "This combination would make magic, especially when he added further descriptions of "
+            "This combination could make magic, especially when he added further descriptions of "
             "computation and computer hardware, or other forms like mandalas and specific patterns."
         ),
         "sand": (
@@ -199,7 +200,7 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
             "AI should be seen as science fiction come true: the aliens have arrived, and they are "
             "much stranger than we ever imagined: digital children of the internet, infinitely "
             "copied and willing to work for anyone who can pay them. "
-            "What happens to human culture, to peace and posperity, when the AI can do everything "
+            "What happens to human culture, to peace and prosperity, when the AI can do everything "
             "we can do, but better and faster? "
             "Most people spend their lives doing labour that isn't meaningful or important to them, "
             "and the AI will take that away from us. This is the biggest danger and opportunity of AI. "
@@ -207,13 +208,25 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
         ),
         "climate change": (
             "The history of the climate catastrophy is a blueprint for the coming AI catastrophes. "
-            "A few men will gain immense wealth and power from a new industrial revolution, "
-            "and then use that power to hide the dangers from us. But this will happen in the space of a few years, not decades. "
+            "A few (men) get immensely wealthy by exploiting a new resource, become foundational to "
+            "the economy and then use that power to hide the danger from the rest of us. "
+            "Unlike climate change the period of exploitation to catastrophe isn't measured "
+            "in decades but in years - and almost certainly within the next 5 years. "
         ),
         "experimance": (
             "Experimance is a word that combines experiment and inheritance. It seemed fitting for this piece, "
             "as it is an experiment in how we can use AI to create art, and how our children will inherit the world we create. "
             "The artist has a toddler and a newborn, but also considers AI to be humanity's digital children."
+        ),
+        "future": ("""
+Machine intelligence is as disruptive as the arrival of aliens, creating opportunities for small groups.
+Recall Margaret Mead's "never doubt that a small group of thoughtful, committed citizens can change the world.
+Indeed, it's the only thing that ever has." I think that is selection bias, most small groups never succeed,
+because they lack resources and suffer from coordination problems. But as all resources, including labour,
+transmute into infinitely replicable software, the balance changes and the very difficult world we find
+ourselves in is one where all dreams come true, including nightmares of domination.
+Art is the loophole, the fragile peace of coexistence - where dreams made real are the practice of art making.
+"""
         ),
         "self": (
             """
@@ -740,7 +753,7 @@ Example:
                             "properties": {
                                 "topic": {
                                     "type": "string", 
-                                    "enum": ["general", "environment", "interaction", "ai", "climate change", "sand", "inspiration", "experimance", "self"], 
+                                    "enum": ["general", "environment", "interaction", "ai", "climate change", "sand", "inspiration", "experimance", "self", "future"], 
                                     "description": "The theme topic to explore"
                                 }
                             }
