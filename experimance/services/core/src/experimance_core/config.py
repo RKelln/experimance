@@ -71,7 +71,7 @@ class StateMachineConfig(BaseModel):
     
     entire_surface_intensity: float = Field(
         default=0.7,
-        ge=0.0,
+        ge=0.1,
         description="Intensity value when the entire surface is interacted with (test to find the value)"
     )
 

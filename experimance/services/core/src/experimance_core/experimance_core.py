@@ -61,7 +61,7 @@ ERA_PROGRESSION = {
     Era.EARLY_INDUSTRIAL: [Era.LATE_INDUSTRIAL],
     Era.LATE_INDUSTRIAL: [Era.MODERN],
     Era.MODERN: [Era.CURRENT],
-    Era.CURRENT: [Era.FUTURE],
+    Era.CURRENT: [Era.FUTURE, Era.DYSTOPIA], # Current can progress to future or dystopia
     Era.FUTURE: [Era.FUTURE, Era.DYSTOPIA],  # Future can loop or progress to dystopia
     Era.DYSTOPIA: [Era.RUINS],
     Era.RUINS: [Era.WILDERNESS]  # Cycle back to beginning
@@ -621,16 +621,17 @@ class ExperimanceCoreService(BaseService):
         if Era(new_era) != self.current_era:
             self._last_era = self.current_era
             self.current_era = Era(new_era)
-            if self.seed < int(2**31 - 2):  # max int
-                self.seed += 1
-            else:
-                self.seed = 0
 
             # resets
             self.era_progression_timer = 0.0
             self.user_interaction_score = 0.0
             if self.current_era == Era.WILDERNESS:
                 self.user_interaction_intensities.clear()
+                # at start of progression pick a seed
+                if self.seed < int(2**31 - 2):  # max int
+                    self.seed += 1
+                else:
+                    self.seed = 0
 
             # Update prompt manager
             if self.prompt_manager is not None:
@@ -650,18 +651,16 @@ class ExperimanceCoreService(BaseService):
         target_era_enum = Era(target_era)
         return target_era_enum in ERA_PROGRESSION.get(current_era_enum, [])
     
-    async def progress_era(self) -> bool:
-        """Progress to the next era in the timeline."""
+    def get_next_era(self) -> Optional[Era]:
+        """Get the next possible era without transitioning."""
         current_era_enum = Era(self.current_era)
         possible_next_eras = ERA_PROGRESSION.get(current_era_enum, [])
         
         if not possible_next_eras:
             logger.warning(f"No progression defined for era: {self.current_era}")
-            return False
+            return None
         
-        # reset interaction score and idle timer on era change
-        self.user_interaction_score = 0.0
-        
+        next_era = current_era_enum
         if current_era_enum == Era.CURRENT:
             # Special case for CURRENT era - transition to FUTURE or DYSTOPIA
             # calculate average interaction score over the session
@@ -674,25 +673,17 @@ class ExperimanceCoreService(BaseService):
             else: # larger changes == dystopia
                 next_era = Era.DYSTOPIA
         elif current_era_enum == Era.FUTURE:
-            next_era = random.choice([Era.FUTURE, Era.DYSTOPIA])
+            # move to dystopia on interaction score threshold,
+            dystopia_chance = max(0.1, min(0.9, self.user_interaction_score / self.config.state_machine.entire_surface_intensity))
+            if random.random() < dystopia_chance:
+                next_era = Era.DYSTOPIA
+            else:
+                next_era = Era.FUTURE
         else:
             # Simple progression for other eras
             next_era = possible_next_eras[0]
-            
-        return await self.transition_to_era(next_era.value)
-    
-    def get_next_era(self) -> Optional[str]:
-        """Get the next possible era without transitioning."""
-        current_era_enum = Era(self.current_era)
-        possible_next_eras = ERA_PROGRESSION.get(current_era_enum, [])
         
-        if not possible_next_eras:
-            return None
-            
-        if current_era_enum == Era.FUTURE and len(possible_next_eras) > 1:
-            return random.choices(possible_next_eras, weights=[0.7, 0.3])[0].value
-        else:
-            return possible_next_eras[0].value
+        return next_era
 
     def should_reset_to_wilderness(self) -> bool:
         """Check if system should reset to wilderness due to idle timeout."""
@@ -1444,7 +1435,7 @@ class ExperimanceCoreService(BaseService):
                     next_era = self.get_next_era()
                     if next_era and next_era != self.current_era:
                         logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
-                        await self.progress_era()
+                        await self.transition_to_era(next_era)
                 
                 # Use _sleep_if_running() to respect shutdown requests
                 if not await self._sleep_if_running(1.0):  # 1 Hz for state updates
