@@ -26,6 +26,9 @@ Group=experimance
 WorkingDirectory=/opt/experimance
 Environment=PROJECT_ENV=%i
 Environment=EXPERIMANCE_ENV=production
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=PATH=/home/experimance/.pyenv/bin:/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/experimance/.local/bin/uv run -m experimance_core
 ExecReload=/bin/kill -HUP $MAINPID
