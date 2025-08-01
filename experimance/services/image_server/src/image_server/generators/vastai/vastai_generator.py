@@ -168,6 +168,40 @@ class VastAIGenerator(ImageGenerator):
             logger.warning(f"Health check failed for instance {endpoint.instance_id}: {e}")
             return False
     
+    def _validate_generated_image(self, image: Image.Image, image_b64: str) -> bool:
+        """
+        Validate that a generated image is not corrupted based on dimensions and file size.
+        
+        This helps detect broken VastAI instances that return invalid images.
+        
+        Args:
+            image: PIL Image object to validate
+            image_b64: Base64 encoded image data for size checking
+            
+        Returns:
+            True if image is valid, False if it should be considered a failure
+        """
+        try:
+            # Check 1: Ensure image has reasonable dimensions
+            if image.width < 1024 or image.height < 1024:
+                logger.warning(f"🚨 Generated image too small: {image.width}x{image.height}")
+                return False
+                
+            # Check 2: Check base64 data size (rough indicator of content)
+            # A typical 1024x1024 JPEG should be at least 50KB encoded
+            # Black or corrupted images are often much smaller
+            min_b64_size = 50000  # ~37KB decoded, reasonable for non-corrupted image
+            if len(image_b64) < min_b64_size:
+                logger.warning(f"🚨 Generated image data too small: {len(image_b64)} chars (min: {min_b64_size})")
+                return False
+            
+            logger.debug(f"✅ Generated image validation passed: {image.width}x{image.height}, {len(image_b64)} chars")
+            return True
+            
+        except Exception as e:
+            logger.error(f"🚨 Error validating generated image: {e}")
+            return False  # Treat validation errors as invalid images
+    
     def _record_success(self):
         """Record a successful generation request."""
         self._consecutive_failures = 0
@@ -460,6 +494,12 @@ class VastAIGenerator(ImageGenerator):
                 logger.error(f"Image data prefix: {image_b64[:50]}..." if len(image_b64) > 50 else f"Full image data: {image_b64}")
                 self._record_failure()  # Record the failure
                 raise RuntimeError("Failed to decode generated image from remote server")
+            
+            # Validate the generated image to catch corrupted/black images from broken instances
+            if not self._validate_generated_image(generated_image, image_b64):
+                logger.error("🚨 Generated image failed validation - likely corrupted or broken instance")
+                self._record_failure()  # Record the failure - this will trigger instance recovery if needed
+                raise RuntimeError("Generated image failed validation - instance may be broken")
             
             # Save the image and return the path (async to avoid blocking)
             sub_dirs = []
