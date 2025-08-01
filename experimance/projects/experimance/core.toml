@@ -23,7 +23,7 @@ absence_threshold = 5.0      # seconds of no presence detection before consideri
 idle_threshold = 60.0        # seconds of no presence detection before considering audience gone
 presence_publish_interval = 20.0  # interval in seconds to publish presence status updates
 conversation_timeout = 7.0   # time after a agent or human speaker finishes that conversation is considered complete
-#always_present=true          # for debugging, to keep presence alive
+always_present=false          # for debugging, to keep presence alive
 
 [camera]
 # Core camera settings
