@@ -97,15 +97,17 @@ class MockImageGenerator(ImageGenerator):
 
         source_image = (self.config.existing_images_dir or Path(".")) / source_image
 
+        return str(source_image)  # Return the path to the existing image
+
         # Create output path with request_id if provided
         request_id = kwargs.get('request_id')
-        output_path = self._get_output_path(output_ext.lstrip('.'), request_id=request_id)
+        #output_path = self._get_output_path(output_ext.lstrip('.'), request_id=request_id)
         
         # Copy the image
-        shutil.copy2(source_image, output_path)
+        #shutil.copy2(source_image, output_path)
         
-        logger.info(f"MockImageGenerator: Copied existing image {source_image.name} to {output_path}")
-        return str(output_path)
+        #logger.info(f"MockImageGenerator: Copied existing image {source_image.name} to {output_path}")
+        #return str(output_path)
     
     async def _generate_placeholder_image(self, prompt: str, **kwargs) -> str:
         """Generate a simple placeholder image with the prompt text."""
