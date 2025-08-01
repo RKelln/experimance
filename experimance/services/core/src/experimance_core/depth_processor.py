@@ -71,6 +71,8 @@ class DepthProcessor:
         self.mask_lock_timeout = config.mask_lock_timeout
         self.started_time = time.time()
         self.mask_lock_succeeded = False
+
+        cv2.setUseOptimized(True)
         
     async def initialize(self) -> bool:
         """Initialize the depth processor."""
