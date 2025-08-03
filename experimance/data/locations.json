@@ -28,12 +28,12 @@
             ]
         },
         "temperate_forest": {
-            "prompt": "temperate forest",
+            "prompt": "temperate forest, river",
             "style": [
                 "summer",
                 "winter",
                 "autumn",
-                "hills"
+                "lake"
             ],
             "locations": [
                 "Black Forest",
@@ -44,12 +44,12 @@
             ]
         },
         "boreal_forest": {
-            "prompt": "boreal forest",
+            "prompt": "boreal forest, river",
             "style": [
                 "summer",
                 "winter",
                 "autumn",
-                "hills"
+                "lake"
             ],
             "locations": [
                 "Taiga",
@@ -60,12 +60,12 @@
             ]
         },
         "deciduous_forest": {
-            "prompt": "deciduous forest",
+            "prompt": "deciduous forest, river",
             "style": [
                 "summer",
                 "winter",
                 "autumn",
-                "hills"
+                "lake"
             ],
             "locations": [
                 "Eastern Deciduous Forest",
@@ -89,7 +89,9 @@
             "prompt": "mountain",
             "style": [
                 "summer",
-                "winter"
+                "winter",
+                "river",
+                "lake"
             ],
             "locations": [
                 "Himalayan Mountains",
@@ -100,7 +102,7 @@
             ]
         },
         "tropical_island": {
-            "prompt": "tropical island, beaches, ocean",
+            "prompt": "tropical island, beaches, ocean, reef",
             "locations": [
                 "Borneo",
                 "Hawaiian Islands",
@@ -131,7 +133,8 @@
             "prompt": "tundra",
             "style": [
                 "summer",
-                "winter"
+                "winter",
+                "lake"
             ],
             "locations": [
                 "Arctic Tundra",
@@ -156,7 +159,7 @@
             ]
         },
         "coastal": {
-            "prompt": "coastal, ocean",
+            "prompt": "coastal, water, ocean",
             "locations": [
                 "New Zealand Fjords",
                 "Norwegian Fjords",

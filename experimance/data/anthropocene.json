@@ -1,13 +1,13 @@
 {
     "base_prompt": {
         "prompt": "aerial photography",
-        "style": "rivers, water, hills, valleys, vibrant hyper detailed photorealistic",
-        "negative": "blurry, sketch, cartoon, illustration, oversaturated, fish-eye lens"
+        "style": "hills, valleys, vibrant hyper detailed photorealistic",
+        "negative": "blurry, warped, sketch, cartoon, illustration, oversaturated, fish-eye lens"
     },
     "eras": {
         "wilderness": {
-            "prompt": "pre-industrial wilderness, late afternoon sunlight",
-            "negative": "modern, plastic, path, road, roads, buildings, humans, vein, tentacle"
+            "prompt": "untouched wilderness, late afternoon sunlight",
+            "negative": "modern, plastic, path, road, roads, buildings, humans"
         },
         "pre_industrial": {
             "prompt": "pre-industrial, 1600s, subsistence agriculture",
@@ -21,10 +21,10 @@
         "late_industrial": {
             "prompt": "late industrial, 1800s",
             "style": "brick and wood buildings, smokestacks, pollution, dirty",
-            "negative": "paved, pavement, modern vehicles"
+            "negative": "paved, pavement, modern vehicles, clean"
         },
         "modern": {
-            "prompt": "1970s suburban development",
+            "prompt": "1970s suburban sprawl, houses",
             "style": "busy roads and highways, superhighways, traffic, parking lots",
             "negative": ""
         },

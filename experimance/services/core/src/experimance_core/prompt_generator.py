@@ -115,6 +115,61 @@ class PromptComponent:
         return self._get_next(self.negative_options, '_negative_index')
 
 
+class BiomePromptComponent(PromptComponent):
+    """A specialized prompt component for biomes that combines style and location lists."""
+    
+    def __init__(self, 
+                 prompt: Union[str, List[str]] = "",
+                 style: Union[str, List[str]] = "",
+                 locations: Union[str, List[str]] = "",
+                 negative: Union[str, List[str]] = "",
+                 strategy: RandomStrategy = RandomStrategy.SHUFFLE,
+                 rng: Optional[random.Random] = None):
+        """Initialize a biome prompt component.
+        
+        Args:
+            prompt: Main prompt text(s)
+            style: Style modifier text(s) 
+            locations: Location text(s)
+            negative: Negative prompt text(s)
+            strategy: How to select from multiple options
+            rng: Random number generator instance for reproducible results
+        """
+        # Initialize the base component with prompt and negative
+        super().__init__(prompt=prompt, style="", negative=negative, strategy=strategy, rng=rng)
+        
+        # Store style and location options separately
+        self.style_list = self._normalize_to_list(style)
+        self.locations_list = self._normalize_to_list(locations)
+        
+        # State for style and location selection
+        self._style_list_index = 0
+        self._locations_list_index = 0
+        
+        # Shuffle if needed
+        if strategy == RandomStrategy.SHUFFLE or strategy == RandomStrategy.REPEAT:
+            self.rng.shuffle(self.style_list)
+            self.rng.shuffle(self.locations_list)
+    
+    def get_style(self) -> str:
+        """Get next style text by combining a style and location."""
+        style_parts = []
+        
+        # Get style if available
+        if self.style_list:
+            style_part = self._get_next(self.style_list, '_style_list_index')
+            if style_part:
+                style_parts.append(style_part)
+        
+        # Get location if available  
+        if self.locations_list:
+            location_part = self._get_next(self.locations_list, '_locations_list_index')
+            if location_part:
+                style_parts.append(location_part)
+        
+        return ", ".join(style_parts)
+
+
 class SectorCombiner:
     """Handles combining development sectors into prompts."""
     
@@ -225,11 +280,16 @@ class PromptGenerator:
         # Create biome components
         self.biome_components = {}
         for biome_name, biome_data in self.locations_data.get("types", {}).items():
-            # Convert "locations" to "style" if present
-            if "locations" in biome_data:
-                biome_data = dict(biome_data)
-                biome_data["style"] = biome_data.pop("locations")
-            self.biome_components[biome_name] = PromptComponent(**biome_data, strategy=strategy, rng=self.rng)
+            
+            # Use BiomePromptComponent which handles style + locations combination
+            self.biome_components[biome_name] = BiomePromptComponent(
+                prompt=biome_data.get("prompt", ""),
+                style=biome_data.get("style", ""),
+                locations=biome_data.get("locations", ""),
+                negative=biome_data.get("negative", ""),
+                strategy=strategy,
+                rng=self.rng
+            )
         
         # Prepare sector data
         self._prepare_sector_data()
