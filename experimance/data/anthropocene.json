@@ -6,7 +6,7 @@
     },
     "eras": {
         "wilderness": {
-            "prompt": "pre-industrial wilderness",
+            "prompt": "pre-industrial wilderness, late afternoon sunlight",
             "negative": "modern, plastic, path, road, roads, buildings, humans, vein, tentacle"
         },
         "pre_industrial": {
