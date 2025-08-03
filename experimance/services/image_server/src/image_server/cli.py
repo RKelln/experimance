@@ -2,7 +2,14 @@
 """
 CLI utility for testing the Image Server Service by sending RenderRequest messages.
 
-This utility allows users to send test image generation requests to the Image Server Service
+This utility allows users to send test        # Create proper RenderRequest object like core service does
+        request = RenderRequest(
+            request_id=request_id,
+            era=era,  # Pass string directly, let RenderRequest handle conversion
+            biome=biome,  # Pass string directly, let RenderRequest handle conversion
+            prompt=prompt,
+            depth_map=depth_map_source
+        )eneration requests to the Image Server Service
 using ZeroMQ. It supports selecting predefined prompts or entering custom prompts,
 specifying era and biome parameters, and optionally including a depth map image.
 
@@ -21,11 +28,22 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-from experimance_common.schemas import MessageType
+from experimance_common.constants import MOCK_IMAGES_DIR
+from experimance_common.schemas import MessageType, ImageSource
 from experimance_common.constants import DEFAULT_PORTS
-from experimance_common.schemas import Era, Biome
 from experimance_common.zmq.components import PushComponent, PullComponent
-from experimance_common.zmq.config import PushConfig, PullConfig
+from experimance_common.zmq.config import ControllerPushConfig, ControllerPullConfig
+from experimance_common.zmq.zmq_utils import prepare_image_source, IMAGE_TRANSPORT_MODES
+
+# Import project-specific schemas (Era, Biome, RenderRequest)
+from experimance_common.schemas import Era, Biome, RenderRequest
+
+# Try to import prompt generator for enhanced prompt generation
+try:
+    from experimance_core.prompt_generator import PromptGenerator, RandomStrategy
+    PROMPT_GENERATOR_AVAILABLE = True
+except ImportError:
+    PROMPT_GENERATOR_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(
@@ -99,15 +117,15 @@ class ImageServerClient:
 
         push_port = extract_port(self.push_address)
         pull_port = extract_port(self.pull_address)
-        push_config = PushConfig(address=self.push_address.rsplit(":", 1)[0], port=push_port)
-        pull_config = PullConfig(address=self.pull_address.rsplit(":", 1)[0], port=pull_port)
+        push_config = ControllerPushConfig(port=push_port)
+        pull_config = ControllerPullConfig(port=pull_port)
         self.push_component = PushComponent(push_config)
         self.pull_component = PullComponent(pull_config)
         self.pull_component.set_work_handler(self._on_image_ready)
         await self.push_component.start()
         await self.pull_component.start()
-        logger.info(f"Connected to image_server push address: {self.push_address}")
-        logger.info(f"Listening for image ready on: {self.pull_address}")
+        logger.info(f"CLI controller bound to push requests on: {self.push_address}")
+        logger.info(f"CLI controller bound to pull results on: {self.pull_address}")
         await asyncio.sleep(1.0)
 
     async def stop(self):
@@ -120,20 +138,35 @@ class ImageServerClient:
     async def send_render_request(
         self,
         prompt: str,
-        depth_map_path: Optional[Path] = None
+        depth_map_path: Optional[Path] = None,
+        era: str = "wilderness",
+        biome: str = "forest"
     ) -> str:
         request_id = str(uuid.uuid4())
-        message = {
-            "type": MessageType.RENDER_REQUEST,
-            "request_id": request_id,
-            "prompt": prompt
-        }
+        
+        # Handle depth map similar to core service using prepare_image_source
+        image_source = None
         if depth_map_path and depth_map_path.exists():
             logger.info(f"Including depth map from {depth_map_path}")
-            message["depth_map_png"] = load_image_as_base64(depth_map_path)
-        logger.debug(f"Sending message: {json.dumps(message)[:200]}...")
+            # Use prepare_image_source like the core service does
+            image_source = prepare_image_source(
+                image_data=depth_map_path,  # Can pass Path directly
+                transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
+                request_id=request_id,
+            )
+        
+        # Create proper RenderRequest object like core service does
+        request = RenderRequest(
+            request_id=request_id,
+            era=Era(era),  # Convert string to enum
+            biome=Biome(biome),  # Convert string to enum
+            prompt=prompt,
+            depth_map=image_source
+        )
+        
+        logger.debug(f"Sending RenderRequest: {request.request_id}")
         assert self.push_component is not None, "PushComponent not initialized"
-        await self.push_component.push(message)
+        await self.push_component.push(request)
         logger.info(f"Sent RenderRequest with ID: {request_id}")
         return request_id
 
@@ -152,26 +185,61 @@ class ImageServerClient:
         return {}
 
     async def _on_image_ready(self, message):
-        logger.info(f"Received IMAGE_READY: {json.dumps(message)[:200]}...")
-        await self._response_queue.put(message)
+        # Convert message to dict if it's a Pydantic object
+        if hasattr(message, 'model_dump'):
+            message_dict = message.model_dump()
+        elif hasattr(message, 'dict'):
+            message_dict = message.dict()
+        else:
+            message_dict = message
+        
+        logger.info(f"Received IMAGE_READY: {json.dumps(message_dict)[:200]}...")
+        await self._response_queue.put(message_dict)
 
 
 async def interactive_mode(debug: bool = False):
     """Run the client in interactive mode with a menu-based interface."""
-    # Default settings - use DEFAULT_PORTS for unified events channel
-    push_address = f"tcp://localhost:{DEFAULT_PORTS['image_requests']}"
+    # Default settings - CLI acts as controller, so it binds to ports
+    push_address = f"tcp://*:{DEFAULT_PORTS['image_requests']}"
     pull_address = f"tcp://*:{DEFAULT_PORTS['image_results']}"
 
     print("\n=== Image Server Test Client ===\n")
-    print("ZMQ Configuration:")
-    print(f"  Push address (to send requests): {push_address}")
-    print(f"  Pull address (to receive images): {pull_address}")
+    print("ZMQ Configuration (CLI acts as Controller):")
+    print(f"  Push address (bind to send requests): {push_address}")
+    print(f"  Pull address (bind to receive results): {pull_address}")
 
     # Allow custom ZMQ addresses
     custom_addresses = input("\nUse custom ZMQ addresses? (y/N): ").lower() == 'y'
     if custom_addresses:
         push_address = input(f"Push address [{push_address}]: ") or push_address
         pull_address = input(f"Pull address [{pull_address}]: ") or pull_address
+
+    # Initialize prompt generator if available
+    prompt_gen = None
+    available_eras = []
+    available_biomes = []
+    
+    if PROMPT_GENERATOR_AVAILABLE:
+        try:
+            # Look for data directory
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent.parent.parent.parent  # Navigate up to project root
+            data_path = project_root / "data"
+            
+            if data_path.exists() and (data_path / "locations.json").exists() and (data_path / "anthropocene.json").exists():
+                prompt_gen = PromptGenerator(
+                    data_path=data_path,
+                    strategy=RandomStrategy.SHUFFLE
+                )
+                available_eras = prompt_gen.get_available_eras()
+                available_biomes = prompt_gen.get_available_biomes()
+                print(f"✅ Prompt generator loaded with {len(available_eras)} eras and {len(available_biomes)} biomes")
+            else:
+                print(f"⚠️  Data files not found at {data_path}, using fallback prompts")
+        except Exception as e:
+            print(f"⚠️  Could not initialize prompt generator: {e}, using fallback prompts")
+    else:
+        print("⚠️  Prompt generator not available, using fallback prompts")
 
     # Create and start client
     client = ImageServerClient(push_address, pull_address)
@@ -182,26 +250,121 @@ async def interactive_mode(debug: bool = False):
             print("\n=== Image Generation Menu ===")
 
             # Prompt selection
-            print("\nSelect a prompt:")
-            print("  0. Enter custom prompt")
-            prompt_options = list(SAMPLE_PROMPTS.keys())
-            for i, name in enumerate(prompt_options):
-                print(f"  {i+1}. {name}: {SAMPLE_PROMPTS[name][:50]}...")
+            print("\nSelect a prompt source:")
+            print("  1. Generate from era/biome (recommended)" if prompt_gen else "  1. Generate from era/biome (unavailable)")
+            print("  2. Select from predefined prompts")
+            print("  3. Enter custom prompt")
 
-            prompt_choice = int(input(f"Choose prompt (0-{len(prompt_options)}, default=0): ") or "0")
-            if prompt_choice == 0:
-                selected_prompt = input("Enter your custom prompt: ")
+            if prompt_gen:
+                prompt_choice = input("Choose option (1-3, default=1): ") or "1"
             else:
-                if 1 <= prompt_choice <= len(prompt_options):
-                    selected_prompt = SAMPLE_PROMPTS[prompt_options[prompt_choice - 1]]
-                else:
+                prompt_choice = input("Choose option (2-3, default=2): ") or "2"
+
+            selected_prompt = ""
+            selected_era = "wilderness"
+            selected_biome = "temperate_forest"
+
+            if prompt_choice == "1" and prompt_gen:
+                # Era/biome based prompt generation
+                print(f"\nEra selection (available: {len(available_eras)}):")
+                for i, era in enumerate(available_eras):
+                    print(f"  {i+1}. {era.value}")
+                
+                era_choice = input(f"Choose era (1-{len(available_eras)}, default=1): ") or "1"
+                try:
+                    selected_era_enum = available_eras[int(era_choice) - 1]
+                    selected_era = selected_era_enum.value
+                except (ValueError, IndexError):
+                    selected_era_enum = available_eras[0]
+                    selected_era = selected_era_enum.value
+
+                print(f"\nBiome selection (available: {len(available_biomes)}):")
+                for i, biome in enumerate(available_biomes):
+                    print(f"  {i+1}. {biome.value}")
+                
+                biome_choice = input(f"Choose biome (1-{len(available_biomes)}, default=1): ") or "1"
+                try:
+                    selected_biome_enum = available_biomes[int(biome_choice) - 1]
+                    selected_biome = selected_biome_enum.value
+                except (ValueError, IndexError):
+                    selected_biome_enum = available_biomes[0]
+                    selected_biome = selected_biome_enum.value
+
+                # Generate prompt
+                try:
+                    positive_prompt, negative_prompt = prompt_gen.generate_prompt(selected_era_enum, selected_biome_enum)
+                    print(f"\n🎨 Generated prompt for {selected_era} + {selected_biome}:")
+                    print(f"Positive: {positive_prompt}")
+                    if negative_prompt:
+                        print(f"Negative: {negative_prompt}")
+                    
+                    # Allow editing
+                    edit_prompt = input("\nEdit this prompt? (y/N): ").lower() == 'y'
+                    if edit_prompt:
+                        print("\nEnter your modified prompt (press Enter to keep current):")
+                        custom_positive = input(f"Positive [{positive_prompt[:50]}...]: ")
+                        if custom_positive.strip():
+                            positive_prompt = custom_positive.strip()
+                        
+                        if negative_prompt:
+                            custom_negative = input(f"Negative [{negative_prompt[:50]}...]: ")
+                            if custom_negative.strip():
+                                negative_prompt = custom_negative.strip()
+                    
+                    selected_prompt = positive_prompt
+                    
+                except Exception as e:
+                    print(f"Error generating prompt: {e}")
                     selected_prompt = "A beautiful landscape"
 
+            elif prompt_choice == "2":
+                # Predefined prompts
+                print("\nSelect a predefined prompt:")
+                print("  0. Enter custom prompt")
+                prompt_options = list(SAMPLE_PROMPTS.keys())
+                for i, name in enumerate(prompt_options):
+                    print(f"  {i+1}. {name}: {SAMPLE_PROMPTS[name][:50]}...")
+
+                predefined_choice = int(input(f"Choose prompt (0-{len(prompt_options)}, default=0): ") or "0")
+                if predefined_choice == 0:
+                    selected_prompt = input("Enter your custom prompt: ")
+                else:
+                    if 1 <= predefined_choice <= len(prompt_options):
+                        selected_prompt = SAMPLE_PROMPTS[prompt_options[predefined_choice - 1]]
+                    else:
+                        selected_prompt = "A beautiful landscape"
+
+            else:  # prompt_choice == "3" or fallback
+                # Custom prompt
+                selected_prompt = input("Enter your custom prompt: ")
+
+            # Era and biome selection (if not already set from prompt generation)
+            if prompt_choice != "1" or not prompt_gen:
+                print(f"\nEra context (default: wilderness):")
+                era_options = [e.value for e in Era]
+                for i, era in enumerate(era_options):
+                    print(f"  {i+1}. {era}")
+                era_choice = input(f"Choose era (1-{len(era_options)}, default=1): ") or "1"
+                try:
+                    selected_era = era_options[int(era_choice) - 1]
+                except (ValueError, IndexError):
+                    selected_era = "wilderness"
+
+                print(f"\nBiome context (default: temperate_forest):")
+                biome_options = [b.value for b in Biome]
+                for i, biome in enumerate(biome_options):
+                    print(f"  {i+1}. {biome}")
+                biome_choice = input(f"Choose biome (1-{len(biome_options)}, default=2): ") or "2"
+                try:
+                    selected_biome = biome_options[int(biome_choice) - 1]
+                except (ValueError, IndexError):
+                    selected_biome = "temperate_forest"
+
             # Depth map selection
-            use_depth_map = input("\nUse a depth map? (y/N): ").lower() == 'y'
+            use_depth_map = input("\nUse a depth map? (Y/n): ").lower() != 'n'
             depth_map_path = None
             if use_depth_map:
-                default_depth_map = "services/image_server/images/mocks/depth_map.png"
+                default_depth_map = MOCK_IMAGES_DIR / "depth" / "mock_depth_map.png"
                 depth_map_path_str = input(f"Enter path to depth map PNG file: ({default_depth_map})") or default_depth_map
                 depth_map_path = Path(depth_map_path_str).expanduser().absolute()
                 if not depth_map_path.exists() or not depth_map_path.is_file():
@@ -211,6 +374,8 @@ async def interactive_mode(debug: bool = False):
             # Show summary and confirm
             print("\n=== Request Summary ===")
             print(f"Prompt: {selected_prompt}")
+            print(f"Era: {selected_era}")
+            print(f"Biome: {selected_biome}")
             print(f"Depth Map: {'Yes - ' + str(depth_map_path) if depth_map_path else 'No'}")
 
             confirm = input("\nSend this request? (Y/n): ").lower() != 'n'
@@ -221,7 +386,9 @@ async def interactive_mode(debug: bool = False):
             # Send request and wait for response
             request_id = await client.send_render_request(
                 prompt=selected_prompt,
-                depth_map_path=depth_map_path
+                depth_map_path=depth_map_path,
+                era=selected_era,
+                biome=selected_biome
             )
 
             print(f"\nRequest {request_id} sent. Waiting for response...")
@@ -257,9 +424,9 @@ async def interactive_mode(debug: bool = False):
 
 async def command_line_mode(args):
     """Run the client in command line mode with arguments using Push/Pull."""
-    # Use push/pull addresses for image server
-    push_address = args.events_address if hasattr(args, 'events_address') else f"tcp://localhost:{DEFAULT_PORTS['image_server_push']}"
-    pull_address = args.images_address if hasattr(args, 'images_address') else f"tcp://localhost:{DEFAULT_PORTS['image_server_pull']}"
+    # CLI acts as controller, so it binds to ports
+    push_address = args.request_address if hasattr(args, 'request_address') else f"tcp://*:{DEFAULT_PORTS['image_requests']}"
+    pull_address = args.result_address if hasattr(args, 'result_address') else f"tcp://*:{DEFAULT_PORTS['image_results']}"
     client = ImageServerClient(
         push_address,
         pull_address,
@@ -275,7 +442,9 @@ async def command_line_mode(args):
 
         request_id = await client.send_render_request(
             prompt=args.prompt,
-            depth_map_path=depth_map_path
+            depth_map_path=depth_map_path,
+            era=args.era,
+            biome=args.biome
         )
 
         if args.no_wait:
@@ -341,14 +510,14 @@ def main():
     parser.add_argument(
         "--request-address", "--requests_address",
         type=str,
-        default=f"tcp://localhost:{DEFAULT_PORTS['image_requests']}",
-        help=f"ZMQ address for publishing events (default: tcp://localhost:{DEFAULT_PORTS['image_requests']})"
+        default=f"tcp://*:{DEFAULT_PORTS['image_requests']}",
+        help=f"ZMQ address for sending requests (default: tcp://*:{DEFAULT_PORTS['image_requests']})"
     )
     parser.add_argument(
         "--result-address", "--results_address",
         type=str,
         default=f"tcp://*:{DEFAULT_PORTS['image_results']}",
-        help=f"ZMQ address for subscribing to images (default: tcp://localhost:{DEFAULT_PORTS['image_results']})"
+        help=f"ZMQ address for receiving results (default: tcp://*:{DEFAULT_PORTS['image_results']})"
     )
     parser.add_argument(
         "--debug", "-D",
