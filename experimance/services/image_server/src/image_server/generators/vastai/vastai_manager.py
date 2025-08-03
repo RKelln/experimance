@@ -25,6 +25,13 @@ from dataclasses import dataclass
 from experimance_common.constants import PROJECT_ROOT
 import requests
 from dotenv import load_dotenv
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,18 +106,142 @@ class VastAIManager:
                 return json.loads(result.stdout)
             else:
                 return result.stdout.strip()
+        except FileNotFoundError as e:
+            logger.error(f"VastAI CLI tool not found. Please install with: uv tool install vastai")
+            if raw:
+                return {
+                    "error": True,
+                    "message": "VastAI CLI tool not found. Please install with: uv tool install vastai",
+                    "install_command": "uv tool install vastai"
+                }
+            else:
+                return "Error: VastAI CLI tool not found"
         except subprocess.CalledProcessError as e:
             logger.error(f"VastAI command failed: {e}")
+            logger.error(f"Command: {' '.join(command)}")
+            logger.error(f"stdout: {e.stdout}")
             logger.error(f"stderr: {e.stderr}")
+            # Return error information in a structured way for commands that expect JSON
+            if raw:
+                return {
+                    "error": True,
+                    "message": e.stderr.strip() if e.stderr else "Command failed with no error message",
+                    "returncode": e.returncode,
+                    "stdout": e.stdout.strip() if e.stdout else "",
+                    "stderr": e.stderr.strip() if e.stderr else ""
+                }
+            else:
+                return f"Error: {e.stderr.strip() if e.stderr else 'Command failed'}"
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse VastAI response: {e}")
+            logger.error(f"Command: {' '.join(command)}")
+            logger.error(f"stdout: {result.stdout}")
+            logger.error(f"stderr: {result.stderr if hasattr(result, 'stderr') else 'N/A'}")
+            # Return error information for commands that expect JSON
+            if raw:
+                return {
+                    "error": True,
+                    "message": f"Invalid JSON response: {result.stdout[:200]}..." if len(result.stdout) > 200 else result.stdout,
+                    "raw_output": result.stdout
+                }
+            else:
+                return f"Error: Invalid JSON response"
+    
+    @retry(
+        stop=stop_after_attempt(3),  # Try 3 times total for transient failures
+        wait=wait_exponential(multiplier=2, min=4, max=30),  # 4s, 8s, 16s delays
+        retry=retry_if_exception_type((
+            subprocess.CalledProcessError,  # Covers VastAI API errors including 502
+            subprocess.TimeoutExpired,      # Network timeouts
+            ConnectionError,                # Network connection issues
+        )),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True  # Let the exception propagate after all retries
+    )
+    def _run_vastai_command_with_retry(self, cmd: List[str], raw: bool = True) -> Any:
+        """
+        Run a vastai CLI command that will be retried on failure.
+        
+        Unlike _run_vastai_command, this method re-raises exceptions for retry logic
+        instead of returning error dictionaries.
+        """
+        try:
+            command_args = []
+            if raw:
+                command_args.append("--raw")
+            if self.api_key:
+                command_args.append("--api-key")
+                command_args.append(self.api_key)
+            
+            command = (
+                ["uv", "tool", "run", "vastai"] +
+                cmd +
+                command_args
+            )
+            # Filter out any accidental None values
+            command = [str(x) for x in command if x is not None]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            if raw:
+                return json.loads(result.stdout)
+            else:
+                return result.stdout.strip()
+        except FileNotFoundError as e:
+            logger.error(f"VastAI CLI tool not found. Please install with: uv tool install vastai")
+            raise ConnectionError("VastAI CLI tool not found. Please install with: uv tool install vastai")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"VastAI command failed: {e}")
+            logger.error(f"Command: {' '.join(command)}")
+            logger.error(f"stdout: {e.stdout}")
+            logger.error(f"stderr: {e.stderr}")
+            # Re-raise the exception for retry logic
             raise
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse VastAI response: {e}")
-            logger.error(f"$ {' '.join(command)}: {result.stdout}")
-            raise
+            logger.error(f"Command: {' '.join(command)}")
+            logger.error(f"stdout: {result.stdout}")
+            # Convert JSON errors to subprocess errors for consistent retry handling
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=command,
+                stderr=f"Invalid JSON response: {result.stdout[:200]}..."
+            )
 
-    def show_instances(self, raw: bool = True) -> List[Dict[str, Any]]:
-        """List all instances for the current user."""
-        return self._run_vastai_command(["show", "instances"], raw=raw)
+    @retry(
+        stop=stop_after_attempt(3),  # Try 3 times total
+        wait=wait_exponential(multiplier=2, min=4, max=30),  # 4s, 8s, 16s delays
+        retry=retry_if_exception_type((
+            subprocess.CalledProcessError,  # Covers VastAI API errors including 502
+            subprocess.TimeoutExpired,      # Network timeouts
+            ConnectionError,                # Network connection issues
+        )),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=False  # Don't re-raise, we'll handle it below
+    )
+    def show_instances(self, raw: bool = True):
+        """List all instances for the current user with automatic retry on transient failures."""
+        try:
+            result = self._run_vastai_command_with_retry(["show", "instances"], raw=raw)
+            if raw:
+                # Ensure result is a list as expected for raw=True
+                if not isinstance(result, list):
+                    logger.error(f"Unexpected response format from show_instances: {type(result)}")
+                    return []
+                return result
+            else:
+                # For raw=False, return the string as-is
+                return result
+        except Exception as e:
+            # If all retries failed, fall back to appropriate default
+            logger.error(f"show_instances failed after all retries: {e}")
+            if raw:
+                return []  # Return empty list for JSON mode
+            else:
+                return f"Error: Failed to list instances after retries: {str(e)}"  # Return error string for non-raw mode
 
     def show_instance(self, instance_id: int, raw: bool = True) -> Dict[str, Any]:
         """Get detailed information about a specific instance."""
@@ -118,7 +249,13 @@ class VastAIManager:
 
     def find_experimance_instances(self) -> List[Dict[str, Any]]:
         """Find all running experimance instances."""
-        instances = self.show_instances(raw=True)  # Force raw=True to get JSON
+        instances = self.show_instances(raw=True)  # Now has retry logic built-in and always returns a list
+        
+        # Ensure we got a list (show_instances with raw=True should always return a list)
+        if not isinstance(instances, list):
+            logger.error(f"show_instances returned unexpected type: {type(instances)}")
+            return []
+        
         experimance_instances = []
         
         for instance in instances:
@@ -903,7 +1040,7 @@ class VastAIManager:
                      dlperf: float = 32.0,       # 3090 +
                      verified_only: bool = True) -> List[Dict[str, Any]]:
         """
-        Search for suitable GPU offers.
+        Search for suitable GPU offers with automatic retry on transient failures.
         
         Args:
             min_gpu_ram: Minimum GPU RAM in GB
@@ -943,10 +1080,20 @@ class VastAIManager:
             "--limit", "15"          # Get more results for smart selection
         ]
         
-        offers = self._run_vastai_command(cmd)
-        
-        # Apply smart selection algorithm
-        return self._smart_select_offers(offers)
+        try:
+            offers = self._run_vastai_command_with_retry(cmd)
+            
+            # Ensure offers is a list as expected
+            if not isinstance(offers, list):
+                logger.error(f"Unexpected response format from search_offers: {type(offers)}")
+                return []
+            
+            # Apply smart selection algorithm
+            return self._smart_select_offers(offers)
+        except Exception as e:
+            # If all retries failed, return empty list
+            logger.error(f"search_offers failed after all retries: {e}")
+            return []
     
     def _smart_select_offers(self, offers: List[Dict[str, Any]], 
                            price_tolerance: float = 0.5) -> List[Dict[str, Any]]:
@@ -1058,7 +1205,7 @@ class VastAIManager:
             offer_id: The offer ID to rent
             
         Returns:
-            Instance creation result
+            Instance creation result or error dict
         """
         # Build environment string with all env vars and port mappings
         env_parts = []
@@ -1083,7 +1230,17 @@ class VastAIManager:
             "--ssh"
         ]
         
-        return self._run_vastai_command(cmd)
+        try:
+            result = self._run_vastai_command_with_retry(cmd)
+            return result
+        except Exception as e:
+            # If all retries failed, return error dict for consistent handling
+            logger.error(f"create_instance failed after all retries: {e}")
+            return {
+                "error": True,
+                "message": f"Failed to create instance after retries: {str(e)}",
+                "exception_type": type(e).__name__
+            }
     
     def stop_instance(self, instance_id: int) -> Dict[str, Any]:
         """
@@ -1233,10 +1390,17 @@ class VastAIManager:
         
         # Create the instance
         result = self.create_instance(offer_id)
+        
+        # Check if the result is an error response
+        if isinstance(result, dict) and result.get("error"):
+            logger.error(f"Failed to create instance: {result.get('message', 'Unknown error')}")
+            logger.error(f"Full error response: {result}")
+            return None
+        
         instance_id = result.get("new_contract")
         
         if not instance_id:
-            logger.error(f"Failed to create instance: {result}")
+            logger.error(f"Failed to create instance - no contract ID returned: {result}")
             return None
         
         logger.info(f"Created instance {instance_id}, waiting for it to be ready...")

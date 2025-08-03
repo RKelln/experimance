@@ -213,6 +213,13 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
                 test_provisioning_simple(manager, endpoint.instance_id)
         else:
             print("❌ Failed to create new instance")
+            print("💡 Common causes:")
+            print("   • VastAI API temporarily unavailable (502 errors)")
+            print("   • No suitable offers found matching your criteria")
+            print("   • Network connectivity issues")
+            print("   • Try again in a few minutes or adjust search criteria")
+            print(f"   • Search criteria used: min GPU RAM: {args.min_gpu_ram}GB, max price: ${args.max_price}/hr, min DLPerf: {args.dlperf}")
+            return 1  # Return error code
 
 
 def update_instance(manager: VastAIManager, args: argparse.Namespace):
