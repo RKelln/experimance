@@ -116,11 +116,23 @@ class VastAIGenerator(ImageGenerator):
         
         # Check if we have a current endpoint and it's still healthy
         if self.current_endpoint:
-            if self._health_check(self.current_endpoint):
-                logger.info(f"Using existing healthy instance: {self.current_endpoint.instance_id}")
-                return self.current_endpoint
-            else:
-                logger.warning(f"Instance {self.current_endpoint.instance_id} is unhealthy, will find/create new one")
+            try:
+                # First check if the instance might be unrecoverably broken
+                instance_data = self.manager.show_instance(self.current_endpoint.instance_id, raw=True)
+                is_broken, error_desc = self.manager._is_instance_unrecoverably_broken(instance_data)
+                
+                if is_broken:
+                    logger.error(f"🚨 Current instance {self.current_endpoint.instance_id} is unrecoverably broken: {error_desc}")
+                    logger.warning(f"Will find/create new instance and let higher-level functions decide on cleanup...")
+                    self.current_endpoint = None
+                elif self._health_check(self.current_endpoint):
+                    logger.info(f"Using existing healthy instance: {self.current_endpoint.instance_id}")
+                    return self.current_endpoint
+                else:
+                    logger.warning(f"Instance {self.current_endpoint.instance_id} is unhealthy, will find/create new one")
+                    self.current_endpoint = None
+            except Exception as e:
+                logger.warning(f"Failed to check instance status: {e}, will find/create new one")
                 self.current_endpoint = None
         
         # Find or create a ready instance
@@ -153,20 +165,11 @@ class VastAIGenerator(ImageGenerator):
             self._instance_ready = False
             raise
         
-    def _health_check(self, endpoint: InstanceEndpoint) -> bool:
-        """Check if the instance endpoint is healthy."""
-        try:
-            response = requests.get(
-                f"{endpoint.url}/healthcheck",
-                timeout=5  # Short timeout for health checks
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("status") == "healthy"
-            return False
-        except Exception as e:
-            logger.warning(f"Health check failed for instance {endpoint.instance_id}: {e}")
-            return False
+    def _health_check(self, endpoint: InstanceEndpoint, timeout: int = 60) -> bool:
+        """Check if the instance endpoint is healthy using the robust health check logic."""
+        # Use the manager's robust health checking logic instead of a simple single request
+        logger.info(f"Starting robust health check for instance {endpoint.instance_id} (timeout: {timeout}s)")
+        return self.manager._wait_for_service_healthy(endpoint.instance_id, timeout=timeout)
     
     def _validate_generated_image(self, image: Image.Image, image_b64: str) -> bool:
         """
@@ -217,28 +220,36 @@ class VastAIGenerator(ImageGenerator):
         if self._first_request_time is None:
             self._first_request_time = time.time()
         
+        logger.debug(f"Recorded failure: {self._consecutive_failures} consecutive, {self._total_requests} total, {self._successful_requests} successful")
+        
     def _should_destroy_instance(self) -> bool:
         """
         Check if current instance should be destroyed due to poor health.
         
-        Uses different criteria based on whether we've had successful requests:
-        - Startup phase (no successes): Use time-based threshold
-        - After first success: Use consecutive failure threshold
+        Uses different criteria based on instance state:
+        - During startup (no successes yet): Only time-based threshold (be generous)
+        - After successful operation: Consecutive failure count (be strict to quickly recover)
         """
         current_time = time.time()
+
+        logger.debug(f"Checking if instance should be destroyed: {self._consecutive_failures} consecutive failures, {self._successful_requests} successful requests")
         
-        # Startup phase: no successful requests yet
+        # Safe time calculation for debug logging
+        time_since_first = (current_time - self._first_request_time) if self._first_request_time is not None else 0
+        logger.debug(f"Current time: {current_time}, first request time: {self._first_request_time}, time since: {time_since_first:.0f}s, max time without success: {self.config.max_time_without_success}")
+        
+        # During startup phase: only use time-based threshold, be generous with failures
         if self._successful_requests == 0:
             if (self._first_request_time is not None and 
                 current_time - self._first_request_time > self.config.max_time_without_success):
                 logger.warning(f"No successful requests for {current_time - self._first_request_time:.0f}s during startup (max: {self.config.max_time_without_success}s)")
                 return True
-                
-        # After first success: use consecutive failure threshold
-        else:
-            if self._consecutive_failures >= self.config.max_consecutive_failures:
-                logger.warning(f"Instance has {self._consecutive_failures} consecutive failures after {self._successful_requests} successful requests (max: {self.config.max_consecutive_failures})")
-                return True
+            return False  # Don't check consecutive failures during startup
+        
+        # After successful operation: check consecutive failures to quickly recover broken instances
+        if self._consecutive_failures >= self.config.max_consecutive_failures:
+            logger.warning(f"Instance has {self._consecutive_failures} consecutive failures after {self._successful_requests} successful requests (max: {self.config.max_consecutive_failures})")
+            return True
                 
         return False
         
@@ -265,21 +276,80 @@ class VastAIGenerator(ImageGenerator):
         self._recovery_task = asyncio.create_task(self._background_recovery(old_endpoint))
         
     async def _background_recovery(self, old_endpoint: InstanceEndpoint):
-        """Background task to destroy old instance and create new one."""
+        """Background task to recover, or destroy and recreate instance if needed."""
         try:
-            logger.info(f"Background recovery: Destroying instance {old_endpoint.instance_id}")
+            logger.info(f"Background recovery: Checking if instance {old_endpoint.instance_id} should be destroyed")
             
-            # Destroy the old instance
+            # Check if the old instance is unrecoverably broken before destroying
+            should_destroy = False
             try:
-                result = self.manager.destroy_instance(old_endpoint.instance_id)
-                logger.info(f"Background recovery: Destroyed instance {old_endpoint.instance_id}: {result}")
+                instance_data = self.manager.show_instance(old_endpoint.instance_id, raw=True)
+                is_broken, error_desc = self.manager._is_instance_unrecoverably_broken(instance_data)
+                
+                if is_broken:
+                    logger.warning(f"Background recovery: Instance {old_endpoint.instance_id} is unrecoverably broken ({error_desc}), will destroy it")
+                    should_destroy = True
+                else:
+                    logger.info(f"Background recovery: Instance {old_endpoint.instance_id} is not broken, attempting recovery without destruction")
+                    # For non-broken instances that are just unhealthy, try to recover the existing instance
+                    # This handles cases like temporary network issues, service restarts, etc.
+                    
+                    # First try to fix the existing instance with provisioning
+                    logger.info(f"Background recovery: Attempting to fix existing instance {old_endpoint.instance_id}")
+                    try:
+                        # Run provisioning to fix any service issues
+                        loop = asyncio.get_event_loop()
+                        provision_success = await loop.run_in_executor(
+                            None,
+                            lambda: self.manager.provision_instance_via_scp(old_endpoint.instance_id, timeout=300)
+                        )
+                        
+                        if provision_success:
+                            logger.info(f"Background recovery: Successfully fixed instance {old_endpoint.instance_id}")
+                            # Test if it's now healthy with robust health check
+                            if self._health_check(old_endpoint, timeout=120):  # Give it 2 minutes to start up
+                                logger.info(f"Background recovery: Instance {old_endpoint.instance_id} is now healthy after fix")
+                                # Reset our state to use the fixed instance
+                                self.current_endpoint = old_endpoint
+                                self._instance_ready = True
+                                self._initialized = True
+                                
+                                # Reset health tracking for fresh start
+                                self._consecutive_failures = 0
+                                self._total_requests = 0
+                                self._successful_requests = 0
+                                self._last_success_time = None
+                                self._first_request_time = None
+                                
+                                logger.info(f"Background recovery: Successfully recovered existing instance {old_endpoint.instance_id}")
+                                return  # Success! No need to destroy/recreate
+                            else:
+                                logger.warning(f"Background recovery: Instance {old_endpoint.instance_id} still unhealthy after fix, will destroy and recreate")
+                                should_destroy = True
+                        else:
+                            logger.warning(f"Background recovery: Failed to fix instance {old_endpoint.instance_id}, will destroy and recreate") 
+                            should_destroy = True
+                            
+                    except Exception as e:
+                        logger.warning(f"Background recovery: Error fixing instance {old_endpoint.instance_id}: {e}, will destroy and recreate")
+                        should_destroy = True
+                        
             except Exception as e:
-                logger.error(f"Background recovery: Failed to destroy instance {old_endpoint.instance_id}: {e}")
+                logger.warning(f"Background recovery: Could not check instance status, proceeding with destroy: {e}")
+                should_destroy = True
             
-            # Wait a bit before creating a new instance (temporarily extended for testing)
-            await asyncio.sleep(30)  # Extended from 5 to 30 seconds for testing
+            # If we reach here, we need to destroy and recreate
+            if should_destroy:
+                try:
+                    result = self.manager.destroy_instance(old_endpoint.instance_id)
+                    logger.info(f"Background recovery: Destroyed instance {old_endpoint.instance_id}: {result}")
+                except Exception as e:
+                    logger.error(f"Background recovery: Failed to destroy instance {old_endpoint.instance_id}: {e}")
+                
+                # Wait a bit before creating a new instance
+                await asyncio.sleep(10)
             
-            # Try to create and initialize a new instance
+            # Try to create and initialize a new instance (or find another existing one)
             logger.info("Background recovery: Creating new instance")
             try:
                 # Run the synchronous find_or_create_instance in a thread executor
@@ -296,7 +366,7 @@ class VastAIGenerator(ImageGenerator):
                 if new_endpoint:
                     # Verify the new instance is actually healthy before marking as successful
                     logger.info(f"Background recovery: Verifying health of new instance {new_endpoint.instance_id}")
-                    is_healthy = self._health_check(new_endpoint)
+                    is_healthy = self._health_check(new_endpoint, timeout=300)  # Give 5 minutes for full startup
                     
                     if is_healthy:
                         self.current_endpoint = new_endpoint
@@ -365,8 +435,13 @@ class VastAIGenerator(ImageGenerator):
         self._validate_prompt(prompt)
         logger.info(f"Generating image with VastAI: {prompt[:50]}...")
         
+        # Ensure _first_request_time is set for timeout tracking
+        if self._first_request_time is None:
+            self._first_request_time = time.time()
+        
         # Check if we should destroy the current instance due to poor health
         if self._should_destroy_instance():
+            logger.warning(f"Health check triggered recovery: {self._consecutive_failures} consecutive failures, {self._successful_requests} successful requests")
             await self._destroy_and_recreate_instance()
         
         # If recovery is in progress, fail fast to trigger fallback
@@ -378,8 +453,10 @@ class VastAIGenerator(ImageGenerator):
         # If we have no endpoint but have been trying for a while, trigger recovery
         if not self.current_endpoint and self._first_request_time is not None:
             current_time = time.time()
-            if current_time - self._first_request_time > self.config.max_time_without_success:
-                logger.warning(f"No working instance for {current_time - self._first_request_time:.0f}s (max: {self.config.max_time_without_success}s), triggering recovery")
+            elapsed = current_time - self._first_request_time
+            logger.debug(f"No current endpoint, checking startup timeout: {elapsed:.0f}s elapsed (max: {self.config.max_time_without_success}s)")
+            if elapsed > self.config.max_time_without_success:
+                logger.warning(f"No working instance for {elapsed:.0f}s (max: {self.config.max_time_without_success}s), triggering recovery")
                 await self._destroy_and_recreate_instance()
                 # Still fail fast to use fallback during recovery
                 self._record_failure()
@@ -549,9 +626,8 @@ class VastAIGenerator(ImageGenerator):
             if "connection" in str(e).lower() or "timeout" in str(e).lower():
                 self._instance_ready = False
             
-            # Record failure if not already recorded
-            if self._consecutive_failures == 0 or self._consecutive_failures < self.config.max_consecutive_failures:
-                self._record_failure()
+            # Always record failure - this is needed for recovery logic
+            self._record_failure()
                 
             raise RuntimeError(f"VastAI generation failed: {e}")
     

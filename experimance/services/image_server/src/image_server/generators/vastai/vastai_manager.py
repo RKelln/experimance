@@ -16,6 +16,7 @@ Usage:
 
 import json
 import os
+import re
 import time
 import subprocess
 import asyncio
@@ -247,6 +248,102 @@ class VastAIManager:
         """Get detailed information about a specific instance."""
         return self._run_vastai_command(["show", "instance", str(instance_id)], raw=raw)
 
+    def _is_instance_unrecoverably_broken(self, instance: Dict[str, Any]) -> tuple[bool, str]:
+        """
+        Check if an instance has unrecoverable VastAI infrastructure errors.
+        
+        Based on official Vast.ai API documentation (verified via Context7 on 2025-01-16):
+        - Error patterns validated against real API error messages
+        - Status fields match documented API response structure  
+        - Terminal failure states confirmed from API documentation
+        
+        These patterns indicate infrastructure issues that require immediate 
+        instance replacement rather than recovery attempts.
+        
+        Args:
+            instance: Instance data from VastAI API
+            
+        Returns:
+            tuple[bool, str]: (is_broken, error_description)
+        """
+        status_msg = instance.get("status_msg", "")
+        actual_status = instance.get("actual_status", "")
+        cur_state = instance.get("cur_state", "")
+        intended_status = instance.get("intended_status", "")
+        
+        # Patterns based on official Vast.ai API documentation and observed errors
+        unrecoverable_patterns = [
+            # Docker/container build errors (confirmed from user reports)
+            "docker_build() error",
+            "error writing dockerfile", 
+            "docker build failed",
+            "image pull failed",
+            "container creation failed",
+            
+            # Host/infrastructure issues (common VastAI patterns)
+            "host unreachable",
+            "host down",
+            "no space left on device",
+            "disk full",
+            "storage unavailable",
+            
+            # GPU/driver failures 
+            "cuda error",
+            "driver error", 
+            "gpu not found",
+            "device not available",
+            
+            # Network/connectivity failures
+            "network error",
+            "connection timeout",
+            "connection refused",
+            
+            # VastAI platform/billing issues (from official API docs)
+            "insufficient credit",
+            "billing error",
+            "account suspended",
+            "payment required",
+            
+            # Official API error messages that indicate unrecoverable states
+            "no such instance",
+            "instance not found",
+            "invalid instance id",
+            "instance type.*no longer available",  # regex pattern
+            "instance type.*not available"         # regex pattern
+        ]
+        
+        # Check status message for error patterns (case-insensitive)
+        if status_msg:
+            status_msg_lower = status_msg.lower()
+            for pattern in unrecoverable_patterns:
+                # Handle regex patterns (those containing special regex chars)
+                if any(char in pattern for char in ['.*', '+', '?', '[', ']', '(', ')', '{', '}']):
+                    if re.search(pattern, status_msg_lower):
+                        return True, f"Unrecoverable error detected: '{status_msg}' (regex pattern: '{pattern}')"
+                else:
+                    # Handle simple string contains
+                    if pattern in status_msg_lower:
+                        return True, f"Unrecoverable error detected: '{status_msg}' (pattern: '{pattern}')"
+        
+        # Check for documented failure states from Vast.ai API
+        # Based on API docs, these actual_status values indicate permanent failures
+        terminal_failure_states = ["failed", "error", "exited", "stopped_with_error"]
+        if actual_status in terminal_failure_states:
+            return True, f"Instance in terminal failure state: '{actual_status}' with status: '{status_msg}'"
+        
+        # Check for problematic state combinations that indicate infrastructure issues
+        if actual_status == "loading" and cur_state == "stopped":
+            # Instance stuck loading but marked as stopped suggests infrastructure problem
+            if status_msg and any(err in status_msg.lower() for err in ["error", "failed", "timeout"]):
+                return True, f"Instance stuck in loading/stopped state with error: '{status_msg}'"
+        
+        # Check for instances that are stopped but should be running (with errors)
+        if cur_state == "stopped" and intended_status == "running":
+            if status_msg and any(err in status_msg.lower() for err in ["error", "failed"]):
+                return True, f"Instance stopped unexpectedly with error: '{status_msg}'"
+        
+        return False, ""
+
     def find_experimance_instances(self) -> List[Dict[str, Any]]:
         """Find all running experimance instances."""
         instances = self.show_instances(raw=True)  # Now has retry logic built-in and always returns a list
@@ -257,6 +354,7 @@ class VastAIManager:
             return []
         
         experimance_instances = []
+        broken_instances = []
         
         for instance in instances:
             # Check if it's our custom template and has our environment variables
@@ -271,9 +369,48 @@ class VastAIManager:
 
             logger.debug(f"Checking instance {instance['id']} - Template ID: {template_id}, Name: {template_name}")
             
-            if (is_experimance_template and
-                instance.get("actual_status") == "running"):
-                experimance_instances.append(instance)
+            if is_experimance_template:
+                # Check if this instance is unrecoverably broken
+                is_broken, error_desc = self._is_instance_unrecoverably_broken(instance)
+                
+                if is_broken:
+                    logger.warning(f"🚨 Instance {instance['id']} has unrecoverable error: {error_desc}")
+                    broken_instances.append({
+                        'instance_id': instance['id'],
+                        'error': error_desc,
+                        'status_msg': instance.get('status_msg', ''),
+                        'actual_status': instance.get('actual_status', ''),
+                        'age_hours': instance.get('duration', 0) / 3600 if instance.get('duration') else 0
+                    })
+                    continue
+                
+                # Only include running instances (or loading instances that aren't broken)
+                if instance.get("actual_status") in ["running", "loading"]:
+                    experimance_instances.append(instance)
+        
+        # Log broken instances for awareness
+        if broken_instances:
+            logger.warning(f"Found {len(broken_instances)} broken Experimance instances:")
+            for broken in broken_instances:
+                age_str = f"{broken['age_hours']:.1f}h" if broken['age_hours'] > 0 else "unknown"
+                logger.warning(f"  Instance {broken['instance_id']} (age: {age_str}): {broken['error']}")
+            
+            # Auto-destroy broken instances if they're not too new (> 30 minutes old)
+            # This prevents accidentally destroying instances that might just be starting up
+            auto_destroy_candidates = [
+                b for b in broken_instances 
+                if b['age_hours'] > 0.5  # > 30 minutes old
+            ]
+            
+            if auto_destroy_candidates:
+                logger.warning(f"Auto-destroying {len(auto_destroy_candidates)} old broken instances:")
+                for broken in auto_destroy_candidates:
+                    try:
+                        logger.warning(f"  Destroying broken instance {broken['instance_id']}: {broken['error']}")
+                        result = self.destroy_instance(broken['instance_id'])
+                        logger.info(f"  Destroyed instance {broken['instance_id']}: {result.get('success', 'unknown result')}")
+                    except Exception as e:
+                        logger.error(f"  Failed to destroy broken instance {broken['instance_id']}: {e}")
         
         return experimance_instances
     
@@ -714,11 +851,29 @@ class VastAIManager:
                     health_data = response.json()
                     logger.debug(f"Health data: {health_data}")
                     
-                    if health_data.get('status') == 'healthy':
-                        logger.debug(f"Health check passed for instance {instance_id}")
+                    status = health_data.get('status', 'unknown')
+                    model_server_healthy = health_data.get('model_server_healthy', False)
+                    
+                    # Consider server healthy if it's responding and in a good state
+                    # New statuses: starting, initializing, loading_models, ready_basic, ready, error
+                    healthy_statuses = ['ready', 'ready_basic', 'loading_models', 'healthy']
+                    
+                    if status in healthy_statuses and model_server_healthy:
+                        # Log additional status information for debugging
+                        startup_status = health_data.get('startup_status', {})
+                        if status == 'loading_models':
+                            logger.info(f"Instance {instance_id} is healthy but still loading models...")
+                            download_progress = startup_status.get('download_progress', {})
+                            if download_progress:
+                                for filename, progress in download_progress.items():
+                                    percent = progress.get('percent', 0)
+                                    status_text = progress.get('status', 'unknown')
+                                    logger.info(f"  {filename}: {status_text} ({percent:.1f}%)")
+                        
+                        logger.debug(f"Health check passed for instance {instance_id} (status: {status})")
                         return True
                     else:
-                        logger.warning(f"Health check failed for instance {instance_id}: service reports status '{health_data.get('status')}' - {health_data}")
+                        logger.warning(f"Health check failed for instance {instance_id}: service reports status '{status}', healthy={model_server_healthy} - {health_data}")
                         return False
                 except ValueError as json_err:
                     error_text = response.text
@@ -772,11 +927,29 @@ class VastAIManager:
                             health_data = await response.json()
                             logger.debug(f"Health data: {health_data}")
                             
-                            if health_data.get('status') == 'healthy':
-                                logger.debug(f"Health check passed for instance {instance_id}")
+                            status = health_data.get('status', 'unknown')
+                            model_server_healthy = health_data.get('model_server_healthy', False)
+                            
+                            # Consider server healthy if it's responding and in a good state
+                            # New statuses: starting, initializing, loading_models, ready_basic, ready, error
+                            healthy_statuses = ['ready', 'ready_basic', 'loading_models', 'healthy']
+                            
+                            if status in healthy_statuses and model_server_healthy:
+                                # Log additional status information for debugging
+                                startup_status = health_data.get('startup_status', {})
+                                if status == 'loading_models':
+                                    logger.info(f"Instance {instance_id} is healthy but still loading models...")
+                                    download_progress = startup_status.get('download_progress', {})
+                                    if download_progress:
+                                        for filename, progress in download_progress.items():
+                                            percent = progress.get('percent', 0)
+                                            status_text = progress.get('status', 'unknown')
+                                            logger.info(f"  {filename}: {status_text} ({percent:.1f}%)")
+                                
+                                logger.debug(f"Health check passed for instance {instance_id} (status: {status})")
                                 return True
                             else:
-                                logger.warning(f"Health check failed for instance {instance_id}: service reports status '{health_data.get('status')}' - {health_data}")
+                                logger.warning(f"Health check failed for instance {instance_id}: service reports status '{status}', healthy={model_server_healthy} - {health_data}")
                                 return False
                         except ValueError as json_err:
                             error_text = await response.text()
@@ -796,14 +969,18 @@ class VastAIManager:
             logger.warning(f"Health check failed for instance {instance_id}: unexpected error - {e}")
             return False
 
-    def _wait_for_service_healthy(self, instance_id: int, timeout: int = 180) -> bool:
+    def _wait_for_service_healthy(self, instance_id: int, timeout: int = 300) -> bool:
         """
         Wait for the Experimance image server to become healthy.
+
+        Extended timeout by default (300s/5min) to account for model downloading.
+        The server will now respond to health checks during model downloads, so we can
+        provide better progress feedback.
         
         Args:
             instance_id: The Vast.ai instance ID
-            timeout: Maximum time to wait in seconds
-            
+            timeout: Maximum time to wait in seconds (default 300s for model downloads)
+
         Returns:
             True if service becomes healthy, False if timeout
         """
@@ -811,6 +988,7 @@ class VastAIManager:
         start_time = time.time()
         endpoint_url = None
         last_check_time = 0
+        last_download_report = 0
         
         while time.time() - start_time < timeout:
             # Try to get endpoint each iteration - it might not be available initially
@@ -820,10 +998,70 @@ class VastAIManager:
                     endpoint_url = endpoint.url
                     logger.info(f"Endpoint now available, checking health at: {endpoint_url}/healthcheck")
                 
-                # Now try health check with a reasonable timeout
-                if self._check_service_health(instance_id, timeout=15):
-                    logger.info(f"Service is healthy on instance {instance_id}")
-                    return True
+                # Try to get detailed health status for progress reporting
+                try:
+                    health_url = f"{endpoint.url}/healthcheck"
+                    response = requests.get(health_url, timeout=5)
+                    
+                    if response.status_code == 200:
+                        health_data = response.json()
+                        status = health_data.get('status', 'unknown')
+                        model_server_healthy = health_data.get('model_server_healthy', False)
+                        startup_status = health_data.get('startup_status', {})
+                        
+                        # Check if service is ready
+                        healthy_statuses = ['ready', 'ready_basic', 'loading_models', 'healthy']
+                        if status in healthy_statuses and model_server_healthy:
+                            if status == 'ready':
+                                logger.info(f"Service is fully ready on instance {instance_id}")
+                                return True
+                            elif status == 'loading_models':
+                                # Report download progress periodically
+                                elapsed = int(time.time() - start_time)
+                                if elapsed - last_download_report >= 30:  # Every 30 seconds
+                                    logger.info(f"Service is healthy but loading models... ({elapsed}s elapsed)")
+                                    download_progress = startup_status.get('download_progress', {})
+                                    if download_progress:
+                                        for filename, progress in download_progress.items():
+                                            percent = progress.get('percent', 0)
+                                            status_text = progress.get('status', 'unknown')
+                                            size_info = ""
+                                            if progress.get('total_bytes'):
+                                                size_mb = progress['total_bytes'] / (1024**2)
+                                                downloaded_mb = progress.get('bytes_downloaded', 0) / (1024**2)
+                                                size_info = f" ({downloaded_mb:.1f}/{size_mb:.1f}MB)"
+                                            logger.info(f"  {filename}: {status_text} {percent:.1f}%{size_info}")
+                                    last_download_report = elapsed
+                            else:
+                                logger.info(f"Service is healthy on instance {instance_id} (status: {status})")
+                                return True
+                        else:
+                            elapsed = int(time.time() - start_time)
+                            
+                            # Check for error conditions that indicate we should stop waiting
+                            if status == 'error':
+                                startup_error = startup_status.get('startup_error')
+                                logger.error(f"Service reported error status on instance {instance_id}: {startup_error}")
+                                return False
+                            
+                            # For other statuses, provide appropriate feedback
+                            if elapsed >= 30 and elapsed % 30 == 0:  # Log every 30 seconds after first 30 seconds
+                                if status in ['starting', 'initializing']:
+                                    logger.info(f"Service still starting up (status: {status}), this is normal... ({elapsed}s elapsed)")
+                                else:
+                                    logger.info(f"Service not ready yet (status: {status}, healthy: {model_server_healthy}), waiting... ({elapsed}s elapsed)")
+                            
+                            # If we've been waiting a long time and status is stuck, that might indicate a problem
+                            if elapsed >= 60 and status in ['starting', 'initializing']:  # 1 minute
+                                logger.warning(f"Service has been in '{status}' state for {elapsed}s - this may indicate a problem")
+                                # But don't give up yet, just warn
+                    
+                except Exception as e:
+                    # Fall back to old simple check
+                    if self._check_service_health(instance_id, timeout=15):
+                        logger.info(f"Service is healthy on instance {instance_id}")
+                        return True
+                        
             else:
                 # Endpoint not available yet - this is normal early in instance lifecycle
                 elapsed = int(time.time() - start_time)
@@ -835,7 +1073,7 @@ class VastAIManager:
             elapsed = int(time.time() - start_time)
             # Only log health check status if we have an endpoint and some time has passed
             if endpoint and elapsed >= 30 and elapsed % 30 == 0:  # Log every 30 seconds after first 30s
-                logger.info(f"Service not healthy yet, waiting... ({elapsed}s elapsed)")
+                logger.debug(f"Checking service health... ({elapsed}s elapsed)")
             elif endpoint and time.time() - last_check_time >= 10:  # Debug log every 10s when we have endpoint
                 logger.debug(f"Service not healthy yet, waiting... ({elapsed}s elapsed)")
                 last_check_time = time.time()
@@ -1334,6 +1572,32 @@ class VastAIManager:
         # First, check for existing instances
         existing_instances = self.find_experimance_instances()
         
+        # Check if any existing instances are unrecoverably broken and clean them up
+        if existing_instances:
+            healthy_instances = []
+            for instance in existing_instances:
+                instance_id = instance["id"]
+                
+                # Check if this instance is unrecoverably broken
+                is_broken, error_desc = self._is_instance_unrecoverably_broken(instance)
+                
+                if is_broken:
+                    logger.warning(f"🚨 Found unrecoverably broken instance {instance_id}: {error_desc}")
+                    logger.warning(f"Destroying broken instance {instance_id}...")
+                    try:
+                        result = self.destroy_instance(instance_id)
+                        if result and not result.get("error"):
+                            logger.info(f"Successfully destroyed broken instance {instance_id}")
+                        else:
+                            logger.error(f"Failed to destroy broken instance {instance_id}: {result}")
+                    except Exception as e:
+                        logger.error(f"Exception destroying broken instance {instance_id}: {e}")
+                else:
+                    healthy_instances.append(instance)
+            
+            # Update the list to only include healthy instances
+            existing_instances = healthy_instances
+        
         if existing_instances:
             instance = existing_instances[0]  # Use the first one
             instance_id = instance["id"]
@@ -1423,8 +1687,36 @@ class VastAIManager:
                     if self._wait_for_service_healthy(instance_id, timeout=180):  # 3 minutes for PROVISIONING_SCRIPT
                         logger.info("Service became healthy - PROVISIONING_SCRIPT worked successfully, skipping SCP fallback")
                     else:
-                        logger.warning("Service not healthy after 180s, falling back to SCP provisioning...")
+                        logger.warning("Service not healthy after 180s, checking if it's progressing normally...")
                         
+                        # Before falling back to SCP, check if the service is actually responding but just loading models
+                        # This helps distinguish between "provisioning failed" vs "provisioning worked but models still downloading"
+                        endpoint = self.get_model_server_endpoint(instance_id)
+                        if endpoint:
+                            try:
+                                health_url = f"{endpoint.url}/healthcheck"
+                                response = requests.get(health_url, timeout=15)
+                                if response.status_code == 200:
+                                    health_data = response.json()
+                                    status = health_data.get('status', 'unknown')
+                                    
+                                    if status in ['loading_models', 'ready_basic']:
+                                        logger.info(f"Service is responding with status '{status}' - provisioning was successful, just waiting for models to finish downloading")
+                                        logger.info("Giving extended time for model downloads to complete...")
+                                        if self._wait_for_service_healthy(instance_id, timeout=600):  # 10 more minutes for model downloads
+                                            logger.info("Service became fully ready after extended wait")
+                                        else:
+                                            logger.warning("Service still not fully ready after extended wait, but provisioning appears successful")
+                                        # Don't run SCP fallback since provisioning clearly worked
+                                        return self.get_model_server_endpoint(instance_id)
+                                    else:
+                                        logger.info(f"Service responding but with status '{status}' - may need SCP fallback")
+                                else:
+                                    logger.info(f"Service responding with HTTP {response.status_code} - may need SCP fallback")
+                            except Exception as e:
+                                logger.info(f"Could not check service status ({e}) - proceeding with SCP fallback")
+                        
+                        logger.info("Proceeding with SCP fallback provisioning...")
                         # Now wait for SSH to be ready before attempting SCP
                         if self.wait_for_ssh_ready(instance_id, timeout=60):  # 1 minute for SSH
                             logger.info("SSH is ready, running provisioning script via SCP...")

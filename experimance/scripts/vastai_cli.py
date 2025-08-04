@@ -640,34 +640,97 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
         if instance_id is None:
             return
     
-    endpoint = manager.get_model_server_endpoint(instance_id)
-    if not endpoint:
-        print("Endpoint not found for instance", instance_id)
-        return
-    print(f"Checking health of model server at {endpoint.url}... (Ctrl+C to stop)")
+    print(f"Checking health of instance {instance_id}... (Ctrl+C to stop)")
+    print()
+    
     try:
         while True:
+            success = False
+            
+            # First, always check the VastAI instance status
             try:
-                url = f"{endpoint.url}/healthcheck"
-                resp = requests.get(url, timeout=5)
-                if resp.status_code == 200:
-                    try:
-                        resp_json = resp.json()
-                        print(f"Healthcheck {resp.status_code}:")
-                        print(json.dumps(resp_json, indent=2))
-                        if resp_json.get("status") == "healthy":
-                            print("✅ Model server is healthy!")
-                            return
-                        else:
-                            print("⚠️ Model server healthcheck returned non-ok status")
-                    except json.JSONDecodeError:
-                        print(f"Healthcheck {resp.status_code}: {resp.text}")
+                instance_data = manager.show_instance(instance_id, raw=True)
+                if isinstance(instance_data, dict):
+                    actual_status = instance_data.get("actual_status", "unknown")
+                    intended_status = instance_data.get("intended_status", "unknown")
+                    cur_state = instance_data.get("cur_state", "unknown")
+                    status_msg = instance_data.get("status_msg", "")
+                    
+                    print(f"🖥️  VastAI Instance Status:")
+                    print(f"   Actual: {actual_status} | Intended: {intended_status} | State: {cur_state}")
+                    if status_msg:
+                        print(f"   Message: {status_msg}")
+                    
+                    # Check if instance is unrecoverably broken
+                    is_broken, error_desc = manager._is_instance_unrecoverably_broken(instance_data)
+                    if is_broken:
+                        print(f"🚨 Instance is unrecoverably broken: {error_desc}")
+                        print("💡 Consider destroying this instance and creating a new one")
+                        return
+                    
+                    print()
                 else:
-                    print(f"❌ Healthcheck failed with status {resp.status_code}: {resp.text}")
-            except requests.RequestException as e:
-                print(f"❌ Healthcheck request failed: {e}") 
-            finally:
+                    print(f"⚠️  Could not get instance status: {instance_data}")
+                    print()
+            except Exception as e:
+                print(f"⚠️  Error getting instance status: {e}")
+                print()
+            
+            # Try to get endpoint and check health if available
+            endpoint = manager.get_model_server_endpoint(instance_id)
+            if endpoint:
+                try:
+                    url = f"{endpoint.url}/healthcheck"
+                    resp = requests.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        try:
+                            resp_json = resp.json()
+                            print(f"🌐 Model Server Health ({resp.status_code}):")
+                            print(json.dumps(resp_json, indent=2))
+                            if resp_json.get("status") == "ready":
+                                print("✅ Model server is ready!")
+                                success = True
+                                return
+                            elif resp_json.get("status") == "loading_models":
+                                print("⏳ Model server is loading models...")
+                                # Show download progress if available
+                                startup_status = resp_json.get('startup_status', {})
+                                download_progress = startup_status.get('download_progress', {})
+                                if download_progress:
+                                    print("📥 Download progress:")
+                                    for filename, progress in download_progress.items():
+                                        percent = progress.get('percent', 0)
+                                        status_text = progress.get('status', 'unknown')
+                                        print(f"   {filename}: {status_text} ({percent:.1f}%)")
+                            else:
+                                print("⚠️ Model server healthcheck returned non-ready status")
+                        except json.JSONDecodeError:
+                            print(f"🌐 Model Server Response ({resp.status_code}): {resp.text}")
+                    else:
+                        print(f"🌐 Model Server Health Failed ({resp.status_code}): {resp.text}")
+                except requests.RequestException as e:
+                    print(f"🌐 Model Server: Not reachable ({e})")
+                    
+                    # If endpoint exists but server isn't reachable, give more context
+                    if actual_status == "running":
+                        print("💡 Instance is running but model server not responding yet")
+                        print("   This is normal during startup - server may still be initializing")
+                    elif actual_status in ["loading", "starting"]:
+                        print("💡 Instance is still starting up")
+                    else:
+                        print(f"💡 Instance status '{actual_status}' - server may not be ready yet")
+            else:
+                print("🌐 Model Server: Endpoint not available yet")
+                if actual_status == "running":
+                    print("💡 Instance is running but port mappings not ready yet")
+                elif actual_status in ["loading", "starting"]:
+                    print("💡 Instance is still starting up")
+                
+            print()
+            
+            if not success:
                 time.sleep(5)
+                
     except KeyboardInterrupt:
         print("\nStopping health check")
 
@@ -920,8 +983,8 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
     for i in range(num_tests):
         # Get prompt from generator or fallback
         prompt, negative_prompt_generated, era_used = get_test_prompt(i)
-        print(f"🎯 Test {i+1}/{num_tests}: {prompt[:50]}...")
-        
+        print(f"🎯 Test {i+1}/{num_tests}: {prompt}")
+
         # Use generated negative prompt or override
         actual_negative = negative_prompt_generated
         
@@ -1012,7 +1075,7 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
                                 # Add lora indicator and seed
                                 if use_loras:
                                     base_filename += "_loras"
-                                base_filename += f"_{seed_used}.png"
+                                base_filename += f"_{seed_used}.jpg"
                                 
                                 filename = base_filename
                                 image_path = os.path.join(output_dir, filename)

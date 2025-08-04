@@ -81,6 +81,17 @@ loaded_loras: Dict[str, List[LoraData]] = {}  # Track loaded LoRAs per model
 deepcache_state: Dict[str, Dict[str, Any]] = {}  # Track DeepCache state per model
 startup_time = None
 
+# Startup status tracking
+startup_status = {
+    "server_started": False,
+    "controlnet_loaded": False,
+    "model_loading": False,
+    "model_loaded": False,
+    "startup_complete": False,
+    "startup_error": None,
+    "download_progress": {}
+}
+
 # Model configuration with optimized scheduler settings
 MODEL_CONFIG = {
     "lightning": {
@@ -166,26 +177,38 @@ torch.backends.cudnn.benchmark = True
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown events using modern lifespan context manager."""
-    global startup_time
+    global startup_time, startup_status
     
     # Startup
     logger.info("Starting ControlNet Model Server...")
     startup_time = time.time()
+    startup_status["server_started"] = True
     
-    # Preload ControlNet and depth estimator
-    load_controlnet()
-    
-    # Optionally preload default model
-    default_model = os.getenv("PRELOAD_MODEL", "lightning")
-    default_controlnet = os.getenv("PRELOAD_CONTROLNET", "sdxl_small")
-    if default_model in MODEL_CONFIG:
-        try:
-            load_model(default_model, default_controlnet)
-            logger.info(f"Preloaded {default_model} model with {default_controlnet} ControlNet")
-        except Exception as e:
-            logger.error(f"Failed to preload {default_model}: {e}")
-    
-    logger.info("Model server startup complete")
+    try:
+        # Preload ControlNet (this is fast, so we can do it synchronously)
+        logger.info("Loading ControlNet...")
+        load_controlnet()
+        startup_status["controlnet_loaded"] = True
+        logger.info("ControlNet loaded successfully")
+        
+        # Start model loading in background (non-blocking)
+        default_model = os.getenv("PRELOAD_MODEL", "lightning")
+        default_controlnet = os.getenv("PRELOAD_CONTROLNET", "sdxl_small")
+        if default_model in MODEL_CONFIG:
+            logger.info(f"Starting background loading of {default_model} model...")
+            startup_status["model_loading"] = True
+            
+            # Import asyncio to run model loading in background
+            import asyncio
+            asyncio.create_task(load_model_async(default_model, default_controlnet))
+        
+        startup_status["startup_complete"] = True
+        logger.info("Model server basic startup complete - model loading in background")
+        
+    except Exception as e:
+        logger.error(f"Startup failed: {e}")
+        startup_status["startup_error"] = str(e)
+        # Don't raise - let server start anyway for debugging
     
     yield  # Server is running
     
@@ -198,6 +221,28 @@ async def lifespan(app: FastAPI):
     logger.info("Model server shutdown complete")
 
 
+async def load_model_async(model_name: str, controlnet_id: str = "sdxl_small"):
+    """Load model asynchronously in background during startup."""
+    global startup_status
+    
+    try:
+        logger.info(f"Background loading {model_name} model with {controlnet_id} ControlNet...")
+        
+        # Run the blocking model loading in a thread pool
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, load_model, model_name, controlnet_id)
+        
+        startup_status["model_loaded"] = True
+        startup_status["model_loading"] = False
+        logger.info(f"Background loading complete: {model_name} model ready")
+        
+    except Exception as e:
+        logger.error(f"Background model loading failed: {e}")
+        startup_status["model_loading"] = False
+        startup_status["startup_error"] = f"Model loading failed: {str(e)}"
+
+
 # Create FastAPI app with lifespan handler
 app = FastAPI(
     title="Experimance Model Server", 
@@ -208,6 +253,8 @@ app = FastAPI(
 
 def download_model(url: str, filename: str, models_dir: Path) -> Path:
     """Download a model file from URL if it doesn't exist locally."""
+    global startup_status
+    
     file_path = models_dir / filename
     
     if file_path.exists():
@@ -230,16 +277,46 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
     logger.info(f"Downloading {filename} from {url}")
     models_dir.mkdir(parents=True, exist_ok=True)
     
+    # Initialize download progress tracking
+    startup_status["download_progress"][filename] = {
+        "status": "starting",
+        "bytes_downloaded": 0,
+        "total_bytes": None,
+        "percent": 0
+    }
+    
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
         
+        # Get file size if available
+        total_size = response.headers.get('content-length')
+        if total_size:
+            total_size = int(total_size)
+            startup_status["download_progress"][filename]["total_bytes"] = total_size
+        
         # Download to a temporary file first, then rename when complete
         temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         
+        startup_status["download_progress"][filename]["status"] = "downloading"
+        
         with open(temp_path, 'wb') as f:
+            downloaded = 0
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
+                downloaded += len(chunk)
+                
+                # Update progress
+                startup_status["download_progress"][filename]["bytes_downloaded"] = downloaded
+                if total_size:
+                    percent = (downloaded / total_size) * 100
+                    startup_status["download_progress"][filename]["percent"] = percent
+                    
+                    # Log progress every 10%
+                    if downloaded % (total_size // 10 + 1) < 8192:
+                        logger.info(f"Downloading {filename}: {percent:.1f}% ({downloaded / (1024**2):.1f}MB / {total_size / (1024**2):.1f}MB)")
+        
+        startup_status["download_progress"][filename]["status"] = "verifying"
         
         # Verify the downloaded file
         try:
@@ -251,9 +328,14 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
             # Move temp file to final location
             temp_path.rename(file_path)
             
+            startup_status["download_progress"][filename]["status"] = "complete"
+            startup_status["download_progress"][filename]["percent"] = 100
+            
         except Exception as e:
             logger.error(f"Downloaded {filename} is corrupted: {e}")
             temp_path.unlink()  # Remove corrupted temp file
+            startup_status["download_progress"][filename]["status"] = "error"
+            startup_status["download_progress"][filename]["error"] = str(e)
             raise RuntimeError(f"Downloaded file {filename} is corrupted and unusable")
         
         logger.info(f"Successfully downloaded {filename}")
@@ -261,6 +343,9 @@ def download_model(url: str, filename: str, models_dir: Path) -> Path:
         
     except Exception as e:
         logger.error(f"Failed to download {filename}: {e}")
+        startup_status["download_progress"][filename]["status"] = "error"
+        startup_status["download_progress"][filename]["error"] = str(e)
+        
         # Clean up any partial files
         temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         if temp_path.exists():
@@ -723,7 +808,15 @@ def load_loras_legacy(pipe: StableDiffusionXLControlNetPipeline, lora_id: str, s
 
 @app.get("/healthcheck")
 async def healthcheck() -> Dict[str, Any]:
-    """Health check endpoint."""
+    """
+    Enhanced health check endpoint that reports startup and download status.
+    
+    Returns detailed information about:
+    - Server startup status
+    - Model loading progress
+    - Memory usage
+    - Available models
+    """
     try:
         # Check memory usage
         process = psutil.Process()
@@ -744,9 +837,27 @@ async def healthcheck() -> Dict[str, Any]:
                 "usage_percent": (allocated_memory / total_memory) * 100
             }
         
+        # Determine overall health status
+        is_healthy = startup_status["server_started"] and startup_status["controlnet_loaded"]
+        is_ready_for_inference = is_healthy and startup_status["model_loaded"]
+        
+        # Determine status string
+        if not startup_status["server_started"]:
+            status = "starting"
+        elif startup_status["startup_error"]:
+            status = "error"
+        elif startup_status["model_loading"]:
+            status = "loading_models"
+        elif startup_status["model_loaded"]:
+            status = "ready"
+        elif startup_status["controlnet_loaded"]:
+            status = "ready_basic"  # Can handle requests but no models preloaded
+        else:
+            status = "initializing"
+        
         response = HealthCheckResponse(
-            status="healthy",
-            model_server_healthy=True,
+            status=status,
+            model_server_healthy=is_healthy,
             models_loaded=list(loaded_models.keys()),
             memory_usage={
                 "ram_mb": memory_info.rss / 1024 / 1024,
@@ -755,14 +866,22 @@ async def healthcheck() -> Dict[str, Any]:
             uptime=time.time() - startup_time if startup_time else None
         )
         
-        return response.to_dict()
+        # Add extended startup information
+        result = response.to_dict()
+        result["startup_status"] = startup_status.copy()
+        result["ready_for_inference"] = is_ready_for_inference
+        result["models_available"] = list(MODEL_CONFIG.keys())
+        result["controlnets_available"] = list(CONTROLNET_CONFIG.keys())
+        
+        return result
         
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return {
-            "status": "unhealthy",
+            "status": "error",
             "model_server_healthy": False,
-            "error": str(e)
+            "error": str(e),
+            "startup_status": startup_status.copy() if 'startup_status' in globals() else {}
         }
 
 
