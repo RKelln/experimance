@@ -116,16 +116,26 @@ check_tailscale_connectivity() {
     
     # Check DERP connection health
     local derp_health
-    if derp_health=$(timeout $TAILSCALE_TIMEOUT tailscale status --json 2>/dev/null | jq -r '.Health[] | select(.Component == "derp")' 2>/dev/null); then
-        if echo "$derp_health" | grep -q '"Level":"ok"'; then
+    if derp_health=$(timeout $TAILSCALE_TIMEOUT tailscale status --json 2>/dev/null | jq -r '.Health[]? | select(.Component? == "derp")?' 2>/dev/null); then
+        if [ -n "$derp_health" ] && echo "$derp_health" | grep -q '"Level":"ok"'; then
             derp_connection=true
             log "DERP connection is healthy"
-        else
+        elif [ -n "$derp_health" ]; then
             derp_connection=false
             warn "DERP connection may be unhealthy: $derp_health"
+        else
+            # No DERP health info available, but connectivity is working
+            derp_connection=true
+            log "DERP connection status unknown but connectivity working"
         fi
     else
-        warn "Could not check DERP connection health"
+        # If we can't check DERP but overall connectivity is ok, don't fail
+        if [ "$connectivity_ok" = true ]; then
+            derp_connection=true
+            log "DERP connection status unknown but connectivity working"
+        else
+            warn "Could not check DERP connection health"
+        fi
     fi
     
     return 0
