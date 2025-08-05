@@ -138,21 +138,21 @@ class PipecatEventProcessor(FrameProcessor):
                 self._conversation_ending = False
             else:
                 # Check if this is an idle timeout cancellation (natural end) vs forced shutdown
-                # Idle timeouts should be treated as natural conversation ends, not service shutdowns
-                logger.info("Pipeline CancelFrame received without EndFrame - checking if idle timeout")
+                # If the backend is marked for forced shutdown, always treat as forced
+                logger.info("Pipeline CancelFrame received without EndFrame - checking shutdown reason")
                 
-                # If the backend is still in running state, this is likely an idle timeout
-                # rather than a forced service shutdown
-                if self.backend._shutdown_state == "running":
+                if (self.backend._shutdown_reason == "forced" or 
+                    self.backend._shutdown_state != "running"):
+                    logger.info("Pipeline CancelFrame during forced shutdown")
+                    await self.backend.emit_event(AgentBackendEvent.CANCEL, {
+                        "reason": "pipeline_cancelled"
+                    })
+                else:
+                    # Only treat as idle timeout if we're still in running state AND no forced shutdown
                     logger.info("Treating CancelFrame as idle timeout (natural conversation end)")
                     self.backend._shutdown_reason = "natural"
                     await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
                         "reason": "idle_timeout"
-                    })
-                else:
-                    logger.info("Pipeline CancelFrame during service shutdown (forced)")
-                    await self.backend.emit_event(AgentBackendEvent.CANCEL, {
-                        "reason": "pipeline_cancelled"
                     })
         
         # Handle transcription frames
@@ -534,7 +534,7 @@ class PipecatBackend(AgentBackend):
                     logger.debug("Stopping audio health monitor...")
                     self._audio_health_monitor_task.cancel()
                     try:
-                        await asyncio.wait_for(self._audio_health_monitor_task, timeout=2.0)
+                        await asyncio.wait_for(self._audio_health_monitor_task, timeout=1.0)  # Reduced timeout
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass  # Expected when cancelling
                 
@@ -548,23 +548,29 @@ class PipecatBackend(AgentBackend):
                     except Exception as e:
                         logger.debug(f"Pipeline completed with error: {e}")
                 else:
-                    # Forced shutdown or error - cancel immediately
+                    # Forced shutdown or error - cancel immediately with no waiting
+                    logger.debug("Forced shutdown detected - cancelling pipeline immediately")
                     await self._force_cancel_pipeline()
                 
-                # Cleanup transport
+                # Cleanup transport with timeout to prevent hanging on WebSocket disconnects
                 if self.transport:
                     try:
-                        await self.transport.cleanup()
+                        # Add timeout to transport cleanup to prevent hanging on WebSocket disconnects
+                        cleanup_timeout = 1.0 if self._shutdown_reason == "forced" else 2.0  # Faster for forced shutdown
+                        await asyncio.wait_for(self.transport.cleanup(), timeout=cleanup_timeout)
                         
                         # Clean up transport streams if available
                         transport_input = getattr(self.transport, '_input', None)
                         transport_output = getattr(self.transport, '_output', None)
                         
+                        stream_timeout = 0.5 if self._shutdown_reason == "forced" else 1.0  # Faster for forced shutdown
                         if transport_input and hasattr(transport_input, 'cleanup'):
-                            await transport_input.cleanup()
+                            await asyncio.wait_for(transport_input.cleanup(), timeout=stream_timeout)
                         if transport_output and hasattr(transport_output, 'cleanup'):
-                            await transport_output.cleanup()
+                            await asyncio.wait_for(transport_output.cleanup(), timeout=stream_timeout)
                             
+                    except asyncio.TimeoutError:
+                        logger.warning("Transport cleanup timed out - WebSocket connections may not have closed gracefully")
                     except Exception as e:
                         logger.debug(f"Transport cleanup error: {e}")
                     
@@ -588,11 +594,15 @@ class PipecatBackend(AgentBackend):
             if self._pipeline_task and not self._pipeline_task.done():
                 self._pipeline_task.cancel()
                 
-                # Wait for the cancelled task to actually finish
+                # Wait for the cancelled task to actually finish with reduced timeout
+                # Use even shorter timeout for forced shutdowns
+                timeout = 1.0 if self._shutdown_reason == "forced" else 2.0
                 try:
-                    await asyncio.wait_for(self._pipeline_task, timeout=3.0)
+                    await asyncio.wait_for(self._pipeline_task, timeout=timeout)
                 except (asyncio.CancelledError, asyncio.TimeoutError, Exception) as e:
-                    logger.debug(f"Pipeline task cancellation: {e}")
+                    logger.debug(f"Pipeline task cancellation (timeout={timeout}s): {e}")
+                    # If it still doesn't cancel after timeout, we'll let the agent service's
+                    # aggressive cleanup handle any remaining tasks
                 
         except Exception as e:
             logger.debug(f"Error during force cancel: {e}")

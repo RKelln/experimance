@@ -24,6 +24,7 @@ except ImportError:
     psutil = None
 
 from experimance_common.base_service import BaseService
+from experimance_common.service_state import ServiceState
 from experimance_common.health import HealthStatus
 from experimance_common.zmq.services import PubSubService
 from experimance_common.schemas import (
@@ -106,7 +107,7 @@ class AgentService(BaseService):
         
     async def start(self):
         """Initialize and start the agent service."""
-        logger.info(f"Starting {self.service_name} in vision-only mode")
+        logger.info(f"Starting {self.service_name}")
         
         # Set up message handlers before starting ZMQ service
         self.zmq_service.add_message_handler(MessageType.SPACE_TIME_UPDATE, self._handle_space_time_update)
@@ -123,26 +124,40 @@ class AgentService(BaseService):
             await self._initialize_vision()
         
         # Register background tasks
-        self.add_task(self._audience_detection_loop())
+        if self.config.vision.audience_detection_enabled:
+            self.add_task(self._audience_detection_loop())
+        else:
+            logger.warning("Audience detection is disabled, no audience monitoring will occur")
+            # start voice chat backend, since it won't be started by audience detection
+            logger.info("Starting conversation backend immediately since audience detection is disabled")
+            await self._start_backend_for_conversation()
+
         if self.config.vision.vlm_enabled:
             self.add_task(self._vision_analysis_loop())
         
         # ALWAYS call super().start() LAST - this starts health monitoring automatically
         await super().start()
         
-        logger.info(f"{self.service_name} started successfully in vision-only mode")
+        logger.info(f"{self.service_name} started successfully")
     
     async def stop(self):
         """Clean up resources and stop the agent service."""
         logger.info(f"Stopping {self.service_name}")
         
-        # Call super().stop() FIRST - this cancels vision loops immediately
-        await super().stop()
-
-        # Stop agent backend if it exists
+        # Stop agent backend if it exists - force immediate shutdown only for signal-based shutdowns
         if self.current_backend:
             try:
-                await self.current_backend.stop()
+                if self.state == ServiceState.STOPPING:
+                    # Mark as forced shutdown for signal-based shutdowns
+                    setattr(self.current_backend, '_shutdown_reason', "forced")
+                    logger.debug("Marked backend for forced shutdown due to signal")
+
+                # Add a timeout to prevent hanging
+                await asyncio.wait_for(self.current_backend.stop(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("Backend stop timed out after 3s, performing immediate aggressive cleanup")
+                # Perform aggressive cleanup immediately if backend hangs
+                await self._perform_aggressive_cleanup()
             except Exception as e:
                 logger.error(f"Error stopping backend: {e}")
             finally:
@@ -174,6 +189,9 @@ class AgentService(BaseService):
         
         logger.info(f"{self.service_name} stopped")
         
+        # Call super().stop() LAST
+        await super().stop() # always in STOPPING state after this
+
         # Shutdown diagnostics and aggressive cleanup
         #await self._perform_shutdown_diagnostics()
         await self._perform_aggressive_cleanup()
@@ -237,26 +255,44 @@ class AgentService(BaseService):
             
             if remaining_tasks:
                 logger.info(f"Force-cancelling {len(remaining_tasks)} remaining tasks (excluding current shutdown task)")
+                
+                # Log task details for debugging
+                for i, task in enumerate(remaining_tasks[:10]):  # Log first 10 tasks
+                    task_name = getattr(task, 'get_name', lambda: 'unnamed')()
+                    task_repr = repr(task).replace('\n', ' ')[:100]
+                    logger.debug(f"  Task {i+1}: {task_name} - {task_repr}")
+                
+                # Cancel all remaining tasks
                 for task in remaining_tasks:
                     if not task.cancelled():
                         task.cancel()
                 
-                # Give tasks a brief moment to cancel
+                # Give tasks a brief moment to cancel, but don't wait too long
                 try:
                     await asyncio.wait_for(
                         asyncio.gather(*remaining_tasks, return_exceptions=True),
-                        timeout=0.5
+                        timeout=1.0  # Reduced from 0.5s to 1.0s but still aggressive
                     )
                 except asyncio.TimeoutError:
-                    logger.info("Some tasks didn't cancel in time")
+                    logger.warning(f"Some tasks didn't cancel within 1.0s - this may indicate hanging WebSocket connections or other external I/O")
+                    
+                    # Check which tasks are still running
+                    still_running = [task for task in remaining_tasks if not task.done()]
+                    if still_running:
+                        logger.warning(f"{len(still_running)} tasks still running after cancellation timeout")
+                        for i, task in enumerate(still_running[:5]):  # Show first 5 still running
+                            task_name = getattr(task, 'get_name', lambda: 'unnamed')()
+                            task_repr = repr(task).replace('\n', ' ')[:100]
+                            logger.warning(f"  Still running {i+1}: {task_name} - {task_repr}")
+                        
                 except Exception as e:
-                    logger.info(f"Task cancellation error: {e}")
+                    logger.warning(f"Task cancellation error: {e}")
             else:
                 logger.info("No tasks to cancel (excluding current shutdown task)")
         except Exception as e:
-            logger.info(f"Aggressive cleanup error: {e}")
+            logger.error(f"Aggressive cleanup error: {e}")
         
-        # Give logs a moment to flush
+        # Give logs a moment to flush before final exit
         await asyncio.sleep(0.1)
     
     # =========================================================================
@@ -290,7 +326,7 @@ class AgentService(BaseService):
         """Initialize the selected agent backend."""
         backend_name = self.config.agent_backend.lower()
         
-        if not self.running: return
+        logger.debug(f"Initializing {backend_name} backend...")
 
         try:
             if backend_name == "pipecat":
@@ -355,9 +391,13 @@ class AgentService(BaseService):
     async def _start_backend_for_conversation(self):
         """Start the agent backend when a person is detected."""
         if self.current_backend is not None:
+            logger.debug("Backend already exists, returning True")
             return True
         
-        if not self.running: 
+        # Allow backend startup during service initialization (STARTING state)
+        # Only block if service is stopped/stopping
+        if self.state in [ServiceState.STOPPED, ServiceState.STOPPING]: 
+            logger.debug(f"Service state is {self.state}, cannot start backend")
             return False
 
         # Check if we're in cooldown period
@@ -370,8 +410,6 @@ class AgentService(BaseService):
                 logger.info(f"Person detected but conversation cooldown active ({cooldown_remaining:.1f}s remaining)")
             return False
 
-        logger.info("Person detected, starting conversation backend...")
-        
         try:
             await self._initialize_backend()
             
@@ -835,6 +873,11 @@ class AgentService(BaseService):
         We trigger immediate service shutdown - the stop() method handles pipeline coordination.
         """
         if not self.current_backend or not self.running:
+            return
+        
+        # Check if we're already stopping to avoid duplicate stop calls
+        if self.state == ServiceState.STOPPING:
+            logger.debug("Backend shutdown signal received, but service already stopping")
             return
         
         logger.info("Backend shutdown signal received, stopping service...")
