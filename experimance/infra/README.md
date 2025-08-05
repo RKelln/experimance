@@ -60,14 +60,20 @@ infra/
 │   ├── get_project_services.py # Dynamic service detection
 │   ├── healthcheck.py         # Health monitoring script
 │   ├── kiosk_mode.sh          # Enable/disable kiosk mode for art installation
+│   ├── preventive_maintenance.sh # Automated maintenance to prevent SSH lockouts
+│   ├── remote_access_monitor.sh # Monitor SSH/Tailscale connectivity with auto-recovery
 │   ├── reset.sh               # System/service reset functionality
 │   ├── reset_on_input.py      # Interactive reset trigger script
 │   ├── shutdown.sh            # Graceful system shutdown
 │   ├── startup.sh             # System startup script (for cron/systemd)
 │   ├── status.sh              # Service status checking
 │   ├── switch-project.sh      # Switch between different project configurations
+│   ├── system_diagnostic.sh   # Diagnose SSH lockout causes and system issues
 │   └── update.sh              # Safe update script with rollback capability
 ├── docs/                      # Documentation
+│   ├── deployment.md          # Detailed deployment instructions
+│   ├── emergency-reference.md # Quick emergency procedures
+│   └── emergency-ssh-recovery.md # SSH lockout recovery guide
 │   
 scripts/                       # Development tools
 └── dev                        # Development service runner
@@ -451,6 +457,63 @@ The deploy script now fails explicitly instead of making assumptions:
 - **Monitoring services**: $0 (ntfy.sh)
 - **Time investment**: 2-3 hours initial, 1-2 hours monthly
 
+
+## Remote Access Monitoring and Troubleshooting
+
+To prevent and diagnose SSH lockout issues, we've added comprehensive monitoring and diagnostic tools:
+
+### Remote Access Monitor
+Monitors SSH, Tailscale, and system health with automatic recovery:
+```bash
+# Run one-time health check
+sudo ./infra/scripts/remote_access_monitor.sh check
+
+# Run health check with automatic recovery
+sudo ./infra/scripts/remote_access_monitor.sh recover
+
+# Install as systemd service for continuous monitoring
+sudo ./infra/scripts/remote_access_monitor.sh install
+sudo systemctl start remote-access-monitor.service
+
+# View monitoring status
+sudo ./infra/scripts/remote_access_monitor.sh status
+```
+
+### System Diagnostics
+Identify potential causes of SSH lockouts:
+```bash
+# Quick health check
+sudo ./infra/scripts/system_diagnostic.sh quick
+
+# Comprehensive system diagnostic
+sudo ./infra/scripts/system_diagnostic.sh full
+```
+
+### Preventive Maintenance
+Automated maintenance to prevent issues:
+```bash
+# Run maintenance tasks manually
+sudo ./infra/scripts/preventive_maintenance.sh run
+
+# Install automatic maintenance (every 6 hours)
+sudo ./infra/scripts/preventive_maintenance.sh install-cron
+
+# Check maintenance status
+sudo ./infra/scripts/preventive_maintenance.sh status
+```
+
+### Common Causes of SSH Lockouts
+Based on analysis of your system, here are common issues that can prevent SSH access:
+
+1. **High System Load**: Core service consuming excessive CPU (161% in logs)
+2. **Memory Pressure**: Services using high memory causing system slowdown
+3. **Network Issues**: Tailscale connectivity problems or DNS failures
+4. **Service Failures**: Critical services (SSH, systemd) becoming unresponsive
+5. **Disk Space**: Full disks preventing log writes and service operation
+
+The monitoring tools will detect and automatically recover from many of these issues.
+
+---
 
 ## Remote access with Tailscale
 
