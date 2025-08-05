@@ -321,30 +321,34 @@ class NtfyHandler(NotificationHandler):
         else:
             tags.append("service")
         
-        data = {
-            "title": title,
-            "message": message,
-            "priority": priority_map[status],
-            "tags": tags
+        # Prepare headers for ntfy.sh API
+        headers = {
+            "Title": title,
+            "Priority": priority_map[status],
+            "Tags": ",".join(tags)
         }
         
         if self.dryrun:
-            log_text = (
-                f"{'=' * 60}\n"
-                f"🔧 [DRY RUN] NTFY NOTIFICATION ({source.upper()})\n"
-                f"{'=' * 60}\n"
-                f"📧 Title: {title}\n"
-                f"🔸 Priority: {priority_map[status]}\n"
-                f"🏷️  Tags: {', '.join(tags)}\n\n"
-                "📝 Message:\n"
-                + "\n".join(f"   {line}" for line in message.split('\n'))
-                + f"\n{'=' * 60}"
-            )
-            logger.info(log_text)
+            # Format detailed dry-run log with headers info
+            lines = [
+                "=" * 60,
+                f"🔧 [DRY RUN] NTFY NOTIFICATION ({source.upper()})",
+                "=" * 60,
+                f"🔗 URL: {self.url}",
+                f"📧 Title: {title}",
+                f"🔸 Priority: {priority_map[status]}",
+                f"🏷️  Tags: {', '.join(tags)}",
+                "",
+                "📝 Message:",
+            ]
+            lines.extend(f"   {line}" for line in message.split('\n'))
+            lines.append("=" * 60)
+            logger.info("\n".join(lines))
         else:
-            response = requests.post(self.url, json=data, timeout=10)
+            # Send using ntfy.sh API format with headers and message as data
+            response = requests.post(self.url, data=message, headers=headers, timeout=10)
             response.raise_for_status()
-            logger.info(f"Sent ntfy notification for {source} ({status})")
+            logger.info(f"✅ Sent ntfy notification for {source} ({status})")
 
 
 class LogHandler(NotificationHandler):
