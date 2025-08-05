@@ -903,6 +903,43 @@ class AgentService(BaseService):
             extra={"details": details}
         )
         
+        # Report to health system with appropriate severity
+        health_status = HealthStatus.WARNING if self._audio_output_issues_count < self._audio_issue_threshold else HealthStatus.ERROR
+        
+        # For now, just report general audio output issues to the health system
+        # TODO: Add specific detection for TTS billing issues when we can capture HTTP 402 errors
+        # Currently, pipecat library errors (like Cartesia HTTP 402) aren't directly accessible
+        
+        # Report all audio issues with escalating severity
+        if self._audio_output_issues_count >= self._audio_issue_threshold:
+            # Multiple failures suggest a systemic issue - report as FATAL
+            self.record_health_check(
+                "tts_audio_pipeline",
+                HealthStatus.FATAL,
+                f"Multiple audio output failures detected ({self._audio_output_issues_count}) - possible TTS service issue",
+                metadata={
+                    "error_count": self._audio_output_issues_count,
+                    "issue_type": issue_type,
+                    "details": details,
+                    "threshold": self._audio_issue_threshold,
+                    "note": "Check logs for HTTP 402 or payment errors from TTS service"
+                }
+            )
+            logger.error("FATAL: Multiple audio output failures - likely TTS service billing/connection issue")
+        else:
+            # Single or few failures - report as WARNING/ERROR
+            self.record_health_check(
+                "tts_audio_pipeline",
+                health_status,
+                f"Audio output issue detected: {issue_type}",
+                metadata={
+                    "error_count": self._audio_output_issues_count,
+                    "issue_type": issue_type,
+                    "details": details,
+                    "threshold": self._audio_issue_threshold
+                }
+            )
+        
         # If we've had multiple issues in a short period, attempt recovery
         if self._audio_output_issues_count >= self._audio_issue_threshold:
             logger.error(
