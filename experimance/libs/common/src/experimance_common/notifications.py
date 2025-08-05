@@ -345,8 +345,8 @@ class NtfyHandler(NotificationHandler):
             lines.append("=" * 60)
             logger.info("\n".join(lines))
         else:
-            # Send using ntfy.sh API format with headers and message as data
-            response = requests.post(self.url, data=message, headers=headers, timeout=10)
+            # Send using ntfy.sh API format with headers and message as data (UTF-8 encoded)
+            response = requests.post(self.url, data=message.encode('utf-8'), headers=headers, timeout=10)
             response.raise_for_status()
             logger.info(f"✅ Sent ntfy notification for {source} ({status})")
 
