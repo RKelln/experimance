@@ -140,7 +140,7 @@ class NtfyHandler(NotificationHandler):
             }
             
             # Create message
-            title = f"🔧 {service_health.service_name} Health Alert"
+            title = f"{service_health.service_name} Health Alert"
             status_emoji = {
                 HealthStatus.HEALTHY: "✅",
                 HealthStatus.WARNING: "⚠️",
@@ -195,7 +195,7 @@ class NtfyHandler(NotificationHandler):
                 overall_status = HealthStatus.UNKNOWN
             
             # Create message
-            title = f"🏗️ Experimance System Health Update"
+            title = f"Experimance System Health Update"
             status_emoji = {
                 HealthStatus.HEALTHY: "✅",
                 HealthStatus.WARNING: "⚠️",
@@ -346,7 +346,7 @@ class NtfyHandler(NotificationHandler):
             logger.info("\n".join(lines))
         else:
             # Send using ntfy.sh API format with headers and message as data (UTF-8 encoded)
-            response = requests.post(self.url, data=message.encode('utf-8'), headers=headers, timeout=10)
+            response = requests.post(self.url, data=message.encode(encoding='utf-8'), headers=headers, timeout=10)
             response.raise_for_status()
             logger.info(f"✅ Sent ntfy notification for {source} ({status})")
 
