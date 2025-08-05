@@ -709,6 +709,10 @@ class ExperimanceCoreService(BaseService):
 
         interaction_intensity += self.config.state_machine.interaction_modifier
 
+        if self.current_era == Era.WILDERNESS:
+            # In wilderness era, double the impact of interactions
+            interaction_intensity *= 2.0
+
         # for testing just add up all the intensities
         self.user_interaction_score += interaction_intensity
         logger.info(f"{self.user_interaction_score} += {interaction_intensity}")
@@ -1429,7 +1433,9 @@ class ExperimanceCoreService(BaseService):
                       (self.config.state_machine.era_min_duration <= 0 or 
                        self.era_progression_timer > self.config.state_machine.era_min_duration)) or 
                        (self.config.state_machine.era_max_duration > 0 and
-                        self.era_progression_timer > self.config.state_machine.era_max_duration)):
+                        self.era_progression_timer > self.config.state_machine.era_max_duration and
+                        self.current_era != Era.WILDERNESS # don't auto-advance from wilderness
+                    )):
                     
                     # Check if we can progress to next era
                     next_era = self.get_next_era()
