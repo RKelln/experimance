@@ -1168,7 +1168,7 @@ class AudioService(BaseService):
                 
             is_idle = data.get("status", False)
             
-            logger.info(f"Idle status changed: {is_idle}")
+            logger.debug(f"Idle status changed: {is_idle}")
             
             # No specific action needed for now, but could implement audio fade out/in
             # based on idle status in the future
