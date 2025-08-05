@@ -18,12 +18,14 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Failure detection**: Services automatically restart on crashes
 - **Resource limits**: Prevent runaway processes from consuming all resources
 
-### 3. **Remote Monitoring**
+### 3. **Remote Monitoring & Access**
 - **Push notifications**: Simple, reliable ntfy.sh notifications to your phone
 - **Email alerts**: Configurable SMTP notifications as fallback
 - **Web dashboard**: Mobile-friendly interface at `http://installation-ip:8080`
 - **Health checks**: Automated monitoring every 5 minutes
 - **SSH access**: Secure remote access for troubleshooting
+- **Remote access monitoring**: Automated SSH/Tailscale connectivity monitoring with recovery ✅
+- **Tailscale integration**: Secure remote access over private WireGuard network
 
 ### 4. **Safe Updates**
 - **Rollback capability**: Automatic rollback on failed updates
@@ -61,7 +63,7 @@ infra/
 │   ├── healthcheck.py         # Health monitoring script
 │   ├── kiosk_mode.sh          # Enable/disable kiosk mode for art installation
 │   ├── preventive_maintenance.sh # Automated maintenance to prevent SSH lockouts
-│   ├── remote_access_monitor.sh # Monitor SSH/Tailscale connectivity with auto-recovery
+│   ├── remote_access_monitor.sh # Monitor SSH/Tailscale connectivity with auto-recovery ✅
 │   ├── reset.sh               # System/service reset functionality
 │   ├── reset_on_input.py      # Interactive reset trigger script
 │   ├── shutdown.sh            # Graceful system shutdown
@@ -101,6 +103,10 @@ Installs functional systemd system services (that wait for the user session to s
 sudo useradd -m -s /bin/bash experimance
 sudo ./infra/scripts/deploy.sh experimance install prod
 sudo ./infra/scripts/deploy.sh experimance start
+
+# Install remote access monitoring (RECOMMENDED for exhibitions)
+sudo ./infra/scripts/remote_access_monitor.sh install
+sudo systemctl start remote-access-monitor.service
 
 # View available services
 sudo ./infra/scripts/deploy.sh experimance services
@@ -295,6 +301,10 @@ ps aux | grep experimance  # Check running dev services
 sudo ./infra/scripts/deploy.sh experimance status
 sudo systemctl status "*@experimance"  # All project services
 sudo systemctl status core@experimance display@experimance  # Specific services
+
+# Remote access monitoring
+sudo systemctl status remote-access-monitor.service
+sudo ./infra/scripts/remote_access_monitor.sh status
 ```
 
 ### Restart Everything
@@ -462,8 +472,8 @@ The deploy script now fails explicitly instead of making assumptions:
 
 To prevent and diagnose SSH lockout issues, we've added comprehensive monitoring and diagnostic tools:
 
-### Remote Access Monitor
-Monitors SSH, Tailscale, and system health with automatic recovery:
+### Remote Access Monitor ✅
+Monitors SSH, Tailscale, and system health with automatic recovery every 60 seconds:
 ```bash
 # Run one-time health check
 sudo ./infra/scripts/remote_access_monitor.sh check
@@ -471,13 +481,32 @@ sudo ./infra/scripts/remote_access_monitor.sh check
 # Run health check with automatic recovery
 sudo ./infra/scripts/remote_access_monitor.sh recover
 
-# Install as systemd service for continuous monitoring
+# Install as systemd service for continuous monitoring (RECOMMENDED)
 sudo ./infra/scripts/remote_access_monitor.sh install
 sudo systemctl start remote-access-monitor.service
 
-# View monitoring status
+# View monitoring status and recent logs
 sudo ./infra/scripts/remote_access_monitor.sh status
+
+# Check service status
+sudo systemctl status remote-access-monitor.service
+
+# Follow live monitoring logs
+sudo journalctl -u remote-access-monitor.service -f
+
+# View health state files
+sudo cat /var/cache/experimance/remote-access-state.json
+sudo cat /var/cache/experimance/health/remote_access_health.json
 ```
+
+**Features:**
+- **Conservative recovery**: Only attempts recovery after 2 consecutive failures (2+ minutes)
+- **SSH monitoring**: Service status, port listening, connection counting
+- **Tailscale monitoring**: IP assignment, connectivity, DERP health
+- **Network monitoring**: Internet, DNS, gateway connectivity
+- **System monitoring**: Memory, disk, CPU load with critical thresholds
+- **Auto-restart capability**: Restarts SSH and Tailscale services if needed
+- **Health logging**: Detailed logs and JSON state files for debugging
 
 ### System Diagnostics
 Identify potential causes of SSH lockouts:

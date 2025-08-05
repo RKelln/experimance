@@ -330,16 +330,24 @@ save_health_state() {
     local overall_status="$1"
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%6NZ")
     
+    # Use default values if variables are not set
+    local ssh_health="${ssh_healthy:-false}"
+    local tailscale_health="${tailscale_healthy:-false}"
+    local network_health="${network_healthy:-false}"
+    local system_health="${system_healthy:-false}"
+    local last_recovery="${last_recovery_attempt:-}"
+    local consecutive="${consecutive_failures:-0}"
+    
     cat > "$STATE_FILE" << EOF
 {
   "timestamp": "$timestamp",
   "overall_status": "$overall_status",
-  "ssh_healthy": $ssh_healthy,
-  "tailscale_healthy": $tailscale_healthy,
-  "network_healthy": $network_healthy,
-  "system_healthy": $system_healthy,
-  "last_recovery_attempt": "$last_recovery_attempt",
-  "consecutive_failures": $consecutive_failures
+  "ssh_healthy": $ssh_health,
+  "tailscale_healthy": $tailscale_health,
+  "network_healthy": $network_health,
+  "system_healthy": $system_health,
+  "last_recovery_attempt": "$last_recovery",
+  "consecutive_failures": $consecutive
 }
 EOF
 
@@ -352,22 +360,22 @@ EOF
   "checks": [
     {
       "name": "ssh_service",
-      "status": "$([ "$ssh_healthy" = true ] && echo "healthy" || echo "unhealthy")",
+      "status": "$([ "$ssh_health" = true ] && echo "healthy" || echo "unhealthy")",
       "timestamp": "$timestamp"
     },
     {
       "name": "tailscale_connectivity", 
-      "status": "$([ "$tailscale_healthy" = true ] && echo "healthy" || echo "unhealthy")",
+      "status": "$([ "$tailscale_health" = true ] && echo "healthy" || echo "unhealthy")",
       "timestamp": "$timestamp"
     },
     {
       "name": "network_connectivity",
-      "status": "$([ "$network_healthy" = true ] && echo "healthy" || echo "unhealthy")",
+      "status": "$([ "$network_health" = true ] && echo "healthy" || echo "unhealthy")",
       "timestamp": "$timestamp"
     },
     {
       "name": "system_resources",
-      "status": "$([ "$system_healthy" = true ] && echo "healthy" || echo "unhealthy")",
+      "status": "$([ "$system_health" = true ] && echo "healthy" || echo "unhealthy")",
       "timestamp": "$timestamp"
     }
   ]
@@ -379,10 +387,11 @@ EOF
 perform_health_check() {
     log "=== Starting Remote Access Health Check ==="
     
-    local ssh_healthy=false
-    local tailscale_healthy=false
-    local network_healthy=false
-    local system_healthy=false
+    # Use global variables so they can be accessed by save_health_state
+    ssh_healthy=false
+    tailscale_healthy=false
+    network_healthy=false
+    system_healthy=false
     local overall_healthy=false
     
     # Run all checks
