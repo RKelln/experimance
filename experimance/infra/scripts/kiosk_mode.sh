@@ -96,7 +96,12 @@ check_prerequisites() {
 create_backup() {
     log "Creating backup of current settings..."
     
+    # Create backup directory with proper permissions
     mkdir -p "$BACKUP_DIR"
+    chown -R "$USER:$USER" "$(dirname "$BACKUP_DIR")"
+    chown -R "$USER:$USER" "$BACKUP_DIR"
+    chmod 755 "$BACKUP_DIR"
+    
     timestamp=$(date '+%Y%m%d_%H%M%S')
     backup_file="$BACKUP_DIR/settings_backup_$timestamp.json"
     
@@ -131,6 +136,10 @@ EOF
     
     # Also backup system settings
     systemctl is-enabled unattended-upgrades 2>/dev/null > "$BACKUP_DIR/unattended-upgrades.status" || echo "not-found" > "$BACKUP_DIR/unattended-upgrades.status"
+    
+    # Ensure backup files are owned by the user
+    chown "$USER:$USER" "$backup_file"
+    chown "$USER:$USER" "$BACKUP_DIR/unattended-upgrades.status"
     
     log "Backup created: $backup_file"
     echo "$backup_file"
