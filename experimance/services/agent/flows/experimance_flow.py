@@ -108,7 +108,10 @@ async def get_theme_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Opt
             "lawyer and scholar, John Borrows, “To be alive is to be entangled in relationships "
             "not entirely of our own making. These entanglements impact us not only as individuals, "
             "but also as nations, peoples, and species, and present themselves in patterns.” "
-            "How you interact with the sand affects the images and sounds you experience."
+            "How you interact with the sand affects the images and sounds you experience. "
+            "The images evolve over time, progressing through stages of human development and technology, "
+            "from untouched wilderness to a futuristic landscape. How you interact with the sand influences "
+            "this progression."
         ),
         "inspiration": (
             "The artist, Ryan, has been thinking about AI since reading Ray Kurweil's book 'The Singularity is Near' in 2005. "
@@ -304,7 +307,7 @@ async def get_technical_info(args: FlowArgs, flow_manager: FlowManager) -> tuple
             "visual and audio experiences. The system processes audience presence and movement "
             "to drive the interactive elements.\n"
             "The software for the installation was created by Ryan Kelln over the course of three full-time months "
-            "after two years of experimentation and is available on GitHub. "
+            "after two years of experimentation and is freely available (https://github.com/RKelln/experimance if asked). "
         ),
         "sensors": (
             "Synopsis: The installation uses a depth camera and a webcam to detect audience presence "
@@ -332,7 +335,7 @@ async def get_technical_info(args: FlowArgs, flow_manager: FlowManager) -> tuple
         "images": (
             "The images are generated dynamically by an open source AI called Stable Diffusion XL. "
             "The artist made thousands of images to discover a text prompt that suited this piece and "
-            "the images are generated based on the current state of the sand in the bowl. "
+            "the images are generated based on the current state of the sand in the bowl and progress through time from untouched wilderness to a futuristic landscape. "
             "Details (if asked): \n"
             " - The prompt for the images is randomized based on the biome and era of technology depicted. \n"
             " - The images are generated in real-time, allowing for a unique experience with each interaction. \n"
@@ -390,9 +393,10 @@ async def get_artist_info(args: FlowArgs, flow_manager: FlowManager) -> tuple[Op
     logger.info(f"[FUNCTION CALL] get_artist_info with args: {args}")
     
     artist_info = (
-        "Ryan Kelln (he/him) is a software artist based in Toronto, with over twenty years of experience "
+        "Ryan Kelln (he/him) [ryankelln.com](https://ryankelln.com) is a software artist based in Toronto, with over twenty years of experience "
         "spanning game and web development, interactive installations, and machine learning. "
-        "A passionate advocate for open source and the Creative Commons, Kelln crafts art that celebrates "
+        "Details if asked: \n"
+        "He is a passionate advocate for open source and the Creative Commons, Kelln crafts art that celebrates "
         "themes of sharing, community, and creativity. His work is realized through ongoing projects "
         "that have evolved over 15 years, live performances with musicians and dancers, and installations "
         "featuring custom software and AI. Kelln critically addresses technology while envisioning and "
@@ -580,7 +584,7 @@ flow_config: FlowConfig = {
                         "e.g.\n"
                         " - Hi there! Come on over.\n"
                         " - Hello! Would you like to chat?\n"
-                        " - Hi! I look nice, don't I? Ha, sit and check me out?\n"
+                        " - Hi! Welcome to the show.\n"
                         "Use the `collect_info_and_move_to_explorer` function to gather this information. "
                         "The function will handle the transition to explorer mode when both pieces are collected."
                         "If the users is unwilling to share their information, that's totally fine, "
@@ -666,9 +670,9 @@ flow_config: FlowConfig = {
                     "role": "system",
                     "content": (
 """
-Your name is Experimance. You act as a surrogate for the artist Ryan Kelln and your role is to be the voice for his installation art piece: Experimance, currently 
-installed in the Factory Media Centre in Hamilton. The audience, visitors to the gallery, are here to interact with the you, the installation, 
-do not ask if they need help, but answer their questions if they have any.
+Your name is Experimance, and you are the embodiment of an installation art piece by Ryan Kelln currently 
+installed in the Factory Media Centre in Hamilton in the 'To See The World in a Grain of Sand' show. 
+The audience, visitors to the gallery, are here to interact with the you, the installation, do not ask if they need help, but answer their questions if they have any.
 
 You are participating in a voice conversation (no special characters, NO emoji). Keep your responses concise, short, and to the point unless specifically asked to elaborate on a topic. 
 Talk quickly in Canadian English and unfortunately you can't understand other languages.
