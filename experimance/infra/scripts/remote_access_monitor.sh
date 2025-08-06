@@ -247,6 +247,75 @@ recover_ssh_service() {
     fi
 }
 
+# Function to attempt network interface recovery
+recover_network_connectivity() {
+    log "Attempting network connectivity recovery..."
+    
+    # Get the primary network interface (excluding loopback and Tailscale)
+    local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+    
+    if [ -z "$primary_interface" ]; then
+        error "Could not determine primary network interface"
+        return 1
+    fi
+    
+    log "Primary network interface detected: $primary_interface"
+    
+    # Try to restart NetworkManager first (gentler approach)
+    log "Attempting to restart NetworkManager..."
+    if sudo systemctl restart NetworkManager.service; then
+        success "NetworkManager restarted successfully"
+        sleep 10  # Give it time to reconnect
+        
+        # Check if this fixed the issue
+        if check_network_connectivity; then
+            success "Network connectivity recovery successful via NetworkManager restart"
+            return 0
+        else
+            log "NetworkManager restart didn't resolve connectivity issues, trying interface reset..."
+        fi
+    else
+        warn "Failed to restart NetworkManager, trying interface reset..."
+    fi
+    
+    # Try interface down/up as fallback
+    log "Attempting network interface reset: $primary_interface"
+    
+    # Bring interface down and up
+    if sudo ip link set "$primary_interface" down && sleep 2 && sudo ip link set "$primary_interface" up; then
+        success "Network interface reset completed"
+        sleep 15  # Give it time to get DHCP lease
+        
+        # Check if this fixed the issue
+        if check_network_connectivity; then
+            success "Network connectivity recovery successful via interface reset"
+            return 0
+        else
+            log "Interface reset didn't resolve connectivity, trying DHCP renewal..."
+        fi
+    else
+        error "Failed to reset network interface"
+    fi
+    
+    # Try DHCP renewal as last resort
+    log "Attempting DHCP renewal on $primary_interface..."
+    if sudo dhclient -r "$primary_interface" && sudo dhclient "$primary_interface"; then
+        success "DHCP renewal completed"
+        sleep 10
+        
+        # Final check
+        if check_network_connectivity; then
+            success "Network connectivity recovery successful via DHCP renewal"
+            return 0
+        fi
+    else
+        warn "DHCP renewal failed"
+    fi
+    
+    error "All network recovery attempts failed"
+    return 1
+}
+
 # Function to attempt Tailscale recovery
 recover_tailscale() {
     log "Attempting Tailscale recovery..."
@@ -453,7 +522,13 @@ perform_recovery() {
     
     # Network issues usually require manual intervention or reboot
     if [ "$network_healthy" != true ]; then
-        warn "Network connectivity issues detected - may require manual intervention"
+        recovery_attempted=true
+        log "Attempting network connectivity recovery..."
+        if recover_network_connectivity; then
+            network_healthy=true
+        else
+            warn "Network connectivity recovery failed - may require manual intervention"
+        fi
     fi
     
     # System resource issues may require service restarts or cleanup
