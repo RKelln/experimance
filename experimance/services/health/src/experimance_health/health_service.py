@@ -77,9 +77,11 @@ class HealthService(BaseService):
                 webhook_headers["Authorization"] = os.environ.get("HEALTH_WEBHOOK_AUTH")
             
             # Create handlers with configuration
-            health_log_path = self.health_dir / "health.log"
+            # Use proper logs directory for notification logs, not health directory
+            from experimance_common.logger import get_log_file_path
+            notification_log_path = get_log_file_path("health_notifications.log")
             self.notification_handlers = create_notification_handlers_from_config(
-                log_file=str(health_log_path),
+                log_file=str(notification_log_path),
                 ntfy_topic=ntfy_topic,
                 ntfy_server=ntfy_server,
                 webhook_url=webhook_url,
@@ -101,7 +103,7 @@ class HealthService(BaseService):
             await self._send_startup_notification()
         
         # Add main health monitoring task
-        self.add_task(self._health_monitoring_loop())
+        self.add_task(self._service_health_monitoring_loop())
         
         # Add cleanup task
         self.add_task(self._cleanup_loop())
@@ -334,32 +336,50 @@ class HealthService(BaseService):
             # Check if health data is fresh
             last_check_str = health_data.get("last_check")
             if last_check_str:
-                last_check = datetime.fromisoformat(last_check_str.replace('Z', '+00:00'))
-                time_since_check = (current_time - last_check.replace(tzinfo=None)).total_seconds()
+                # Parse datetime more robustly
+                if last_check_str.endswith('Z'):
+                    last_check_str = last_check_str[:-1] + '+00:00'
                 
-                # During startup grace period, don't mark stale data as error
-                time_since_startup = (current_time - self.startup_time).total_seconds()
-                in_grace_period = time_since_startup < self.config.startup_grace_period
-                
-                if time_since_check > self.config.service_timeout and not in_grace_period:
-                    return {
-                        "status": "ERROR",
-                        "message": f"Service health data is stale ({time_since_check:.1f}s old)",
-                        "uptime": health_data.get("uptime", "N/A"),
-                        "messages_sent": health_data.get("messages_sent", 0),
-                        "messages_received": health_data.get("messages_received", 0),
-                        "errors": health_data.get("error_count", 0)
-                    }
-                elif time_since_check > self.config.service_timeout and in_grace_period:
-                    # During grace period, just mark as unknown instead of error
-                    return {
-                        "status": "UNKNOWN",
-                        "message": f"Stale data from previous run ({time_since_check:.1f}s old, in grace period)",
-                        "uptime": health_data.get("uptime", "N/A"),
-                        "messages_sent": health_data.get("messages_sent", 0),
-                        "messages_received": health_data.get("messages_received", 0),
-                        "errors": health_data.get("error_count", 0)
-                    }
+                try:
+                    last_check = datetime.fromisoformat(last_check_str)
+                    # Ensure both datetimes are naive for comparison
+                    if last_check.tzinfo is not None:
+                        last_check = last_check.replace(tzinfo=None)
+                    
+                    time_since_check = (current_time - last_check).total_seconds()
+                    
+                    # During startup grace period, don't mark stale data as error
+                    time_since_startup = (current_time - self.startup_time).total_seconds()
+                    in_grace_period = time_since_startup < self.config.startup_grace_period
+                    
+                    # Add debug logging to understand what's happening
+                    logger.debug(f"Service {service_type}: time_since_check={time_since_check:.1f}s, "
+                               f"timeout={self.config.service_timeout}s, in_grace_period={in_grace_period}")
+                    
+                    if time_since_check > self.config.service_timeout and not in_grace_period:
+                        logger.debug(f"Service {service_type}: Marking as ERROR due to staleness")
+                        return {
+                            "status": "ERROR",
+                            "message": f"Service health data is stale ({time_since_check:.1f}s old)",
+                            "uptime": health_data.get("uptime", "N/A"),
+                            "messages_sent": health_data.get("messages_sent", 0),
+                            "messages_received": health_data.get("messages_received", 0),
+                            "errors": health_data.get("error_count", 0)
+                        }
+                    elif time_since_check > self.config.service_timeout and in_grace_period:
+                        # During grace period, just mark as unknown instead of error
+                        logger.debug(f"Service {service_type}: Marking as UNKNOWN due to grace period")
+                        return {
+                            "status": "UNKNOWN",
+                            "message": f"Stale data from previous run ({time_since_check:.1f}s old, in grace period)",
+                            "uptime": health_data.get("uptime", "N/A"),
+                            "messages_sent": health_data.get("messages_sent", 0),
+                            "messages_received": health_data.get("messages_received", 0),
+                            "errors": health_data.get("error_count", 0)
+                        }
+                except Exception as e:
+                    logger.error(f"Error parsing last_check datetime for {service_type}: {e}")
+                    # Fall through to return file status
             
             # Extract stats from health data
             uptime_seconds = health_data.get("uptime", 0)
@@ -389,7 +409,7 @@ class HealthService(BaseService):
                 "errors": 0
             }
     
-    async def _health_monitoring_loop(self):
+    async def _service_health_monitoring_loop(self):
         """Main health monitoring loop."""
         while self.running:
             try:
