@@ -1373,7 +1373,7 @@ remove_schedule() {
     
     # Remove our crontab entries
     local temp_cron=$(mktemp)
-    crontab -l 2>/dev/null | grep -v "experimance-auto" > "$temp_cron" || true
+    crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
     crontab "$temp_cron"
     rm "$temp_cron"
     
