@@ -149,8 +149,8 @@ check_network_connectivity() {
     local dns_ok=false
     local gateway_ok=false
     
-    # Check internet connectivity
-    if ping -c 1 -W 5 8.8.8.8 &>/dev/null; then
+    # Check internet connectivity - use || true to prevent exit on failure
+    if ping -c 1 -W 5 8.8.8.8 &>/dev/null || true; then
         internet_ok=true
         log "Internet connectivity: OK"
     else
@@ -158,8 +158,8 @@ check_network_connectivity() {
         error "Internet connectivity: FAILED"
     fi
     
-    # Check DNS resolution
-    if nslookup google.com &>/dev/null; then
+    # Check DNS resolution - use || true to prevent exit on failure
+    if nslookup google.com &>/dev/null || true; then
         dns_ok=true
         log "DNS resolution: OK"
     else
@@ -167,9 +167,9 @@ check_network_connectivity() {
         warn "DNS resolution: FAILED"
     fi
     
-    # Check default gateway
-    local gateway=$(ip route | grep default | awk '{print $3}' | head -1)
-    if [ -n "$gateway" ] && ping -c 1 -W 3 "$gateway" &>/dev/null; then
+    # Check default gateway - use || true to prevent exit on failure
+    local gateway=$(ip route | grep default | awk '{print $3}' | head -1 || true)
+    if [ -n "$gateway" ] && (ping -c 1 -W 3 "$gateway" &>/dev/null || true); then
         gateway_ok=true
         log "Gateway connectivity to $gateway: OK"
     else
@@ -211,7 +211,7 @@ check_system_resources() {
     log "System resources: Memory: ${memory_usage_percent}% used (${memory_available} available), Disk: ${disk_usage_percent}% used, Load:${load_avg}, CPU temp: ${cpu_temp}°C"
     
     # Check for critical resource usage
-    if (( $(echo "$memory_usage_percent > 90" | bc -l) )); then
+    if (( $(echo "$memory_usage_percent > 90" | bc -l 2>/dev/null || echo 0) )); then
         error "Critical memory usage: ${memory_usage_percent}%"
         return 1
     fi
@@ -568,7 +568,7 @@ run_monitor() {
     export consecutive_failures last_recovery_attempt
     
     while true; do
-        if perform_health_check; then
+        if perform_health_check || false; then
             consecutive_failures=0
             save_health_state "healthy"
         else
@@ -577,7 +577,7 @@ run_monitor() {
             
             # Attempt recovery after 2 consecutive failures
             if [ $consecutive_failures -ge 2 ]; then
-                perform_recovery
+                perform_recovery || true  # Don't exit on recovery failure
                 consecutive_failures=0  # Reset after recovery attempt
             fi
             
@@ -649,7 +649,7 @@ main() {
             perform_health_check
             ;;
         "recover")
-            perform_health_check
+            perform_health_check || true  # Don't exit on health check failure
             if ! perform_recovery; then
                 exit 1
             fi
