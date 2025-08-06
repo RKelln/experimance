@@ -577,8 +577,17 @@ run_monitor() {
             
             # Attempt recovery after 2 consecutive failures
             if [ $consecutive_failures -ge 2 ]; then
-                perform_recovery || true  # Don't exit on recovery failure
-                consecutive_failures=0  # Reset after recovery attempt
+                if perform_recovery || false; then
+                    # Recovery succeeded, reset counter
+                    consecutive_failures=0
+                    log "Recovery successful, resetting failure counter"
+                else
+                    # Recovery failed, limit retry attempts to prevent spam
+                    if [ $consecutive_failures -ge 5 ]; then
+                        warn "Multiple recovery attempts failed, waiting longer before next attempt"
+                        consecutive_failures=3  # Reset to 3 so next attempt is in 2 cycles
+                    fi
+                fi
             fi
             
             save_health_state "unhealthy"
