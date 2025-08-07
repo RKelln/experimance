@@ -165,6 +165,11 @@ class PresenceManager:
                 self._current_status.idle = True
                 return True
         
+        # Only check should_publish if we have meaningful state changes
+        # Don't publish repeatedly just based on time intervals when idle
+        if self._current_status.idle and not self.updated:
+            return False
+            
         return self.should_publish()
 
     def _update_presence_state(self, request_update: bool = False) -> None:
@@ -213,9 +218,12 @@ class PresenceManager:
                 if self._current_status.present:
                     if not self.config.always_present:
                         logger.debug("Audience absence confirmed (hysteresis threshold met)")
-                    # Set _last_absence_time to when absence was first confirmed, not now
-                    self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
-                    self.updated = True # send out presence update
+                        # Set _last_absence_time to when absence was first confirmed, not now
+                        self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
+                        self.updated = True # send out presence update
+                    else:
+                        # With always_present=true, just set the absence time but don't trigger updates
+                        self._last_absence_time = self._absence_start_time + timedelta(seconds=self.config.absence_threshold)
                 elif self._last_absence_time is None:
                     # Ensure _last_absence_time is set even if absence was already confirmed
                     # This handles the case where we're past the threshold but haven't set it yet
@@ -231,13 +239,19 @@ class PresenceManager:
             # If always_present is enabled, we treat presence as always true
             present = True
         
-        if present and self._current_status.idle:
-            # Reset idle state if presence is detected
+        # Determine if idle state should change
+        if present:
             idle = False
-            self.updated = True  # Presence state has changed
-            logger.debug("Presence detected, setting idle to False")
         else:
             idle = self._current_status.idle
+            
+        # Only mark as updated if idle state is actually changing
+        if idle != self._current_status.idle:
+            self.updated = True  # Presence state has changed
+            if not idle:
+                logger.debug("Presence detected, setting idle to False")
+            else:
+                logger.debug("Going idle")
 
         # Calculate durations
         presence_duration = 0.0
@@ -260,7 +274,7 @@ class PresenceManager:
         # Calculate conversation status (either agent or human speaking)
         conversation_active = self._agent_speaking or self._voice_detected
         if self._current_status.conversation and not conversation_active: # if we were in a conversation but not actively speaking, check for timeout
-            conversation_active = self._last_voice_time and (now - self._last_voice_time).total_seconds() < self.config.conversation_timeout
+            conversation_active = bool(self._last_voice_time and (now - self._last_voice_time).total_seconds() < self.config.conversation_timeout)
 
         if conversation_active != self._current_status.conversation:
             logger.debug(f"Conversation state changed: {conversation_active}")
