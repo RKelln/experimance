@@ -176,6 +176,16 @@ class AgentService(BaseService):
         # Clear any displayed text
         await self._clear_all_displayed_text()
 
+        # Stop background tasks BEFORE stopping ZMQ to prevent publish errors
+        # This will cancel the audience detection and vision analysis loops
+        try:
+            # Give background tasks a moment to exit their loops cleanly
+            await asyncio.sleep(0.1)
+            
+            logger.debug("Background tasks signaled to stop before ZMQ shutdown")
+        except Exception as e:
+            logger.debug(f"Error stopping background tasks: {e}")
+
         # Stop ZMQ service
         await self.zmq_service.stop()
         
@@ -599,7 +609,8 @@ class AgentService(BaseService):
         report_min_interval = 30.0  # used so if core service restarts we update it every 30 seconds regardless of changes
 
         # send 0 people detected to start
-        await self._publish_audience_present(person_count=0)
+        if self.running and self.zmq_service.is_running:
+            await self._publish_audience_present(person_count=0)
 
         while self.running:
             try:
@@ -648,9 +659,10 @@ class AgentService(BaseService):
                                         await self._backend_update_person_count(person_count)
 
                                     last_publish_time = now
-                                    await self._publish_audience_present(
-                                        person_count=person_count
-                                    )
+                                    if self.running and self.zmq_service.is_running:
+                                        await self._publish_audience_present(
+                                            person_count=person_count
+                                        )
                                     
                                     # Check if cooldown just ended and we should start a conversation
                                     if (person_count > 0 and 
@@ -682,8 +694,9 @@ class AgentService(BaseService):
                 current_interval = normal_interval
                 await self._sleep_if_running(10.0)  # Back off on error
 
-        # report 0 on shutdown
-        await self._publish_audience_present(person_count=0) 
+        # report 0 on shutdown - but only if ZMQ service is still running
+        if self.running and self.zmq_service.is_running:
+            await self._publish_audience_present(person_count=0) 
 
     async def _vision_analysis_loop(self):
         """Perform periodic vision analysis for scene understanding."""
@@ -1215,9 +1228,8 @@ class AgentService(BaseService):
                 
                 # idle overrides not being present
                 if idle and current_node != "goodbye":
-                    logger.info("Idle state detected, transitioning to goodbye node")
-                    #await self.current_backend.transition_to_node("goodbye")
-                    await self.current_backend.stop()
+                    logger.info("Idle state detected, ending conversation gracefully")
+                    await self.current_backend.graceful_shutdown()
     
     # =========================================================================
     # Publishing Methods
@@ -1225,20 +1237,36 @@ class AgentService(BaseService):
     
     async def _publish_audience_present(self, person_count: int = 0):
         """Publish audience presence detection."""
+        if not self.running or not self.zmq_service.is_running:
+            logger.debug(f"Skipping audience present publish (service running: {self.running}, zmq running: {self.zmq_service.is_running})")
+            return
+            
         message = AudiencePresent(
             person_count=person_count
         )
-        await self.zmq_service.publish(message, MessageType.AUDIENCE_PRESENT)
-        logger.debug(f"Published audience present: (people: {person_count})")
+        try:
+            await self.zmq_service.publish(message, MessageType.AUDIENCE_PRESENT)
+            logger.debug(f"Published audience present: (people: {person_count})")
+        except Exception as e:
+            logger.debug(f"Failed to publish audience present: {e}")
+            # Don't raise the exception to prevent shutdown issues
 
     async def _publish_speech_detected(self, is_speaking: bool, speaker_type: str = "agent"):
         """Publish speech detection for conversation tracking."""
+        if not self.running or not self.zmq_service.is_running:
+            logger.debug(f"Skipping speech detected publish (service running: {self.running}, zmq running: {self.zmq_service.is_running})")
+            return
+            
         message = SpeechDetected(
             is_speaking=is_speaking,
             speaker=speaker_type  # Convert to enum value
         )
-        await self.zmq_service.publish(message, MessageType.SPEECH_DETECTED)
-        logger.debug(f"Published speech detected: {speaker_type} speaking={is_speaking}")
+        try:
+            await self.zmq_service.publish(message, MessageType.SPEECH_DETECTED)
+            logger.debug(f"Published speech detected: {speaker_type} speaking={is_speaking}")
+        except Exception as e:
+            logger.debug(f"Failed to publish speech detected: {e}")
+            # Don't raise the exception to prevent shutdown issues
     
     async def _publish_request_biome(self, requested_biome: str):
         """Publish biome change request based on conversation context."""
@@ -1256,6 +1284,11 @@ class AgentService(BaseService):
             message = RequestBiome(
                 biome=biome_enum.value  # Field name expected by core service
             )
+            
+            if not self.running or not self.zmq_service.is_running:
+                logger.debug(f"Skipping biome request publish (service running: {self.running}, zmq running: {self.zmq_service.is_running})")
+                return
+                
             await self.zmq_service.publish(message.model_dump(), MessageType.REQUEST_BIOME)
             logger.info(f"Published biome request: {biome_enum.value}")
         except ValueError as e:

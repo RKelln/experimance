@@ -952,6 +952,63 @@ class PipecatBackend(AgentBackend):
             except Exception as e:
                 logger.error(f"Error interrupting bot: {e}")
     
+    async def end_conversation_naturally(self) -> None:
+        """End the conversation naturally by sending an EndFrame.
+        
+        This triggers the natural shutdown sequence that the goodbye node would use,
+        allowing the conversation to end gracefully rather than being forcibly stopped.
+        """
+        if self.task and self.is_connected:
+            try:
+                # Send EndFrame to signal natural conversation end
+                await self.task.queue_frame(EndFrame())
+                logger.info("Sent EndFrame to end conversation naturally")
+            except Exception as e:
+                logger.error(f"Error ending conversation naturally: {e}")
+    
+    async def graceful_shutdown(self, goodbye_message: Optional[str] = None) -> None:
+        """
+        Gracefully shutdown the conversation pipeline, allowing any final messages to be processed before terminating.
+        This is the proper way to end a conversation when the user leaves or the session should end naturally.
+        
+        Args:
+            goodbye_message: Optional goodbye message to say before shutting down (not yet implemented)
+        """
+        logger.info("Starting graceful shutdown of Pipecat backend")
+        
+        # For now, just end the conversation naturally - in the future we could implement
+        # saying a goodbye message first if provided
+        if goodbye_message:
+            logger.debug(f"TODO: Say goodbye message before shutdown: {goodbye_message}")
+            # await self.send_message(goodbye_message, speaker="agent", say_tts=True)
+            # await asyncio.sleep(2.0)  # Give time for TTS to complete
+        
+        await self.end_conversation_naturally()
+    
+    async def say_goodbye_and_shutdown(self, goodbye_message: str = "Thank you for visiting Experimance. Have a wonderful day!") -> None:
+        """
+        Say a goodbye message and then gracefully shutdown the conversation.
+        
+        Args:
+            goodbye_message: The goodbye message to speak before shutting down
+        """
+        logger.info(f"Saying goodbye and shutting down: {goodbye_message}")
+        
+        try:
+            # Send the goodbye message with TTS
+            await self.send_message(goodbye_message, speaker="agent", say_tts=True)
+            
+            # Give some time for the TTS to complete
+            await asyncio.sleep(3.0)
+            
+            # Then end the conversation naturally
+            await self.end_conversation_naturally()
+            
+        except Exception as e:
+            logger.error(f"Error during goodbye and shutdown: {e}")
+            # Fallback to just ending naturally
+            await self.end_conversation_naturally()
+    
     def clear_conversation_history(self) -> None:
         """Clear conversation history."""
         super().clear_conversation_history()  # Call base class method
