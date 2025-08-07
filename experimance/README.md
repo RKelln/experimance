@@ -60,9 +60,15 @@ experimance/
 ├── utils/               # Utility modules for testing and other purposes
 │   ├── examples/        # Examples of usage
 │   └── tests/           # Testing utilities for cross service testing
-├── scripts/             # Utility scripts for setup and management
-├─ infra/
 │
+├── scripts/             # Utility scripts for setup and management (development)
+│
+├─ infra/                # Infrastructure related files
+│   ├── scripts/         # Scripts for installing and monitoring the project (production)
+│   └── systemd/         # Systemd service files     
+│
+├── docs/                # Additional in-depth docs on various features
+|
 ├── pyproject.toml       # Main project configuration file
 │
 └── projects/                 # **ONLY project-specific artifacts live here**
@@ -121,31 +127,36 @@ sudo apt-get install libssl-dev libusb-1.0-0-dev libsdl2-dev ffmpeg libasound2-d
 uv sync
 ```
 
-#### Video Overlay Manual Download
+# Services
 
-If the automated download fails during deployment, you can manually download the video overlay:
+Experimance is currently comprised of a number of services:
 
-```bash
-mkdir -p media/video
-wget --quiet --no-check-certificate \
-    "https://docs.google.com/uc?export=download&id=144JbBnjyz-GmB5RJdmafDagDRurXfB2L" \
-    -O media/video/experimance_video_overlay.mp4
-```
+* ## Core
+  * The many controller / coordinator
+  * Custom to each project
+  * [readme](services/core/README.md)
+  * [depth camera readme](services/core/README_DEPTH.md)
+* ## Image Server
+  * Image generation using multiple plugin generators
+  * Receives `RenderRequest`s, replies with `ImageReady`
+  * [readme](services/image_server/README.md)
+* ## Agent
+  * Voice agent powered by `pipecat` and `pipecat-flows`
+  * Supports many flavours of TTS, STT and LLM
+  * Integrated vision system to detect audience (CPU and VLM based)
+  * [readme](services/agent/README.md)
+* ## Display
+  * Simple, `pyglet`-based display
+  * Displays and transitions between images, displays video and text overlays
+  * [readme](services/display/README.md)
+* ## Audio
+  * Handles audio (effects, ambience and music)
+  * [Supercollider](https://supercollider.github.io/) headless plays audio & music
+  * [readme](services/audio/README.md)
+* ## Health
+  * Monitors other services
+  * Send notifications using ntfy.sh
 
-### Vision System Setup
-
-The agent service includes vision capabilities for audience detection. To set up and test webcam functionality:
-
-```bash
-# Check available webcams
-uv run python scripts/list_webcams.py
-
-# Test vision system components
-cd services/agent && uv run python tests/test_vision_imports.py
-
-# Test CPU-based audience detection
-cd services/agent && uv run python tests/test_cpu_detection.py
-```
 
 ## Running Services
 

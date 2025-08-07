@@ -28,6 +28,16 @@ cd libs/common
 uv pip install -e .
 ```
 
+## Documentation
+
+* [Services](README_SERVICE.md)
+  * [Service Testing](README_SERVICE_TESTING.md)
+* [ZMQ](./README.md)
+* [Health system](../../docs/health_system.md)
+* [Logging system](../../docs/logging_system.md)
+* [Image zmq utilities](../../docs/image_zmq_utilities.md)
+
+
 ## ZeroMQ Utilities Usage Guide
 
 The `experimance_common.zmq_utils` module provides enhanced ZeroMQ socket wrappers that avoid the common pitfalls of ZMQ such as hanging receives and difficult cleanup.
@@ -52,12 +62,9 @@ from experimance_common.schemas import MessageType
 # MessageType.PRESENCE_STATUS
 # MessageType.SPACE_TIME_UPDATE
 # MessageType.IMAGE_READY
-# MessageType.TRANSITION_READY
 # MessageType.LOOP_READY
 # MessageType.AUDIENCE_PRESENT
 # MessageType.SPEECH_DETECTED
-# MessageType.TRANSITION_REQUEST
-# MessageType.LOOP_REQUEST
 ```
 
 ### Port Configuration

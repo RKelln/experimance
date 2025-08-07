@@ -114,6 +114,21 @@ Key vision features:
 - VLM-based scene understanding
 - Real-time performance optimization
 
+### Vision System Setup
+
+The agent service includes vision capabilities for audience detection. To set up and test webcam functionality:
+
+```bash
+# Check available webcams
+uv run python scripts/list_webcams.py
+
+# Test vision system components
+cd services/agent && uv run python tests/test_vision_imports.py
+
+# Test CPU-based audience detection
+cd services/agent && uv run python tests/test_cpu_detection.py
+```
+
 ## Testing
 
 ### Basic Functionality
