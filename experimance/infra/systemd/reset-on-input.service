@@ -1,6 +1,6 @@
 [Unit]
 Description=Experimance Reset on Input - Keyboard/Controller Listener
-After=graphical.target
+After=multi-user.target
 # Independent service - does not start or depend on experimance services
 
 [Service]
