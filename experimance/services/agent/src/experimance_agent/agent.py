@@ -390,9 +390,15 @@ class AgentService(BaseService):
 
     async def _start_backend_for_conversation(self):
         """Start the agent backend when a person is detected."""
-        if self.current_backend is not None:
-            logger.debug("Backend already exists, returning True")
+        if self.current_backend is not None and self.current_backend.is_connected:
+            logger.debug("Backend already exists and is connected, returning True")
             return True
+        
+        # Clear disconnected backend reference
+        if self.current_backend is not None and not self.current_backend.is_connected:
+            logger.debug("Clearing disconnected backend reference")
+            self.current_backend = None
+            self._pipeline_task_ref = None
         
         # Allow backend startup during service initialization (STARTING state)
         # Only block if service is stopped/stopping
