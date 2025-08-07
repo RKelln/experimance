@@ -1212,10 +1212,6 @@ class AgentService(BaseService):
                     logger.info("Idle state detected, transitioning to goodbye node")
                     #await self.current_backend.transition_to_node("goodbye")
                     await self.current_backend.stop()
-
-                elif not audience_present and current_node not in ["search", "goodbye"]:
-                    logger.info("No audience detected, transitioning to search node")
-                    await self.current_backend.transition_to_node("search")
     
     # =========================================================================
     # Publishing Methods

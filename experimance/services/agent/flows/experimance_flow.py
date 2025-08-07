@@ -307,7 +307,7 @@ async def get_technical_info(args: FlowArgs, flow_manager: FlowManager) -> tuple
             "visual and audio experiences. The system processes audience presence and movement "
             "to drive the interactive elements.\n"
             "The software for the installation was created by Ryan Kelln over the course of three full-time months "
-            "after two years of experimentation and is freely available (https://github.com/RKelln/experimance if asked). "
+            "after two years of experimentation and is freely available on his website (ryankelln.com). "
         ),
         "sensors": (
             "Synopsis: The installation uses a depth camera and a webcam to detect audience presence "
@@ -622,38 +622,6 @@ flow_config: FlowConfig = {
             "context_strategy": ContextStrategyConfig(
                 strategy=ContextStrategy.RESET,
             )
-        },
-        "search": {
-            "task_messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "The visitors seem to have left, you might ask \"is anyone there?\" "
-                        "Use the `move_to_goodbye` function exit the conversation if no one replies or they don't want to interact. "
-                        "Or return to explorer mode using the `move_to_explorer` function if they do. "
-                    )
-                }
-            ],
-            "functions": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "move_to_goodbye",
-                        "handler": move_to_goodbye,
-                        "description": "Move to goodbye mode",
-                        "parameters": {"type": "object", "properties": {}}
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "move_to_explorer",
-                        "handler": move_to_explorer,
-                        "description": "Move to explorer mode regardless of collected information",
-                        "parameters": {"type": "object", "properties": {}}
-                    }
-                }
-            ]
         },
         "goodbye": {
             "task_messages": [
