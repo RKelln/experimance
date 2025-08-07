@@ -72,7 +72,7 @@ fi
 log "=== Experimance Shutdown Complete ==="
 
 # System shutdown to help with gallery temperature control
-log "Initiating system shutdown..."
-sudo shutdown -h now
+#log "Initiating system shutdown..."
+#sudo shutdown -h now
 
 exit 0
