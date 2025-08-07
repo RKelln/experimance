@@ -46,6 +46,7 @@ class HealthService(BaseService):
         self.health_dir = config.get_effective_health_dir()
         self.last_notifications = {}  # Track last notification time per service
         self.last_service_status = {}  # Track last known status per service
+        self.last_global_stats = None  # Track previous global stats to detect changes
         self.notification_handlers = []
         self.startup_time = datetime.now()
         self.initial_system_notification_sent = False  # Track if we've sent the post-grace-period notification
@@ -298,14 +299,35 @@ class HealthService(BaseService):
             overall_stats["global_summary"]["total_messages_received"] += stats.get("messages_received", 0)
             overall_stats["global_summary"]["total_errors"] += stats.get("errors", 0)
         
-        # Log the global summary in a clean format
+        # Log the global summary only if there are changes
         summary = overall_stats["global_summary"]
         healthy_count = summary["healthy_services"]
         total_count = summary["total_services"]
         
-        logger.info(f"Global Stats: {healthy_count}/{total_count} services healthy | "
-                   f"Messages: {summary['total_messages_sent']} sent, {summary['total_messages_received']} received | "
-                   f"Total errors: {summary['total_errors']}")
+        # Create a comparable summary for change detection
+        current_summary = {
+            "healthy_count": healthy_count,
+            "total_count": total_count,
+            "total_messages_sent": summary["total_messages_sent"],
+            "total_messages_received": summary["total_messages_received"],
+            "total_errors": summary["total_errors"]
+        }
+        
+        # Only log if this is the first check or if something has changed
+        if (self.last_global_stats is None or 
+            current_summary != self.last_global_stats):
+            
+            logger.info(f"Global Stats: {healthy_count}/{total_count} services healthy | "
+                       f"Messages: {summary['total_messages_sent']} sent, {summary['total_messages_received']} received | "
+                       f"Total errors: {summary['total_errors']}")
+            
+            # Update the last known stats
+            self.last_global_stats = current_summary
+        else:
+            # Log at debug level when no changes
+            logger.debug(f"Global Stats (no changes): {healthy_count}/{total_count} services healthy | "
+                        f"Messages: {summary['total_messages_sent']} sent, {summary['total_messages_received']} received | "
+                        f"Total errors: {summary['total_errors']}")
         
         # Log individual service stats at debug level to reduce noise
         for service_name, stats in overall_stats["services"].items():
