@@ -179,6 +179,22 @@ async def index(request: Request) -> Response:
                 border-radius: 4px; 
                 margin-bottom: 20px;
             }
+            .image-section { 
+                margin-top: 30px; 
+                text-align: center;
+            }
+            .latest-image { 
+                max-width: 100%; 
+                max-height: 400px; 
+                border-radius: 8px; 
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                margin: 10px 0;
+            }
+            .image-info { 
+                color: #6c757d; 
+                font-size: 14px; 
+                margin-top: 10px;
+            }
             @media (max-width: 768px) {
                 .container { 
                     margin: 10px; 
@@ -186,6 +202,9 @@ async def index(request: Request) -> Response:
                 }
                 .status-grid { 
                     grid-template-columns: 1fr; 
+                }
+                .latest-image { 
+                    max-height: 300px; 
                 }
             }
         </style>
@@ -204,6 +223,13 @@ async def index(request: Request) -> Response:
                         <h3>Loading...</h3>
                         <p>Fetching system status...</p>
                     </div>
+                </div>
+            </div>
+            
+            <div class="image-section">
+                <h3>Latest Generated Image</h3>
+                <div id="image-content">
+                    <p>Loading image...</p>
                 </div>
             </div>
             
@@ -281,11 +307,44 @@ async def index(request: Request) -> Response:
                 }
             }
             
+            async function loadLatestImage() {
+                try {
+                    // Get image metadata first
+                    const infoResponse = await fetch('/api/image-info');
+                    const imageInfo = await infoResponse.json();
+                    
+                    if (imageInfo.exists) {
+                        // Create image element with cache-busting timestamp
+                        const imgUrl = `/api/latest-image?t=${imageInfo.timestamp}`;
+                        const imgElement = `
+                            <img src="${imgUrl}" class="latest-image" alt="Latest generated image">
+                            <div class="image-info">
+                                File: ${imageInfo.filename}<br>
+                                Generated: ${new Date(imageInfo.modified).toLocaleString()}<br>
+                                Size: ${(imageInfo.size / 1024).toFixed(1)} KB
+                            </div>
+                        `;
+                        document.getElementById('image-content').innerHTML = imgElement;
+                    } else {
+                        document.getElementById('image-content').innerHTML = 
+                            '<p style="color: #6c757d;">No image generated yet</p>';
+                    }
+                    
+                } catch (error) {
+                    document.getElementById('image-content').innerHTML = 
+                        '<p style="color: #dc3545;">Error loading image: ' + error.message + '</p>';
+                }
+            }
+            
             // Load status on page load
             loadStatus();
+            loadLatestImage();
             
             // Auto-refresh every 30 seconds
-            setInterval(loadStatus, 30000);
+            setInterval(() => {
+                loadStatus();
+                loadLatestImage();
+            }, 30000);
         </script>
     </body>
     </html>
@@ -329,6 +388,37 @@ async def api_restart(request: Request) -> Response:
             status=500
         )
 
+async def api_latest_image(request: Request) -> Response:
+    """API endpoint to serve the latest generated image."""
+    try:
+        latest_image = Path("/home/experimance/experimance/media/images/generated/latest.jpg")
+        if latest_image.exists():
+            return web.FileResponse(latest_image)
+        else:
+            return web.Response(text="No latest image found", status=404)
+    except Exception as e:
+        return web.Response(text=f"Error: {str(e)}", status=500)
+
+async def api_image_info(request: Request) -> Response:
+    """API endpoint to get latest image metadata."""
+    try:
+        latest_image = Path("/home/experimance/experimance/media/images/generated/latest.jpg")
+        if latest_image.exists():
+            stat = latest_image.stat()
+            # Get the actual file it points to (since it's a symlink)
+            actual_file = latest_image.resolve()
+            return web.json_response({
+                "exists": True,
+                "timestamp": stat.st_mtime,
+                "size": stat.st_size,
+                "filename": actual_file.name,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+            })
+        else:
+            return web.json_response({"exists": False})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 async def init_app():
     """Initialize the web application."""
     app = web.Application()
@@ -343,6 +433,8 @@ async def init_app():
     app.router.add_get('/', index)
     app.router.add_get('/api/status', api_status)
     app.router.add_post('/api/restart', api_restart)
+    app.router.add_get('/api/latest-image', api_latest_image)
+    app.router.add_get('/api/image-info', api_image_info)
     
     return app
 

@@ -21,7 +21,7 @@ from experimance_common.image_utils import extract_image_as_base64
 from experimance_common.schemas import ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
-from experimance_common.constants import DEFAULT_PORTS
+from experimance_common.constants import DEFAULT_PORTS, GENERATED_IMAGES_DIR
 from experimance_common.logger import configure_external_loggers
 from image_server.generators.config import GENERATOR_NAMES
 from pydantic import ValidationError
@@ -264,6 +264,17 @@ class ImageServerService(BaseService):
                 height=request.get('height', None),
             )
             logger.debug(f"Generated image path: {image_path}")
+
+            # Create symlink to latest generated image for easy access
+            try:
+                latest_filename = f"latest{Path(image_path).suffix}"
+                latest_path = GENERATED_IMAGES_DIR / latest_filename
+                if latest_path.exists() or latest_path.is_symlink():
+                    latest_path.unlink()
+                latest_path.symlink_to(Path(image_path).name)
+                logger.debug(f"Created {latest_filename} symlink to {Path(image_path).name}")
+            except Exception as e:
+                logger.warning(f"Failed to create {latest_filename} symlink: {e}")
 
             # Publish ImageReady message with context (from schemas.py)
             logger.debug(f"Publishing ImageReady for {request_id}")
