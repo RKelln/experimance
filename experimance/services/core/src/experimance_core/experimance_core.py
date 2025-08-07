@@ -566,17 +566,18 @@ class ExperimanceCoreService(BaseService):
         except Exception as e:
             logger.error(f"Error publishing interaction sound: {e}")
 
-    async def _publish_presence_status(self, presence: PresenceStatus | None = None):
+    async def _publish_presence_status(self, presence: PresenceStatus | None = None, log: bool = True):
         """Publish current presence status from the presence manager."""
         try:
             if presence is None:
                 # Get current presence status from manager
                 presence = self.presence_manager.get_current_status()
 
-            logger.info(f"Published presence status: present={presence.present}, "
-                       f"idle={presence.idle}, hand={presence.hand}, touch={presence.touch}, "
-                       f"voice={presence.voice}, conversation={presence.conversation}, "
-                       f"people={presence.person_count}")
+            if log:
+                logger.info(f"Published presence status: present={presence.present}, "
+                            f"idle={presence.idle}, hand={presence.hand}, touch={presence.touch}, "
+                            f"voice={presence.voice}, conversation={presence.conversation}, "
+                            f"people={presence.person_count}")
 
             # Publish the presence status (publish() raises exception on failure)
             await self.zmq_service.publish(presence)
@@ -1394,8 +1395,8 @@ class ExperimanceCoreService(BaseService):
             try:
                 # Check if it's time to publish presence status
                 if self.presence_manager.should_publish():
-                    await self._publish_presence_status()
-                
+                    await self._publish_presence_status(log=False)
+
                 # Sleep for the configured interval
                 sleep_time = self.config.presence.presence_publish_interval
                 if not await self._sleep_if_running(sleep_time):
