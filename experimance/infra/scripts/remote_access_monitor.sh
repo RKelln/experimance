@@ -212,7 +212,8 @@ check_system_resources() {
         # Handle cases where there might be a prefix before the sensor name (e.g., "3:Package id 0:")
         local temp_line=$(sensors 2>/dev/null | grep -E "(Tctl:|Core [0-9]+:|Package id [0-9]+:)" | head -1)
         if [ -n "$temp_line" ]; then
-            # Extract temperature - it should be the field containing +XX.X°C pattern
+            # Extract temperature - get the first temperature value (not high/crit values)
+            # Look for the first occurrence of +XX.X°C pattern and extract just the number
             cpu_temp=$(echo "$temp_line" | grep -oE '\+[0-9]+\.[0-9]+°C' | head -1 | sed 's/+//;s/°C.*//' 2>/dev/null || echo "N/A")
         fi
         
@@ -295,71 +296,245 @@ recover_ssh_service() {
 
 # Function to attempt network interface recovery
 recover_network_connectivity() {
-    log "Attempting network connectivity recovery..."
+    log "Starting network connectivity recovery..."
     
-    # Get the primary network interface (excluding loopback and Tailscale)
-    local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+    # Check if we're currently connected via Tailscale
+    local via_tailscale=false
+    local tailscale_connection_details=""
+    if [ -n "${SSH_CLIENT:-}" ] && echo "${SSH_CLIENT}" | grep -q "100\."; then
+        via_tailscale=true
+        tailscale_connection_details="SSH_CLIENT: ${SSH_CLIENT}"
+        warn "Current SSH connection appears to be via Tailscale ($tailscale_connection_details)"
+    elif [ -n "${SSH_CONNECTION:-}" ] && echo "${SSH_CONNECTION}" | grep -q "100\."; then
+        via_tailscale=true  
+        tailscale_connection_details="SSH_CONNECTION: ${SSH_CONNECTION}"
+        warn "Current SSH connection appears to be via Tailscale ($tailscale_connection_details)"
+    fi
     
-    if [ -z "$primary_interface" ]; then
-        error "Could not determine primary network interface"
+    # Get current Tailscale status
+    local tailscale_healthy=false
+    if systemctl is-active --quiet tailscaled && command -v tailscale >/dev/null 2>&1; then
+        if tailscale status >/dev/null 2>&1; then
+            tailscale_healthy=true
+        fi
+    fi
+    
+    # Check how long network has been failing
+    local outage_duration=$(get_network_outage_duration)
+    
+    # Decision matrix based on connection method, Tailscale health, and outage duration
+    # Conservative thresholds:
+    # - < 5 minutes: Very conservative, only try safe operations
+    # - 5-10 minutes: Careful, try NetworkManager restart
+    # - 10-15 minutes: Moderate, try interface restart but preserve Tailscale if connected via it
+    # - > 15 minutes: Aggressive recovery, network is clearly broken
+    local recovery_mode="conservative"
+    
+    if [ "$outage_duration" -gt 900 ]; then  # > 15 minutes
+        recovery_mode="aggressive"
+    elif [ "$outage_duration" -gt 600 ]; then  # > 10 minutes
+        recovery_mode="moderate"
+    elif [ "$outage_duration" -gt 300 ]; then   # > 5 minutes
+        recovery_mode="careful"
+    else
+        recovery_mode="conservative"
+    fi
+    
+    log "Network outage duration: ${outage_duration}s, using '$recovery_mode' recovery mode"
+    
+    # SAFETY DECISION LOGIC - Use the recovery modes
+    if [ "$via_tailscale" = true ] && [ "$tailscale_healthy" = true ]; then
+        warn "SAFETY: Connected via Tailscale and Tailscale is healthy"
+        warn "SAFETY: Remote access is working - using mode: $recovery_mode"
+        
+        case "$recovery_mode" in
+            "conservative")
+                warn "Conservative mode: Only DNS and gentle NetworkManager operations"
+                
+                # Flush DNS cache gently
+                if command -v systemd-resolve >/dev/null 2>&1; then
+                    log "Flushing DNS cache..."
+                    sudo systemd-resolve --flush-caches 2>/dev/null || true
+                fi
+                
+                # Very gentle NetworkManager nudge only
+                if systemctl is-active --quiet NetworkManager; then
+                    log "Sending gentle signal to NetworkManager..."
+                    sudo pkill -HUP NetworkManager 2>/dev/null || true
+                    sleep 5
+                    
+                    if check_network_connectivity; then
+                        success "Network connectivity restored via conservative methods"
+                        return 0
+                    fi
+                fi
+                
+                warn "Conservative recovery insufficient, network may need manual intervention"
+                return 1
+                ;;
+                
+            "careful")
+                warn "Careful mode: DNS refresh and NetworkManager restart"
+                
+                # DNS flush
+                if command -v systemd-resolve >/dev/null 2>&1; then
+                    log "Flushing DNS cache..."
+                    sudo systemd-resolve --flush-caches 2>/dev/null || true
+                fi
+                
+                # Restart NetworkManager (should not affect Tailscale)
+                if systemctl is-active --quiet NetworkManager; then
+                    log "Restarting NetworkManager (safe with Tailscale)..."
+                    if sudo systemctl restart NetworkManager; then
+                        success "NetworkManager restarted"
+                        sleep 10  # Give it time to reinitialize
+                        
+                        if check_network_connectivity; then
+                            success "Network connectivity restored via NetworkManager restart"
+                            return 0
+                        fi
+                    fi
+                fi
+                
+                warn "Careful recovery methods exhausted"
+                return 1
+                ;;
+                
+            "moderate")
+                warn "Moderate mode: NetworkManager + interface restart (RISK: May disrupt Tailscale briefly)"
+                
+                # First try NetworkManager restart
+                if systemctl is-active --quiet NetworkManager; then
+                    log "Restarting NetworkManager..."
+                    if sudo systemctl restart NetworkManager; then
+                        sleep 10
+                        if check_network_connectivity; then
+                            success "Network connectivity restored via NetworkManager restart"
+                            return 0
+                        fi
+                    fi
+                fi
+                
+                # Get primary interface
+                local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+                if [ -z "$primary_interface" ]; then
+                    warn "Cannot determine primary network interface"
+                    return 1
+                fi
+                
+                warn "Attempting interface restart on $primary_interface (may briefly interrupt Tailscale)"
+                
+                # Interface restart with monitoring
+                if sudo ip link set "$primary_interface" down && sleep 3 && sudo ip link set "$primary_interface" up; then
+                    success "Interface restart completed, checking connectivity..."
+                    sleep 15  # Give time for network to stabilize
+                    
+                    if check_network_connectivity; then
+                        success "Network connectivity restored via interface restart"
+                        return 0
+                    fi
+                fi
+                
+                warn "Moderate recovery methods failed"
+                return 1
+                ;;
+                
+            "aggressive")
+                warn "Aggressive mode: Full network recovery (RISK: May disrupt remote access)"
+                warn "Network has been failing for over 15 minutes - attempting full recovery"
+                
+                # Try all recovery methods in sequence
+                local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+                
+                # NetworkManager restart
+                if systemctl is-active --quiet NetworkManager && sudo systemctl restart NetworkManager; then
+                    sleep 10
+                    if check_network_connectivity; then
+                        success "Network restored via NetworkManager restart"
+                        return 0
+                    fi
+                fi
+                
+                # Interface reset
+                if [ -n "$primary_interface" ]; then
+                    log "Attempting interface reset..."
+                    if sudo ip link set "$primary_interface" down && sleep 5 && sudo ip link set "$primary_interface" up; then
+                        sleep 20
+                        if check_network_connectivity; then
+                            success "Network restored via interface reset"
+                            return 0
+                        fi
+                    fi
+                    
+                    # DHCP renewal
+                    log "Attempting DHCP renewal..."
+                    if sudo dhclient -r "$primary_interface" 2>/dev/null && sudo dhclient "$primary_interface"; then
+                        sleep 15
+                        if check_network_connectivity; then
+                            success "Network restored via DHCP renewal"
+                            return 0
+                        fi
+                    fi
+                fi
+                
+                error "All aggressive recovery attempts failed"
+                return 1
+                ;;
+        esac
+    else
+        # Not connected via Tailscale OR Tailscale is not healthy
+        # Can be more aggressive since we're not risking losing the only access method
+        warn "Not connected via Tailscale or Tailscale unhealthy - can attempt full recovery"
+        
+        # Get the primary network interface
+        local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+        
+        if [ -z "$primary_interface" ]; then
+            error "Could not determine primary network interface"
+            return 1
+        fi
+        
+        log "Primary network interface detected: $primary_interface"
+        
+        # Try to restart NetworkManager first
+        log "Attempting to restart NetworkManager..."
+        if sudo systemctl restart NetworkManager.service; then
+            success "NetworkManager restarted successfully"
+            sleep 10
+            
+            if check_network_connectivity; then
+                success "Network connectivity recovery successful via NetworkManager restart"
+                return 0
+            fi
+        fi
+        
+        # Try interface down/up
+        log "Attempting network interface reset: $primary_interface"
+        if sudo ip link set "$primary_interface" down && sleep 2 && sudo ip link set "$primary_interface" up; then
+            success "Network interface reset completed"
+            sleep 15
+            
+            if check_network_connectivity; then
+                success "Network connectivity recovery successful via interface reset"
+                return 0
+            fi
+        fi
+        
+        # Try DHCP renewal
+        log "Attempting DHCP renewal on $primary_interface..."
+        if sudo dhclient -r "$primary_interface" && sudo dhclient "$primary_interface"; then
+            success "DHCP renewal completed"
+            sleep 10
+            
+            if check_network_connectivity; then
+                success "Network connectivity recovery successful via DHCP renewal"
+                return 0
+            fi
+        fi
+        
+        error "All network recovery attempts failed"
         return 1
     fi
-    
-    log "Primary network interface detected: $primary_interface"
-    
-    # Try to restart NetworkManager first (gentler approach)
-    log "Attempting to restart NetworkManager..."
-    if sudo systemctl restart NetworkManager.service; then
-        success "NetworkManager restarted successfully"
-        sleep 10  # Give it time to reconnect
-        
-        # Check if this fixed the issue
-        if check_network_connectivity; then
-            success "Network connectivity recovery successful via NetworkManager restart"
-            return 0
-        else
-            log "NetworkManager restart didn't resolve connectivity issues, trying interface reset..."
-        fi
-    else
-        warn "Failed to restart NetworkManager, trying interface reset..."
-    fi
-    
-    # Try interface down/up as fallback
-    log "Attempting network interface reset: $primary_interface"
-    
-    # Bring interface down and up
-    if sudo ip link set "$primary_interface" down && sleep 2 && sudo ip link set "$primary_interface" up; then
-        success "Network interface reset completed"
-        sleep 15  # Give it time to get DHCP lease
-        
-        # Check if this fixed the issue
-        if check_network_connectivity; then
-            success "Network connectivity recovery successful via interface reset"
-            return 0
-        else
-            log "Interface reset didn't resolve connectivity, trying DHCP renewal..."
-        fi
-    else
-        error "Failed to reset network interface"
-    fi
-    
-    # Try DHCP renewal as last resort
-    log "Attempting DHCP renewal on $primary_interface..."
-    if sudo dhclient -r "$primary_interface" && sudo dhclient "$primary_interface"; then
-        success "DHCP renewal completed"
-        sleep 10
-        
-        # Final check
-        if check_network_connectivity; then
-            success "Network connectivity recovery successful via DHCP renewal"
-            return 0
-        fi
-    else
-        warn "DHCP renewal failed"
-    fi
-    
-    error "All network recovery attempts failed"
-    return 1
 }
 
 # Function to attempt Tailscale recovery
@@ -440,6 +615,28 @@ test_remote_connectivity() {
     return $([ "$ssh_config_ok" = true ] && echo 0 || echo 1)
 }
 
+# Function to calculate network outage duration in seconds
+get_network_outage_duration() {
+    local last_success=""
+    
+    # Get last network success time from state file
+    if [ -f "$STATE_FILE" ]; then
+        last_success=$(jq -r '.last_network_success // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    fi
+    
+    # If we have no record of last success, assume it's been a long time
+    if [ -z "$last_success" ] || [ "$last_success" = "null" ]; then
+        echo "999999"  # Very large number to indicate unknown duration
+        return
+    fi
+    
+    # Calculate seconds since last success
+    local current_epoch=$(date +%s)
+    local last_success_epoch=$(date -d "$last_success" +%s 2>/dev/null || echo "0")
+    
+    echo $((current_epoch - last_success_epoch))
+}
+
 # Function to save health state
 save_health_state() {
     local overall_status="$1"
@@ -452,17 +649,18 @@ save_health_state() {
     local system_health="${system_healthy:-false}"
     local last_recovery="${last_recovery_attempt:-}"
     local consecutive="${consecutive_failures:-0}"
-    
+
     cat > "$STATE_FILE" << EOF
 {
   "timestamp": "$timestamp",
   "overall_status": "$overall_status",
   "ssh_healthy": $ssh_health,
-  "tailscale_healthy": $tailscale_health,
+  "tailscale_healthy": $tailscale_healthy,
   "network_healthy": $network_health,
   "system_healthy": $system_health,
   "last_recovery_attempt": "$last_recovery",
-  "consecutive_failures": $consecutive
+  "consecutive_failures": $consecutive,
+  "last_network_success": "$(if [ "$network_health" = true ]; then echo "$timestamp"; else [ -f "$STATE_FILE" ] && jq -r '.last_network_success // ""' "$STATE_FILE" 2>/dev/null || echo ""; fi)"
 }
 EOF
 
@@ -569,6 +767,22 @@ perform_recovery() {
     # Network issues usually require manual intervention or reboot
     if [ "$network_healthy" != true ]; then
         recovery_attempted=true
+        
+        # CRITICAL SAFETY: Check if we're currently connected via Tailscale
+        local current_ssh_via_tailscale=false
+        if [ -n "${SSH_CLIENT:-}" ] && echo "${SSH_CLIENT}" | grep -q "100\."; then
+            current_ssh_via_tailscale=true
+            warn "SAFETY: Current SSH connection appears to be via Tailscale (${SSH_CLIENT})"
+        elif [ -n "${SSH_CONNECTION:-}" ] && echo "${SSH_CONNECTION}" | grep -q "100\."; then
+            current_ssh_via_tailscale=true  
+            warn "SAFETY: Current SSH connection appears to be via Tailscale (${SSH_CONNECTION})"
+        fi
+        
+        if [ "$current_ssh_via_tailscale" = true ] && [ "$tailscale_healthy" = true ]; then
+            warn "SAFETY: Current session is via Tailscale and Tailscale is healthy"
+            warn "SAFETY: Network recovery could break this connection - being very conservative"
+        fi
+        
         log "Attempting network connectivity recovery..."
         if recover_network_connectivity; then
             network_healthy=true
