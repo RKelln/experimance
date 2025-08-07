@@ -1119,10 +1119,10 @@ class ExperimanceCoreService(BaseService):
                 # Periodic state logging for debugging
                 if period > state_display_period:  # Every 30 seconds
                     period = 0
-                    logger.info(f"State: era={self.current_era}, biome={self.current_biome}, "
-                               f"interaction={self.user_interaction_score:.3f}, "
-                               f"era progression={self.era_progression_timer:.1f}/{self.config.state_machine.era_max_duration}s, ")
-                
+                    logger.debug(f"State: era={self.current_era}, biome={self.current_biome}, "
+                                 f"interaction={self.user_interaction_score:.3f}, "
+                                 f"era progression={self.era_progression_timer:.1f}/{self.config.state_machine.era_max_duration}s, ")
+
                 # Use _sleep_if_running() to respect shutdown requests
                 if not await self._sleep_if_running(sleep):  # Check twice per second
                     break
@@ -1419,7 +1419,8 @@ class ExperimanceCoreService(BaseService):
                 last_update = current_time
                 
                 # Update timers
-                self.era_progression_timer += delta_time
+                if self.current_era != Era.WILDERNESS: # no automatic progression in wilderness
+                    self.era_progression_timer += delta_time
                 
                 #logger.info(f"Era progression triggered interaction: {self.user_interaction_score:.3f}, progression: {self.era_progression_timer}")
 
