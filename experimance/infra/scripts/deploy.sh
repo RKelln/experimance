@@ -565,6 +565,7 @@ get_required_packages() {
         "guvcview"         # GTK+ UVC Viewer and control tool (optional)
         "ffmpeg"           # FFmpeg for video/audio processing
         "evtest"           # evtest for USB input monitoring
+        "lm-sensors"       # lm-sensors for hardware monitoring
     )
     
     # Export arrays for use by calling functions

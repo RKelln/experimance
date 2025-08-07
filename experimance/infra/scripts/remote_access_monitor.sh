@@ -201,11 +201,44 @@ check_system_resources() {
     # Load average
     load_avg=$(uptime | awk -F'load average:' '{print $2}')
     
-    # CPU temperature (if available)
+    # CPU temperature (from hardware sensors)
+    cpu_temp="N/A"
+    
+    # Try to get CPU temperature from various sources
+    # 1. Primary: use sensors command if available (most portable)
     if command -v sensors &>/dev/null; then
-        cpu_temp=$(sensors 2>/dev/null | grep -E "Core|CPU" | awk '{print $3}' | head -1 | sed 's/+//;s/°C.*//' || echo "N/A")
-    else
-        cpu_temp="N/A"
+        # Try to get CPU temperature from sensors output
+        # Look for Tctl (AMD), Core temp (Intel), or Package (Intel)
+        cpu_temp=$(sensors 2>/dev/null | grep -E "(Tctl:|Core [0-9]+:|Package id [0-9]+:)" | head -1 | awk '{print $2}' | sed 's/+//;s/°C.*//' 2>/dev/null || echo "N/A")
+        
+        # If that didn't work, try looking for any temperature sensor that might be CPU
+        if [ "$cpu_temp" = "N/A" ]; then
+            cpu_temp=$(sensors 2>/dev/null | grep -E "temp[0-9]+:" | grep -v "crit\|high\|low" | head -1 | awk '{print $2}' | sed 's/+//;s/°C.*//' 2>/dev/null || echo "N/A")
+        fi
+    fi
+    
+    # 2. Fallback: direct hwmon access for k10temp (AMD) or coretemp (Intel)
+    if [ "$cpu_temp" = "N/A" ]; then
+        for hwmon_dir in /sys/class/hwmon/hwmon*; do
+            if [ -f "$hwmon_dir/name" ]; then
+                local hwmon_name=$(cat "$hwmon_dir/name" 2>/dev/null)
+                if [[ "$hwmon_name" =~ ^(k10temp|coretemp)$ ]] && [ -f "$hwmon_dir/temp1_input" ]; then
+                    local temp_millidegrees=$(cat "$hwmon_dir/temp1_input" 2>/dev/null)
+                    if [ -n "$temp_millidegrees" ] && [ "$temp_millidegrees" -gt 0 ]; then
+                        cpu_temp=$(echo "$temp_millidegrees / 1000" | bc -l | xargs printf "%.1f")
+                        break
+                    fi
+                fi
+            fi
+        done
+    fi
+    
+    # 3. Final fallback: ACPI thermal zone
+    if [ "$cpu_temp" = "N/A" ] && [ -f "/sys/class/thermal/thermal_zone0/temp" ]; then
+        local temp_millidegrees=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+        if [ -n "$temp_millidegrees" ] && [ "$temp_millidegrees" -gt 0 ]; then
+            cpu_temp=$(echo "$temp_millidegrees / 1000" | bc -l | xargs printf "%.1f")
+        fi
     fi
     
     log "System resources: Memory: ${memory_usage_percent}% used (${memory_available} available), Disk: ${disk_usage_percent}% used, Load:${load_avg}, CPU temp: ${cpu_temp}°C"
