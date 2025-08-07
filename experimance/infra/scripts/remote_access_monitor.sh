@@ -209,7 +209,12 @@ check_system_resources() {
     if command -v sensors &>/dev/null; then
         # Try to get CPU temperature from sensors output
         # Look for Tctl (AMD), Core temp (Intel), or Package (Intel)
-        cpu_temp=$(sensors 2>/dev/null | grep -E "(Tctl:|Core [0-9]+:|Package id [0-9]+:)" | head -1 | awk '{print $2}' | sed 's/+//;s/°C.*//' 2>/dev/null || echo "N/A")
+        # Handle cases where there might be a prefix before the sensor name (e.g., "3:Package id 0:")
+        local temp_line=$(sensors 2>/dev/null | grep -E "(Tctl:|Core [0-9]+:|Package id [0-9]+:)" | head -1)
+        if [ -n "$temp_line" ]; then
+            # Extract temperature - it should be the field containing +XX.X°C pattern
+            cpu_temp=$(echo "$temp_line" | grep -oE '\+[0-9]+\.[0-9]+°C' | head -1 | sed 's/+//;s/°C.*//' 2>/dev/null || echo "N/A")
+        fi
         
         # If that didn't work, try looking for any temperature sensor that might be CPU
         if [ "$cpu_temp" = "N/A" ]; then
@@ -225,7 +230,11 @@ check_system_resources() {
                 if [[ "$hwmon_name" =~ ^(k10temp|coretemp)$ ]] && [ -f "$hwmon_dir/temp1_input" ]; then
                     local temp_millidegrees=$(cat "$hwmon_dir/temp1_input" 2>/dev/null)
                     if [ -n "$temp_millidegrees" ] && [ "$temp_millidegrees" -gt 0 ]; then
-                        cpu_temp=$(echo "$temp_millidegrees / 1000" | bc -l | xargs printf "%.1f")
+                        if command -v bc &>/dev/null; then
+                            cpu_temp=$(echo "$temp_millidegrees / 1000" | bc -l 2>/dev/null | xargs printf "%.1f" 2>/dev/null || echo "N/A")
+                        else
+                            cpu_temp="N/A"
+                        fi
                         break
                     fi
                 fi
@@ -237,14 +246,18 @@ check_system_resources() {
     if [ "$cpu_temp" = "N/A" ] && [ -f "/sys/class/thermal/thermal_zone0/temp" ]; then
         local temp_millidegrees=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
         if [ -n "$temp_millidegrees" ] && [ "$temp_millidegrees" -gt 0 ]; then
-            cpu_temp=$(echo "$temp_millidegrees / 1000" | bc -l | xargs printf "%.1f")
+            if command -v bc &>/dev/null; then
+                cpu_temp=$(echo "$temp_millidegrees / 1000" | bc -l 2>/dev/null | xargs printf "%.1f" 2>/dev/null || echo "N/A")
+            else
+                cpu_temp="N/A"
+            fi
         fi
     fi
     
     log "System resources: Memory: ${memory_usage_percent}% used (${memory_available} available), Disk: ${disk_usage_percent}% used, Load:${load_avg}, CPU temp: ${cpu_temp}°C"
     
     # Check for critical resource usage
-    if (( $(echo "$memory_usage_percent > 90" | bc -l 2>/dev/null || echo 0) )); then
+    if command -v bc &>/dev/null && (( $(echo "$memory_usage_percent > 90" | bc -l 2>/dev/null || echo 0) )); then
         error "Critical memory usage: ${memory_usage_percent}%"
         return 1
     fi
