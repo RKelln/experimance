@@ -1,8 +1,11 @@
 #!/bin/bash
 # Remote Access Monitor and Recovery Script
 # Monitors SSH, Tailscale, and system health with auto-recovery
+# 
+# NOTE: Run with sudo for proper file permissions:
+# sudo ./remote_access_monitor.sh [command]
 
-set -euo pipefail
+set -u  # Exit on undefined variables (but allow commands to fail)
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,36 +20,86 @@ REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_FILE="/var/log/experimance/remote-access.log"
 STATE_FILE="/var/cache/experimance/remote-access-state.json"
 HEALTH_FILE="/var/cache/experimance/health/remote_access_health.json"
-CHECK_INTERVAL=60  # seconds
-SSH_TIMEOUT=10     # seconds for SSH connection tests
-TAILSCALE_TIMEOUT=15  # seconds for Tailscale operations
+CHECK_INTERVAL=60           # seconds - normal monitoring interval
+FAST_CHECK_INTERVAL=10      # seconds - interval when issues are detected
+SSH_TIMEOUT=10              # seconds for SSH connection tests
+TAILSCALE_TIMEOUT=15        # seconds for Tailscale operations
+FAILURES_THRESHOLD=2        # Number of consecutive failures before attempting recovery
+RECOVERY_FAILURES_LIMIT=5   # After this many consecutive recovery failures, slow down checks
 
-# Ensure log directory exists
-sudo mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$STATE_FILE")" "$(dirname "$HEALTH_FILE")"
+# Ensure log directory exists (will work when script is run with sudo)
+mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$STATE_FILE")" "$(dirname "$HEALTH_FILE")"
 
 log() {
     echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
 warn() {
     echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING:${NC} $1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" >> "$LOG_FILE"
 }
 
 error() {
     echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR:${NC} $1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >> "$LOG_FILE"
 }
 
 success() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS:${NC} $1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" >> "$LOG_FILE"
+}
+
+# Function to log only state changes
+log_state_change() {
+    local component="$1"
+    local new_state="$2"
+    local message="$3"
+    local level="${4:-INFO}"
+    
+    # Try to get the last known state for this component from STATE_FILE
+    local last_state=""
+    if [ -f "$STATE_FILE" ]; then
+        case "$component" in
+            "ssh") last_state=$(jq -r '.ssh_healthy // ""' "$STATE_FILE" 2>/dev/null || echo "") ;;
+            "tailscale") last_state=$(jq -r '.tailscale_healthy // ""' "$STATE_FILE" 2>/dev/null || echo "") ;;
+            "network") last_state=$(jq -r '.network_healthy // ""' "$STATE_FILE" 2>/dev/null || echo "") ;;
+            "system") last_state=$(jq -r '.system_healthy // ""' "$STATE_FILE" 2>/dev/null || echo "") ;;
+            "overall") last_state=$(jq -r '.overall_status // ""' "$STATE_FILE" 2>/dev/null || echo "") ;;
+        esac
+    fi
+    
+    # Log if state changed or if it's the first run (no previous state)
+    if [ "$new_state" != "$last_state" ] || [ -z "$last_state" ] || [ "$last_state" = "null" ]; then
+        case "$level" in
+            "SUCCESS") success "$component state changed: $last_state → $new_state - $message" ;;
+            "ERROR") error "$component state changed: $last_state → $new_state - $message" ;;
+            "WARN") warn "$component state changed: $last_state → $new_state - $message" ;;
+            *) log "$component state changed: $last_state → $new_state - $message" ;;
+        esac
+        return 0  # State changed, was logged
+    else
+        return 1  # State unchanged, not logged
+    fi
+}
+
+# Function for verbose logging (only when state changes or in verbose mode)
+log_verbose() {
+    local message="$1"
+    local force_log="${2:-false}"
+    
+    # Always show in console (helpful for interactive use)
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $message"
+    
+    # Only log to file if forced or in verbose mode
+    if [ "$force_log" = true ] || [ "${VERBOSE_LOGGING:-false}" = true ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" >> "$LOG_FILE"
+    fi
 }
 
 # Function to check SSH service health
 check_ssh_service() {
-    log "Checking SSH service status..."
+    log_verbose "Checking SSH service status..."
     
     local ssh_status="unknown"
     local ssh_port="unknown"
@@ -58,7 +111,7 @@ check_ssh_service() {
         ssh_status="active"
     else
         ssh_status="inactive"
-        error "SSH service is not active"
+        log_state_change "ssh" "false" "SSH service is not active" "ERROR"
         return 1
     fi
     
@@ -68,20 +121,20 @@ check_ssh_service() {
         ssh_listeners=$(ss -tlnp | grep ":22 " | wc -l)
     else
         ssh_port="not_listening"
-        error "SSH not listening on port 22"
+        log_state_change "ssh" "false" "SSH not listening on port 22" "ERROR"
         return 1
     fi
     
     # Count active SSH connections
     ssh_active_connections=$(ss -tn | grep ":22 " | grep ESTAB | wc -l)
     
-    log "SSH service: $ssh_status, Port 22: $ssh_port, Listeners: $ssh_listeners, Active connections: $ssh_active_connections"
+    log_verbose "SSH service: $ssh_status, Port 22: $ssh_port, Listeners: $ssh_listeners, Active connections: $ssh_active_connections"
     return 0
 }
 
 # Function to check Tailscale connectivity
 check_tailscale_connectivity() {
-    log "Checking Tailscale connectivity..."
+    log_verbose "Checking Tailscale connectivity..."
     
     local tailscale_status="unknown"
     local tailscale_ip=""
@@ -93,48 +146,53 @@ check_tailscale_connectivity() {
         tailscale_status="active"
     else
         tailscale_status="inactive"
-        error "Tailscale daemon is not active"
+        log_state_change "tailscale" "false" "Tailscale daemon is not active" "ERROR"
         return 1
     fi
     
     # Get Tailscale IP address
     if tailscale_ip=$(timeout $TAILSCALE_TIMEOUT tailscale ip -4 2>/dev/null); then
-        log "Tailscale IP: $tailscale_ip"
+        if [ -n "$tailscale_ip" ]; then
+            log_verbose "Tailscale IP: $tailscale_ip"
+        else
+            log_state_change "tailscale" "false" "Failed to get Tailscale IP address" "ERROR"
+            return 1
+        fi
     else
-        error "Failed to get Tailscale IP address"
+        log_state_change "tailscale" "false" "Failed to get Tailscale IP address" "ERROR"
         return 1
     fi
     
     # Check overall connectivity
-    if timeout $TAILSCALE_TIMEOUT tailscale status | grep -q "active\|idle"; then
+    if timeout $TAILSCALE_TIMEOUT tailscale status 2>/dev/null | grep -q "active\|idle"; then
         connectivity_ok=true
-        log "Tailscale connectivity appears healthy"
+        log_verbose "Tailscale connectivity appears healthy"
     else
         connectivity_ok=false
-        warn "Tailscale connectivity may be impaired"
+        log_state_change "tailscale" "false" "Tailscale connectivity may be impaired" "WARN" || true
     fi
     
     # Check DERP connection health
     local derp_health
-    if derp_health=$(timeout $TAILSCALE_TIMEOUT tailscale status --json 2>/dev/null | jq -r '.Health[]? | select(.Component? == "derp")?' 2>/dev/null); then
+    if derp_health=$(timeout $TAILSCALE_TIMEOUT tailscale status --json 2>/dev/null | jq -r '.Health[]? | select(.Component? == "derp")?' 2>/dev/null || true); then
         if [ -n "$derp_health" ] && echo "$derp_health" | grep -q '"Level":"ok"'; then
             derp_connection=true
-            log "DERP connection is healthy"
+            log_verbose "DERP connection is healthy"
         elif [ -n "$derp_health" ]; then
             derp_connection=false
-            warn "DERP connection may be unhealthy: $derp_health"
+            log_verbose "DERP connection may be unhealthy: $derp_health" true  # Force log this
         else
             # No DERP health info available, but connectivity is working
             derp_connection=true
-            log "DERP connection status unknown but connectivity working"
+            log_verbose "DERP connection status unknown but connectivity working"
         fi
     else
         # If we can't check DERP but overall connectivity is ok, don't fail
         if [ "$connectivity_ok" = true ]; then
             derp_connection=true
-            log "DERP connection status unknown but connectivity working"
+            log_verbose "DERP connection status unknown but connectivity working"
         else
-            warn "Could not check DERP connection health"
+            log_verbose "Could not check DERP connection health" true  # Force log this
         fi
     fi
     
@@ -143,38 +201,38 @@ check_tailscale_connectivity() {
 
 # Function to check network connectivity
 check_network_connectivity() {
-    log "Checking network connectivity..."
+    log_verbose "Checking network connectivity..."
     
     local internet_ok=false
     local dns_ok=false
     local gateway_ok=false
     
-    # Check internet connectivity - use || true to prevent exit on failure
-    if ping -c 1 -W 5 8.8.8.8 &>/dev/null || true; then
+    # Check internet connectivity
+    if ping -c 1 -W 5 8.8.8.8 &>/dev/null; then
         internet_ok=true
-        log "Internet connectivity: OK"
+        log_verbose "Internet connectivity: OK"
     else
         internet_ok=false
-        error "Internet connectivity: FAILED"
+        log_state_change "network" "false" "Internet connectivity: FAILED" "ERROR"
     fi
     
-    # Check DNS resolution - use || true to prevent exit on failure
-    if nslookup google.com &>/dev/null || true; then
+    # Check DNS resolution
+    if nslookup google.com &>/dev/null; then
         dns_ok=true
-        log "DNS resolution: OK"
+        log_verbose "DNS resolution: OK"
     else
         dns_ok=false
-        warn "DNS resolution: FAILED"
+        log_verbose "DNS resolution: FAILED" true  # Force log DNS issues
     fi
     
-    # Check default gateway - use || true to prevent exit on failure
-    local gateway=$(ip route | grep default | awk '{print $3}' | head -1 || true)
-    if [ -n "$gateway" ] && (ping -c 1 -W 3 "$gateway" &>/dev/null || true); then
+    # Check default gateway
+    local gateway=$(ip route | grep default | awk '{print $3}' | head -1)
+    if [ -n "$gateway" ] && ping -c 1 -W 3 "$gateway" &>/dev/null; then
         gateway_ok=true
-        log "Gateway connectivity to $gateway: OK"
+        log_verbose "Gateway connectivity to $gateway: OK"
     else
         gateway_ok=false
-        warn "Gateway connectivity: FAILED"
+        log_verbose "Gateway connectivity: FAILED" true  # Force log gateway issues
     fi
     
     # Overall network health
@@ -187,7 +245,7 @@ check_network_connectivity() {
 
 # Function to check system resources
 check_system_resources() {
-    log "Checking system resources..."
+    log_verbose "Checking system resources..."
     
     local memory_usage_percent memory_available disk_usage_percent load_avg cpu_temp
     
@@ -255,16 +313,16 @@ check_system_resources() {
         fi
     fi
     
-    log "System resources: Memory: ${memory_usage_percent}% used (${memory_available} available), Disk: ${disk_usage_percent}% used, Load:${load_avg}, CPU temp: ${cpu_temp}°C"
+    log_verbose "System resources: Memory: ${memory_usage_percent}% used (${memory_available} available), Disk: ${disk_usage_percent}% used, Load:${load_avg}, CPU temp: ${cpu_temp}°C"
     
     # Check for critical resource usage
     if command -v bc &>/dev/null && (( $(echo "$memory_usage_percent > 90" | bc -l 2>/dev/null || echo 0) )); then
-        error "Critical memory usage: ${memory_usage_percent}%"
+        log_state_change "system" "false" "Critical memory usage: ${memory_usage_percent}%" "ERROR" || true
         return 1
     fi
     
     if (( disk_usage_percent > 90 )); then
-        error "Critical disk usage: ${disk_usage_percent}%"
+        log_state_change "system" "false" "Critical disk usage: ${disk_usage_percent}%" "ERROR" || true
         return 1
     fi
     
@@ -542,7 +600,7 @@ recover_tailscale() {
     log "Attempting Tailscale recovery..."
     
     # Try to bring Tailscale up
-    if sudo timeout $TAILSCALE_TIMEOUT tailscale up; then
+    if sudo timeout $TAILSCALE_TIMEOUT tailscale up 2>/dev/null; then
         success "Tailscale brought up successfully"
         sleep 5
         
@@ -554,29 +612,29 @@ recover_tailscale() {
             error "Tailscale still not healthy after recovery attempt"
             return 1
         fi
-    else
-        error "Failed to bring Tailscale up"
-        
-        # Try restarting the daemon
-        log "Attempting to restart Tailscale daemon..."
-        if sudo systemctl restart tailscaled.service; then
-            success "Tailscale daemon restarted"
-            sleep 10
-            
-            # Try to bring it up again
-            if sudo timeout $TAILSCALE_TIMEOUT tailscale up; then
-                success "Tailscale recovery successful after daemon restart"
-                return 0
-            fi
-        fi
-        
-        return 1
     fi
+    
+    error "Failed to bring Tailscale up"
+    
+    # Try restarting the daemon
+    log "Attempting to restart Tailscale daemon..."
+    if sudo systemctl restart tailscaled.service; then
+        success "Tailscale daemon restarted"
+        sleep 10
+        
+        # Try to bring it up again
+        if sudo timeout $TAILSCALE_TIMEOUT tailscale up 2>/dev/null; then
+            success "Tailscale recovery successful after daemon restart"
+            return 0
+        fi
+    fi
+    
+    return 1
 }
 
 # Function to check if we can test remote connectivity
 test_remote_connectivity() {
-    log "Testing remote connectivity capabilities..."
+    log_verbose "Testing remote connectivity capabilities..."
     
     # We can't easily test if remote SSH works from the local machine
     # But we can check if the service is ready for remote connections
@@ -588,7 +646,7 @@ test_remote_connectivity() {
     if [ -f "$sshd_config" ]; then
         # Check if key authentication is enabled
         if grep -q "^PubkeyAuthentication yes" "$sshd_config" || ! grep -q "^PubkeyAuthentication no" "$sshd_config"; then
-            log "SSH public key authentication: enabled"
+            log_verbose "SSH public key authentication: enabled"  # Console only, not logged unless verbose
         else
             warn "SSH public key authentication may be disabled"
             ssh_config_ok=false
@@ -596,14 +654,14 @@ test_remote_connectivity() {
         
         # Check if password authentication is properly disabled
         if grep -q "^PasswordAuthentication no" "$sshd_config"; then
-            log "SSH password authentication: properly disabled"
+            log_verbose "SSH password authentication: properly disabled"  # Console only, not logged unless verbose
         else
             warn "SSH password authentication may be enabled (security risk)"
         fi
         
         # Check if root login is disabled
         if grep -q "^PermitRootLogin no" "$sshd_config"; then
-            log "SSH root login: properly disabled"
+            log_verbose "SSH root login: properly disabled"  # Console only, not logged unless verbose
         else
             warn "SSH root login may be enabled (security risk)"
         fi
@@ -641,6 +699,7 @@ get_network_outage_duration() {
 save_health_state() {
     local overall_status="$1"
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%6NZ")
+    local current_interval_info="${2:-$CHECK_INTERVAL}"
     
     # Use default values if variables are not set
     local ssh_health="${ssh_healthy:-false}"
@@ -655,11 +714,12 @@ save_health_state() {
   "timestamp": "$timestamp",
   "overall_status": "$overall_status",
   "ssh_healthy": $ssh_health,
-  "tailscale_healthy": $tailscale_healthy,
+  "tailscale_healthy": $tailscale_health,
   "network_healthy": $network_health,
   "system_healthy": $system_health,
   "last_recovery_attempt": "$last_recovery",
   "consecutive_failures": $consecutive,
+  "current_interval": $current_interval_info,
   "last_network_success": "$(if [ "$network_health" = true ]; then echo "$timestamp"; else [ -f "$STATE_FILE" ] && jq -r '.last_network_success // ""' "$STATE_FILE" 2>/dev/null || echo ""; fi)"
 }
 EOF
@@ -691,14 +751,19 @@ EOF
       "status": "$([ "$system_health" = true ] && echo "healthy" || echo "unhealthy")",
       "timestamp": "$timestamp"
     }
-  ]
+  ],
+  "monitoring": {
+    "consecutive_failures": $consecutive,
+    "current_interval": $current_interval_info,
+    "in_recovery_mode": $([ $consecutive -gt 0 ] && echo "true" || echo "false")
+  }
 }
 EOF
 }
 
 # Function to perform a complete health check
 perform_health_check() {
-    log "=== Starting Remote Access Health Check ==="
+    log_verbose "=== Starting Remote Access Health Check ==="
     
     # Use global variables so they can be accessed by save_health_state
     ssh_healthy=false
@@ -710,18 +775,22 @@ perform_health_check() {
     # Run all checks
     if check_ssh_service; then
         ssh_healthy=true
+        # log_state_change "ssh" "true" "SSH service is healthy" "SUCCESS"
     fi
     
     if check_tailscale_connectivity; then
         tailscale_healthy=true
+        # log_state_change "tailscale" "true" "Tailscale connectivity is healthy" "SUCCESS"
     fi
     
     if check_network_connectivity; then
         network_healthy=true
+        # log_state_change "network" "true" "Network connectivity is healthy" "SUCCESS"
     fi
     
     if check_system_resources; then
         system_healthy=true
+        # log_state_change "system" "true" "System resources are healthy" "SUCCESS"
     fi
     
     # Test remote connectivity readiness
@@ -730,9 +799,10 @@ perform_health_check() {
     # Determine overall health
     if [ "$ssh_healthy" = true ] && [ "$tailscale_healthy" = true ] && [ "$network_healthy" = true ] && [ "$system_healthy" = true ]; then
         overall_healthy=true
-        success "=== All remote access checks PASSED ==="
+        log_state_change "overall" "healthy" "All remote access checks passed" "SUCCESS" || true
     else
-        error "=== Some remote access checks FAILED ==="
+        overall_healthy=false
+        log_state_change "overall" "unhealthy" "Some remote access checks failed" "ERROR" || true
     fi
     
     # Export for use in recovery functions
@@ -812,48 +882,80 @@ perform_recovery() {
 }
 
 # Function to run continuous monitoring
+# Function to run continuous monitoring
 run_monitor() {
-    log "Starting remote access monitoring (interval: ${CHECK_INTERVAL}s)"
-    log "Press Ctrl+C to stop"
+    log "Remote access check (interval: ${CHECK_INTERVAL}s)"
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Press Ctrl+C to stop"  # Console only, no logging
     
     local consecutive_failures=0
     local last_recovery_attempt=""
+    local current_interval=$CHECK_INTERVAL
+    local in_fast_mode=false
     
     # Load previous state if available
     if [ -f "$STATE_FILE" ]; then
         consecutive_failures=$(jq -r '.consecutive_failures // 0' "$STATE_FILE" 2>/dev/null || echo 0)
         last_recovery_attempt=$(jq -r '.last_recovery_attempt // ""' "$STATE_FILE" 2>/dev/null || echo "")
+        
+        # Resume in fast mode if we had recent failures
+        if [ $consecutive_failures -gt 0 ]; then
+            current_interval=$FAST_CHECK_INTERVAL
+            in_fast_mode=true
+            log "Resuming in fast recovery mode due to previous failures"
+        fi
     fi
     
     export consecutive_failures last_recovery_attempt
     
     while true; do
-        if perform_health_check || false; then
+        if perform_health_check; then
+            # Health check passed
+            if [ $consecutive_failures -gt 0 ]; then
+                success "System recovered after $consecutive_failures failures"
+            fi
             consecutive_failures=0
-            save_health_state "healthy"
+            save_health_state "healthy" "$current_interval"
+            
+            # Return to normal interval if we were in fast mode
+            if [ "$in_fast_mode" = true ]; then
+                in_fast_mode=false
+                current_interval=$CHECK_INTERVAL
+                log "Returning to normal monitoring interval (${CHECK_INTERVAL}s)"
+            fi
+            
         else
+            # Health check failed
             consecutive_failures=$((consecutive_failures + 1))
-            warn "Health check failed (consecutive failures: $consecutive_failures)"
+            log_state_change "monitoring" "failed" "Health check failed (consecutive failures: $consecutive_failures)" "WARN"
+            
+            # Switch to fast mode after first failure
+            if [ "$in_fast_mode" = false ]; then
+                in_fast_mode=true
+                current_interval=$FAST_CHECK_INTERVAL
+                log "Switching to fast recovery mode (${FAST_CHECK_INTERVAL}s interval)"
+            fi
             
             # Attempt recovery after 2 consecutive failures
-            if [ $consecutive_failures -ge 2 ]; then
-                if perform_recovery || false; then
-                    # Recovery succeeded, reset counter
+            if [ $consecutive_failures -ge $FAILURES_THRESHOLD ]; then
+                if perform_recovery; then
+                    # Recovery succeeded, reset counter but stay in fast mode for a few cycles to verify stability
                     consecutive_failures=0
-                    log "Recovery successful, resetting failure counter"
+                    log "Recovery successful, monitoring stability..."
                 else
                     # Recovery failed, limit retry attempts to prevent spam
-                    if [ $consecutive_failures -ge 5 ]; then
-                        warn "Multiple recovery attempts failed, waiting longer before next attempt"
-                        consecutive_failures=3  # Reset to 3 so next attempt is in 2 cycles
+                    if [ $consecutive_failures -ge $RECOVERY_FAILURES_LIMIT ]; then
+                        warn "Multiple recovery attempts failed ($consecutive_failures), extending check interval"
+                        consecutive_failures=0  # Reset to 0 so next recovery attempt is in 2 cycles
+                        current_interval=$CHECK_INTERVAL  # Slow down when recovery fails repeatedly
                     fi
                 fi
             fi
             
-            save_health_state "unhealthy"
+            save_health_state "unhealthy" "$current_interval"
         fi
         
-        sleep $CHECK_INTERVAL
+        log_verbose "Next check in ${current_interval}s..."
+        sleep $current_interval
     done
 }
 
@@ -913,11 +1015,29 @@ show_status() {
 
 # Main function
 main() {
-    case "${1:-check}" in
+    # Check for verbose flag
+    if [[ "$*" =~ (^|[[:space:]])-v([[:space:]]|$) ]] || [[ "$*" =~ (^|[[:space:]])--verbose([[:space:]]|$) ]]; then
+        export VERBOSE_LOGGING=true
+        log "Verbose logging enabled"
+    fi
+    
+    # Remove verbose flags from arguments for command parsing
+    local args=()
+    for arg in "$@"; do
+        if [[ "$arg" != "-v" && "$arg" != "--verbose" ]]; then
+            args+=("$arg")
+        fi
+    done
+    
+    case "${args[0]:-check}" in
         "check")
+            # Always use verbose mode for one-time checks to show full details
+            export VERBOSE_LOGGING=true
             perform_health_check
             ;;
         "recover")
+            # Always use verbose mode for recovery to show what's happening
+            export VERBOSE_LOGGING=true
             perform_health_check || true  # Don't exit on health check failure
             if ! perform_recovery; then
                 exit 1
@@ -930,27 +1050,44 @@ main() {
             install_monitor_service
             ;;
         "status")
+            # Always use verbose mode for status to show full details
+            export VERBOSE_LOGGING=true
             show_status
             ;;
         "help"|"--help"|"-h")
             echo "Remote Access Monitor and Recovery Script"
             echo ""
-            echo "Usage: $0 [command]"
+            echo "Usage: sudo $0 [command] [options]"
+            echo ""
+            echo "IMPORTANT: This script requires sudo privileges for:"
+            echo "  • Writing to /var/log/experimance/ and /var/cache/experimance/"
+            echo "  • Network recovery operations (interface restart, etc.)"
+            echo "  • Service management (systemctl commands)"
             echo ""
             echo "Commands:"
             echo "  check    - Run one-time health check (default)"
             echo "  recover  - Run health check and attempt recovery"
-            echo "  monitor  - Run continuous monitoring"
+            echo "  monitor  - Run continuous monitoring with adaptive intervals"
             echo "  install  - Install as systemd service"
             echo "  status   - Show current status and recent logs"
             echo "  help     - Show this help message"
             echo ""
-            echo "Log file: $LOG_FILE"
-            echo "State file: $STATE_FILE"
-            echo "Health file: $HEALTH_FILE"
+            echo "Options:"
+            echo "  -v, --verbose  - Enable verbose logging (shows all checks, not just changes)"
+            echo ""
+            echo "Features:"
+            echo "  • Adaptive monitoring intervals (${CHECK_INTERVAL}s normal, ${FAST_CHECK_INTERVAL}s when issues detected)"
+            echo "  • State-change logging (reduces log spam by only logging when states change)"
+            echo "  • Safe network recovery (protects existing remote connections)"
+            echo "  • Comprehensive health monitoring (SSH, Tailscale, network, system resources)"
+            echo ""
+            echo "Files:"
+            echo "  Log file: $LOG_FILE"
+            echo "  State file: $STATE_FILE"
+            echo "  Health file: $HEALTH_FILE"
             ;;
         *)
-            error "Unknown command: $1"
+            error "Unknown command: ${args[0]}"
             echo "Use '$0 help' for usage information"
             exit 1
             ;;
