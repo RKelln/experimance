@@ -361,6 +361,11 @@ recover_network_connectivity() {
     # Check if we're currently connected via Tailscale
     local via_tailscale=false
     local tailscale_connection_details=""
+    
+    # Debug: Log SSH connection environment variables (force log this always for debugging)
+    log "SSH connection environment: SSH_CLIENT='${SSH_CLIENT:-}', SSH_CONNECTION='${SSH_CONNECTION:-}'"
+    
+    # Method 1: Check SSH environment variables (works when run interactively)
     if [ -n "${SSH_CLIENT:-}" ] && echo "${SSH_CLIENT}" | grep -q "100\."; then
         via_tailscale=true
         tailscale_connection_details="SSH_CLIENT: ${SSH_CLIENT}"
@@ -369,15 +374,61 @@ recover_network_connectivity() {
         via_tailscale=true  
         tailscale_connection_details="SSH_CONNECTION: ${SSH_CONNECTION}"
         warn "Current SSH connection appears to be via Tailscale ($tailscale_connection_details)"
+    else
+        log "SSH environment variables don't indicate Tailscale connection"
+        # Also check for other Tailscale IP ranges (100.64.0.0/10)
+        if [ -n "${SSH_CLIENT:-}" ] && echo "${SSH_CLIENT}" | grep -qE "100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\."; then
+            via_tailscale=true
+            tailscale_connection_details="SSH_CLIENT: ${SSH_CLIENT}"
+            warn "Current SSH connection appears to be via Tailscale (extended range): ($tailscale_connection_details)"
+        elif [ -n "${SSH_CONNECTION:-}" ] && echo "${SSH_CONNECTION}" | grep -qE "100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\."; then
+            via_tailscale=true
+            tailscale_connection_details="SSH_CONNECTION: ${SSH_CONNECTION}"
+            warn "Current SSH connection appears to be via Tailscale (extended range): ($tailscale_connection_details)"
+        fi
+    fi
+    
+    # Method 2: Check for active SSH connections to Tailscale IPs (works for systemd service)
+    if [ "$via_tailscale" = false ]; then
+        log "Checking for active SSH connections from Tailscale IPs..."
+        local tailscale_ssh_connections=$(ss -tn | grep ":22 " | grep ESTAB | grep -E " 100\.[0-9]+\.[0-9]+\.[0-9]+:" | wc -l)
+        if [ "$tailscale_ssh_connections" -gt 0 ]; then
+            via_tailscale=true
+            tailscale_connection_details="Active SSH connections from Tailscale IPs: $tailscale_ssh_connections"
+            warn "Detected active SSH connections from Tailscale network ($tailscale_connection_details)"
+            log "Active Tailscale SSH connections:"
+            ss -tn | grep ":22 " | grep ESTAB | grep -E " 100\.[0-9]+\.[0-9]+\.[0-9]+:" | head -5
+        else
+            log "No active SSH connections from Tailscale IPs detected"
+        fi
     fi
     
     # Get current Tailscale status
     local tailscale_healthy=false
-    if systemctl is-active --quiet tailscaled && command -v tailscale >/dev/null 2>&1; then
-        if tailscale status >/dev/null 2>&1; then
-            tailscale_healthy=true
+    log "Checking Tailscale health status..."
+    
+    if systemctl is-active --quiet tailscaled; then
+        log "Tailscale daemon is active"
+        if command -v tailscale >/dev/null 2>&1; then
+            log "Tailscale command is available"
+            if tailscale status >/dev/null 2>&1; then
+                tailscale_healthy=true
+                log "Tailscale status check: healthy"
+                # Get some additional info
+                local ts_ip=$(tailscale ip -4 2>/dev/null || echo "unknown")
+                local ts_status=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo "unknown")
+                log "Tailscale details: IP=$ts_ip, State=$ts_status"
+            else
+                log "Tailscale status check: unhealthy (command failed)"
+            fi
+        else
+            log "Tailscale status check: unhealthy (command not found)"
         fi
+    else
+        log "Tailscale status check: unhealthy (daemon not active)"
     fi
+    
+    log "Recovery decision inputs: via_tailscale=$via_tailscale, tailscale_healthy=$tailscale_healthy"
     
     # Check how long network has been failing
     local outage_duration=$(get_network_outage_duration)
@@ -400,7 +451,17 @@ recover_network_connectivity() {
         recovery_mode="conservative"
     fi
     
-    log "Network outage duration: ${outage_duration}s, using '$recovery_mode' recovery mode"
+    # Format duration for human readability
+    local duration_formatted
+    if [ "$outage_duration" -lt 60 ]; then
+        duration_formatted="${outage_duration}s"
+    elif [ "$outage_duration" -lt 3600 ]; then
+        duration_formatted="$((outage_duration / 60))m $((outage_duration % 60))s"
+    else
+        duration_formatted="$((outage_duration / 3600))h $((outage_duration % 3600 / 60))m"
+    fi
+    
+    log "Network outage duration: ${duration_formatted} (${outage_duration}s), using '$recovery_mode' recovery mode"
     
     # SAFETY DECISION LOGIC - Use the recovery modes
     if [ "$via_tailscale" = true ] && [ "$tailscale_healthy" = true ]; then
@@ -684,17 +745,29 @@ get_network_outage_duration() {
         last_success=$(jq -r '.last_network_success // ""' "$STATE_FILE" 2>/dev/null || echo "")
     fi
     
-    # If we have no record of last success, assume it's been a long time
+    # If we have no record of last success, check if this is the first run
     if [ -z "$last_success" ] || [ "$last_success" = "null" ]; then
-        echo "999999"  # Very large number to indicate unknown duration
-        return
+        # If the network is currently healthy, this might be first run - return short duration
+        if [ "${network_healthy:-false}" = "true" ]; then
+            echo "0"  # First run with healthy network
+            return
+        else
+            # Network is failing and we have no history - assume recent failure
+            echo "300"  # Assume 5 minutes to be conservative
+            return
+        fi
     fi
     
     # Calculate seconds since last success
     local current_epoch=$(date +%s)
     local last_success_epoch=$(date -d "$last_success" +%s 2>/dev/null || echo "0")
     
-    echo $((current_epoch - last_success_epoch))
+    if [ "$last_success_epoch" -eq 0 ]; then
+        # Failed to parse timestamp, assume moderate outage
+        echo "300"
+    else
+        echo $((current_epoch - last_success_epoch))
+    fi
 }
 
 # Function to save health state
@@ -710,6 +783,22 @@ save_health_state() {
     local system_health="${system_healthy:-false}"
     local last_recovery="${last_recovery_attempt:-}"
     local consecutive="${consecutive_failures:-0}"
+    
+    # Handle last_network_success timestamp logic
+    local last_network_success=""
+    if [ "$network_health" = true ]; then
+        # Network is healthy, update timestamp
+        last_network_success="$timestamp"
+    else
+        # Network is not healthy, preserve previous timestamp if it exists
+        if [ -f "$STATE_FILE" ]; then
+            last_network_success=$(jq -r '.last_network_success // ""' "$STATE_FILE" 2>/dev/null || echo "")
+        fi
+        # If we still don't have a timestamp, this might be the first run with network failure
+        if [ -z "$last_network_success" ] || [ "$last_network_success" = "null" ]; then
+            last_network_success=""  # Will be empty in JSON
+        fi
+    fi
 
     cat > "$STATE_FILE" << EOF
 {
@@ -722,7 +811,7 @@ save_health_state() {
   "last_recovery_attempt": "$last_recovery",
   "consecutive_failures": $consecutive,
   "current_interval": $current_interval_info,
-  "last_network_success": "$(if [ "$network_health" = true ]; then echo "$timestamp"; else [ -f "$STATE_FILE" ] && jq -r '.last_network_success // ""' "$STATE_FILE" 2>/dev/null || echo ""; fi)"
+  "last_network_success": "$last_network_success"
 }
 EOF
 
