@@ -88,8 +88,10 @@ log_verbose() {
     local message="$1"
     local force_log="${2:-false}"
     
-    # Always show in console (helpful for interactive use)
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $message"
+    # Only show in console if in verbose mode (for systemd service silence)
+    if [ "${VERBOSE_LOGGING:-false}" = true ]; then
+        echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $message"
+    fi
     
     # Only log to file if forced or in verbose mode
     if [ "$force_log" = true ] || [ "${VERBOSE_LOGGING:-false}" = true ]; then
@@ -885,7 +887,11 @@ perform_recovery() {
 # Function to run continuous monitoring
 run_monitor() {
     log "Remote access check (interval: ${CHECK_INTERVAL}s)"
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Press Ctrl+C to stop"  # Console only, no logging
+    
+    # Only show "Press Ctrl+C" in interactive mode, not when running as systemd service
+    if [ -t 1 ] && [ "${SYSTEMD_EXEC_PID:-}" = "" ]; then
+        echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Press Ctrl+C to stop"
+    fi
     
     local consecutive_failures=0
     local last_recovery_attempt=""
