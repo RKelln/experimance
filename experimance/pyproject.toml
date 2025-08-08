@@ -75,7 +75,7 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 mypy_path = [
     "libs/common/src/experimance_common", # where schemas.pyi lives
-    "projects/sohkepayin",                # so environment-specific .pyi are seen
+    "projects/fire",                # so environment-specific .pyi are seen
     "projects/experimance"
 ]
 

@@ -51,7 +51,7 @@ sudo ./infra/scripts/deploy.sh experimance status
 * **SSH Access**: Key-based authentication for secure remote access
 * **Web Interface**: Restart services, view status, and check logs from any device
 * **Update System**: Safe updates with automatic rollback on failure
-* **Project Switching**: Easy switching between different installations (experimance, sohkepayin, etc.)
+* **Project Switching**: Easy switching between different installations (experimance, fire, etc.)
 
 **Key Scripts:**
 * `infra/scripts/deploy.sh` - Service management (install, start, stop, restart, status)

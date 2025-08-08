@@ -10,7 +10,7 @@
 # SYSTEMD TEMPLATE SYSTEM:
 # This script uses systemd template services for multi-project support:
 # - Template files: core@.service, display@.service, experimance@.target (installed to /etc/systemd/system/)
-# - Instance services: core@experimance.service, display@sohkepayin.service (created when started)
+# - Instance services: core@experimance.service, display@fire.service (created when started)
 # - The @ symbol makes it a template, %i gets replaced with project name
 # - Multiple projects can share the same templates with different instances
 

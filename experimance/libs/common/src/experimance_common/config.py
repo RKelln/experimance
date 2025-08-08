@@ -180,7 +180,7 @@ def resolve_path(
         
         # Project-specific path
         resolve_config_path("system_prompt.txt", hint="project") 
-        # -> PROJECT_ROOT/projects/sohkepayin/system_prompt.txt
+        # -> PROJECT_ROOT/projects/fire/system_prompt.txt
         
         # Data directory path
         resolve_config_path("locations.json", hint="data")

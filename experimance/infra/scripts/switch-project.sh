@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Experimance Project Switch Script
-# Switches between different projects (experimance, sohkepayin, etc.)
+# Switches between different projects (experimance, fire, etc.)
 
 set -euo pipefail
 

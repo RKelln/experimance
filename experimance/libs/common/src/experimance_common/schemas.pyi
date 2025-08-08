@@ -53,8 +53,8 @@ if TYPE_CHECKING:
             SpaceTimeUpdate,
             RequestBiome,
         )
-    elif _PROJECT_ENV == "sohkepayin":
-        from projects.sohkepayin.schemas import (
+    elif _PROJECT_ENV == "fire":
+        from projects.fire.schemas import (
             Emotion,
             MessageType,
             StoryHeard,

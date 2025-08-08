@@ -46,7 +46,7 @@ cleanup_existing_services() {
     # Send SIGINT to processes that match our service patterns (graceful shutdown)
     for suffix in "${service_suffixes[@]}"; do
         # Pattern: any process running python with module ending in our suffix
-        # This catches: python -m experimance_core, python -m sohkepayin_core, etc.
+        # This catches: python -m experimance_core, python -m fire_core, etc.
         if pgrep -f "experimance.*python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
             echo -e "  ${YELLOW}Sending SIGINT to existing ${suffix} processes...${NC}"
             pkill -INT -f "experimance.*python.*-m.*${suffix}(\$| )" 2>/dev/null || true

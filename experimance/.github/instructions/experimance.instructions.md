@@ -72,8 +72,8 @@ experimance/
 │   │   ├─ constants.py     # constants specific to Experimance project
 │   │   ├─ schemas.py       # schemas specific to Experimance project
 │   │   └─ schemas.pyi      # type stubs for schemas
-│   └─ sohkepayin/          # overrides for Sohkepayin project
-│       └─ ...              # configuration files for Sohkepayin project  
+│   └─ fire/                # overrides for Feed the Fires project
+│       └─ ...              # configuration files for Feed the Fires project
 ```
 
 # Primary Development Guidelines

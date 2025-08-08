@@ -184,11 +184,11 @@ class RenderingConfig(BaseModel):
     )
 
 
-class SohkepayinCoreConfig(BaseServiceConfig):
-    """Sohkepayin core service configuration."""
+class FireCoreConfig(BaseServiceConfig):
+    """Feed the Fires core service configuration."""
     
     service_name: str = Field(
-        default="sohkepayin_core",
+        default="fire_core",
         description="Service instance name"
     )
     

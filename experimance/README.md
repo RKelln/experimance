@@ -80,8 +80,8 @@ experimance/
 │   │   ├─ schemas.pyi      # type stubs for schemas
 │   │   ├─ core.toml        # configuration for the core service
 │   │   └─ <service>.toml   # configuration for the <service>
-│   └─ sohkepayin/          # overrides for Sohkepayin project
-│       └─ ...              # configuration files for Sohkepayin project  
+│   └─ fire/                # overrides for Feed the Fires project
+│       └─ ...              # configuration files for Feed the Fires project  
 │
 └── media/
     ├── images/
@@ -303,8 +303,8 @@ class RenderRequest(_BaseRenderRequest):
 # Work on Experimance project
 PROJECT_ENV=experimance uv run -m experimance_core
 
-# Work on Sohkepayin project  
-PROJECT_ENV=sohkepayin uv run -m experimance_core
+# Work on Feed the Fires project  
+PROJECT_ENV=fire uv run -m fire_core
 
 # Import project-specific schemas
 from experimance_common.schemas import Era, Biome  # Loaded based on PROJECT_ENV

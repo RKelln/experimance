@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for the Sohkepayin Core Service.
+Unit tests for the Feed the Fires Core Service.
 
 Tests the core service functionality including:
 - State management
@@ -19,22 +19,22 @@ from unittest.mock import Mock, AsyncMock, patch, ANY
 # Add the source directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sohkepayin_core.sohkepayin_core import SohkepayinCoreService, CoreState, ActiveRequest
-from sohkepayin_core.config import SohkepayinCoreConfig, LLMConfig, ImagePrompt
-from sohkepayin_core.tiler import TileSpec
+from fire_core.fire_core import FireCoreService, CoreState, ActiveRequest
+from fire_core.config import FireCoreConfig, LLMConfig, ImagePrompt
+from fire_core.tiler import TileSpec
 from experimance_common.schemas import StoryHeard
 from experimance_common.schemas_base import ImageReady
 
 
-class TestSohkepayinCoreService:
-    """Test the SohkepayinCoreService class."""
-    
+class TestFireCoreService:
+    """Test the FireCoreService class."""
+
     @pytest.fixture
     def mock_config(self):
         """Create a mock configuration for testing."""
         # Use default config and override just what we need
-        return SohkepayinCoreConfig(
-            service_name="test_sohkepayin_core",
+        return FireCoreConfig(
+            service_name="test_fire_core",
             llm=LLMConfig(
                 provider="mock",
                 model="test-model"
@@ -44,11 +44,11 @@ class TestSohkepayinCoreService:
     @pytest.fixture
     def mock_service(self, mock_config):
         """Create a mock service instance."""
-        with patch('sohkepayin_core.sohkepayin_core.get_llm_provider') as mock_llm_factory:
+        with patch('fire_core.fire_core.get_llm_provider') as mock_llm_factory:
             mock_llm = Mock()
             mock_llm_factory.return_value = mock_llm
             
-            service = SohkepayinCoreService(mock_config)
+            service = FireCoreService(mock_config)
             service.zmq_service = Mock()
             service.zmq_service.start = AsyncMock()
             service.zmq_service.stop = AsyncMock()
@@ -59,11 +59,11 @@ class TestSohkepayinCoreService:
     
     def test_service_initialization(self, mock_config):
         """Test service initialization."""
-        with patch('sohkepayin_core.sohkepayin_core.get_llm_provider') as mock_llm_factory:
+        with patch('fire_core.fire_core.get_llm_provider') as mock_llm_factory:
             mock_llm = Mock()
             mock_llm_factory.return_value = mock_llm
             
-            service = SohkepayinCoreService(mock_config)
+            service = FireCoreService(mock_config)
             
             assert service.config == mock_config
             assert service.core_state == CoreState.IDLE

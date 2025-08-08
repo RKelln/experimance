@@ -100,9 +100,9 @@ if TYPE_CHECKING:
         # For now, the experimance constants.py file is mostly empty,
         # but this allows for future project-specific constants
         pass
-    elif _PROJECT_ENV == "sohkepayin":
-        # Import sohkepayin-specific constants if they exist
-        # For now, the sohkepayin constants.py file is mostly empty,
+    elif _PROJECT_ENV == "fire":
+        # Import Feed the Fires-specific constants if they exist
+        # For now, the fire constants.py file is mostly empty,
         # but this allows for future project-specific constants
         pass
     else:

@@ -32,7 +32,7 @@ from experimance_common.schemas import (
 )
 from experimance_common.zmq.zmq_utils import prepare_image_source
 
-from .config import SohkepayinCoreConfig, ImagePrompt
+from .config import FireCoreConfig, ImagePrompt
 from .llm import LLMProvider, get_llm_provider
 from .llm_prompt_builder import LLMPromptBuilder
 from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
@@ -64,7 +64,7 @@ class ActiveRequest:
     total_tiles: int = 0
 
 
-class SohkepayinCoreService(BaseService):
+class FireCoreService(BaseService):
     """
     Core service for the Sohkepayin installation.
     
@@ -76,7 +76,7 @@ class SohkepayinCoreService(BaseService):
     - Image delivery to display service
     """
     
-    def __init__(self, config: SohkepayinCoreConfig):
+    def __init__(self, config: FireCoreConfig):
         """Initialize the Sohkepayin core service."""
         super().__init__(
             service_name=config.service_name,
@@ -452,7 +452,7 @@ class SohkepayinCoreService(BaseService):
             await self._sleep_if_running(10.0)  # Check every 10 seconds
 
 
-async def run_sohkepayin_core_service(
+async def run_fire_core_service(
     config_path: str,
     args: Optional[argparse.Namespace] = None
 ) -> None:
@@ -464,13 +464,13 @@ async def run_sohkepayin_core_service(
         args: Optional command line arguments
     """
     # Load configuration using the from_overrides method
-    config = SohkepayinCoreConfig.from_overrides(
+    config = FireCoreConfig.from_overrides(
         config_file=config_path,
         args=args
     )
     
     # Create and run service
-    service = SohkepayinCoreService(config)
+    service = FireCoreService(config)
     
     await service.start()
     logger.info("Sohkepayin core service started successfully")

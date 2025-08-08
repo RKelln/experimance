@@ -9,7 +9,7 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 ### 1. **Easy Service Management**
 - **Development setup**: `./infra/scripts/deploy.sh experimance install dev` (no sudo needed)
 - **Production deployment**: `sudo ./infra/scripts/deploy.sh experimance install prod`
-- **Project switching**: Support for multiple installations (experimance, sohkepayin, etc.)
+- **Project switching**: Support for multiple installations (experimance, fire, etc.)
 - **Service lifecycle**: Start, stop, restart, status checking all automated
 - **Explicit modes**: Clear separation between development and production environments
 
@@ -219,7 +219,7 @@ Our systemd setup uses **template services** for multi-project support:
 ### How It Works
 1. **Template**: `core@.service` contains `%i` placeholder for project name
 2. **Instance**: `systemctl start core@experimance.service` creates instance with `%i=experimance`
-3. **Multiple Projects**: Same templates can run `core@sohkepayin.service`, etc.
+3. **Multiple Projects**: Same templates can run `core@fire.service`, etc.
 
 ### Common Commands
 ```bash
