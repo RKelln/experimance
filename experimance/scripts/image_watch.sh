@@ -3,9 +3,10 @@
 # Supports both feh and eog viewers with auto-update capabilities
 
 REMOTE_HOST="gallery"
-REMOTE_IMAGE_DIR="/home/experimance/Documents/art/experimance/experimance/media/images/generated/"
+REMOTE_IMAGE_DIR="/home/experimance/experimance/media/images/generated"
 REMOTE_LATEST="$REMOTE_IMAGE_DIR/latest.jpg"
 LOCAL_TEMP="/tmp/latest_experimance.jpg"
+SCP_OPTS="-q -o ConnectTimeout=3 -o ConnectionAttempts=1"
 
 # Default viewer (can be overridden with command line argument)
 VIEWER="${1:-auto}"
@@ -77,8 +78,17 @@ echo "Starting Experimance image watcher with $SELECTED_VIEWER viewer..."
 
 # Initial download of latest image
 echo "Downloading current latest image..."
-scp "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null || {
+echo "Remote target: $REMOTE_HOST:$REMOTE_LATEST"
+scp $SCP_OPTS "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null || {
     echo "Failed to download initial image, creating placeholder..."
+    # Quick diagnosis to help troubleshoot SSH and path issues
+    if ssh -o BatchMode=yes -o ConnectTimeout=3 "$REMOTE_HOST" "test -f '$REMOTE_LATEST'" 2>/dev/null; then
+        echo "Note: Remote file exists but scp failed. Check SSH auth or permissions."
+    else
+        echo "Note: Remote file not found at: $REMOTE_LATEST"
+        echo "Listing remote directory contents (first few entries):"
+        ssh -o ConnectTimeout=3 "$REMOTE_HOST" "ls -l \"$REMOTE_IMAGE_DIR\" 2>/dev/null | head -n 10" || true
+    fi
     # Create a simple placeholder if no image exists yet
     convert -size 1024x1024 xc:black -fill white -gravity center \
             -pointsize 48 -annotate +0+0 "Waiting for\nfirst image..." "$LOCAL_TEMP" 2>/dev/null || {
@@ -122,7 +132,7 @@ if ssh "$REMOTE_HOST" "command -v inotifywait >/dev/null 2>&1"; then
             echo "$time: New image generated! Downloading..."
             # Download new image to same local path
             # eog will auto-detect the change, feh will auto-reload
-            scp "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null && {
+            scp $SCP_OPTS "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null && {
                 echo "$time: Image updated (viewer will refresh automatically)"
             } || {
                 echo "$time: Failed to download new image"
@@ -142,7 +152,7 @@ else
             echo "$CURRENT_TIME: New image detected (timestamp changed)! Downloading..."
             
             # Download new image
-            scp "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null && {
+            scp $SCP_OPTS "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null && {
                 echo "$CURRENT_TIME: Image updated (viewer will refresh automatically)"
                 LAST_TIMESTAMP=$CURRENT_TIMESTAMP
             } || {
