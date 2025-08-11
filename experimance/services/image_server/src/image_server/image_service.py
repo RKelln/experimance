@@ -21,7 +21,7 @@ from experimance_common.image_utils import extract_image_as_base64
 from experimance_common.schemas import ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
-from experimance_common.constants import DEFAULT_PORTS, GENERATED_IMAGES_DIR
+from experimance_common.constants import DEFAULT_PORTS, PROJECT_ROOT, GENERATED_IMAGES_DIR, GENERATED_IMAGES_DIR_ABS
 from experimance_common.logger import configure_external_loggers
 from image_server.generators.config import GENERATOR_NAMES
 from pydantic import ValidationError
@@ -268,11 +268,29 @@ class ImageServerService(BaseService):
             # Create symlink to latest generated image for easy access
             try:
                 latest_filename = f"latest{Path(image_path).suffix}"
-                latest_path = GENERATED_IMAGES_DIR / latest_filename
+                latest_path = GENERATED_IMAGES_DIR_ABS / latest_filename
                 if latest_path.exists() or latest_path.is_symlink():
                     latest_path.unlink()
-                latest_path.symlink_to(Path(image_path).name)
-                logger.debug(f"Created {latest_filename} symlink to {Path(image_path).name}")
+                
+                # Convert image_path to absolute path, then get relative path from GENERATED_IMAGES_DIR_ABS
+                image_path_obj = Path(image_path)
+                if image_path_obj.is_absolute():
+                    # Already absolute
+                    absolute_image_path = image_path_obj
+                else:
+                    # Try as relative to project root
+                    absolute_image_path = PROJECT_ROOT / image_path_obj
+                # Now get the relative path from latest_path.parent
+                try:
+                    relative_image_path = absolute_image_path.relative_to(latest_path.parent)
+                except ValueError:
+                    # If relative_to fails, the path is not under latest_path.parent
+                    # This shouldn't happen, but log it and use the original path
+                    logger.warning(f"Image path {absolute_image_path} is not under {latest_path.parent}")
+                    relative_image_path = image_path_obj
+                
+                latest_path.symlink_to(relative_image_path)
+                logger.debug(f"Created {latest_filename} symlink to {relative_image_path}")
             except Exception as e:
                 logger.warning(f"Failed to create {latest_filename} symlink: {e}")
 
