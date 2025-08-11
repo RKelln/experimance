@@ -16,8 +16,6 @@ conversation_cooldown_duration = 12.0  # seconds
 # This prevents the same person from immediately restarting, but allows new people to start immediately
 cancel_cooldown_on_absence = true
 
-deep_thoughts_min_delay = 30 # second after conversation start will allow for deep thoughts
-
 [backend_config.pipecat]
 # Pipecat-specific configuration
 system_prompt = "prompt.md"
@@ -38,8 +36,8 @@ audio_out_sample_rate = 16000
 # Use `uv run python scripts/audio_recovery.py list` to list available devices
 # Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
 # For better performance, you can also specify device indices directly:
-audio_input_device_name = "Yealink"   # USB Conference microphone
-audio_output_device_name = "Yealink"  # USB Conference speaker
+audio_input_device_name = "Torch Streaming Microphone"   # USB Conference microphone
+audio_output_device_name = "Torch Streaming Microphone"  # USB Conference speaker
 # Alternatively, use indices for faster startup (uncomment to use):
 # audio_input_device_index = 6   # Yealink device index
 # audio_output_device_index = 6  # Yealink device index
@@ -57,33 +55,13 @@ openai_model = "gpt-4o"  # For ensemble mode
 
 # OpenAI Realtime settings (realtime mode only)
 openai_realtime_model = "gpt-4o-realtime-preview-2025-06-03"
-openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmerinfra
 turn_detection_threshold = 0.5
 turn_detection_silence_ms = 800
 
 # TTS (Text-to-Speech) settings (ensemble mode only)
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
-
-[vision]
-# Vision processing configuration
-webcam_enabled = true
-webcam_device_name = "eMeet"
-webcam_width = 640
-webcam_height = 480
-webcam_fps = 30
-
-# Audience detection
-audience_detection_enabled = true
-audience_detection_interval = 1.0
-stable_readings_required = 3
-
-# Vision Language Model
-vlm_enabled = false
-vlm_model = "moondream"
-vlm_analysis_interval = 10.0
-vlm_max_image_size = 512
-vlm_device = "cpu"  # cuda
 
 [transcript]
 # Transcript management

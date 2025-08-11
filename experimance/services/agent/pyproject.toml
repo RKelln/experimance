@@ -48,7 +48,7 @@ vision-models = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["experimance_agent"]
+packages = ["agent", "experimance_agent", "fire_agent"]
 
 [tool.ruff]
 line-length = 100

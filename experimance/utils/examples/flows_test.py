@@ -65,8 +65,8 @@ from pipecat_flows import FlowConfig, FlowManager, FlowArgs, FlowResult, NodeCon
 from experimance_test_flow import flow_config
 
 # Import config from agent service
-from experimance_agent.config import AgentServiceConfig, PipecatBackendConfig
-from experimance_agent.backends.base import load_prompt
+from agent.config import AgentServiceConfig, PipecatBackendConfig
+from agent.backends.base import load_prompt
 
 # Set up logging
 logging.basicConfig(
@@ -465,7 +465,7 @@ async def main():
         sys.exit(1)
     
     # Create configuration using proper types
-    from experimance_agent.config import PipecatBackendConfig, BackendConfig
+    from agent.config import PipecatBackendConfig, BackendConfig
     
     pipecat_config = PipecatBackendConfig(
         mode="ensemble",

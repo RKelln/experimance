@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Callable, AsyncGenerator, Union
 import asyncio
 import logging
 
-from experimance_agent.config import AgentServiceConfig
+from agent.config import AgentServiceConfig
 from experimance_common.constants import AGENT_SERVICE_DIR
 from experimance_common.transcript_manager import TranscriptManager, TranscriptMessage, TranscriptMessageType
 
@@ -206,13 +206,14 @@ class AgentBackend(ABC):
     # =========================================================================
     
     @abstractmethod
-    async def send_message(self, message: str, speaker: str = "system") -> None:
+    async def send_message(self, message: str, speaker: str = "system", say_tts: bool = False) -> None:
         """
         Send a message to the conversation.
         
         Args:
             message: Text message to send
             speaker: Speaker identifier (e.g., "system", "user")
+            say_tts: If True, use TTS for immediate output instead of context message
         """
         pass
     

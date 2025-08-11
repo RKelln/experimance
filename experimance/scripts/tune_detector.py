@@ -10,7 +10,7 @@ from pathlib import Path
 agent_src = Path(__file__).parent / "services" / "agent" / "src"
 sys.path.insert(0, str(agent_src))
 
-from experimance_agent.vision.interactive_detector_tuning import main
+from agent.vision.interactive_detector_tuning import main
 
 if __name__ == "__main__":
     main()

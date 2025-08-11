@@ -20,7 +20,7 @@ import importlib.util
 from typing import Any, Dict, List, Optional, AsyncGenerator, Callable
 from pathlib import Path
 
-from experimance_agent.config import AgentServiceConfig
+from agent.config import AgentServiceConfig
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
