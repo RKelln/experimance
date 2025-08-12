@@ -29,15 +29,15 @@ flow_file = "flows/experimance_flow.py"
 # Audio settings
 audio_in_enabled = true
 audio_out_enabled = true
-audio_in_sample_rate = 16000
-audio_out_sample_rate = 16000
+audio_in_sample_rate = 48000
+audio_out_sample_rate = 48000
 
 # Audio device selection (comment out to use default devices)
 # Use `uv run python scripts/audio_recovery.py list` to list available devices
 # Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
 # For better performance, you can also specify device indices directly:
-audio_input_device_name = "Torch Streaming Microphone"   # USB Conference microphone
-audio_output_device_name = "Torch Streaming Microphone"  # USB Conference speaker
+audio_input_device_name = "AIRHUG"   # USB Conference microphone
+audio_output_device_name = "AIRHUG"  # USB Conference speaker
 # Alternatively, use indices for faster startup (uncomment to use):
 # audio_input_device_index = 6   # Yealink device index
 # audio_output_device_index = 6  # Yealink device index
