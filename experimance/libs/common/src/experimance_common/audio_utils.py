@@ -118,6 +118,42 @@ def cleanup_audio_resources():
     _device_cache = None
 
 
+def _verify_alsa_input_device(device_name: str) -> bool:
+    """
+    Verify that a USB audio device has input capabilities using ALSA tools.
+    This is a workaround for PipeWire/PyAudio compatibility issues.
+    
+    Args:
+        device_name: Device name to verify
+        
+    Returns:
+        True if ALSA can confirm input capabilities
+    """
+    try:
+        import subprocess
+        
+        # Use arecord -l to list recording devices
+        result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            output_lower = result.stdout.lower()
+            device_name_lower = device_name.lower()
+            
+            # Look for the device name in the ALSA recording device list
+            if device_name_lower in output_lower:
+                logger.debug(f"ALSA confirms input capability for {device_name}")
+                return True
+                
+        logger.debug(f"ALSA verification failed for {device_name}")
+        return False
+        
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.debug(f"ALSA verification error for {device_name}: {e}")
+        return False
+    except Exception as e:
+        logger.debug(f"Unexpected error during ALSA verification for {device_name}: {e}")
+        return False
+
+
 def find_audio_device_by_name(device_name: str, input_device: bool = True) -> Optional[int]:
     """
     Find an audio device index by partial name matching.
@@ -137,6 +173,7 @@ def find_audio_device_by_name(device_name: str, input_device: bool = True) -> Op
         device_name_lower = device_name.lower()
         devices = _get_device_list()
         
+        # First pass: look for exact capability match
         for device in devices:
             name = device['name'].lower()
             max_inputs = device['max_input_channels']
@@ -151,6 +188,37 @@ def find_audio_device_by_name(device_name: str, input_device: bool = True) -> Op
                 elif not input_device and max_outputs > 0:
                     logger.info(f"Found output device '{device['name']}' at index {device['index']}")
                     return device['index']
+        
+        # Second pass: PipeWire/PyAudio compatibility workaround
+        # If we're looking for an input device and found a matching device with outputs,
+        # check if it's a USB device that might have input capabilities that PyAudio can't detect
+        if input_device:
+            usb_device_found = None
+            for device in devices:
+                name = device['name'].lower()
+                max_outputs = device['max_output_channels']
+                
+                if device_name_lower in name and max_outputs > 0:
+                    usb_device_found = device
+                    break
+            
+            if usb_device_found:
+                # Check if this is likely a USB audio device that should have input
+                device_name_check = usb_device_found['name'].lower()
+                is_likely_usb_audio = any(keyword in device_name_check for keyword in 
+                    ['usb', 'airhug', 'yealink', 'jabra', 'plantronics', 'logitech'])
+                
+                if is_likely_usb_audio:
+                    logger.warning(f"PyAudio reports 0 input channels for USB device '{usb_device_found['name']}' "
+                                 f"at index {usb_device_found['index']}, but USB audio devices typically support input. "
+                                 f"This is likely a PipeWire/PyAudio compatibility issue. Attempting to use device anyway.")
+                    
+                    # Verify the device exists in ALSA
+                    if _verify_alsa_input_device(device_name):
+                        logger.info(f"ALSA confirms input capability for {device_name}, using device index {usb_device_found['index']}")
+                        return usb_device_found['index']
+                    else:
+                        logger.warning(f"ALSA verification failed for {device_name}")
                     
         logger.warning(f"No {'input' if input_device else 'output'} device found matching '{device_name}'")
         return None

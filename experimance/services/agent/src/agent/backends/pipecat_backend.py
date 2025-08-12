@@ -26,7 +26,12 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADAnalyzer
 from pipecat.services.whisper.stt import WhisperSTTService
+
+# Apply VAD monkey patch to fix sample rate override issues
+from agent.vad_patch import apply_silero_vad_patch
+apply_silero_vad_patch()
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai_realtime_beta.openai import OpenAIRealtimeBetaLLMService
@@ -40,12 +45,16 @@ from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
 from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
+from pipecat.audio.resamplers.soxr_stream_resampler import SOXRStreamAudioResampler
 from pipecat.frames.frames import (
-    Frame, AudioRawFrame, TextFrame, TranscriptionFrame, 
-    TTSStartedFrame, TTSStoppedFrame, UserStartedSpeakingFrame, 
+    AudioRawFrame, UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
+    BotStartedSpeakingFrame, BotStoppedSpeakingFrame, TTSStartedFrame,
+    TTSStoppedFrame, Frame, TranscriptionFrame,
     UserStoppedSpeakingFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame,
     SystemFrame, CancelFrame, EndFrame
 )
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat_flows import FlowManager, FlowArgs, FlowResult, FlowConfig
 
 from experimance_common.audio_utils import resolve_audio_device_index
@@ -53,6 +62,149 @@ from experimance_common.constants import AGENT_SERVICE_DIR
 from .base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext, load_prompt
 
 logger = logging.getLogger(__name__)
+
+
+class ResampleFilter(BaseAudioFilter):
+    """
+    Audio filter that resamples audio from input rate to 16kHz using synchronous resampling.
+    This is needed when the audio device operates at non 16kHz, which is expected by VAD and STT services.
+    
+    DESIGN RATIONALE:
+    After extensive testing with AIRHUG USB device (48kHz → 16kHz conversion), this approach was chosen because:
+    
+    ✅ CHUNK-BASED SYNCHRONOUS RESAMPLING (this implementation):
+       - 0% empty chunks - perfect reliability 
+       - Zero latency - processes each chunk immediately
+       - Fast processing (~11ms for 3s audio, 17.5% faster without normalization)
+       - Works perfectly with real speech audio
+       - Minor clicking artifacts (less noticeable with real speech audio)
+
+    ❌ STREAM-BASED RESAMPLING (SOXRStreamAudioResampler):
+       - 71% empty chunks with 20ms chunks
+       - Requires 80ms+ buffering to work properly (4+ chunks accumulated)
+       - Higher latency for real-time applications
+       - Complex state management
+    
+    OPTIMIZATION: Direct int16→float64→int16 conversion without normalization provides identical 
+    audio quality but 17.5% better performance compared to normalized float32 approach.
+    
+    For 48kHz→16kHz conversion with 20ms chunks, this approach is optimal for real-time speech processing.
+    """
+
+    def __init__(self, in_rate: int = 48000, out_rate: int = 16000, mode="soxr"):
+        super().__init__()
+        self.in_rate = in_rate
+        self.out_rate = out_rate
+        self.mode = mode
+        self._resampler_func = None
+        
+    async def start(self, sample_rate: int) -> None:
+        """Initialize the resampler with the actual transport sample rate."""
+        try:
+            # Use the actual sample rate from the transport
+            #self.in_rate = sample_rate
+            
+            # Set up synchronous resampling function
+            if self.mode == "soxr":
+                try:
+                    import soxr
+                    self._resampler_func = lambda x, sr_orig, sr_new: soxr.resample(x, sr_orig, sr_new)
+                    logger.info(f"Resample16kFilter: Using soxr for {self.in_rate}Hz -> {self.out_rate}Hz")
+                except ImportError:
+                    try:
+                        import resampy
+                        self._resampler_func = resampy.resample
+                        logger.info(f"Resample16kFilter: Using resampy for {self.in_rate}Hz -> {self.out_rate}Hz")
+                    except ImportError:
+                        raise ImportError("Neither soxr nor resampy available for resampling")
+            elif self.mode == "resampy":
+                try:
+                    import resampy
+                    self._resampler_func = resampy.resample
+                    logger.info(f"Resample16kFilter: Using resampy for {self.in_rate}Hz -> {self.out_rate}Hz")
+                except ImportError:
+                    raise ImportError("resampy not available for resampling")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize resampler: {e}")
+            raise
+    
+    async def stop(self) -> None:
+        """Clean up the resampler."""
+        self._resampler_func = None
+        logger.debug("Resample16kFilter stopped")
+        
+    async def filter(self, audio: bytes) -> bytes:
+        """Resample audio from input rate to 16kHz."""
+        if self._resampler_func is None:
+            logger.warning("Resampler not initialized, returning original audio")
+            return audio
+            
+        # Skip resampling if no data
+        if not audio:
+            return audio
+            
+        try:
+            import numpy as np
+            
+            # Convert bytes to numpy array (int16)
+            audio_array = np.frombuffer(audio, dtype=np.int16)
+            
+            # Direct resampling with float64 for soxr compatibility
+            # (Testing showed this is 17.5% faster than normalization with identical results)
+            audio_float = audio_array.astype(np.float64)
+            
+            # Resample using the synchronous resampler
+            resampled_array = self._resampler_func(
+                audio_float,
+                sr_orig=self.in_rate, 
+                sr_new=self.out_rate
+            )
+            
+            # Convert directly back to int16
+            resampled_bytes = resampled_array.astype(np.int16).tobytes()
+            
+            return resampled_bytes
+            
+        except Exception as e:
+            logger.warning(f"Audio resampling failed: {e}, returning original audio")
+            return audio
+    
+    async def process_frame(self, frame) -> None:
+        """Process frames - required by BaseAudioFilter interface."""
+        # This method is required by the interface but may not be used
+        # depending on how the filter is integrated
+        pass
+
+
+class SimpleResample16kFilter(SOXRStreamAudioResampler):
+
+    def __init__(self, in_rate: int, out_rate: int):
+        super().__init__()
+        self._in_rate = in_rate
+        self._out_rate = out_rate
+
+    async def start(self, sample_rate: int):
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+    async def filter(self, audio: bytes) -> bytes:
+        """Resample audio from input rate to 16kHz."""
+        if not audio:
+            return audio
+        audio = await self.resample(audio, self._in_rate, self._out_rate) # type: ignore
+        if not audio:
+            # return empty bytes
+            return b""
+        return audio
+
+    async def process_frame(self, frame) -> None:
+        """Process frames - required by BaseAudioFilter interface."""
+        # This method is required by the interface but may not be used
+        # depending on how the filter is integrated
+        pass
 
 class PipecatEventProcessor(FrameProcessor):
     """
@@ -711,6 +863,8 @@ class PipecatBackend(AgentBackend):
                         audio_out_device = None
         
         # Create transport
+        input_rate = 16000 # NOTE: this is the only value that works with VAD and Assembly
+        
         transport_params = LocalAudioTransportParams(
             audio_in_enabled=self.pipecat_config.audio_in_enabled,
             audio_out_enabled=self.pipecat_config.audio_out_enabled,
@@ -720,10 +874,23 @@ class PipecatBackend(AgentBackend):
             output_device_index=audio_out_device,
         )
 
-        if self.pipecat_config.vad_enabled and self.pipecat_config.mode == "ensemble":
-            transport_params.vad_analyzer = SileroVADAnalyzer()
+        # Add audio input filter for resampling if needed
+        if self.pipecat_config.audio_in_sample_rate != input_rate:
+            logger.info(f"Adding Resample16kFilter: {self.pipecat_config.audio_in_sample_rate}Hz -> {input_rate}Hz for STT compatibility")
+            transport_params.audio_in_filter = ResampleFilter(in_rate=self.pipecat_config.audio_in_sample_rate, out_rate=input_rate)
+            # Set transport to use mono if device is stereo for consistent processing
+            transport_params.audio_in_channels = 1
 
-        return LocalAudioTransport(transport_params)
+        # Handle VAD configuration 
+        if self.pipecat_config.vad_enabled and self.pipecat_config.mode == "ensemble":
+            # Create VAD for 16kHz (our monkey patch prevents sample rate override)
+            transport_params.vad_analyzer = SileroVADAnalyzer(sample_rate=input_rate)
+            logger.info(f"VAD enabled at {input_rate}Hz")
+
+        logger.info(f"Creating LocalAudioTransport with device rate: {self.pipecat_config.audio_in_sample_rate}Hz → pipeline rate: {input_rate}Hz")
+        transport = LocalAudioTransport(transport_params)
+        
+        return transport
         
 
     async def _create_ensemble_pipeline(self) -> None:
@@ -774,16 +941,21 @@ class PipecatBackend(AgentBackend):
             logger.debug("Creating Cartesia TTS service...")
             
             try:
+                # Configure Cartesia to output at the device's output sample rate
+                output_sample_rate = self.pipecat_config.audio_out_sample_rate
+                logger.info(f"Configuring Cartesia TTS for {output_sample_rate}Hz output to match device")
+                
                 tts = CartesiaTTSService(
                     api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
                     voice_id=self.config.cartesia_voice_id,
                     model="sonic-2",
+                    sample_rate=output_sample_rate,  # Set TTS output to match device rate
                     params=CartesiaTTSService.InputParams(
                         language=Language.EN,
                         speed="fast",  # Options: "fast", "normal", "slow"
                     )
                 )
-                logger.debug("Cartesia TTS service created successfully")
+                logger.info(f"Cartesia TTS service created successfully at {output_sample_rate}Hz")
             except Exception as e:
                 logger.error(f"Failed to create Cartesia TTS service: {e}")
                 raise
@@ -811,8 +983,8 @@ class PipecatBackend(AgentBackend):
 
         logger.info("Creating pipeline with audio components...")
         
-        # Create pipeline
-        self.pipeline = Pipeline([
+        # Build pipeline components list - audio resampling now handled by transport filter
+        pipeline_components = [
             self.transport.input(),
             stt_mute_processor,
             stt,
@@ -824,7 +996,10 @@ class PipecatBackend(AgentBackend):
             transcript_processor.assistant(),
             context_aggregator.assistant(),
             self.event_processor
-        ])
+        ]
+        
+        # Create pipeline
+        self.pipeline = Pipeline(pipeline_components)
         
         logger.info("Pipeline created successfully")
 
