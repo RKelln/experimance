@@ -119,9 +119,9 @@ trap cleanup INT TERM
 # Monitor for changes and update the local file (using polling if inotifywait not available)
 if ssh "$REMOTE_HOST" "command -v inotifywait >/dev/null 2>&1"; then
     echo "Using inotifywait for real-time monitoring..."
-    # Real-time monitoring with inotifywait
-    ssh "$REMOTE_HOST" "inotifywait -m '$REMOTE_IMAGE_DIR' -e close_write -e moved_to --format '%T %f' --timefmt '%H:%M:%S'" | \
-    while read time file; do 
+    # Real-time monitoring with inotifywait - include events for symlink updates
+    ssh "$REMOTE_HOST" "inotifywait -m '$REMOTE_IMAGE_DIR' -e close_write -e moved_to -e create -e delete -e attrib --format '%T %f %e' --timefmt '%H:%M:%S'" | \
+    while read time file event; do 
         # Check if viewer is still running
         if ! kill -0 $VIEWER_PID 2>/dev/null; then
             echo "Image viewer closed, exiting..."
@@ -129,7 +129,7 @@ if ssh "$REMOTE_HOST" "command -v inotifywait >/dev/null 2>&1"; then
         fi
         
         if [[ "$file" == "latest.jpg" ]]; then
-            echo "$time: New image generated! Downloading..."
+            echo "$time: New image generated! (event: $event) Downloading..."
             # Download new image to same local path
             # eog will auto-detect the change, feh will auto-reload
             scp $SCP_OPTS "$REMOTE_HOST:$REMOTE_LATEST" "$LOCAL_TEMP" 2>/dev/null && {
