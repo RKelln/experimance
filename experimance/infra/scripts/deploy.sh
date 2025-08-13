@@ -223,8 +223,60 @@ check_project() {
     done
 }
 
+# Update shell profiles to include pyenv and uv in PATH
+update_shell_profile() {
+    local bashrc="$HOME/.bashrc"
+    local pyenv_init_added=false
+    local uv_path_added=false
+    
+    # Check if pyenv is already configured in .bashrc
+    if [[ -f "$bashrc" ]] && grep -q "PYENV_ROOT" "$bashrc"; then
+        pyenv_init_added=true
+    fi
+    
+    # Check if uv path is already configured in .bashrc
+    if [[ -f "$bashrc" ]] && grep -q "\$HOME/\.local/bin" "$bashrc"; then
+        uv_path_added=true
+    fi
+    
+    # Add pyenv initialization to .bashrc if not present
+    if [[ "$pyenv_init_added" == false ]]; then
+        log "Adding pyenv initialization to ~/.bashrc..."
+        cat >> "$bashrc" << 'EOF'
+
+# Added by experimance deploy script - pyenv configuration
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+if command -v pyenv >/dev/null 2>&1; then
+    eval "$(pyenv init --path)"
+    eval "$(pyenv init -)"
+fi
+EOF
+    fi
+    
+    # Add uv path to .bashrc if not present
+    if [[ "$uv_path_added" == false ]]; then
+        log "Adding uv to PATH in ~/.bashrc..."
+        cat >> "$bashrc" << 'EOF'
+
+# Added by experimance deploy script - uv configuration
+export PATH="$HOME/.local/bin:$PATH"
+EOF
+    fi
+    
+    if [[ "$pyenv_init_added" == false ]] || [[ "$uv_path_added" == false ]]; then
+        log "Shell profile updated. Changes will take effect in new terminal sessions."
+        log "Run 'source ~/.bashrc' to use the new settings in this terminal."
+    fi
+}
+
 # Create symlink for standard installation directory
 create_symlink() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        log "Skipping symlink creation in development mode"
+        return
+    fi
+    
     local install_dir="$1"
     local symlink_target="/opt/experimance"
     
@@ -901,6 +953,10 @@ else:
             if ! uv sync; then
                 error "Failed to install project dependencies"
             fi
+            
+            # Ensure shell profile is updated for persistent access
+            update_shell_profile
+            
             log "Dependencies installed for development with Python 3.11"
         else
             log "Installing pyenv and Python 3.11 for development..."
@@ -1021,6 +1077,9 @@ else:
             else
                 error "uv installation failed or not found. Expected at: $HOME/.local/bin/uv"
             fi
+            
+            # Update shell profile for persistent access
+            update_shell_profile
             
             cd "$REPO_DIR"
             if ! uv sync; then
@@ -1468,6 +1527,15 @@ main() {
             
             if [[ "$MODE" == "dev" ]]; then
                 log "Development installation complete!"
+                log ""
+                log "IMPORTANT: To use Python and uv in new terminal sessions, run:"
+                log "  source ~/.bashrc"
+                log "Or restart your terminal."
+                log ""
+                log "To verify installation:"
+                log "  python --version    # Should show Python 3.11.x"
+                log "  uv --version        # Should show uv version"
+                log ""
                 log "To test services: Use './scripts/dev <service>'"
                 log "To install for production: sudo ./deploy.sh $PROJECT install prod"
             else
