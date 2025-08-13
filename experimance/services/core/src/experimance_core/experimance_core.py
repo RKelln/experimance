@@ -1222,8 +1222,8 @@ class ExperimanceCoreService(BaseService):
 
         if blur and self.config.camera.blur_depth:
             # Apply Gaussian blur to reduce noise
-            image = cv2.GaussianBlur(image, (17, 17), 0)
-        
+            image = cv2.GaussianBlur(image, (self.config.camera.blur_amount, self.config.camera.blur_amount), 0)
+
         return image
 
 

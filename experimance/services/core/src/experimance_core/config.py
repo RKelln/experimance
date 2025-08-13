@@ -248,7 +248,13 @@ class CameraConfig(BaseModel):
         default=False,
         description="Apply Gaussian blur to depth map to reduce noise"
     )
-    
+
+    blur_amount: int = Field(
+        default=17,
+        ge=3,
+        description="Gaussian blur kernel size (must be odd and positive)"
+    )
+
     # Mask stability parameters
     mask_stability_frames: int = Field(
         default=20,
