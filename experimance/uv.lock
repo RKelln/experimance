@@ -846,6 +846,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyglet" },
     { name = "pyrealsense2" },
+    { name = "rich" },
     { name = "tenacity" },
 ]
 
@@ -890,6 +891,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-mock", marker = "extra == 'dev'" },
+    { name = "rich", specifier = ">=13.7.1" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "tenacity", specifier = ">=9.1.2" },
 ]
