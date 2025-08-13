@@ -37,6 +37,15 @@ dev = [
     "mypy",
     "ruff",
 ]
+local_gen = [
+    "torch>=2.1.0",
+    "diffusers>=0.27.0",
+    "transformers>=4.39.0",
+    "accelerate>=0.27.0",
+    "safetensors>=0.4.2",
+    "tqdm>=4.64.0",
+    "xformers>=0.0.23; platform_system=='Linux' and platform_machine=='x86_64'",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

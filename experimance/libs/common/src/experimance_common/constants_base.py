@@ -116,6 +116,7 @@ VIDEOS_DIR_ABS = VIDEOS_DIR.absolute()
 # other directories
 LOGS_DIR = PROJECT_ROOT / "logs"
 DATA_DIR = PROJECT_ROOT / "data"
+MODELS_DIR = PROJECT_ROOT / "models"
 
 def get_project_config_path(service_name: str, fallback_dir: Path | None = None) -> Path:
     """

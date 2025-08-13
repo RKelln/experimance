@@ -14,7 +14,7 @@ from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2I
 from image_server.generators.vastai.vastai_generator import VastAIGenerator
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 #from image_server.generators.openai.openai_generator import OpenAIGenerator, OpenAIGeneratorConfig
-#from image_server.generators.local.sdxl_generator import LocalSDXLGenerator, SDXLGeneratorConfig
+from image_server.generators.local.sdxl_generator import LocalSDXLGenerator, LocalSDXLConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,10 @@ GENERATORS = {
     #     "config_class": OpenAIGeneratorConfig,
     #     "generator_class": OpenAIGenerator
     # },
-    # "local": {
-    #     "config_class": SDXLGeneratorConfig,
-    #     "generator_class": LocalSDXLGenerator
-    # },
+    "local_sdxl": {
+        "config_class": LocalSDXLConfig,
+        "generator_class": LocalSDXLGenerator
+    },
 }
 
 def create_generator_from_config(

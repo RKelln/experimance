@@ -26,6 +26,7 @@ from image_server.generators.config import GENERATOR_NAMES
 from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
+from image_server.generators.local.sdxl_generator import LocalSDXLConfig
 
 # For future use when other generators are implemented:
 #from image_server.generators.mock.mock_generator import MockGeneratorConfig
@@ -102,9 +103,14 @@ class ImageServerConfig(BaseServiceConfig):
         description="Configuration for mock generator"
     )
     
+    local_sdxl: LocalSDXLConfig = Field(
+        default_factory=LocalSDXLConfig,
+        description="Configuration for local SDXL generator"
+    )
+    
     sdxl: Dict = Field(
         default_factory=dict,
-        description="Configuration for SDXL generator"
+        description="Configuration for SDXL generator (deprecated, use local_sdxl)"
     )
     
     fal_comfy: FalComfyGeneratorConfig = Field(

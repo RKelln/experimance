@@ -11,6 +11,7 @@ GENERATOR_NAMES = Literal[
     "vastai",
     "fal_comfy",
     "fal_lightning_i2i",
+    "local_sdxl",
 ]
 
 class BaseGeneratorConfig(BaseConfig, MessageSchema):
