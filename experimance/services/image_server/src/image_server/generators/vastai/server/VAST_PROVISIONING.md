@@ -8,7 +8,7 @@ This is the simplest way to deploy the Experimance image generation server on va
 2. **Set environment variables**:
    ```
    PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw
-   GITHUB_ACCESS_TOKEN=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
+   GITHUB_ACCESS_TOKEN=github_pat_YOUR_ACCESS_TOKEN
    ```
 3. **Start instance** - the script will automatically install everything
 4. **Access via Instance Portal** - Click "Open" → "Experimance Image Server"
