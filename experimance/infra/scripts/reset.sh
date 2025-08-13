@@ -67,6 +67,13 @@ fi
 # Wait for audio system to stabilize
 sleep 3
 
+# Wait for a display (projector/monitor) so display service doesn't crash
+if "${SCRIPT_DIR}/wait_for_display.sh" >> "$LOG_FILE" 2>&1; then
+    log "Display detected and ready"
+else
+    log "WARNING: Display not detected before timeout; continuing anyway"
+fi
+
 # Check system resources before restart
 log "System status before restart:"
 log "Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
