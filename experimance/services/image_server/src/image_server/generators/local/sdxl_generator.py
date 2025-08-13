@@ -10,8 +10,6 @@ import asyncio
 import logging
 from typing import Optional, Any, Callable
 from pathlib import Path
-import base64
-from io import BytesIO
 
 from PIL import Image
 from pydantic import Field
@@ -58,6 +56,7 @@ class LocalSDXLConfig(BaseGeneratorConfig):
     controlnet_id: Optional[str] = "diffusers/controlnet-depth-sdxl-1.0-small"
     steps: int = 6
     guidance_scale: float = 1.5
+    strength: float = 0.4 # image-to-image strength, if image is passed into generator
     width: int = 1024
     height: int = 1024
     compile_unet: bool = True
@@ -80,9 +79,14 @@ class LocalSDXLGenerator(ImageGenerator):
     """
 
     def _configure(self, config: Any, **kwargs):  # type: ignore[override]
-        # config may be a BaseGeneratorConfig coming from factory; we ignore most fields for now
-        cfg = kwargs.get("lightning_config") or kwargs.get("local_config") or LocalSDXLConfig()
-        self.cfg: LocalSDXLConfig = cfg
+        # Use provided config if it's a LocalSDXLConfig, otherwise fall back to defaults
+        if isinstance(config, LocalSDXLConfig):
+            self.cfg: LocalSDXLConfig = config
+        else:
+            # config may be a BaseGeneratorConfig coming from factory; we ignore most fields for now
+            cfg = kwargs.get("lightning_config") or kwargs.get("local_config") or LocalSDXLConfig()
+            self.cfg: LocalSDXLConfig = cfg
+        
         self._pipeline: Optional[StableDiffusionXLControlNetPipeline] = None  # type: ignore
 
         # Allow overrides
@@ -126,12 +130,13 @@ class LocalSDXLGenerator(ImageGenerator):
             # Treat as local filename
             return ('file', model, model)
 
-    async def generate_image(self, prompt: str, *, depth_map_b64: Optional[str] = None, **kwargs) -> str:  # type: ignore[override]
+    async def generate_image(self, prompt: str, *, image: Optional[Image.Image] = None, depth_map: Optional[Image.Image] = None, **kwargs) -> str:  # type: ignore[override]
         """Generate an image for the given prompt.
 
         Args:
             prompt: Text prompt
-            depth_map_b64: Optional base64-encoded depth map (applied if ControlNet active)
+            image: Optional PIL Image for image-to-image generation
+            depth_map: Optional PIL Image depth map (applied if ControlNet active)
 
         Returns:
             Path to saved output image.
@@ -155,17 +160,46 @@ class LocalSDXLGenerator(ImageGenerator):
             prompt=prompt,
             num_inference_steps=gen_steps,
             guidance_scale=guidance,
-            width=width,
-            height=height,
             generator=generator,
             output_type="pil",
         )
 
-        if depth_map_b64 and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
-            pipe_inputs["image"] = self._decode_depth_map(depth_map_b64)
+        # Handle different generation modes
+        if image is not None:
+            # Image-to-image generation
+            pipe_inputs["image"] = image
+            pipe_inputs["strength"] = kwargs.get("strength", 0.8)  # Default strength for i2i
+            
+            # For image-to-image, we typically don't specify exact dimensions
+            # The pipeline will use the input image dimensions
+            if "width" not in kwargs and "height" not in kwargs:
+                # Don't set width/height, let pipeline use input image dimensions
+                pass
+            else:
+                pipe_inputs["width"] = width
+                pipe_inputs["height"] = height
+        else:
+            # Text-to-image generation
+            pipe_inputs["width"] = width
+            pipe_inputs["height"] = height
+
+        # Add ControlNet depth map if provided (takes precedence over img2img image)
+        if depth_map and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
+            pipe_inputs["image"] = depth_map
+            # For ControlNet, we always need to specify dimensions
+            pipe_inputs["width"] = width
+            pipe_inputs["height"] = height
+            # Remove img2img strength if using ControlNet
+            pipe_inputs.pop("strength", None)
 
         model_type, _, _ = self._detect_model_type(self.cfg.model)
-        logger.info("LocalSDXL(%s): generating (%s steps, cfg=%.2f)", model_type, gen_steps, guidance)
+        if depth_map and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
+            generation_mode = "controlnet"
+        elif image is not None:
+            generation_mode = "img2img"
+        else:
+            generation_mode = "txt2img"
+        logger.info("LocalSDXL(%s): generating %s (%s steps, cfg=%.2f)", model_type, generation_mode, gen_steps, guidance)
 
         result = await asyncio.to_thread(self._pipeline, **pipe_inputs)
         if not hasattr(result, "images") or not result.images:
@@ -176,12 +210,14 @@ class LocalSDXLGenerator(ImageGenerator):
         return output_path
 
     async def _init_pipeline(self) -> None:
+        # Testing path: use injected pipeline factory if provided
+        if self.cfg.pipeline_factory:
+            logger.warning("using injected pipeline factory (test mode)")
+            self._pipeline = self.cfg.pipeline_factory()
+            return
+            
         # Lightweight testing path: allow injected pipeline factory even when diffusers absent
         if not _DIFFUSERS_AVAILABLE:
-            if self.cfg.pipeline_factory:
-                logger.warning("diffusers not available; using injected pipeline factory (test mode)")
-                self._pipeline = self.cfg.pipeline_factory()
-                return
             raise RuntimeError("diffusers/torch not installed. Install extras: local_gen")
 
         self.cfg.models_dir.mkdir(parents=True, exist_ok=True)
@@ -374,13 +410,6 @@ class LocalSDXLGenerator(ImageGenerator):
                     async for chunk in resp.content.iter_chunked(1 << 20):
                         f.write(chunk)
         tmp.rename(target)
-
-    @staticmethod
-    def _decode_depth_map(depth_map_b64: str) -> Image.Image:
-        if depth_map_b64.startswith("data:"):
-            depth_map_b64 = depth_map_b64.split(",", 1)[1]
-        data = base64.b64decode(depth_map_b64)
-        return Image.open(BytesIO(data)).convert("RGB")
 
 
 """Backward compatibility aliases (can be deprecated later)."""
