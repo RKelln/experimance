@@ -30,7 +30,7 @@ from queue import Queue
 # Set up logging
 log_dir = Path('/var/log/experimance')
 log_dir.mkdir(parents=True, exist_ok=True)
-log_file = log_dir / f'reset_controller_{os.getpid()}.log'
+log_file = log_dir / f'input.log'
 
 logging.basicConfig(
     level=logging.INFO,

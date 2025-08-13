@@ -36,7 +36,12 @@ dependencies = [
     "psutil>=7.0.0",
     "onnxruntime>=1.22.1",
     "tenacity>=9.1.2",
+    "rich>=13.7.1",
 ]
+
+[project.scripts]
+transcripts = "experimance.transcripts_cli:main"
+vastai = "experimance.vastai_cli:main"
 
 [tool.uv.workspace]
 members = ["services/*", "libs/*"]

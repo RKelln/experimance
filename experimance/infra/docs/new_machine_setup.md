@@ -41,7 +41,7 @@
     # 2. Vulkan & VA-API accel for video playback
     sudo apt install mesa-vulkan-drivers mesa-va-drivers libvulkan1
 
-    # 3. Create the directtory you want experimance to live
+    # 3. Create the directory you want experimance to live
     mkdir -p Documents/art
     cd Documents/art
 
@@ -49,6 +49,11 @@
     git clone https://github.com/RKelln/experimance.git
 
     cd experimance/experimance
+
+    # create symlink for easy access
+    cd ~
+    ln -s Documents/art/experimance/experimance/
+    cd experimance
     ```
 
 ## 4 | Deploy the application
@@ -60,4 +65,118 @@ You can deploy in dev (development) or prod (production) mode. See the [infrastr
 ```
 
 This will install all dependencies, including `uv` (used for python package management and virtual environments) and `pyenv` (used for managing Python versions) and all Ubuntu packages needed.
+
+
+## 5 | SSH remote access (key only)
+
+1. **Install OpenSSH Server on the Target Machine**
+
+    On the machine you want to access remotely (the "target"), run:
+
+    ```bash
+    sudo apt update
+    sudo apt install openssh-server
+    sudo systemctl enable --now ssh
+    ```
+
+    To check the SSH service status:
+    ```bash
+    sudo systemctl status ssh
+    ```
+
+2. **Find the Target Machine’s Local IP Address**
+
+    On the target machine, run:
+    ```bash
+    hostname -I
+    ```
+    Note the IP address (e.g., `192.168.1.42`).
+
+3. **Test SSH Access from the Source Machine**
+
+    On your existing Ubuntu machine (the "source"), run:
+    ```bash
+    ssh <username>@<target-ip>
+    # Example:
+    ssh experimance@192.168.1.42
+    ```
+    Accept the fingerprint prompt and enter the password when asked.
+
+4. **(Optional) Set Up Passwordless SSH Login**
+
+    On the source machine:
+    ```bash
+    ssh-keygen   # Press Enter to accept defaults
+    ssh-copy-id <username>@<target-ip>
+    # Example:
+    ssh-copy-id experimance@192.168.1.42
+    ```
+    Now you can SSH without a password.
+
+**Troubleshooting:**
+- Ensure both machines are on the same network and can ping each other.
+- If SSH fails, check firewall settings:
+  ```bash
+  sudo ufw allow ssh
+  sudo ufw status
+  ```
+- If you change the default SSH port, specify it with `-p <port>`.
+
+
+## 6 | Creating a New 'experimance' User (with sudo access)
+
+1. **Check if the user already exists:**
+
+    ```bash
+    id experimance
+    ```
+    If you see "no such user," continue below.
+
+2. **Create the user and set a password:**
+
+    ```bash
+    sudo adduser experimance
+    ```
+    Follow the prompts to set a password and (optionally) user info.
+
+3. **Add the user to the sudo group:**
+
+    ```bash
+    sudo usermod -aG sudo experimance
+    ```
+
+4. **(Optional) Switch to the new user:**
+
+    ```bash
+    su - experimance
+    ```
+
+5. **(Optional) Add home dirs:**
+   When logged in as eexperimance user if home directory empty:
+   ```bash
+   xdg-user-dirs-update
+   ```
+
+## 7 | Lock down SSH
+
+    In the project root:
+    ```bash
+    sudo infra/scripts/secure_ssh.sh status
+    sudo infra/scripts/secure_ssh.sh test-keys
+    sudo infra/scripts/secure_ssh.sh secure
+    ```
+
+## 8 | Run deploy
+
+    In the project root:
+
+    Production deploy of experimance project:
+    ```bash
+    sudo infra/scripts/deploy.sh experimance install prod
+    ```
+
+    Dev install of fire project:
+    ```bash
+    infra/scripts/deploy.sh fire install dev
+    ```
 
