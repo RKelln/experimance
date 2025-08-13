@@ -41,6 +41,7 @@ dependencies = [
 
 [project.scripts]
 transcripts = "experimance.transcripts_cli:main"
+vastai = "experimance.vastai_cli:main"
 
 [tool.uv.workspace]
 members = ["services/*", "libs/*"]

@@ -2,6 +2,16 @@
 """
 CLI tool for managing Vast.ai instances for Experimance Image Generation.
 
+DEPRECATION: This script has been promoted to a packaged console command.
+Prefer running:
+
+    uv run vastai <command>
+
+The maintained implementation now lives in `experimance/vastai_cli.py` and
+is exposed via the `vastai` entry point in `pyproject.toml`.
+
+This legacy script remains temporarily for backwards compatibility.
+
 Usage:
     python scripts/vastai_manager_cli.py <command> [options]
 
