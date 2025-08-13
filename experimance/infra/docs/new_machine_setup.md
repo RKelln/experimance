@@ -22,7 +22,7 @@
     
     Save & exit.
 
-## 3 | Install Linux (30 min)
+## 3 | Install Linux and the project (30 min)
 
     Boot from USB installer.
     *Install Ubuntu 24.04 LTS* (or later).
@@ -38,14 +38,18 @@
     # 1. system up to date
     sudo apt update && sudo apt full-upgrade
 
-    # 2. Vulkan & VA-API accel for video playback
-    sudo apt install mesa-vulkan-drivers mesa-va-drivers libvulkan1
+    # 2. Install git
+    sudo apt install git
 
-    # 3. Create the directory you want experimance to live
+    # 3. Set git credentials
+    git config --global user.name "Your Name"
+    git config --global user.email "your.email@example.com"
+
+    # 4. Create the directtory you want experimance to live
     mkdir -p Documents/art
     cd Documents/art
 
-    # clone the repo
+    # 5. clone the repo
     git clone https://github.com/RKelln/experimance.git
 
     cd experimance/experimance
