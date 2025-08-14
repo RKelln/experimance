@@ -316,6 +316,12 @@ class SubscriberComponent(BaseZmqComponent):
     Subscriber component for SUB socket.
     
     Handles topic subscription and message receiving with async message handling.
+    
+    Topic Subscription Behavior:
+    - Subscribes to specific topics from config.topics list
+    - Empty string topic ("") subscribes to ALL topics (ZMQ standard behavior)
+    - Handler for "" will receive ALL messages regardless of their specific topic
+    - Specific topic handlers take priority over the catch-all "" handler
     """
     
     def __init__(self, config: SubscriberConfig, context: Optional[zmq.asyncio.Context] = None):
@@ -353,9 +359,14 @@ class SubscriberComponent(BaseZmqComponent):
         Register a handler for a specific topic.
         
         Args:
-            topic: Topic to handle messages for
+            topic: Topic to handle messages for. Use "" (empty string) to handle ALL topics.
             handler: Function that takes (message) parameter where message is MessageDataType.
                     Can be sync or async.
+                    
+        Note:
+            - Handler for "" (empty topic) receives ALL messages regardless of their topic
+            - Specific topic handlers take priority over the catch-all "" handler
+            - Must subscribe to "" in config.topics for catch-all behavior to work
         """
         self.topic_handlers[topic] = handler
         self.logger.debug(f"Registered handler for topic '{topic}'")
@@ -438,6 +449,19 @@ class SubscriberComponent(BaseZmqComponent):
                         except Exception as e:
                             self.logger.error(f"Error in handler for topic '{topic}': {e}")
                     
+                    # Check for empty topic handler (subscribes to all topics)
+                    elif "" in self.topic_handlers or "*" in self.topic_handlers:
+                        handler = self.topic_handlers.get("", self.topic_handlers.get("*"))
+                        if handler:
+                            try:
+                                if asyncio.iscoroutinefunction(handler):
+                                    await handler(message)
+                                else:
+                                    handler(message)
+                            except Exception as e:
+                                self.logger.error(f"Error in catch-all handler for topic '{topic}': {e}")
+                        else:
+                            self.logger.warning(f"No catch-all handler registered for topic '{topic}'")
                     # Call default handler if no specific handler found
                     elif self.default_handler:
                         try:
