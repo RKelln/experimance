@@ -35,8 +35,11 @@ from experimance_common.zmq.components import PushComponent, PullComponent
 from experimance_common.zmq.config import ControllerPushConfig, ControllerPullConfig
 from experimance_common.zmq.zmq_utils import prepare_image_source, IMAGE_TRANSPORT_MODES
 
+PROJECT_ENV = os.getenv("PROJECT_ENV", "experimance").lower()
 # Import project-specific schemas (Era, Biome, RenderRequest)
-from experimance_common.schemas import Era, Biome, RenderRequest
+if PROJECT_ENV == "experimance":
+    from experimance_common.schemas import Era, Biome
+from experimance_common.schemas import RenderRequest
 
 # Try to import prompt generator for enhanced prompt generation
 try:
@@ -140,8 +143,8 @@ class ImageServerClient:
         prompt: str,
         depth_map_path: Optional[Path] = None,
         image_path: Optional[Path] = None,
-        era: str = "wilderness",
-        biome: str = "temperate_forest"
+        era: Optional[str] = None,
+        biome: Optional[str] = None
     ) -> str:
         request_id = str(uuid.uuid4())
         
@@ -165,17 +168,18 @@ class ImageServerClient:
                 transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
                 request_id=request_id,
             )
-        
+
         # Create proper RenderRequest object like core service does
         request = RenderRequest(
             request_id=request_id,
-            era=Era(era),  # Convert string to enum
-            biome=Biome(biome),  # Convert string to enum
             prompt=prompt,
             depth_map=depth_map_source,
             image=image_source
         )
-        
+        if PROJECT_ENV == "experimance":
+            request.era = Era(era) if era else None
+            request.biome = Biome(biome) if biome else None
+
         logger.debug(f"Sending RenderRequest: {request.request_id}")
         assert self.push_component is not None, "PushComponent not initialized"
         await self.push_component.push(request)
@@ -263,20 +267,21 @@ async def interactive_mode(debug: bool = False):
 
             # Prompt selection
             print("\nSelect a prompt source:")
-            print("  1. Generate from era/biome (recommended)" if prompt_gen else "  1. Generate from era/biome (unavailable)")
-            print("  2. Select from predefined prompts")
-            print("  3. Enter custom prompt")
+            print("  1. Select from predefined prompts")
+            print("  2. Enter custom prompt")
+            if PROJECT_ENV == "experimance":
+                print("  3. Generate from era/biome (recommended)" if prompt_gen else "  3. Generate from era/biome (unavailable)")
 
             if prompt_gen:
-                prompt_choice = input("Choose option (1-3, default=1): ") or "1"
+                prompt_choice = input("Choose option (1-3, default=3): ") or "3"
             else:
-                prompt_choice = input("Choose option (2-3, default=2): ") or "2"
+                prompt_choice = input("Choose option (1-2, default=1): ") or "1"
 
             selected_prompt = ""
             selected_era = "wilderness"
             selected_biome = "temperate_forest"
 
-            if prompt_choice == "1" and prompt_gen:
+            if prompt_choice == "3" and prompt_gen:
                 # Era/biome based prompt generation
                 print(f"\nEra selection (available: {len(available_eras)}):")
                 for i, era in enumerate(available_eras):
@@ -329,7 +334,7 @@ async def interactive_mode(debug: bool = False):
                     print(f"Error generating prompt: {e}")
                     selected_prompt = "A beautiful landscape"
 
-            elif prompt_choice == "2":
+            elif prompt_choice == "1":
                 # Predefined prompts
                 print("\nSelect a predefined prompt:")
                 print("  0. Enter custom prompt")
@@ -350,27 +355,28 @@ async def interactive_mode(debug: bool = False):
                 # Custom prompt
                 selected_prompt = input("Enter your custom prompt: ")
 
-            # Era and biome selection (if not already set from prompt generation)
-            if prompt_choice != "1" or not prompt_gen:
-                print(f"\nEra context (default: wilderness):")
-                era_options = [e.value for e in Era]
-                for i, era in enumerate(era_options):
-                    print(f"  {i+1}. {era}")
-                era_choice = input(f"Choose era (1-{len(era_options)}, default=1): ") or "1"
-                try:
-                    selected_era = era_options[int(era_choice) - 1]
-                except (ValueError, IndexError):
-                    selected_era = "wilderness"
+            if PROJECT_ENV == "experimance":
+                # Era and biome selection (if not already set from prompt generation)
+                if prompt_choice != "3" or not prompt_gen:
+                    print(f"\nEra context (default: wilderness):")
+                    era_options = [e.value for e in Era]
+                    for i, era in enumerate(era_options):
+                        print(f"  {i+1}. {era}")
+                    era_choice = input(f"Choose era (1-{len(era_options)}, default=1): ") or "1"
+                    try:
+                        selected_era = era_options[int(era_choice) - 1]
+                    except (ValueError, IndexError):
+                        selected_era = "wilderness"
 
-                print(f"\nBiome context (default: temperate_forest):")
-                biome_options = [b.value for b in Biome]
-                for i, biome in enumerate(biome_options):
-                    print(f"  {i+1}. {biome}")
-                biome_choice = input(f"Choose biome (1-{len(biome_options)}, default=2): ") or "2"
-                try:
-                    selected_biome = biome_options[int(biome_choice) - 1]
-                except (ValueError, IndexError):
-                    selected_biome = "temperate_forest"
+                    print(f"\nBiome context (default: temperate_forest):")
+                    biome_options = [b.value for b in Biome]
+                    for i, biome in enumerate(biome_options):
+                        print(f"  {i+1}. {biome}")
+                    biome_choice = input(f"Choose biome (1-{len(biome_options)}, default=2): ") or "2"
+                    try:
+                        selected_biome = biome_options[int(biome_choice) - 1]
+                    except (ValueError, IndexError):
+                        selected_biome = "temperate_forest"
 
             # Source image selection (for image-to-image generation)
             use_source_image = input("\nUse a source image for image-to-image generation? (y/N): ").lower() == 'y'
@@ -452,8 +458,9 @@ async def interactive_mode(debug: bool = False):
             # Show summary and confirm
             print("\n=== Request Summary ===")
             print(f"Prompt: {selected_prompt}")
-            print(f"Era: {selected_era}")
-            print(f"Biome: {selected_biome}")
+            if PROJECT_ENV == "experimance":
+                print(f"Era: {selected_era}")
+                print(f"Biome: {selected_biome}")
             print(f"Source Image: {'Yes - ' + str(source_image_path) if source_image_path else 'No'}")
             print(f"Depth Map: {'Yes - ' + str(depth_map_path) if depth_map_path else 'No'}")
             
@@ -473,13 +480,16 @@ async def interactive_mode(debug: bool = False):
                 continue
 
             # Send request and wait for response
-            request_id = await client.send_render_request(
-                prompt=selected_prompt,
-                depth_map_path=depth_map_path,
-                image_path=source_image_path,
-                era=selected_era,
-                biome=selected_biome
-            )
+            request = {
+                "prompt": selected_prompt,
+                "depth_map_path": depth_map_path,
+                "image_path": source_image_path,
+            }
+            if PROJECT_ENV == "experimance":
+                request["era"] = selected_era
+                request["biome"] = selected_biome
+
+            request_id = await client.send_render_request(**request)
 
             print(f"\nRequest {request_id} sent. Waiting for response...")
             start_time = time.monotonic()   
@@ -534,13 +544,17 @@ async def command_line_mode(args):
         depth_map_path = Path(args.depth_map) if args.depth_map else None
         source_image_path = Path(args.source_image) if args.source_image else None
 
-        request_id = await client.send_render_request(
-            prompt=args.prompt,
-            depth_map_path=depth_map_path,
-            image_path=source_image_path,
-            era=args.era,
-            biome=args.biome
-        )
+        # Send request and wait for response
+        request = {
+            "prompt": selected_prompt,
+            "depth_map_path": depth_map_path,
+            "image_path": source_image_path,
+        }
+        if PROJECT_ENV == "experimance":
+            request["era"] = selected_era
+            request["biome"] = selected_biome
+
+        request_id = await client.send_render_request(**request)
 
         if args.no_wait:
             print(f"Request {request_id} sent. Not waiting for response.")
@@ -583,20 +597,21 @@ def main():
         type=str,
         help="Text prompt for image generation"
     )
-    parser.add_argument(
-        "--era", "-e",
-        type=str,
-        choices=[e.value for e in Era],
-        default="wilderness",
-        help="Era context for the image"
-    )
-    parser.add_argument(
-        "--biome", "-b",
-        type=str,
-        choices=[b.value for b in Biome],
-        default="temperate_forest",
-        help="Biome context for the image"
-    )
+    if PROJECT_ENV == "experimance":
+        parser.add_argument(
+            "--era", "-e",
+            type=str,
+            choices=[e.value for e in Era],
+            default="wilderness",
+            help="Era context for the image"
+        )
+        parser.add_argument(
+            "--biome", "-b",
+            type=str,
+            choices=[b.value for b in Biome],
+            default="temperate_forest",
+            help="Biome context for the image"
+        )
     parser.add_argument(
         "--depth-map", "--depth_map", "-d",
         type=str,

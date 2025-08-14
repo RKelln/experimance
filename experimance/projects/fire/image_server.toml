@@ -16,7 +16,6 @@ timeout = 120
 [local_sdxl]
 # Model source - can be URL, HuggingFace ID (org/name), or local filename
 model = "https://storage.googleapis.com/experimance_models/juggernautXL_juggXILightningByRD.safetensors"
-controlnet_id = null
 # Generation parameters
 steps = 6
 guidance_scale = 1.5
@@ -24,7 +23,7 @@ strength = 0.2  # Image-to-image strength (0.0 = keep original, 1.0 = completely
 width = 1024
 height = 1024
 # Performance settings
-compile_unet = true          # Enable PyTorch compilation for max speed (slow startup)
+compile_unet = false          # Enable PyTorch compilation for max speed (slow startup)
 warmup_on_start = true       # Generate dummy image on startup to warm caches
 
 # Fake image generator
