@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Sohkepayin Core Service.
+Feed the Fires Core Service.
 
-Main service that orchestrates the Sohkepayin installation by:
+Main service that orchestrates the Fire installation by:
 1. Listening for stories from the agent service
 2. Analyzing stories to infer environmental settings
 3. Generating base panorama images
@@ -66,7 +66,7 @@ class ActiveRequest:
 
 class FireCoreService(BaseService):
     """
-    Core service for the Sohkepayin installation.
+    Core service for the Fire installation.
     
     Manages the complete pipeline from story to panoramic visualization:
     - Story analysis and location inference
@@ -77,7 +77,7 @@ class FireCoreService(BaseService):
     """
     
     def __init__(self, config: FireCoreConfig):
-        """Initialize the Sohkepayin core service."""
+        """Initialize the Fire core service."""
         super().__init__(
             service_name=config.service_name,
             service_type=SERVICE_TYPE
@@ -114,11 +114,11 @@ class FireCoreService(BaseService):
         # ZMQ communication will be initialized in start()
         self.zmq_service: ControllerService = None  # type: ignore # Will be initialized in start()
         
-        logger.info("Sohkepayin core service initialized")
+        logger.info("Fire core service initialized")
     
     async def start(self):
         """Start the service and initialize ZMQ communication."""
-        logger.info("Starting Sohkepayin core service")
+        logger.info("Starting Fire core service")
         
         # Initialize ZMQ service
         self.zmq_service = ControllerService(self.config.zmq)
@@ -143,7 +143,7 @@ class FireCoreService(BaseService):
     
     async def stop(self):
         """Stop the service gracefully."""
-        logger.info("Stopping Sohkepayin core service")
+        logger.info("Stopping Fire core service")
         
         if self.zmq_service:
             await self.zmq_service.stop()
@@ -457,7 +457,7 @@ async def run_fire_core_service(
     args: Optional[argparse.Namespace] = None
 ) -> None:
     """
-    Run the Sohkepayin core service.
+    Run the Fire core service.
     
     Args:
         config_path: Path to configuration file
@@ -473,5 +473,5 @@ async def run_fire_core_service(
     service = FireCoreService(config)
     
     await service.start()
-    logger.info("Sohkepayin core service started successfully")
+    logger.info("Fire core service started successfully")
     await service.run()

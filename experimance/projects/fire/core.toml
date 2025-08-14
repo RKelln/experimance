@@ -1,6 +1,6 @@
 # Sohkepayin Core Service Configuration
 
-service_name = "sohkepayin_core"
+service_name = "fire_core"
 
 [panorama]
 # Base panorama dimensions (before mirroring)

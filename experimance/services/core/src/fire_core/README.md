@@ -1,18 +1,18 @@
-# Sohkepayin Core Service
+# Feed the Fires Core Service
 
-The core orchestration service for the Sohkepayin interactive art installation. This service manages the complete pipeline from audience stories to immersive panoramic visualizations.
+The core orchestration service for the Feed the Fires interactive art installation. This service manages the complete pipeline from audience stories to immersive panoramic visualizations.
 
 ## Quick Start
 
 ```bash
 # Set project environment
-export PROJECT_ENV=sohkepayin
+export PROJECT_ENV=fire
 
 # Install the service (from experimance root)
 uv pip install -e services/core
 
 # Run the service
-uv run -m sohkepayin_core
+uv run -m fire_core
 ```
 
 ## What it does
@@ -32,7 +32,7 @@ uv run -m sohkepayin_core
 
 ## Configuration
 
-Main config file: `projects/sohkepayin/core.toml`
+Main config file: `projects/fire/core.toml`
 
 Key settings:
 - **Panorama dimensions**: Base image size before mirroring
@@ -65,7 +65,7 @@ Tile Requests → Tile Images Ready → Complete
 
 ## Environment Variables
 
-- `PROJECT_ENV=sohkepayin`: Enable Sohkepayin mode
+- `PROJECT_ENV=fire`: Enable Feed the Fires mode
 - `OPENAI_API_KEY`: API key for OpenAI LLM
 
 ## Development
@@ -74,15 +74,15 @@ Tile Requests → Tile Images Ready → Complete
 
 ```bash
 # Run with mock LLM (no API key needed)
-uv run -m sohkepayin_core --llm-provider mock
+uv run -m fire_core --llm-provider mock
 
 # Debug mode
-uv run -m sohkepayin_core --log-level DEBUG
+uv run -m fire_core --log-level DEBUG
 ```
 
 ### Adding New Biomes
 
-1. Add biome to `projects/sohkepayin/schemas.py`
+1. Add biome to `projects/fire/schemas.py`
 2. Update biome templates in `prompt_builder.py`
 3. Test with mock stories
 
@@ -96,4 +96,4 @@ uv run -m sohkepayin_core --log-level DEBUG
 
 - **Input**: `StoryHeard`, `UpdateLocation` from agent service
 - **Output**: `RenderRequest` to image_server, `DisplayMedia` to display service
-- **Ports**: See `projects/sohkepayin/core.toml` for ZMQ configuration
+- **Ports**: See `projects/fire/core.toml` for ZMQ configuration
