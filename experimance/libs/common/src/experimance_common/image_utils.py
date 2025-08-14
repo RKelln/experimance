@@ -52,7 +52,7 @@ def png_to_base64url(image, format="PNG"):
     return f"{DATA_URL_PREFIX}{format.lower()};base64,{image_base64}"
 
 
-def base64url_to_png(base64url):
+def base64url_to_image(base64url):
     """
     Convert a base64url string to a PNG image.
     
@@ -73,8 +73,8 @@ def base64url_to_png(base64url):
         if comma_index != -1:
             base64url = base64url[comma_index + 1:]
         else:
-            logger.warning(f"base64url_to_png: Found data URL prefix but no comma separator in: {base64url[:100]}...")
-    
+            logger.warning(f"base64url_to_image: Found data URL prefix but no comma separator in: {base64url[:100]}...")
+
     try:
         # Decode the base64url string - this is the main bottleneck
         image_data = base64.b64decode(base64url)
@@ -83,10 +83,13 @@ def base64url_to_png(base64url):
         image = Image.open(io.BytesIO(image_data))
         return image
     except Exception as e:
-        logger.error(f"base64url_to_png: Failed to decode base64 image data: {e}")
-        logger.error(f"base64url_to_png: Input length: {len(base64url)}")
-        logger.error(f"base64url_to_png: Input prefix: {base64url[:100]}..." if len(base64url) > 100 else f"base64url_to_png: Full input: {base64url}")
+        logger.error(f"base64url_to_image: Failed to decode base64 image data: {e}")
+        logger.error(f"base64url_to_image: Input length: {len(base64url)}")
+        logger.error(f"base64url_to_image: Input prefix: {base64url[:100]}..." if len(base64url) > 100 else f"base64url_to_image: Full input: {base64url}")
         return None
+
+def base64url_to_png(base64url):
+    return base64url_to_image(base64url)
 
 def ndarray_to_base64url(ndarray):
     """Convert numpy array to base64 URL string.
