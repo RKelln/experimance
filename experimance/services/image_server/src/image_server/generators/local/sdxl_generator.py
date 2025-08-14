@@ -59,7 +59,7 @@ class LocalSDXLConfig(BaseGeneratorConfig):
     strength: float = 0.4 # image-to-image strength, if image is passed into generator, 0-1, where 0 keeps the original image and 1 is and completely new image
     width: int = 1024
     height: int = 1024
-    compile_unet: bool = True  # Enable compilation for maximum inference speed
+    compile_unet: bool = False  # Enable compilation for maximum inference speed, but only if generation params (size, etc.) remain the same
     enable_xformers: bool = True
     enable_attention_slicing: bool = True
     device: str = "cuda"
@@ -84,20 +84,24 @@ class LocalSDXLGenerator(ImageGenerator):
         if isinstance(config, LocalSDXLConfig):
             self.cfg: LocalSDXLConfig = config
         else:
-            # config may be a BaseGeneratorConfig coming from factory; we ignore most fields for now
-            cfg = kwargs.get("lightning_config") or kwargs.get("local_config") or LocalSDXLConfig()
-            self.cfg: LocalSDXLConfig = cfg
-        
+            raise ValueError("Invalid config type, expected LocalSDXLConfig")
+
         self._pipeline: Optional[StableDiffusionXLControlNetPipeline] = None  # type: ignore
 
         # Allow overrides
-        for field in ("model", "steps", "guidance_scale", "width", "height", "controlnet_id"):
+        for field in ("model", "steps", "guidance_scale", "width", "height", "controlnet_id", "strength"):
             if field in kwargs:
                 setattr(self.cfg, field, kwargs[field])
 
         # Resolve device
         if not self._cuda_available():  # Fall back to cpu if cuda missing
             self.cfg.device = "cpu"
+            # ——— PERFORMANCE TWEAKS ———
+            # 1) Allow TF32 on Ampere+ and enable cudnn autotuner
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+
 
     async def start(self):  # noqa: D401
         """Warm load the model pipeline if not already loaded."""
@@ -164,13 +168,20 @@ class LocalSDXLGenerator(ImageGenerator):
             # Treat as local filename
             return ('file', model, model)
 
-    async def generate_image(self, prompt: str, *, image: Optional[Image.Image] = None, depth_map: Optional[Image.Image] = None, **kwargs) -> str:  # type: ignore[override]
+    async def generate_image(self, prompt: str, *, 
+        image: Optional[Image.Image] = None, 
+        image_b64: Optional[str] = None,
+        depth_map: Optional[Image.Image] = None, 
+        depth_map_b64: Optional[str] = None,
+        **kwargs) -> str:  # type: ignore[override]
         """Generate an image for the given prompt.
 
         Args:
             prompt: Text prompt
             image: Optional PIL Image for image-to-image generation
+            image_b64: Optional base64-encoded image for image-to-image generation
             depth_map: Optional PIL Image depth map (applied if ControlNet active)
+            depth_map_b64: Optional base64-encoded depth map (applied if ControlNet active)
 
         Returns:
             Path to saved output image.
@@ -199,6 +210,9 @@ class LocalSDXLGenerator(ImageGenerator):
         )
 
         # Handle different generation modes
+        if image_b64 is not None and image is None:
+            image = base64url_to_image(image_b64)
+
         if image is not None:
             # Image-to-image generation
             pipe_inputs["image"] = image
@@ -217,14 +231,15 @@ class LocalSDXLGenerator(ImageGenerator):
             pipe_inputs["width"] = width
             pipe_inputs["height"] = height
 
+        if depth_map_b64 is not None and depth_map is None:
+            depth_map = base64url_to_image(depth_map_b64)
+
         # Add ControlNet depth map if provided (takes precedence over img2img image)
         if depth_map and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
             pipe_inputs["image"] = depth_map
             # For ControlNet, we always need to specify dimensions
             pipe_inputs["width"] = width
             pipe_inputs["height"] = height
-            # Remove img2img strength if using ControlNet
-            pipe_inputs.pop("strength", None)
 
         model_type, _, _ = self._detect_model_type(self.cfg.model)
         if depth_map and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
