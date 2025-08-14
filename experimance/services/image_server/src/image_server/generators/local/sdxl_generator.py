@@ -53,17 +53,18 @@ class LocalSDXLConfig(BaseGeneratorConfig):
     
     # Single model attribute - auto-detects URL, model ID, or filename
     model: str = "https://storage.googleapis.com/experimance_models/juggernautXL_juggXILightningByRD.safetensors"
-    controlnet_id: Optional[str] = "diffusers/controlnet-depth-sdxl-1.0-small"
+    controlnet_id: Optional[str] = None  # Disabled by default - enable for depth control
     steps: int = 6
     guidance_scale: float = 1.5
-    strength: float = 0.4 # image-to-image strength, if image is passed into generator
+    strength: float = 0.4 # image-to-image strength, if image is passed into generator, 0-1, where 0 keeps the original image and 1 is and completely new image
     width: int = 1024
     height: int = 1024
-    compile_unet: bool = True
+    compile_unet: bool = True  # Enable compilation for maximum inference speed
     enable_xformers: bool = True
     enable_attention_slicing: bool = True
     device: str = "cuda"
     models_dir: Path = MODELS_DIR
+    warmup_on_start: bool = True  # Generate a dummy image on startup to warm caches and trigger compilation
 
     # Dependency injection hooks (used for lightweight/unit testing)
     # Using Any type and exclude from serialization since these are callables
@@ -102,6 +103,39 @@ class LocalSDXLGenerator(ImageGenerator):
         """Warm load the model pipeline if not already loaded."""
         if self._pipeline is None:
             await self._init_pipeline()
+            
+        # Warm up the pipeline with a dummy generation to populate caches
+        if self.cfg.warmup_on_start and not self.cfg.pipeline_factory:
+            await self._warmup_pipeline()
+
+    async def _warmup_pipeline(self):
+        """Generate a dummy image to warm up caches and trigger compilation for maximum performance."""
+        try:
+            import time
+            warmup_start = time.time()
+            logger.info("LocalSDXL: warming up pipeline (this may take several minutes with compilation enabled)...")
+            # Use very fast settings for warmup
+            old_output_dir = self.output_dir
+            self.output_dir = Path("/tmp")  # Don't save warmup image permanently
+            
+            # CRITICAL: Use the same dimensions and settings as production to trigger compilation
+            # for the actual computation graph that will be used in production
+            warmup_steps = self.cfg.steps if self.cfg.compile_unet else 1
+            await self.generate_image(
+                "warmup compilation test", 
+                width=self.cfg.width,   # Use production width
+                height=self.cfg.height, # Use production height  
+                steps=warmup_steps,     # Use production steps
+                guidance_scale=self.cfg.guidance_scale  # Use production guidance_scale
+            )
+            warmup_duration = time.time() - warmup_start
+            logger.info("LocalSDXL: pipeline warmup complete in %.1f seconds - subsequent renders will be fast", warmup_duration)
+            
+            # Restore original output directory
+            self.output_dir = old_output_dir
+            
+        except Exception as e:
+            logger.warning("LocalSDXL: warmup failed, continuing anyway: %s", e)
 
     async def stop(self):  # noqa: D401
         """Release pipeline resources"""
@@ -219,6 +253,14 @@ class LocalSDXLGenerator(ImageGenerator):
         # Lightweight testing path: allow injected pipeline factory even when diffusers absent
         if not _DIFFUSERS_AVAILABLE:
             raise RuntimeError("diffusers/torch not installed. Install extras: local_gen")
+
+        # Configure PyTorch for better performance and fewer warnings
+        if torch is not None and torch.cuda.is_available():  # type: ignore[attr-defined]
+            # Reduce inductor warnings for smaller GPUs
+            import os
+            os.environ.setdefault("TORCH_LOGS", "-inductor")
+            # Disable max autotune for smaller GPUs to avoid warnings
+            torch._inductor.config.max_autotune = False  # type: ignore[attr-defined]
 
         self.cfg.models_dir.mkdir(parents=True, exist_ok=True)
         

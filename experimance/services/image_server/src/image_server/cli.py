@@ -139,18 +139,29 @@ class ImageServerClient:
         self,
         prompt: str,
         depth_map_path: Optional[Path] = None,
+        image_path: Optional[Path] = None,
         era: str = "wilderness",
-        biome: str = "forest"
+        biome: str = "temperate_forest"
     ) -> str:
         request_id = str(uuid.uuid4())
         
         # Handle depth map similar to core service using prepare_image_source
-        image_source = None
+        depth_map_source = None
         if depth_map_path and depth_map_path.exists():
             logger.info(f"Including depth map from {depth_map_path}")
             # Use prepare_image_source like the core service does
-            image_source = prepare_image_source(
+            depth_map_source = prepare_image_source(
                 image_data=depth_map_path,  # Can pass Path directly
+                transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
+                request_id=request_id,
+            )
+        
+        # Handle source image for image-to-image generation
+        image_source = None
+        if image_path and image_path.exists():
+            logger.info(f"Including source image for image-to-image from {image_path}")
+            image_source = prepare_image_source(
+                image_data=image_path,  # Can pass Path directly
                 transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
                 request_id=request_id,
             )
@@ -161,7 +172,8 @@ class ImageServerClient:
             era=Era(era),  # Convert string to enum
             biome=Biome(biome),  # Convert string to enum
             prompt=prompt,
-            depth_map=image_source
+            depth_map=depth_map_source,
+            image=image_source
         )
         
         logger.debug(f"Sending RenderRequest: {request.request_id}")
@@ -360,8 +372,74 @@ async def interactive_mode(debug: bool = False):
                 except (ValueError, IndexError):
                     selected_biome = "temperate_forest"
 
+            # Source image selection (for image-to-image generation)
+            use_source_image = input("\nUse a source image for image-to-image generation? (y/N): ").lower() == 'y'
+            source_image_path = None
+            if use_source_image:
+                print("\nSource image options:")
+                print("  1. Browse media/images/ directory")
+                print("  2. Enter custom path")
+                
+                image_choice = input("Choose option (1-2, default=1): ") or "1"
+                
+                if image_choice == "1":
+                    # Browse media/images directory
+                    script_dir = Path(__file__).parent
+                    project_root = script_dir.parent.parent.parent.parent  # Navigate up to project root
+                    media_images_dir = project_root / "media" / "images"
+                    
+                    if media_images_dir.exists():
+                        # Find image files in media/images and subdirectories
+                        image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp'}
+                        image_files = []
+                        
+                        for subdir in media_images_dir.iterdir():
+                            if subdir.is_dir():
+                                for img_file in subdir.rglob('*'):
+                                    if img_file.is_file() and img_file.suffix.lower() in image_extensions:
+                                        # Store relative path from media/images for display
+                                        rel_path = img_file.relative_to(media_images_dir)
+                                        image_files.append((str(rel_path), img_file))
+                        
+                        if image_files:
+                            print(f"\nFound {len(image_files)} images in media/images/:")
+                            for i, (rel_path, full_path) in enumerate(image_files[:20]):  # Show first 20
+                                size_kb = full_path.stat().st_size // 1024
+                                print(f"  {i+1}. {rel_path} ({size_kb}KB)")
+                            
+                            if len(image_files) > 20:
+                                print(f"  ... and {len(image_files) - 20} more")
+                            
+                            print("  0. Enter custom path")
+                            
+                            img_choice = input(f"Choose image (0-{min(len(image_files), 20)}, default=1): ") or "1"
+                            try:
+                                img_idx = int(img_choice)
+                                if img_idx == 0:
+                                    source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                                elif 1 <= img_idx <= len(image_files):
+                                    source_image_path = image_files[img_idx - 1][1]
+                                    print(f"Selected: {image_files[img_idx - 1][0]}")
+                                else:
+                                    source_image_path = image_files[0][1] if image_files else None
+                            except (ValueError, IndexError):
+                                source_image_path = image_files[0][1] if image_files else None
+                        else:
+                            print(f"No images found in {media_images_dir}")
+                            source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                    else:
+                        print(f"Media directory not found at {media_images_dir}")
+                        source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                else:
+                    # Custom path
+                    source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                
+                if source_image_path and not source_image_path.exists():
+                    print(f"Warning: Source image file not found at {source_image_path}")
+                    source_image_path = None
+
             # Depth map selection
-            use_depth_map = input("\nUse a depth map? (Y/n): ").lower() != 'n'
+            use_depth_map = input("\nUse a depth map? (y/N): ").lower() == 'y'
             depth_map_path = None
             if use_depth_map:
                 default_depth_map = MOCK_IMAGES_DIR / "depth" / "mock_depth_map.png"
@@ -376,7 +454,18 @@ async def interactive_mode(debug: bool = False):
             print(f"Prompt: {selected_prompt}")
             print(f"Era: {selected_era}")
             print(f"Biome: {selected_biome}")
+            print(f"Source Image: {'Yes - ' + str(source_image_path) if source_image_path else 'No'}")
             print(f"Depth Map: {'Yes - ' + str(depth_map_path) if depth_map_path else 'No'}")
+            
+            # Show generation mode
+            if source_image_path and depth_map_path:
+                print("Generation Mode: Image-to-image with ControlNet depth guidance")
+            elif source_image_path:
+                print("Generation Mode: Image-to-image")
+            elif depth_map_path:
+                print("Generation Mode: Text-to-image with ControlNet depth guidance")
+            else:
+                print("Generation Mode: Text-to-image")
 
             confirm = input("\nSend this request? (Y/n): ").lower() != 'n'
             if not confirm:
@@ -387,12 +476,16 @@ async def interactive_mode(debug: bool = False):
             request_id = await client.send_render_request(
                 prompt=selected_prompt,
                 depth_map_path=depth_map_path,
+                image_path=source_image_path,
                 era=selected_era,
                 biome=selected_biome
             )
 
             print(f"\nRequest {request_id} sent. Waiting for response...")
+            start_time = time.monotonic()   
             response = await client.wait_for_response(request_id)
+            duration = time.monotonic() - start_time
+            print(f"Response received in {duration:.1f} seconds")
 
             if response:
                 if response.get("type") == MessageType.IMAGE_READY:
@@ -439,10 +532,12 @@ async def command_line_mode(args):
     try:
         # Send the render request
         depth_map_path = Path(args.depth_map) if args.depth_map else None
+        source_image_path = Path(args.source_image) if args.source_image else None
 
         request_id = await client.send_render_request(
             prompt=args.prompt,
             depth_map_path=depth_map_path,
+            image_path=source_image_path,
             era=args.era,
             biome=args.biome
         )
@@ -499,13 +594,18 @@ def main():
         "--biome", "-b",
         type=str,
         choices=[b.value for b in Biome],
-        default="forest",
+        default="temperate_forest",
         help="Biome context for the image"
     )
     parser.add_argument(
         "--depth-map", "--depth_map", "-d",
         type=str,
-        help="Path to depth map PNG file"
+        help="Path to depth map PNG file for ControlNet guidance"
+    )
+    parser.add_argument(
+        "--source-image", "--source_image",
+        type=str,
+        help="Path to source image for image-to-image generation"
     )
     parser.add_argument(
         "--request-address", "--requests_address",

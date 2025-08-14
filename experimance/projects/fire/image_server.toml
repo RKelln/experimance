@@ -1,7 +1,7 @@
 ## Image server configuration
 
 # General settings
-cache_dir = "images"         # Directory to cache generated images
+cache_dir = "media/images/generated"         # Directory to cache generated images
 max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # ZeroMQ configuration
@@ -9,36 +9,25 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # Generator configuration
 [generator]
-strategy = "mock"     # Options: "falai", "openai", "sdxl", "mock"
+strategy = "local_sdxl" 
 timeout = 120
 
-# FAL.AI configuration
-[falai]
-#endpoint = "comfy/RKelln/experimance_hyper_depth_v5"
-endpoint = "comfy/RKelln/experimancexilightningdepth"
-model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"
-lora_url = "https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor"
-lora_strength = 1.0
-timeout = 120
-
-# OpenAI configuration (DALLE)
-[openai]
-model = "dall-e-3"
-dimensions = [1024, 1024]
-quality = "standard"
-
-# Local SDXL configuration  
-[sdxl]
-model_path = "models/sdxl-base"
-device = "cuda"
-dimensions = [1024, 1024]
-num_inference_steps = 30
+# Local SDXL generator (local_sdxl strategy)
+[local_sdxl]
+# Model source - can be URL, HuggingFace ID (org/name), or local filename
+model = "https://storage.googleapis.com/experimance_models/juggernautXL_juggXILightningByRD.safetensors"
+controlnet_id = null
+# Generation parameters
+steps = 6
+guidance_scale = 1.5
+strength = 0.2  # Image-to-image strength (0.0 = keep original, 1.0 = completely new)
+width = 1024
+height = 1024
+# Performance settings
+compile_unet = true          # Enable PyTorch compilation for max speed (slow startup)
+warmup_on_start = true       # Generate dummy image on startup to warm caches
 
 # Fake image generator
 [mock]
-#strategy: Literal["mock"] = "mock"
-#image_size: tuple = (1024, 1024)
-#background_color: tuple = (100, 150, 200)
-#text_color: tuple = (255, 255, 255)
 use_existing_images = false
 existing_images_dir = "media/images/generated"
