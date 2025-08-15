@@ -1,5 +1,6 @@
 # Fresh install on new Ubuntu machine
 
+
 ## 1 | First boot in Windows 11 (10 min)
 
     BIOS / EC update
@@ -11,6 +12,7 @@
     Full Shutdown (⚠ not reboot).
     This releases the Bluetooth/Wi-Fi firmware so Linux sees the devices on next power-up.
 
+
 ## 2 | BIOS tweaks before installing Linux (3 min)
 
     Press DEL at power-on.
@@ -21,6 +23,7 @@
     Secure Boot	            *Boot ⇢ Secure Boot	Off* (or enrol your own keys)	ROCm DKMS builds are simpler with SB off.
     
     Save & exit.
+
 
 ## 3 | Install Linux and the project (30 min)
 
@@ -60,6 +63,7 @@
     cd experimance
     ```
 
+
 ## 4 | Deploy the application
 
 You can deploy in dev (development) or prod (production) mode. See the [infrastructure README](../README.md) for details. In production services are controlled by systemctl, so in general you'll want to install in dev mode, you can install in production mode afterwards.
@@ -69,6 +73,11 @@ You can deploy in dev (development) or prod (production) mode. See the [infrastr
 ```
 
 This will install all dependencies, including `uv` (used for python package management and virtual environments) and `pyenv` (used for managing Python versions) and all Ubuntu packages needed.
+
+
+### 4.1 | .env file
+
+Create or copy a .env file for your project and put into `projects/<project_name>/`.
 
 
 ## 5 | SSH remote access (key only)
@@ -161,6 +170,7 @@ This will install all dependencies, including `uv` (used for python package mana
    xdg-user-dirs-update
    ```
 
+
 ## 7 | Lock down SSH
 
     In the project root:
@@ -169,6 +179,7 @@ This will install all dependencies, including `uv` (used for python package mana
     sudo infra/scripts/secure_ssh.sh test-keys
     sudo infra/scripts/secure_ssh.sh secure
     ```
+
 
 ## 8 | Run deploy
 
