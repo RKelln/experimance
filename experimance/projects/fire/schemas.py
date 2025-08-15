@@ -1,9 +1,9 @@
 """
-Sohkepayin-specific schema extensions and overrides.
+Fires-specific schema extensions and overrides.
 
-This file extends the base schemas with Sohkepayin project-specific
+This file extends the base schemas with Fires project-specific
 definitions. These schemas are automatically merged with the base schemas
-when PROJECT_ENV=sohkepayin.
+when PROJECT_ENV=fire.
 """
 
 from enum import Enum
@@ -19,23 +19,9 @@ from experimance_common.schemas_base import (
     ContentType
 )
 
-# Sohkepayin-specific enums (different from Experimance)
-class Biome(StringComparableEnum):
-    """Biome definitions for the Sohkepayin installation."""
-    FOREST = "forest"
-    GRASSLAND = "grassland"
-    WETLAND = "wetland"
-    MOUNTAIN = "mountain"
-    RIVER = "river"
-    LAKE = "lake"
-    URBAN = "urban"
-    INDOORS = "indoors"
-    DESERT = "desert"
-    COAST = "coast"
-
-
+# Fires-specific enums (different from Experimance)
 class Emotion(StringComparableEnum):
-    """Emotion types specific to Sohkepayin."""
+    """Emotion types specific to Fires."""
     JOY = "joy"
     SORROW = "sorrow"
     ANGER = "anger"
@@ -44,9 +30,9 @@ class Emotion(StringComparableEnum):
     HOPE = "hope"
 
 
-# Extended MessageType with Sohkepayin-specific message types
+# Extended MessageType with Fires-specific message types
 class MessageType(StringComparableEnum):
-    """Message types used in the Sohkepayin system (extends base MessageType)."""
+    """Message types used in the Fires system (extends base MessageType)."""
     # Base Experimance message types
     SPACE_TIME_UPDATE = "SpaceTimeUpdate"
     RENDER_REQUEST = "RenderRequest"
@@ -65,17 +51,17 @@ class MessageType(StringComparableEnum):
     REMOVE_TEXT = "RemoveText"
     CHANGE_MAP = "ChangeMap"
     
-    # Sohkepayin-specific message types
+    # Fires-specific message types
     STORY_HEARD = "StoryHeard"
     UPDATE_LOCATION = "UpdateLocation"
 
 
 class SuggestTimePeriodPayload(MessageBase):
-    """Sohkepayin-specific SuggestTimePeriodPayload with time_period field."""
+    """Fires-specific SuggestTimePeriodPayload with time_period field."""
     time_period: str
 
 
-# Sohkepayin-specific message types for story handling
+# Fires-specific message types for story handling
 
 class StoryHeard(MessageBase):
     """Message sent when a complete story is heard from the audience."""

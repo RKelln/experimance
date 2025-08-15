@@ -1,5 +1,5 @@
 """
-LLM integration for Sohkepayin story processing.
+LLM integration for Fire story processing.
 
 This module provides an abstraction layer for different LLM providers.
 """

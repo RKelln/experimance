@@ -1,13 +1,13 @@
-# Sohkepayin Core Service - TODO
+# Fire Core Service - TODO
 
 ## Architecture & Setup
-- [x] Create `pyproject.toml` for sohkepayin_core package
+- [x] Create `pyproject.toml` for fire_core package
 - [x] Define package structure and dependencies
 - [x] Create main service entry point (`__main__.py`)
-- [x] Set up logging configuration specific to Sohkepayin
+- [x] Set up logging configuration specific to fire
 - [x] Create service configuration schema and default config file
 
-## Core State Machine (`sohkepayin_core.py`)
+## Core State Machine (`fire_core.py`)
 - [x] Implement state machine: Idle → Listening → BaseImage → Tiles
 - [x] Define state transitions and triggers
 - [x] Implement ZMQ message handlers:
@@ -21,7 +21,7 @@
 - [x] Create LLM client wrapper (OpenAI/Anthropic/local)
 - [x] Implement `infer_location()` function
   - [x] Parse story content and extract location/setting details
-  - [x] Map to Sohkepayin biomes and emotions
+  - [x] Map to fire biomes and emotions
   - [x] Generate initial prompt for image generation
 - [x] Implement `update_location()` function
   - [x] Modify existing prompts based on location updates
@@ -31,7 +31,7 @@
 - [x] Add configuration for different LLM providers
 
 ## Prompt Builder (`prompt_builder.py`)
-- [x] Create prompt templates for Sohkepayin aesthetic
+- [x] Create prompt templates for fire aesthetic
 - [x] Implement story-to-prompt conversion logic
 - [x] Add support for biome-specific prompt elements
 - [x] Include emotion-based artistic direction
@@ -56,7 +56,7 @@
 - [x] Implement timeout handling for image generation
 
 ## Configuration & Environment
-- [x] Create Sohkepayin-specific configuration file
+- [x] Create fire-specific configuration file
 - [x] Define image dimensions and aspect ratios
 - [x] Configure tiling parameters (count, overlap, etc.)
 - [x] Set LLM provider and API configuration
@@ -88,7 +88,7 @@
 
 ## Integration & Deployment
 - [ ] Test integration with existing image_server
-- [ ] Verify compatibility with sohkepayin_display
+- [ ] Verify compatibility with fire_display
 - [ ] Test with agent service message flow
 - [ ] Create deployment scripts and configuration
 - [ ] Add monitoring and logging hooks

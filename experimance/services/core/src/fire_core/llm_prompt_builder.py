@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM-based prompt builder for Sohkepayin image generation.
+LLM-based prompt builder for Fire image generation.
 
 This module uses an LLM to create contextual, nuanced image generation prompts
 based purely on story analysis, relying on the LLM's understanding rather than

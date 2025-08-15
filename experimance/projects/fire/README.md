@@ -1,17 +1,17 @@
-# Sohkepayin – Project Ove
+# Feed the Fires – Project Overview
 
-## What is Sohkepayin?
+## What is Feed the Fires?
 
-Sohkepayin (ᓱᐦᑫ ᐸᔨᐣ — *Fire Spirit*) is an immersive 360‑projection artwork in which audience stories are transformed, in real‑time, into dream‑like panoramas that wrap an entire rectangular room.
+*Feed the Fires* is an immersive 360‑projection artwork in which audience stories are transformed, in real‑time, into dream‑like panoramas that wrap an entire rectangular room.
 
 The codebase extends the *Experimance* architecture.  Four micro‑services cooperate via a ZeroMQ event bus:
 
-| Service                  | Role                                                 | Key Messages                    |
-| ------------------------ | ---------------------------------------------------- | ------------------------------- |
-| **`sohkepayin_core`**    | Builds prompts, orchestrates rendering, routes media | `RenderRequest`, `DisplayMedia` |
-| **`image_server`**       | Generates images (fast pass + 6 tiles)               | `ImageReady`                    |
-| **`sohkepayin_display`** | Assembles & renders panorama, shader squashes × 6    | —                               |
-| **`agent`**              | Collect audience stories                             | `StoryHeard` ➜ Core             |
+| Service            | Role                                                 | Key Messages                    |
+| ------------------ | ---------------------------------------------------- | ------------------------------- |
+| **`fire_core`**    | Builds prompts, orchestrates rendering, routes media | `RenderRequest`, `DisplayMedia` |
+| **`image_server`** | Generates images (fast pass + 6 tiles)               | `ImageReady`                    |
+| **`display`**      | Assembles & renders panorama, shader squashes × 6    | —                               |
+| **`agent`**        | Collect audience stories                             | `StoryHeard` ➜ Core             |
 
 ```mermaid
 graph TD
@@ -33,14 +33,14 @@ graph TD
 
 # Core Service
 
-**Package path:** `services/core/src/sohkepayin_core/`
+**Package path:** `services/core/src/fire_core/`
 
 ## Quick start
 
 ```bash
 uv pip install -e services/core
-export PROJECT_ENV=sohkepayin
-uv run -m sohkepayin_core
+export PROJECT_ENV=fire
+uv run -m fire_core
 ```
 
 ## Responsibilities
@@ -68,8 +68,8 @@ to ensure they tile seamlessly.
 ## Package layout
 
 ```
-services/core/src/sohkepayin_core/
-├─ sohkepaying_core.py  # Idle ▸ Listening ▸ BaseImage ▸ Tiles
+services/core/src/fire_core/
+├─ fire_core.py  # Idle ▸ Listening ▸ BaseImage ▸ Tiles
 ├─ llm.py               # OpenAI / … wrapper
 ├─ tiler.py             # Manages tiling
 └─ prompt_builder.py    # Creates or updates text-to-image prompts based on narratives
@@ -90,13 +90,13 @@ that can be sent directly to the display wioth proper positioning.
 
 # Display Service – `services/display/README.md`
 
-**Package path:** `services/display/src/sohkepayin_display/`
+**Package path:** `services/display/src/display/`
 
 ## Quick start
 
 ```bash
 uv pip install -e services/display
-uv sohkepayin_display --config projects/sohkepayin/display.toml
+uv fire_display --config projects/fire/display.toml
 ```
 
 ## Rendering pipeline

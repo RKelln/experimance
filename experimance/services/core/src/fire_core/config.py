@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration schema for the Sohkepayin Core Service.
+Configuration schema for the Fire Core Service.
 
 This module defines Pydantic models for validating and accessing
 core service configuration in a type-safe way.

@@ -30,6 +30,6 @@ topics = ["DisplayMedia"]
 
 [title_screen]
 enabled = true 
-text = "Sohkepayin"           # Text to display
+text = "Feed the Fires"           # Text to display
 duration = 10.0               # Duration in seconds
 fade_out_duration = 10.0      # Fade out duration in seconds

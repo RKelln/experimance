@@ -1,6 +1,4 @@
-# Sohkepayin Core Service Configuration
-
-service_name = "fire_core"
+# Feed the Fires Core Service Configuration
 
 [panorama]
 # Base panorama dimensions (before mirroring)
