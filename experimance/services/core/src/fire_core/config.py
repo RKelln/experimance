@@ -56,7 +56,7 @@ class PanoramaConfig(BaseModel):
     )
     
     generated_height: int = Field(
-        default=420,
+        default=424,
         description="Base panorama height in pixels", 
         ge=120
     )
@@ -181,6 +181,13 @@ class RenderingConfig(BaseModel):
         description="Timeout for tile generation in seconds", 
         ge=30.0,
         le=180.0
+    )
+    
+    tile_strength: float = Field(
+        default=0.7,
+        description="Strength for img2img tile generation (0.0 = no change from reference, 1.0 = ignore reference)",
+        ge=0.0,
+        le=1.0
     )
 
 

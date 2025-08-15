@@ -260,6 +260,7 @@ class ImageServerService(BaseService):
                 biome=str(biome) if biome else None,
                 seed=getattr(request, 'seed', None),
                 style=getattr(request, 'style', None),
+                strength=getattr(request, 'strength', None),
                 width=request.get('width', None),
                 height=request.get('height', None),
             )

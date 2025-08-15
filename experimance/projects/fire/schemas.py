@@ -30,6 +30,13 @@ class Emotion(StringComparableEnum):
     HOPE = "hope"
 
 
+# Fires-specific extensions of base schemas
+class RenderRequest(_BaseRenderRequest):
+    """Extended RenderRequest with Fires-specific fields."""
+    # Fires-specific fields can be added here
+    strength: Optional[float] = None  # img2img strength (0.0-1.0, where 1.0 completely ignores reference image)
+
+
 # Extended MessageType with Fires-specific message types
 class MessageType(StringComparableEnum):
     """Message types used in the Fires system (extends base MessageType)."""

@@ -17,6 +17,21 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def round_to_multiple_of_8(value: int) -> int:
+    """
+    Round a value to the nearest multiple of 8.
+    
+    Many image generation models require dimensions divisible by 8.
+    
+    Args:
+        value: The value to round
+        
+    Returns:
+        The nearest multiple of 8
+    """
+    return ((value + 4) // 8) * 8
+
+
 @dataclass
 class TileSpec:
     """Specification for a single tile."""
@@ -133,8 +148,8 @@ class PanoramaTiler:
                 display_width=panorama_display_width,
                 display_height=panorama_display_height,
                 overlap=0,
-                generated_width=self.generated_tile_width,
-                generated_height=self.generated_tile_height,
+                generated_width=round_to_multiple_of_8(self.generated_tile_width),
+                generated_height=round_to_multiple_of_8(self.generated_tile_height),
                 tile_index=0,
                 total_tiles=1,
             )]
@@ -202,6 +217,10 @@ class PanoramaTiler:
                 aspect_ratio = self.generated_tile_width / self.generated_tile_height
                 generated_height = int(generated_width / aspect_ratio)
             
+            # Ensure dimensions are divisible by 8 (required by most image generation models)
+            generated_width = round_to_multiple_of_8(generated_width)
+            generated_height = round_to_multiple_of_8(generated_height)
+            
             # Check megapixel constraint
             if generated_width * generated_height > self.max_pixels:
                 logger.warning(
@@ -266,6 +285,92 @@ class PanoramaTiler:
             tile_spec.display_x + tile_spec.display_width,
             tile_spec.display_y + tile_spec.display_height
         ))
+    
+    def prepare_tile_reference_image(
+        self, 
+        base_image: Image.Image, 
+        tile_spec: TileSpec,
+        display_width: int,
+        display_height: int,
+        output_dir: str = "/tmp"
+    ) -> str:
+        """
+        Create a reference image for tile generation by cropping and scaling the base image.
+        
+        Args:
+            base_image: Base panorama image (PIL Image object)
+            tile_spec: Tile specification with positioning info
+            display_width: Total display panorama width
+            display_height: Total display panorama height
+            output_dir: Directory to save the reference image
+            
+        Returns:
+            Path to the created reference image file
+        """
+        import os
+        
+        # Calculate scaling factors from display coordinates to base image coordinates
+        base_width, base_height = base_image.size
+        
+        x_scale = base_width / display_width
+        y_scale = base_height / display_height
+        
+        logger.debug(f"Base image: {base_width}x{base_height}, Display: {display_width}x{display_height}")
+        logger.debug(f"Scale factors: x={x_scale:.3f}, y={y_scale:.3f}")
+        
+        # Calculate crop coordinates in display space first
+        crop_x = tile_spec.display_x
+        crop_width = tile_spec.display_width
+        
+        # For tiles with overlap, extend the crop to include overlap region
+        if tile_spec.overlap > 0:
+            crop_x = max(0, crop_x - tile_spec.overlap)
+            crop_width += tile_spec.overlap
+        
+        # Scale coordinates to base image space
+        base_crop_x = int(crop_x * x_scale)
+        base_crop_y = int(tile_spec.display_y * y_scale)
+        base_crop_width = int(crop_width * x_scale)
+        base_crop_height = int(tile_spec.display_height * y_scale)
+        
+        # Clamp coordinates to image boundaries
+        base_crop_x = max(0, base_crop_x)
+        base_crop_y = max(0, base_crop_y)
+        base_crop_width = min(base_crop_width, base_width - base_crop_x)
+        base_crop_height = min(base_crop_height, base_height - base_crop_y)
+        
+        # Ensure we have positive dimensions
+        if base_crop_width <= 0 or base_crop_height <= 0:
+            logger.warning(f"Invalid crop dimensions for tile {tile_spec.tile_index}: {base_crop_width}x{base_crop_height}")
+            # Fall back to a proportional section of the image
+            base_crop_x = int((tile_spec.tile_index / tile_spec.total_tiles) * base_width * 0.8)  # 80% to avoid edge
+            base_crop_y = 0
+            base_crop_width = max(1, int(base_width / tile_spec.total_tiles))
+            base_crop_height = base_height
+        
+        logger.debug(f"Tile {tile_spec.tile_index} crop: ({base_crop_x}, {base_crop_y}) {base_crop_width}x{base_crop_height}")
+        
+        # Crop the relevant section from the base image
+        cropped = base_image.crop((
+            base_crop_x,
+            base_crop_y,
+            base_crop_x + base_crop_width,
+            base_crop_y + base_crop_height
+        ))
+        
+        # Scale to match generated dimensions for better reference
+        reference = cropped.resize(
+            (tile_spec.generated_width, tile_spec.generated_height),
+            Image.Resampling.LANCZOS
+        )
+        
+        # Save reference image
+        ref_filename = f"tile_{tile_spec.tile_index}_ref.jpg"
+        ref_path = os.path.join(output_dir, ref_filename)
+        reference.save(ref_path, "JPEG", quality=85)
+        
+        logger.debug(f"Created reference image for tile {tile_spec.tile_index}: {ref_path} ({reference.size})")
+        return ref_path
     
     def apply_edge_blending(self, tile_image: Image.Image | str, tile_spec: TileSpec) -> Image.Image:
         """

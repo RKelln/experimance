@@ -14,7 +14,7 @@ load_dotenv(dotenv_path="../../.env", override=True)
 # Configure logging
 logger = logging.getLogger(__name__)
 
-from image_server.generators.generator import ImageGenerator, configure_external_loggers
+from image_server.generators.generator import ImageGenerator, GeneratorCapabilities, configure_external_loggers
 from image_server.generators.config import BaseGeneratorConfig, DEFAULT_GENERATOR_TIMEOUT
 from .fal_lightning_i2i_config import FalLightningI2IConfig
 from experimance_common.image_utils import png_to_base64url
@@ -25,6 +25,13 @@ class FalLightningI2IGenerator(ImageGenerator):
     
     Uses the FAL.AI Lightning SDXL image-to-image API for fast image generation from input images.
     """
+    
+    # Declare generator capabilities
+    supported_capabilities = {
+        GeneratorCapabilities.IMAGE_TO_IMAGE,
+        GeneratorCapabilities.NEGATIVE_PROMPTS,
+        GeneratorCapabilities.SEEDS
+    }
     
     def __init__(self, config: BaseGeneratorConfig, output_dir: str = "/tmp", **kwargs):
         """Initialize the FAL.AI Lightning image-to-image generator.
@@ -46,7 +53,7 @@ class FalLightningI2IGenerator(ImageGenerator):
         })
         logger.info(f"FalLightningI2IGenerator initialized with endpoint: {self.config.endpoint}")
 
-    async def generate_image(self, prompt: str, image_b64: Optional[str] = None, 
+    async def _generate_image_impl(self, prompt: str, image_b64: Optional[str] = None, 
                              **kwargs) -> str:
         """Generate an image using FAL.AI Lightning image-to-image API.
         

@@ -18,6 +18,10 @@ class DummyResult:
 
 
 class MockComponent:
+    def __init__(self):
+        # Add the attributes that diffusers expects
+        self.config = type('Config', (), {'block_out_channels': [320, 640, 1280]})()
+    
     def to(self, *args, **kwargs):
         return self
     def set_attn_processor(self, *args, **kwargs):
@@ -114,6 +118,7 @@ def test_model_type_detection():
 def test_image_to_image_generation(tmp_path: Path):
     """Test image-to-image generation with PIL Image input."""
     from image_server.generators.local.sdxl_generator import LocalSDXLConfig, LocalSDXLGenerator
+    from unittest.mock import patch
     
     cfg = LocalSDXLConfig(
         model="test_model.safetensors",
@@ -129,15 +134,31 @@ def test_image_to_image_generation(tmp_path: Path):
     # Create a test input image
     input_image = Image.new("RGB", (512, 512), color="blue")
     
-    # Run image-to-image generation
-    out_path = asyncio.run(gen.generate_image(
-        "transform this into a sunset scene", 
-        image=input_image,
-        strength=0.7
-    ))
-    
-    assert Path(out_path).exists()
-    assert Path(out_path).suffix == ".png"
+    # Mock the img2img pipeline creation to avoid the complexity of real diffusers
+    with patch('image_server.generators.local.sdxl_generator.StableDiffusionXLImg2ImgPipeline') as mock_img2img:
+        mock_pipeline = mock_img2img.return_value
+        mock_pipeline.to.return_value = mock_pipeline
+        mock_result = DummyResult()
+        mock_pipeline.return_value = mock_result
+        
+        # Run image-to-image generation
+        out_path = asyncio.run(gen.generate_image(
+            "transform this into a sunset scene", 
+            image=input_image,
+            strength=0.7
+        ))
+        
+        # Verify the img2img pipeline was created
+        assert mock_img2img.called
+        
+        # Verify the generation call included the image
+        assert mock_pipeline.called
+        call_kwargs = mock_pipeline.call_args[1]
+        assert 'image' in call_kwargs
+        assert call_kwargs['image'] is input_image
+        
+        assert Path(out_path).exists()
+        assert Path(out_path).suffix == ".png"
 
 
 def test_controlnet_generation(tmp_path: Path):

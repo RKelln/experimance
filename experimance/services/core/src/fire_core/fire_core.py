@@ -19,6 +19,7 @@ import uuid
 from enum import Enum
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
+from PIL import Image
 
 from experimance_common.base_service import BaseService
 from experimance_common.config import ConfigError, resolve_path
@@ -60,6 +61,8 @@ class ActiveRequest:
     base_prompt: ImagePrompt
     tiles: List[TileSpec] = field(default_factory=list)
     base_image_ready: bool = False
+    base_image: Optional[Image.Image] = None  # Base image for reference image generation
+    base_image_path: Optional[str] = None  # Keep path for logging/debugging
     completed_tiles: Dict[int, str] = field(default_factory=dict)  # tile_index -> image_path
     total_tiles: int = 0
 
@@ -280,6 +283,7 @@ class FireCoreService(BaseService):
             negative_prompt = message_data.get('negative_prompt', 'blurry, low quality, distorted')
                 
             logger.info(f"Processing debug prompt: {prompt[:100]}...")
+            logger.debug(f"Debug negative prompt: {negative_prompt}")
             
             self.cancel_current_request()
             
@@ -291,6 +295,9 @@ class FireCoreService(BaseService):
                 prompt=prompt,
                 negative_prompt=negative_prompt
             )
+            
+            logger.info(f"Created debug base prompt: {base_prompt.prompt}")
+            logger.debug(f"Debug base negative: {base_prompt.negative_prompt}")
             
             # Calculate tiling strategy
             tiles = self.tiler.calculate_tiles(
@@ -407,7 +414,19 @@ class FireCoreService(BaseService):
         if not self.current_request:
             return
         
-        logger.info("Base image ready, sending to display")
+        logger.info("Base image ready, loading and sending to display")
+        
+        # Store base image path for logging/debugging
+        base_image_path = response.uri.replace("file://", "") if response.uri.startswith("file://") else response.uri
+        self.current_request.base_image_path = base_image_path
+        logger.debug(f"Base image path: {base_image_path}")
+        # Load and store the base image in memory
+        try:
+            self.current_request.base_image = Image.open(base_image_path)
+            logger.debug(f"Loaded base image: {self.current_request.base_image.size}")
+        except Exception as e:
+            logger.error(f"Failed to load base image from {base_image_path}: {e}")
+            # Continue without base image - tiles will generate without reference
         
         # Send base image to display (no position = base panorama)
         display_message = DisplayMedia(
@@ -443,13 +462,33 @@ class FireCoreService(BaseService):
             return
         
         # Build tile-specific prompt
-        # TODO: look at the reference image to create prompt?
-
         tile_prompt = self.prompt_builder.base_prompt_to_tile_prompt(
             self.current_request.base_prompt,
         )
         
+        logger.info(f"Tile {tile_spec.tile_index} prompt: {tile_prompt.prompt}")
+        logger.debug(f"Tile {tile_spec.tile_index} negative: {tile_prompt.negative_prompt}")
+        
         request_id = f"{self.current_request.request_id}_tile_{tile_spec.tile_index}"
+        
+        # Create reference image if base image is available
+        reference_image = None
+        if self.current_request.base_image is not None:
+            try:
+                reference_image_path = self.tiler.prepare_tile_reference_image(
+                    self.current_request.base_image,
+                    tile_spec,
+                    self.config.panorama.display_width,
+                    self.config.panorama.display_height,
+                    output_dir="/tmp"  # Or use config for this
+                )
+                # Create ImageSource from the reference image path
+                reference_image = ImageSource(
+                    uri=f"file://{reference_image_path}",
+                    image_data=None  # Use file path, not in-memory data
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create reference image for tile {tile_spec.tile_index}: {e}")
         
         render_request = RenderRequest(
             request_id=request_id,
@@ -457,7 +496,8 @@ class FireCoreService(BaseService):
             negative_prompt=tile_prompt.negative_prompt,
             width=tile_spec.generated_width,
             height=tile_spec.generated_height,
-            # Add reference image and other tile-specific parameters
+            reference_image=reference_image,  # Add reference image
+            strength=self.config.rendering.tile_strength  # Use configured strength value
         )
         
         # Track pending request
@@ -466,7 +506,8 @@ class FireCoreService(BaseService):
         # Send render request
         await self.zmq_service.send_work_to_worker("image_server", render_request)
         
-        logger.debug(f"Requested tile {tile_spec.tile_index}: {tile_spec.generated_width}x{tile_spec.generated_height}")
+        logger.debug(f"Requested tile {tile_spec.tile_index}: {tile_spec.generated_width}x{tile_spec.generated_height}" + 
+                    (f" with reference" if reference_image else ""))
     
     async def _handle_tile_image_ready(self, response: ImageReady, tile_index: int):
         """Handle completion of tile image generation."""

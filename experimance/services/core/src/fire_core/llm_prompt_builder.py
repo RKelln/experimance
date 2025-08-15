@@ -46,7 +46,12 @@ class LLMPromptBuilder:
             "360 degree equirectangular view", 
         ]
 
-        self.tile_style = []
+        self.tile_style = [
+            "ultra detailed",
+            "professional photography", 
+            "masterpiece composition",
+            "enhanced detail"
+        ]
 
         # Fallback style keywords if LLM fails
         self.quality_style = [
@@ -54,11 +59,16 @@ class LLMPromptBuilder:
             "cinematic lighting",
             "high detail",
             "photorealistic",
-            "8k resolution"
+            "8k resolution",
+            "sharp focus",
+            "dramatic contrast",
+            "rich textures"
         ]
 
         self.negative_style = [
-            "people", "humans", "faces", "low quality", "blurry", "watermark", "text"
+            "people", "humans", "faces", "low quality", "blurry", "watermark", "text",
+            "deformed", "disfigured", "poor quality", "lowres", "bad anatomy",
+            "worst quality", "jpeg artifacts", "signature", "malformed", "clone", "duplicate"
         ]
         
         logger.info("LLM prompt builder initialized")
@@ -188,12 +198,13 @@ class LLMPromptBuilder:
         negative_elements = [elem.strip() for elem in negative_elements if elem.strip()]
         if negative:
             negative_elements = [elem for elem in negative_elements if elem not in negative]
+            negative_elements += negative
         else:
-            negative_elements = self.negative_style
+            negative_elements += self.negative_style
         
         return ImagePrompt(
             prompt=", ".join(prompt_elements),
-            negative_prompt=", ".join(negative) if negative else ""
+            negative_prompt=", ".join(negative_elements)
         )
 
     def base_prompt_to_panorama_prompt(

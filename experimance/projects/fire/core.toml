@@ -5,14 +5,14 @@
 display_width = 5760
 display_height = 1080
 generated_width = 2240  # 3 tiles
-generated_height = 420
+generated_height = 424
 
 [tiles]
 # Tile generation settings
 display_width = 1920
 display_height = 1080
 generated_width = 1344
-generated_height = 758
+generated_height = 760
 min_overlap_percent = 0
 max_megapixels = 1.1  # Keep tiles around 1MP for reasonable generation time
 
@@ -30,3 +30,5 @@ system_prompt_or_file = "system_prompt_t2i_prompt.md"
 timeout = 120.0
 base_image_timeout = 60.0
 tile_timeout = 90.0
+# Strength for img2img tile generation (0.0 = no change from reference, 1.0 = ignore reference)
+tile_strength = 0.3

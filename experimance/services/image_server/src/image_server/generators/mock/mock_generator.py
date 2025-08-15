@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, Literal, List
 
-from image_server.generators.generator import ImageGenerator
+from image_server.generators.generator import ImageGenerator, GeneratorCapabilities
 from image_server.generators.config import BaseGeneratorConfig
 from .mock_generator_config import MockGeneratorConfig
 
@@ -21,6 +21,18 @@ class MockImageGenerator(ImageGenerator):
     Can either generate simple placeholder images with prompt text or 
     use existing images from a specified directory for more realistic testing.
     """
+    
+    # Mock generator supports most capabilities for testing purposes
+    supported_capabilities = {
+        GeneratorCapabilities.IMAGE_TO_IMAGE,
+        GeneratorCapabilities.CONTROLNET,
+        GeneratorCapabilities.LORAS,
+        GeneratorCapabilities.NEGATIVE_PROMPTS,
+        GeneratorCapabilities.SEEDS,
+        GeneratorCapabilities.INPAINTING,
+        GeneratorCapabilities.UPSCALING,
+        GeneratorCapabilities.BATCH_GENERATION
+    }
     
     def _configure(self, config:BaseGeneratorConfig, **kwargs):
         """Configure mock generator settings."""
@@ -51,7 +63,7 @@ class MockImageGenerator(ImageGenerator):
         if not self._existing_images:
             logger.warning("No existing images found - will fall back to generated placeholders")
     
-    async def generate_image(self, prompt: str, **kwargs) -> str:
+    async def _generate_image_impl(self, prompt: str, **kwargs) -> str:
         """Generate a mock image with the prompt text or copy an existing image."""
         self._validate_prompt(prompt)
         

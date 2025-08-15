@@ -24,7 +24,7 @@ class OpenAIGenerator(ImageGenerator):
         })
         logger.info(f"OpenAIGenerator initialized: {self.config}")
     
-    async def generate_image(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
+    async def _generate_image_impl(self, prompt: str, depth_map_b64: Optional[str] = None, **kwargs) -> str:
         """Generate an image using OpenAI DALL-E API."""
         self._validate_prompt(prompt)
         

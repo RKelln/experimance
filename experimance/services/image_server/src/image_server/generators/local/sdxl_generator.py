@@ -15,7 +15,8 @@ from PIL import Image
 from pydantic import Field
 
 from experimance_common.constants import MODELS_DIR
-from image_server.generators.generator import ImageGenerator
+from experimance_common.image_utils import base64url_to_image
+from image_server.generators.generator import ImageGenerator, GeneratorCapabilities
 from image_server.generators.config import BaseGeneratorConfig
 from pydantic import Field
 
@@ -25,6 +26,7 @@ try:  # Optional heavy imports (loaded lazily where possible)
     import torch
     from diffusers import (
         StableDiffusionXLPipeline,
+        StableDiffusionXLImg2ImgPipeline,
         StableDiffusionXLControlNetPipeline,
         ControlNetModel,
         EulerDiscreteScheduler,
@@ -75,10 +77,26 @@ class LocalSDXLConfig(BaseGeneratorConfig):
 
 
 class LocalSDXLGenerator(ImageGenerator):
-    """Local SDXL generator supporting lightning (single-file) and base diffusers models.
+    """Local SDXL Lightning image generator.
 
+    Optimized for interactive generation with lightning-fast sampling.
+    
     Backward-compatible with previous SDXLLightningGenerator naming.
     """
+    
+    # Declare generator capabilities
+    supported_capabilities = {
+        GeneratorCapabilities.IMAGE_TO_IMAGE,
+        GeneratorCapabilities.CONTROLNET,
+        GeneratorCapabilities.NEGATIVE_PROMPTS,
+        GeneratorCapabilities.SEEDS,
+        GeneratorCapabilities.CUSTOM_SCHEDULERS
+    }
+
+    def __init__(self, config: BaseGeneratorConfig, output_dir: str = "/tmp", **kwargs):
+        """Initialize LocalSDXL generator with sequential processing for thread safety."""
+        # Force max_concurrent=1 for SDXL to prevent tensor dimension conflicts
+        super().__init__(config, output_dir, max_concurrent=1, **kwargs)
 
     def _configure(self, config: Any, **kwargs):  # type: ignore[override]
         # Use provided config if it's a LocalSDXLConfig, otherwise fall back to defaults
@@ -87,7 +105,15 @@ class LocalSDXLGenerator(ImageGenerator):
         else:
             raise ValueError("Invalid config type, expected LocalSDXLConfig")
 
-        self._pipeline: Optional[StableDiffusionXLControlNetPipeline] = None  # type: ignore
+        # Dynamic pipeline management - initialize as None, create on demand
+        self._txt2img_pipeline: Optional[StableDiffusionXLPipeline] = None
+        self._img2img_pipeline: Optional[StableDiffusionXLImg2ImgPipeline] = None  # type: ignore
+        self._controlnet_pipeline: Optional[StableDiffusionXLControlNetPipeline] = None  # type: ignore
+        self._current_mode = None
+        self._base_components = None  # Shared components between pipelines
+        
+        # For compatibility with existing code that expects _pipeline
+        self._pipeline = None
 
         # Allow overrides
         for field in ("model", "steps", "guidance_scale", "width", "height", "controlnet_id", "strength"):
@@ -106,7 +132,10 @@ class LocalSDXLGenerator(ImageGenerator):
 
 
     async def start(self):  # noqa: D401
-        """Warm load the model pipeline if not already loaded."""
+        """Initialize the queue system, then warm load the model pipeline if not already loaded."""
+        # Start the base class queue system first
+        await super().start()
+        
         if self._pipeline is None:
             await self._init_pipeline()
             
@@ -127,7 +156,9 @@ class LocalSDXLGenerator(ImageGenerator):
             # CRITICAL: Use the same dimensions and settings as production to trigger compilation
             # for the actual computation graph that will be used in production
             warmup_steps = self.cfg.steps if self.cfg.compile_unet else 1
-            await self.generate_image(
+            
+            # Call the implementation directly, bypassing the queue system during warmup
+            await self._generate_image_impl(
                 "warmup compilation test", 
                 width=self.cfg.width,   # Use production width
                 height=self.cfg.height, # Use production height  
@@ -144,7 +175,11 @@ class LocalSDXLGenerator(ImageGenerator):
             logger.warning("LocalSDXL: warmup failed, continuing anyway: %s", e)
 
     async def stop(self):  # noqa: D401
-        """Release pipeline resources"""
+        """Release pipeline resources and stop queue processing."""
+        # Call parent stop first to handle queue cleanup
+        await super().stop()
+        
+        # Then handle SDXL-specific cleanup
         if self._pipeline is not None and torch is not None:  # type: ignore[attr-defined]
             del self._pipeline
             self._pipeline = None
@@ -170,13 +205,13 @@ class LocalSDXLGenerator(ImageGenerator):
             # Treat as local filename
             return ('file', model, model)
 
-    async def generate_image(self, prompt: str, *, 
+    async def _generate_image_impl(self, prompt: str, *, 
         image: Optional[Image.Image] = None, 
         image_b64: Optional[str] = None,
         depth_map: Optional[Image.Image] = None, 
         depth_map_b64: Optional[str] = None,
         **kwargs) -> str:  # type: ignore[override]
-        """Generate an image for the given prompt.
+        """Internal implementation of image generation.
 
         Args:
             prompt: Text prompt
@@ -198,6 +233,24 @@ class LocalSDXLGenerator(ImageGenerator):
         width = kwargs.get("width", self.cfg.width)
         height = kwargs.get("height", self.cfg.height)
         seed = kwargs.get("seed")
+        strength = kwargs.get("strength", self.cfg.strength)
+        
+        # Check if we'll be doing img2img generation
+        will_do_img2img = image is not None or image_b64 is not None
+        
+        # Apply step compensation for img2img to maintain quality
+        if will_do_img2img and strength > 0:
+            # Calculate effective steps: total_steps * strength
+            effective_steps = gen_steps * strength
+            # We want exactly 6 effective steps for good quality
+            target_effective_steps = 6
+            if effective_steps < target_effective_steps:
+                # Calculate the exact steps needed to get target_effective_steps
+                compensated_steps = int(target_effective_steps / strength)
+                if compensated_steps > gen_steps:
+                    logger.info(f"LocalSDXL: Step compensation - increasing from {gen_steps} to {compensated_steps} steps "
+                              f"(strength={strength:.2f}, effective={effective_steps:.1f}→{compensated_steps * strength:.1f})")
+                    gen_steps = compensated_steps
 
         generator = None
         if seed is not None and torch is not None:  # type: ignore[attr-defined]
@@ -215,44 +268,63 @@ class LocalSDXLGenerator(ImageGenerator):
         if image_b64 is not None and image is None:
             image = base64url_to_image(image_b64)
 
-        if image is not None:
-            # Image-to-image generation
-            pipe_inputs["image"] = image
-            pipe_inputs["strength"] = kwargs.get("strength", 0.8)  # Default strength for i2i
-            
-            # For image-to-image, we typically don't specify exact dimensions
-            # The pipeline will use the input image dimensions
-            if "width" not in kwargs and "height" not in kwargs:
-                # Don't set width/height, let pipeline use input image dimensions
-                pass
-            else:
-                pipe_inputs["width"] = width
-                pipe_inputs["height"] = height
-        else:
-            # Text-to-image generation
-            pipe_inputs["width"] = width
-            pipe_inputs["height"] = height
-
         if depth_map_b64 is not None and depth_map is None:
             depth_map = base64url_to_image(depth_map_b64)
 
-        # Add ControlNet depth map if provided (takes precedence over img2img image)
-        if depth_map and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
+        # Determine pipeline mode and get appropriate pipeline
+        if depth_map and self.cfg.controlnet_id:
+            generation_mode = "controlnet"
+            # Use ControlNet pipeline if available, otherwise txt2img
+            if hasattr(self._pipeline, '__class__') and 'ControlNet' in self._pipeline.__class__.__name__:
+                current_pipeline = self._pipeline
+            else:
+                # For now, fall back to txt2img for ControlNet
+                current_pipeline = self._pipeline
+                logger.warning("ControlNet requested but no ControlNet pipeline available, using txt2img")
             pipe_inputs["image"] = depth_map
-            # For ControlNet, we always need to specify dimensions
+            pipe_inputs["width"] = width
+            pipe_inputs["height"] = height
+        elif image is not None:
+            generation_mode = "img2img"
+            # We need to create or use an img2img pipeline
+            if hasattr(self, '_img2img_pipeline') and self._img2img_pipeline is not None:
+                current_pipeline = self._img2img_pipeline
+            elif hasattr(self._pipeline, '__class__') and 'Img2Img' in self._pipeline.__class__.__name__:
+                current_pipeline = self._pipeline
+            else:
+                logger.info("Creating img2img pipeline for image-to-image generation")
+                # Create img2img pipeline from the existing txt2img pipeline components
+                txt2img_pipeline = self._pipeline
+                if _DIFFUSERS_AVAILABLE:
+                    current_pipeline = StableDiffusionXLImg2ImgPipeline(
+                        vae=txt2img_pipeline.vae,
+                        text_encoder=txt2img_pipeline.text_encoder,
+                        text_encoder_2=getattr(txt2img_pipeline, 'text_encoder_2', None),
+                        unet=txt2img_pipeline.unet,
+                        scheduler=txt2img_pipeline.scheduler,
+                        tokenizer=txt2img_pipeline.tokenizer,
+                        tokenizer_2=getattr(txt2img_pipeline, 'tokenizer_2', None),
+                    )
+                    # Keep the same optimizations
+                    current_pipeline = current_pipeline.to(self.cfg.device)
+                    # Cache it for future use
+                    self._img2img_pipeline = current_pipeline
+                else:
+                    current_pipeline = self._pipeline
+            pipe_inputs["image"] = image
+            pipe_inputs["strength"] = strength
+            # img2img doesn't need width/height as it uses the image dimensions
+        else:
+            generation_mode = "txt2img"
+            # Always use the original txt2img pipeline for txt2img
+            current_pipeline = self._pipeline
             pipe_inputs["width"] = width
             pipe_inputs["height"] = height
 
         model_type, _, _ = self._detect_model_type(self.cfg.model)
-        if depth_map and isinstance(self._pipeline, StableDiffusionXLControlNetPipeline):
-            generation_mode = "controlnet"
-        elif image is not None:
-            generation_mode = "img2img"
-        else:
-            generation_mode = "txt2img"
-        logger.info("LocalSDXL(%s): generating %s (%s steps, cfg=%.2f)", model_type, generation_mode, gen_steps, guidance)
+        logger.info(f"LocalSDXL(): generating {model_type} {generation_mode}({width}x{height}, {gen_steps} steps, cfg={guidance:.2f}, strength={strength if 'strength' in pipe_inputs else 'N/A'})")
 
-        result = await asyncio.to_thread(self._pipeline, **pipe_inputs)
+        result = await asyncio.to_thread(current_pipeline, **pipe_inputs)
         if not hasattr(result, "images") or not result.images:
             raise RuntimeError("Pipeline returned no images")
         output_path = self._get_output_path("png")
