@@ -34,6 +34,7 @@ try:  # Optional heavy imports (loaded lazily where possible)
 except Exception:  # pragma: no cover
     _DIFFUSERS_AVAILABLE = False
     torch = None  # type: ignore
+    logger.warning("diffusers/torch not installed, local SDXL generation will be unavailable. Install extras: `uv sync --extra local_gen`")
 
 
 class LocalSDXLConfig(BaseGeneratorConfig):
@@ -96,11 +97,12 @@ class LocalSDXLGenerator(ImageGenerator):
         # Resolve device
         if not self._cuda_available():  # Fall back to cpu if cuda missing
             self.cfg.device = "cpu"
-            # ——— PERFORMANCE TWEAKS ———
-            # 1) Allow TF32 on Ampere+ and enable cudnn autotuner
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-            torch.backends.cudnn.benchmark = True
+            if _DIFFUSERS_AVAILABLE:
+                # ——— PERFORMANCE TWEAKS ———
+                # 1) Allow TF32 on Ampere+ and enable cudnn autotuner
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.backends.cudnn.benchmark = True
 
 
     async def start(self):  # noqa: D401

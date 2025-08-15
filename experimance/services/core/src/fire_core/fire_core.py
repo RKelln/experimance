@@ -22,13 +22,13 @@ from dataclasses import dataclass, field
 
 from experimance_common.base_service import BaseService
 from experimance_common.config import ConfigError, resolve_path
-from experimance_common.constants import IMAGE_TRANSPORT_MODES
+from experimance_common.constants import IMAGE_TRANSPORT_MODES, DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX
 from experimance_common.schemas import ImageSource
-from experimance_common.zmq.config import MessageDataType
-from experimance_common.zmq.services import ControllerService  
+from experimance_common.zmq.config import MessageDataType, SubscriberConfig
+from experimance_common.zmq.services import ControllerService, SubscriberComponent
 from experimance_common.schemas import (
-    StoryHeard, UpdateLocation, ImageReady, RenderRequest, DisplayMedia, 
-    ContentType, MessageType
+    StoryHeard, UpdateLocation,  # type: ignore
+    ImageReady, RenderRequest, DisplayMedia, ContentType, MessageType 
 )
 from experimance_common.zmq.zmq_utils import prepare_image_source
 
@@ -127,6 +127,17 @@ class FireCoreService(BaseService):
         self.zmq_service.add_message_handler(MessageType.STORY_HEARD, self._handle_story_heard)
         self.zmq_service.add_message_handler(MessageType.UPDATE_LOCATION, self._handle_story_heard) # for now use the same handler
         
+        # Add subscriber for updates on port 5556 (core binds, others publish to us)
+        updates_config = SubscriberConfig(
+            port=DEFAULT_PORTS['updates'],
+            address=ZMQ_TCP_BIND_PREFIX,  # Core binds - other services publish to us
+            bind=True,  # Core binds on updates channel
+            topics=[""]  # Subscribe to all topics
+        )
+        self.updates_subscriber = SubscriberComponent(updates_config)
+        self.updates_subscriber.set_default_handler(self._handle_update_message)
+        await self.updates_subscriber.start()
+        
         # Set up worker response handler for image results
         self.zmq_service.add_response_handler(self._handle_worker_response)
         
@@ -145,6 +156,9 @@ class FireCoreService(BaseService):
         """Stop the service gracefully."""
         logger.info("Stopping Fire core service")
         
+        if hasattr(self, 'updates_subscriber'):
+            await self.updates_subscriber.stop()
+            
         if self.zmq_service:
             await self.zmq_service.stop()
         
@@ -159,11 +173,15 @@ class FireCoreService(BaseService):
         # State-specific actions
         if new_state == CoreState.LISTENING:
             # Clear any old request when returning to listening
-            if self.current_request:
-                logger.info("Clearing previous request")
-                self.current_request = None
-                self.pending_image_requests.clear()
-    
+            self.cancel_current_request()
+
+    def cancel_current_request(self):
+        """Cancel the current image request, if any."""
+        if self.current_request:
+            logger.debug("Canceling current request")
+            self.current_request = None
+            self.pending_image_requests.clear()
+
     async def _handle_story_heard(self, topic: str, message_data: MessageDataType):
         """
         Handle StoryHeard message - start new visualization pipeline.
@@ -172,6 +190,7 @@ class FireCoreService(BaseService):
             topic: The message topic
             message_data: Message data (dict or MessageBase)
         """
+        logger.debug(f"Received story heard message '{message_data}'")
         try:
             story : StoryHeard = StoryHeard.to_message_type(message_data) # type: ignore[assignment]
             if not story or not isinstance(story, StoryHeard):
@@ -180,14 +199,10 @@ class FireCoreService(BaseService):
         
             logger.info(f"Story heard: {len(str(story.content))} chars")
             
-            # Cancel any ongoing requests
-            if self.current_request:
-                logger.info("Canceling previous request for new story")
-                self.pending_image_requests.clear()
+            self.cancel_current_request()
             
             # Send clear display message
             await self._send_clear_display()
-        
 
             # Analyze story to infer location
             logger.info("Analyzing story with LLM")
@@ -224,6 +239,88 @@ class FireCoreService(BaseService):
             
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Failed to process story")
+            await self._transition_to_state(CoreState.LISTENING)
+
+    async def _handle_update_message(self, topic: str, message_data: MessageDataType):
+        """
+        Handle update messages from other services on port 5556.
+        
+        Args:
+            topic: The message topic (e.g., "story", "prompt", "status")
+            message_data: Message data
+        """
+        try:
+            logger.debug(f"Received update message on topic '{topic}'")
+            
+            if topic == "story":
+                # Handle story updates - use the same handler as StoryHeard
+                await self._handle_story_heard(topic, message_data)
+                
+            elif topic == "prompt":
+                # Handle direct prompt - bypass LLM analysis  
+                await self._handle_debug_prompt(topic, message_data)
+                
+            else:
+                logger.debug(f"Ignoring update message on unhandled topic '{topic}'")
+                
+        except Exception as e:
+            self.record_error(e, is_fatal=False, custom_message=f"Failed to process update message on topic '{topic}'")
+
+    async def _handle_debug_prompt(self, topic: str, message_data: MessageDataType):
+        """
+        Handle debug prompt - bypass LLM analysis and go directly to image generation.
+        
+        Args:
+            topic: The message topic
+            message_data: Message data containing the prompt
+        """
+        logger.debug(f"Received debug prompt on topic '{topic}': {message_data}")
+        try:
+            prompt = message_data.get('prompt', '')
+            negative_prompt = message_data.get('negative_prompt', 'blurry, low quality, distorted')
+                
+            logger.info(f"Processing debug prompt: {prompt[:100]}...")
+            
+            self.cancel_current_request()
+            
+            # Send clear display message
+            await self._send_clear_display()
+            
+            # Create direct image prompt (no LLM processing)
+            base_prompt = ImagePrompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt
+            )
+            
+            # Calculate tiling strategy
+            tiles = self.tiler.calculate_tiles(
+                self.config.panorama.display_width,
+                self.config.panorama.display_height
+            )
+            
+            # Create new active request
+            self.current_request = ActiveRequest(
+                request_id=str(uuid.uuid4()),
+                base_prompt=base_prompt,
+                tiles=tiles,
+                total_tiles=len(tiles)
+            )
+            
+            logger.info(
+                f"New debug request {self.current_request.request_id}: "
+                f"direct prompt with {len(tiles)} tiles"
+            )
+            
+            # Transition to base image generation
+            await self._transition_to_state(CoreState.BASE_IMAGE)
+            
+            # Request base panorama image
+            await self._request_base_image()
+
+            logger.debug("Debug prompt processed successfully")
+            
+        except Exception as e:
+            self.record_error(e, is_fatal=False, custom_message="Failed to process debug prompt")
             await self._transition_to_state(CoreState.LISTENING)
 
     
@@ -277,9 +374,11 @@ class FireCoreService(BaseService):
     
     async def _request_base_image(self):
         """Request generation of the base panorama image."""
-        if not self.current_request:
+        if self.current_request is None:
             return
-        
+
+        logger.info(f"Requesting base image for prompt: {self.current_request.base_prompt}")
+
         request_id = f"{self.current_request.request_id}_base"
         
         panorama_prompt = self.prompt_builder.base_prompt_to_panorama_prompt(
