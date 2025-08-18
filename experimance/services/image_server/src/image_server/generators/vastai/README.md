@@ -23,9 +23,34 @@ The VastAI generator allows the image server to automatically use VastAI instanc
 - **Single Instance Management**: Manages one instance at a time for cost efficiency  
 - **Automatic Instance Lifecycle**: Finds existing instances or creates new ones as needed
 - **Health Monitoring**: Monitors instance health and switches to new instances if needed
+- **Smart Offer Exclusion**: Automatically excludes problematic offers/instances to prevent repeated failures
 - **ControlNet Support**: Full support for depth-conditioned image generation
 - **Era-specific LoRAs**: Support for experimance and drone era models
 - **Multiple Models**: Support for lightning, hyper, and base SDXL models
+
+### Exclusion List System
+
+The VastAI generator includes an intelligent exclusion list system that prevents repeatedly trying broken or problematic offers:
+
+- **Automatic Exclusion**: Failed offers/instances are automatically excluded
+- **Persistent Storage**: Exclusion data survives service restarts (stored in `/var/cache/experimance/`)
+- **Smart Recovery**: System tries alternative offers when excluded ones are filtered out
+- **CLI Management**: View stats and manage exclusions via command line
+
+View exclusion list statistics:
+```bash
+uv run python services/image_server/src/image_server/generators/vastai/vastai_manager.py --exclusion-list-stats
+```
+
+Clear exclusion list (emergency use only):
+```bash
+uv run python services/image_server/src/image_server/generators/vastai/vastai_manager.py --clear-exclusion-list
+```
+
+Manually exclude a problematic offer:
+```bash
+uv run python services/image_server/src/image_server/generators/vastai/vastai_manager.py --exclude-offer OFFER_ID
+```
 
 ### Quick Start
 

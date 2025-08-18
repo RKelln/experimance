@@ -341,6 +341,14 @@ class VastAIGenerator(ImageGenerator):
             # If we reach here, we need to destroy and recreate
             if should_destroy:
                 try:
+                    # Exclude the offer before destroying the instance
+                    if old_endpoint.offer_id:
+                        self.manager.add_offer_to_exclusion_list(
+                            old_endpoint.offer_id, 
+                            old_endpoint.instance_id,
+                            f"Instance {old_endpoint.instance_id} destroyed due to: {error_desc if is_broken else 'Poor health/consecutive failures'}"
+                        )
+                    
                     result = self.manager.destroy_instance(old_endpoint.instance_id)
                     logger.info(f"Background recovery: Destroyed instance {old_endpoint.instance_id}: {result}")
                 except Exception as e:

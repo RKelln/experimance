@@ -21,9 +21,9 @@ import time
 import subprocess
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass
-from experimance_common.constants import PROJECT_ROOT
+from experimance_common.constants import PROJECT_ROOT, DEFAULT_TEMP_DIR
 import requests
 from dotenv import load_dotenv
 from tenacity import (
@@ -48,6 +48,7 @@ class InstanceEndpoint:
     url: str
     instance_id: int
     status: str
+    offer_id: Optional[int] = None  # Track which offer was used to create this instance
 
 
 class VastAIManager:
@@ -79,6 +80,61 @@ class VastAIManager:
             "PROVISIONING_SCRIPT": self.provisioning_script_url
         }
         self.disk_size = 20 # Gigabytes
+        
+        # Exclusion list functionality - track problematic offers/instances
+        self._exclusion_list_file = os.path.join(DEFAULT_TEMP_DIR, "vastai_exclusion_list.json")
+        self._exclusion_list_data = self._load_exclusion_list()
+        
+        # Track offer-instance relationships for exclusion
+        self._instance_offers = {}  # instance_id -> offer_id mapping (in-memory)
+        
+    def _get_offer_id_for_instance(self, instance_id: int) -> Optional[int]:
+        """Get the offer_id that was used to create this instance."""
+        # First check in-memory mapping
+        offer_id = self._instance_offers.get(instance_id)
+        if offer_id:
+            return offer_id
+            
+        # Check exclusion list data for historical record
+        instance_str = str(instance_id)
+        if instance_str in self._exclusion_list_data["instances"]:
+            return self._exclusion_list_data["instances"][instance_str].get("offer_id")
+            
+        return None
+        
+    def _track_instance_offer(self, instance_id: int, offer_id: int):
+        """Track which offer was used to create this instance."""
+        self._instance_offers[instance_id] = offer_id
+        logger.debug(f"Tracking instance {instance_id} created from offer {offer_id}")
+        
+    def _load_exclusion_list(self) -> Dict[str, Any]:
+        """Load exclusion list data from persistent storage."""
+        try:
+            if os.path.exists(self._exclusion_list_file):
+                with open(self._exclusion_list_file, 'r') as f:
+                    data = json.load(f)
+                    logger.info(f"Loaded VastAI exclusion list with {len(data.get('offers', {}))} offers, {len(data.get('instances', {}))} instances")
+                    return data
+        except Exception as e:
+            logger.warning(f"Failed to load exclusion list from {self._exclusion_list_file}: {e}")
+        
+        # Default exclusion list structure
+        return {
+            "offers": {},      # offer_id -> {"reason": str, "timestamp": float, "failures": int}
+            "instances": {}    # instance_id -> {"reason": str, "timestamp": float, "failures": int, "offer_id": int}
+        }
+        
+    def _save_exclusion_list(self):
+        """Save exclusion list data to persistent storage."""
+        try:
+            # Ensure cache directory exists
+            os.makedirs(os.path.dirname(self._exclusion_list_file), exist_ok=True)
+            
+            with open(self._exclusion_list_file, 'w') as f:
+                json.dump(self._exclusion_list_data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Failed to save exclusion list to {self._exclusion_list_file}: {e}")
         
     def _run_vastai_command(self, cmd: List[str], raw: bool = True) -> Any:
         """Run a vastai CLI command and return parsed JSON result."""
@@ -414,6 +470,137 @@ class VastAIManager:
         
         return experimance_instances
     
+    def add_offer_to_exclusion_list(self, offer_id: int, instance_id: Optional[int] = None, reason: str = "Instance creation/provisioning failed") -> None:
+        """
+        Add an offer to the exclusion list to prevent future use.
+        
+        Args:
+            offer_id: The VastAI offer ID to exclude
+            instance_id: Optional instance ID if known (for tracking)
+            reason: Reason for excluding
+        """
+        current_time = time.time()
+        
+        # Update offer exclusion list
+        if str(offer_id) in self._exclusion_list_data["offers"]:
+            # Increment failure count for existing entry
+            self._exclusion_list_data["offers"][str(offer_id)]["failures"] += 1
+            self._exclusion_list_data["offers"][str(offer_id)]["last_failure"] = current_time
+            self._exclusion_list_data["offers"][str(offer_id)]["reason"] = reason
+        else:
+            # New exclusion list entry
+            self._exclusion_list_data["offers"][str(offer_id)] = {
+                "reason": reason,
+                "timestamp": current_time,
+                "last_failure": current_time,
+                "failures": 1,
+                "instance_id": instance_id
+            }
+        
+        # Update instance exclusion list if instance_id provided
+        if instance_id:
+            if str(instance_id) in self._exclusion_list_data["instances"]:
+                self._exclusion_list_data["instances"][str(instance_id)]["failures"] += 1
+                self._exclusion_list_data["instances"][str(instance_id)]["last_failure"] = current_time
+                self._exclusion_list_data["instances"][str(instance_id)]["reason"] = reason
+            else:
+                self._exclusion_list_data["instances"][str(instance_id)] = {
+                    "reason": reason,
+                    "timestamp": current_time,
+                    "last_failure": current_time,
+                    "failures": 1,
+                    "offer_id": offer_id
+                }
+        
+        # Save to disk
+        self._save_exclusion_list()
+        
+        logger.warning(f"🚫 Excluded offer {offer_id} (instance {instance_id}): {reason}")
+        
+        # Log current exclusion list stats
+        total_offers = len(self._exclusion_list_data["offers"])
+        total_instances = len(self._exclusion_list_data["instances"])
+        logger.info(f"📋 Exclusion list now contains {total_offers} offers, {total_instances} instances")
+    
+    def is_offer_excluded(self, offer_id: int) -> tuple[bool, Optional[str]]:
+        """
+        Check if an offer is excluded.
+        
+        Args:
+            offer_id: The VastAI offer ID to check
+            
+        Returns:
+            Tuple of (is_excluded, reason)
+        """
+        offer_str = str(offer_id)
+        if offer_str in self._exclusion_list_data["offers"]:
+            entry = self._exclusion_list_data["offers"][offer_str]
+            return True, entry.get("reason", "Unknown reason")
+        return False, None
+    
+    def is_instance_excluded(self, instance_id: int) -> tuple[bool, Optional[str]]:
+        """
+        Check if an instance is excluded.
+        
+        Args:
+            instance_id: The VastAI instance ID to check
+            
+        Returns:
+            Tuple of (is_excluded, reason)
+        """
+        instance_str = str(instance_id)
+        if instance_str in self._exclusion_list_data["instances"]:
+            entry = self._exclusion_list_data["instances"][instance_str]
+            return True, entry.get("reason", "Unknown reason")
+        return False, None
+    
+    def get_exclusion_list_stats(self) -> Dict[str, Any]:
+        """Get statistics about the current exclusion list."""
+        current_time = time.time()
+        
+        # Count recent failures (last 24 hours)
+        recent_offers = 0
+        recent_instances = 0
+        
+        for entry in self._exclusion_list_data["offers"].values():
+            if current_time - entry.get("last_failure", entry.get("timestamp", 0)) < 86400:  # 24 hours
+                recent_offers += 1
+                
+        for entry in self._exclusion_list_data["instances"].values():
+            if current_time - entry.get("last_failure", entry.get("timestamp", 0)) < 86400:  # 24 hours
+                recent_instances += 1
+        
+        return {
+            "total_offers": len(self._exclusion_list_data["offers"]),
+            "total_instances": len(self._exclusion_list_data["instances"]),
+            "recent_offers_24h": recent_offers,
+            "recent_instances_24h": recent_instances,
+            "exclusion_list_file": self._exclusion_list_file
+        }
+    
+    def clear_exclusion_list(self, confirm: bool = False) -> bool:
+        """
+        Clear the entire exclusion list (use with caution).
+        
+        Args:
+            confirm: Must be True to actually clear the exclusion list
+            
+        Returns:
+            True if exclusion list was cleared, False otherwise
+        """
+        if not confirm:
+            logger.warning("clear_exclusion_list called without confirmation - use confirm=True to actually clear")
+            return False
+            
+        logger.warning("🗑️  Clearing entire VastAI exclusion list")
+        self._exclusion_list_data = {
+            "offers": {},
+            "instances": {}
+        }
+        self._save_exclusion_list()
+        logger.info("✅ Exclusion list cleared")
+        return True
+    
     def get_ssh_command(self, instance_id: int, prefer_direct: bool = True) -> Optional[str]:
         """
         Get the SSH command to connect to an instance.
@@ -544,7 +731,8 @@ class VastAIManager:
                 internal_port=8000,
                 url=url,
                 instance_id=instance_id,
-                status=instance.get("actual_status", "unknown")
+                status=instance.get("actual_status", "unknown"),
+                offer_id=self._get_offer_id_for_instance(instance_id)
             )
             
         except Exception as e:
@@ -1326,8 +1514,26 @@ class VastAIManager:
                 logger.error(f"Unexpected response format from search_offers: {type(offers)}")
                 return []
             
+            # Filter out excluded offers
+            filtered_offers = []
+            excluded_count = 0
+            
+            for offer in offers:
+                offer_id = offer.get("id")
+                if offer_id:
+                    is_excluded, reason = self.is_offer_excluded(offer_id)
+                    if is_excluded:
+                        logger.debug(f"Skipping excluded offer {offer_id}: {reason}")
+                        excluded_count += 1
+                        continue
+                
+                filtered_offers.append(offer)
+            
+            if excluded_count > 0:
+                logger.info(f"Filtered out {excluded_count} excluded offers from search results")
+            
             # Apply smart selection algorithm
-            return self._smart_select_offers(offers)
+            return self._smart_select_offers(filtered_offers)
         except Exception as e:
             # If all retries failed, return empty list
             logger.error(f"search_offers failed after all retries: {e}")
@@ -1659,13 +1865,23 @@ class VastAIManager:
         if isinstance(result, dict) and result.get("error"):
             logger.error(f"Failed to create instance: {result.get('message', 'Unknown error')}")
             logger.error(f"Full error response: {result}")
+            # Exclude the offer since creation failed at the API level
+            self.add_offer_to_exclusion_list(
+                offer_id, 
+                reason=f"API creation failed: {result.get('message', 'Unknown error')}"
+            )
             return None
         
         instance_id = result.get("new_contract")
         
         if not instance_id:
             logger.error(f"Failed to create instance - no contract ID returned: {result}")
+            # Exclude the offer since instance creation failed
+            self.add_offer_to_exclusion_list(offer_id, reason=f"Instance creation failed: {result}")
             return None
+        
+        # Track the offer-instance relationship
+        self._track_instance_offer(instance_id, offer_id)
         
         logger.info(f"Created instance {instance_id}, waiting for it to be ready...")
         
@@ -1675,7 +1891,7 @@ class VastAIManager:
                     logger.info(f"Instance {instance_id} is ready. SCP provisioning disabled - relying on PROVISIONING_SCRIPT environment variable")
                     # Wait for the provisioning script to complete and service to become healthy
                     logger.info("Waiting for PROVISIONING_SCRIPT to complete and service to become healthy...")
-                    if self._wait_for_service_healthy(instance_id, timeout=180):  # 3 minutes for provisioning
+                    if self._wait_for_service_healthy(instance_id, timeout=240):  # 4 minutes for provisioning
                         logger.info("Service is healthy - PROVISIONING_SCRIPT completed successfully")
                     else:
                         logger.warning("Service did not become healthy within timeout - PROVISIONING_SCRIPT may have failed")
@@ -1684,7 +1900,7 @@ class VastAIManager:
                     logger.info(f"Instance {instance_id} is ready. Waiting for PROVISIONING_SCRIPT to complete...")
 
                     # Wait for the service to become healthy first (PROVISIONING_SCRIPT should handle this)
-                    if self._wait_for_service_healthy(instance_id, timeout=180):  # 3 minutes for PROVISIONING_SCRIPT
+                    if self._wait_for_service_healthy(instance_id, timeout=240):  # 4 minutes for PROVISIONING_SCRIPT
                         logger.info("Service became healthy - PROVISIONING_SCRIPT worked successfully, skipping SCP fallback")
                     else:
                         logger.warning("Service not healthy after 180s, checking if it's progressing normally...")
@@ -1731,6 +1947,18 @@ class VastAIManager:
                 return self.get_model_server_endpoint(instance_id)
             else:
                 logger.error(f"New instance {instance_id} failed to become ready")
+                # Exclude the offer since the instance failed to start properly
+                self.add_offer_to_exclusion_list(
+                    offer_id, 
+                    instance_id,
+                    f"Instance {instance_id} failed to become ready within timeout"
+                )
+                # Optionally destroy the failed instance
+                try:
+                    logger.warning(f"Destroying failed instance {instance_id}")
+                    self.destroy_instance(instance_id)
+                except Exception as e:
+                    logger.error(f"Failed to destroy failed instance {instance_id}: {e}")
                 return None
         else:
             return self.get_model_server_endpoint(instance_id)
@@ -1753,10 +1981,60 @@ def main():
                        help="Create new instance if none found")
     parser.add_argument("--provision-script", type=str, metavar="URL",
                        help="Custom provisioning script URL to use instead of default")
+    parser.add_argument("--exclusion-list-stats", action="store_true",
+                       help="Show exclusion list statistics")
+    parser.add_argument("--clear-exclusion-list", action="store_true",
+                       help="Clear the entire exclusion list (use with caution)")
+    parser.add_argument("--exclude-offer", type=int, metavar="OFFER_ID",
+                       help="Manually exclude a specific offer ID")
     
     args = parser.parse_args()
     
     manager = VastAIManager(provisioning_script_url=args.provision_script)
+
+    if args.exclusion_list_stats:
+        print("📋 VastAI Exclusion List Statistics:")
+        stats = manager.get_exclusion_list_stats()
+        print(f"  Total excluded offers: {stats['total_offers']}")
+        print(f"  Total excluded instances: {stats['total_instances']}")
+        print(f"  Recent failures (24h): {stats['recent_offers_24h']} offers, {stats['recent_instances_24h']} instances")
+        print(f"  Exclusion list file: {stats['exclusion_list_file']}")
+        
+        # Show some recent entries
+        if manager._exclusion_list_data['offers']:
+            print(f"\n🚫 Recent excluded offers:")
+            sorted_offers = sorted(
+                manager._exclusion_list_data['offers'].items(),
+                key=lambda x: x[1].get('last_failure', x[1].get('timestamp', 0)),
+                reverse=True
+            )[:5]  # Show last 5
+            
+            for offer_id, data in sorted_offers:
+                timestamp = data.get('last_failure', data.get('timestamp', 0))
+                time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
+                failures = data.get('failures', 1)
+                reason = data.get('reason', 'Unknown')
+                print(f"  Offer {offer_id}: {failures} failure(s), last: {time_str} - {reason[:50]}...")
+        return
+
+    if args.clear_exclusion_list:
+        confirm = input("⚠️  Are you sure you want to clear the entire exclusion list? (yes/NO): ")
+        if confirm.lower() == 'yes':
+            if manager.clear_exclusion_list(confirm=True):
+                print("✅ Exclusion list cleared successfully")
+            else:
+                print("❌ Failed to clear exclusion list")
+        else:
+            print("Cancelled exclusion list clearing")
+        return
+
+    if args.exclude_offer:
+        reason = input(f"Enter reason for excluding offer {args.exclude_offer}: ").strip()
+        if not reason:
+            reason = "Manually excluded"
+        manager.add_offer_to_exclusion_list(args.exclude_offer, reason=reason)
+        print(f"✅ Offer {args.exclude_offer} excluded")
+        return
 
     if args.provision_instance:
         print(f"Manually provisioning instance {args.provision_instance}...")
