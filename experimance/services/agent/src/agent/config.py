@@ -133,11 +133,19 @@ class VisionConfig(BaseModel):
     )
 
     # Detection method selection
-    detection_method: Annotated[Literal["cpu", "vlm", "hybrid"], 
+    detection_method: Annotated[Literal["cpu", "vlm", "hybrid", "reolink"], 
                                StringConstraints(to_lower=True)] = Field(
         default="cpu",
-        description="Detection method: 'cpu' for OpenCV-only, 'vlm' for Vision Language Model, 'hybrid' for both"
+        description="Detection method: 'cpu' for OpenCV-only, 'vlm' for Vision Language Model, 'hybrid' for both, 'reolink' for IP camera AI"
     )
+    
+    # Reolink camera configuration (only used if detection_method is 'reolink')
+    reolink_enabled: bool = Field(default=False, description="Enable Reolink IP camera detection")
+    reolink_host: Optional[str] = Field(default=None, description="Reolink camera IP address or hostname (e.g. '192.168.1.100')")
+    reolink_user: str = Field(default="admin", description="Reolink camera username")
+    reolink_https: bool = Field(default=True, description="Use HTTPS for Reolink camera (recommended)")
+    reolink_channel: int = Field(default=0, description="Reolink camera channel (0 for single-channel cameras)")
+    reolink_timeout: int = Field(default=10, description="Reolink camera request timeout (seconds)")
     
     # CPU detection performance mode
     cpu_performance_mode: Annotated[Literal["fast", "balanced", "accurate"], 
@@ -172,6 +180,45 @@ class VisionConfig(BaseModel):
             logging.getLogger(__name__).warning(
                 "VLM-only detection method selected. This may be slow on CPU. Consider 'cpu' or 'hybrid' mode."
             )
+        elif v == "reolink":
+            import logging
+            logging.getLogger(__name__).info(
+                "Reolink camera detection selected. Ensure camera is configured and accessible."
+            )
+        return v
+    
+    @field_validator('reolink_host')
+    @classmethod
+    def validate_reolink_config(cls, v: Optional[str], info) -> Optional[str]:
+        """Validate Reolink configuration when using Reolink detection method."""
+        values = info.data if hasattr(info, 'data') else {}
+        detection_method = values.get('detection_method')
+        reolink_enabled = values.get('reolink_enabled', False)
+        
+        if detection_method == "reolink" or reolink_enabled:
+            if not v:
+                raise ValueError("reolink_host is required when using Reolink detection method")
+            # Basic IP address/hostname validation
+            if not (v.replace('.', '').replace('-', '').replace('_', '').isalnum()):
+                import re
+                if not re.match(r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$', v):
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"Reolink host '{v}' may not be a valid IP address or hostname"
+                    )
+        return v
+    
+    @field_validator('reolink_password')
+    @classmethod  
+    def validate_reolink_password(cls, v: Optional[str], info) -> Optional[str]:
+        """Validate Reolink password is provided when needed."""
+        values = info.data if hasattr(info, 'data') else {}
+        detection_method = values.get('detection_method')
+        reolink_enabled = values.get('reolink_enabled', False)
+        
+        if detection_method == "reolink" or reolink_enabled:
+            if not v:
+                raise ValueError("reolink_password is required when using Reolink detection method")
         return v
     
     @field_validator('webcam_width', 'webcam_height')
