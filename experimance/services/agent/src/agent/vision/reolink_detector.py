@@ -20,13 +20,83 @@ urllib3.disable_warnings(InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
-class SimpleReolinkDetector:
+class ReolinkDetector:
     """
     Simple audience detector using Reolink camera AI.
     
     Polls camera's AI alarm status for person detection with hysteresis
     to avoid rapid state changes.
     """
+    
+    @classmethod
+    async def create_with_discovery(
+        cls,
+        known_ip: Optional[str] = None,
+        user: str = "admin",
+        password: str = "admin", 
+        model_pattern: Optional[str] = None,
+        **kwargs
+    ) -> "ReolinkDetector":
+        """
+        Create a ReolinkDetector with automatic comprehensive camera discovery.
+        
+        Uses intelligent progressive discovery:
+        1. If known_ip provided, tests that first
+        2. Falls back to network scan if needed  
+        3. Signature verification to confirm cameras
+        
+        Args:
+            known_ip: Optional specific IP to test first (fastest)
+            user: Camera username
+            password: Camera password
+            model_pattern: Optional model pattern to search for (e.g., "RLC-820A")
+            **kwargs: Additional arguments passed to ReolinkDetector constructor
+            
+        Returns:
+            Configured ReolinkDetector instance
+            
+        Raises:
+            RuntimeError: If no camera found or credentials invalid
+        """
+        from .reolink_discovery import discover_reolink_cameras_comprehensive, find_reolink_camera_by_model, test_camera_credentials
+        
+        logger.info("Discovering Reolink cameras with comprehensive discovery...")
+        
+        # Find cameras using comprehensive discovery
+        if model_pattern:
+            # If model pattern specified, use traditional discovery for now
+            # TODO: Could enhance comprehensive discovery to filter by model
+            camera_info = await find_reolink_camera_by_model(model_pattern)
+            cameras = [camera_info] if camera_info else []
+        else:
+            # Use new comprehensive discovery
+            cameras = await discover_reolink_cameras_comprehensive(known_ip=known_ip)
+        
+        if not cameras:
+            if known_ip:
+                raise RuntimeError(f"No Reolink cameras found (tested known IP {known_ip} and network scan)")
+            else:
+                raise RuntimeError("No Reolink cameras found on network")
+        
+        # Test credentials for each camera
+        for camera in cameras:
+            logger.info(f"Testing credentials for {camera.host} ({camera.model})...")
+            
+            if await test_camera_credentials(camera.host, user, password):
+                logger.info(f"✅ Successfully connected to {camera}")
+                
+                # Create detector instance
+                detector = cls(
+                    host=camera.host,
+                    user=user,
+                    password=password,
+                    **kwargs
+                )
+                return detector
+            else:
+                logger.warning(f"❌ Invalid credentials for {camera.host}")
+        
+        raise RuntimeError(f"Found {len(cameras)} camera(s) but credentials invalid for all")
     
     def __init__(
         self,
@@ -59,6 +129,7 @@ class SimpleReolinkDetector:
         # HTTP session and authentication
         self._session: Optional[aiohttp.ClientSession] = None
         self._token: str = "null"  # Must be literal "null" for first login request
+        self._token_expires_at: Optional[float] = None  # Unix timestamp when token expires
         
     async def start(self):
         """Initialize the detector."""
@@ -118,8 +189,8 @@ class SimpleReolinkDetector:
             # Get response text
             text = await response.text()
             
-            # Try to parse as JSON regardless of content-type
-            # (Reolink cameras return JSON with text/html content-type)
+            # IMPORTANT: Reolink cameras return JSON data with "text/html" Content-Type header
+            # This is a quirk of their firmware - they send valid JSON but wrong MIME type
             try:
                 import json
                 data = json.loads(text)
@@ -136,16 +207,20 @@ class SimpleReolinkDetector:
                 logger.error(f"Login API error: {error_detail}")
                 raise ValueError(f"Login failed: {error_detail}")
             
-            # Extract token
+            # Extract token and lease time
             token_info = data[0].get("value", {}).get("Token", {})
             token = token_info.get("name")
+            lease_time = token_info.get("leaseTime", 3600)  # Default 1 hour
             
             if not token:
                 logger.error(f"No token in response: {data}")
                 raise ValueError("Login succeeded but no token returned")
             
             self._token = token
-            logger.info("Reolink authentication successful")
+            # Set expiry to 90% of lease time to allow for renewal before expiry
+            import time
+            self._token_expires_at = time.time() + (lease_time * 0.9)
+            logger.info(f"Reolink authentication successful (token expires in {lease_time}s)")
     
     async def _logout(self):
         """Logout from camera and invalidate token."""
@@ -156,11 +231,24 @@ class SimpleReolinkDetector:
             await self._api_call("Logout", {})
         finally:
             self._token = "null"
+            self._token_expires_at = None
+    
+    def _token_needs_renewal(self) -> bool:
+        """Check if token needs renewal (approaching expiry)."""
+        if self._token == "null" or self._token_expires_at is None:
+            return True
+        import time
+        return time.time() >= self._token_expires_at
     
     async def _api_call(self, cmd: str, param: dict) -> dict:
-        """Make authenticated API call to camera."""
+        """Make authenticated API call to camera with automatic token renewal."""
         if not self._session:
             raise RuntimeError("Session not initialized")
+        
+        # Check if token needs renewal before making the call
+        if self._token_needs_renewal():
+            logger.info("Token expired or approaching expiry, renewing...")
+            await self._login()
         
         protocol = "https" if self.https else "http"
         url = f"{protocol}://{self.host}/cgi-bin/api.cgi?cmd={cmd}&token={self._token}"
@@ -178,8 +266,8 @@ class SimpleReolinkDetector:
         ) as response:
             response.raise_for_status()
             
-            # Try to parse as JSON regardless of content-type
-            # (Reolink cameras return JSON with text/html content-type)
+            # IMPORTANT: Reolink cameras return JSON data with "text/html" Content-Type header  
+            # This is a quirk of their firmware - they send valid JSON but wrong MIME type
             try:
                 import json
                 text = await response.text()
@@ -187,25 +275,9 @@ class SimpleReolinkDetector:
             except Exception as e:
                 text = await response.text() if 'text' not in locals() else text
                 logger.error(f"Failed to parse JSON: {e}, raw text: {text[:200]}...")
-                # Check if it looks like an auth error
+                # Check if it looks like an auth error (shouldn't happen with proactive renewal)
                 if 'login' in text.lower() or 'unauthorized' in text.lower():
-                    # Token might have expired, try re-login once
-                    if self._token != "null":
-                        logger.info("Token expired, re-authenticating...")
-                        await self._login()
-                        # Retry the call with new token
-                        url = f"{protocol}://{self.host}/cgi-bin/api.cgi?cmd={cmd}&token={self._token}"
-                        async with self._session.post(
-                            url, 
-                            json=payload, 
-                            headers={'Content-Type': 'application/json'}
-                        ) as retry_response:
-                            retry_response.raise_for_status()
-                            retry_text = await retry_response.text()
-                            retry_data = json.loads(retry_text)
-                            return retry_data[0].get("value", {})
-                    else:
-                        raise ValueError("Authentication failed - check username/password")
+                    raise ValueError("Authentication failed - token may have expired unexpectedly")
                 else:
                     raise ValueError(f"Unexpected response format: {text[:200]}...")
             
@@ -288,3 +360,9 @@ class SimpleReolinkDetector:
             'hysteresis_count': self.hysteresis_count,
             'consecutive_readings': self._reading_count
         }
+    
+    def get_detection_stats(self) -> Dict[str, Any]:
+        """Get detection statistics (alias for get_stats for compatibility)."""
+        stats = self.get_stats()
+        stats['current_state'] = 'present' if stats['current_state'] else 'absent'
+        return stats

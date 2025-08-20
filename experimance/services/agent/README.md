@@ -19,6 +19,22 @@ The agent service acts as a coordinator between:
 uv run -m experimance_agent
 ```
 
+### Reolink Camera Setup (Fire Project)
+
+For the Fire project using Reolink cameras for audience detection:
+
+```bash
+# find reolink  cameras
+uv run python scripts/list_cameras.py
+```
+
+Configure camera in `projects/fire/.env`:
+```env
+REOLINK_HOST=192.168.2.229
+REOLINK_USER=admin  
+REOLINK_PASSWORD=your_password
+```
+
 ### Testing Without External Dependencies
 
 For development and testing without a webcam or core service:

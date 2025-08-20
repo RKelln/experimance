@@ -370,7 +370,7 @@ class AgentServiceBase(BaseService):
 
             self._on_conversation_started()
             
-            logger.info("Conversation backend started successfully - deep thoughts initialized")
+            logger.info("Conversation backend started successfully")
             return True
             
         except Exception as e:

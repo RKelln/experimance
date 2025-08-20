@@ -208,19 +208,6 @@ class VisionConfig(BaseModel):
                     )
         return v
     
-    @field_validator('reolink_password')
-    @classmethod  
-    def validate_reolink_password(cls, v: Optional[str], info) -> Optional[str]:
-        """Validate Reolink password is provided when needed."""
-        values = info.data if hasattr(info, 'data') else {}
-        detection_method = values.get('detection_method')
-        reolink_enabled = values.get('reolink_enabled', False)
-        
-        if detection_method == "reolink" or reolink_enabled:
-            if not v:
-                raise ValueError("reolink_password is required when using Reolink detection method")
-        return v
-    
     @field_validator('webcam_width', 'webcam_height')
     @classmethod
     def validate_resolution(cls, v):

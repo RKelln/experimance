@@ -4,6 +4,81 @@ This directory contains utility scripts for managing the Experimance project.
 
 ## Available Scripts
 
+### `list_cameras.py`
+
+Comprehensive Reolink camera discovery tool using intelligent progressive detection.
+
+**Usage:**
+```bash
+# Comprehensive discovery (default - smartest)
+uv run python scripts/list_cameras.py
+
+# Fast port scan only (shows all HTTPS devices)
+uv run python scripts/list_cameras.py --fast
+
+# Signature-based detection (precise Reolink identification)  
+uv run python scripts/list_cameras.py --signature
+
+# Test specific IP first (fastest for known cameras)
+uv run python scripts/list_cameras.py --known-ip 192.168.2.229
+
+# Test credentials on discovered cameras
+uv run python scripts/list_cameras.py --test-creds admin your_password
+
+# Verbose output for debugging
+uv run python scripts/list_cameras.py --verbose
+```
+
+**Discovery Methods:**
+- **Comprehensive (Default)**: Smart progressive discovery - tests known IP first, falls back to network scan, then signature verification
+- **Fast**: Ultra-fast port scanning for HTTPS devices (seconds)
+- **Signature**: Credential-free detection using Reolink API signatures
+- **Known IP**: Direct testing of specific IP address
+
+**Features:**
+- **No Credential Broadcast**: Never sends passwords during network discovery
+- **Progressive Fallback**: Intelligently escalates from fastest to most thorough methods
+- **Security Conscious**: Uses port scanning and signature detection before credentials
+- **Comprehensive Output**: Shows camera details and provides configuration guidance
+
+### `test_reolink_camera.py`
+
+Comprehensive Reolink camera testing and control tool for debugging and exploration.
+
+**Usage:**
+```bash
+# Continuous presence monitoring
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password
+
+# Check camera status and capabilities  
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --status
+
+# Explore all supported API commands
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --explore
+
+# Camera control (stealth mode)
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --camera-off
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --camera-on
+
+# Individual feature control
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --ir-lights off
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --power-led off
+
+# Debug mode with raw AI data
+uv run python scripts/test_reolink_camera.py --host 192.168.2.229 --user admin --password your_password --debug
+```
+
+**Features:**
+- **Presence Detection**: Real-time person, vehicle, and pet detection monitoring
+- **Camera Control**: Stealth mode, IR lights, power LED control
+- **API Exploration**: Test all camera capabilities and supported features  
+- **Debug Mode**: Raw AI state data and comprehensive status information
+- **Flexible Options**: Configurable polling intervals, different protocols
+- **Production Integration**: Used as reference for ReolinkDetector development
+
+**Camera Models Tested:**
+- Reolink RLC-820A (firmware v3.1.0.2368_23062508)
+
 ### `tune_detector.py`
 
 Interactive tool for tuning audience detection parameters with live webcam feedback.

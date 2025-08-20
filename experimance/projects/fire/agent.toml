@@ -63,6 +63,24 @@ turn_detection_silence_ms = 800
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 
+[vision]
+audience_detection_enabled = true
+reolink_enabled = true
+
+# Reolink Camera Settings
+reolink_host = "192.168.2.229"          # Your camera IP
+reolink_user = "admin"                  # Camera username (can override with REOLINK_USER env var)
+# reolink_password - NEVER set here! Use REOLINK_PASSWORD environment variable in .env file
+reolink_https = true                    # Use HTTPS (recommended)
+reolink_channel = 0                     # Camera channel (usually 0)
+reolink_hysteresis_count = 3            # Readings needed for state change (stability)
+reolink_timeout = 2                     # Timeout for checking for people
+
+# Audience Detection Settings  
+audience_detection_interval = 1.0       # Check camera every second
+conversation_cooldown_duration = 30     # 30s between conversations
+cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves then returns
+
 [transcript]
 # Transcript management
 display_transcripts = false

@@ -581,6 +581,7 @@ def load_prompt(prompt_path: str | Path) -> str:
         # try in the prompt directory
         prompt_path = AGENT_SERVICE_DIR / "prompts" / prompt_path
 
+    logger.info(f"Loading prompt instructions from {prompt_path}")
     try:
         with open(str(prompt_path), "r") as f:
             return f.read()

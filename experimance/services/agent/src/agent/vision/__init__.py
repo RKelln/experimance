@@ -9,7 +9,7 @@ from .webcam import WebcamManager
 from .vlm import VLMProcessor
 from .audience_detector import AudienceDetector
 from .cpu_audience_detector import CPUAudienceDetector
-from .reolink_audience_detector import ReolinkAudienceDetector, create_reolink_detector
+from .reolink_detector import ReolinkDetector
 from .detector_profile import DetectorProfile, load_profile, list_available_profiles, create_default_profile_files
 
 __all__ = [
@@ -17,8 +17,11 @@ __all__ = [
     "VLMProcessor", 
     "AudienceDetector", 
     "CPUAudienceDetector",
-    "ReolinkAudienceDetector",
-    "create_reolink_detector",
+    "ReolinkDetector",
+    "DetectorProfile",
+    "load_profile",
+    "list_available_profiles",
+    "create_default_profile_files",
     "DetectorProfile",
     "load_profile",
     "list_available_profiles",
