@@ -16,15 +16,12 @@ conversation_cooldown_duration = 12.0  # seconds
 # This prevents the same person from immediately restarting, but allows new people to start immediately
 cancel_cooldown_on_absence = true
 
+[backend_config]
+prompt_path="projects/fire/fire_spirit_prompt.md"
+
 [backend_config.pipecat]
-# Pipecat-specific configuration
-system_prompt = "prompt.md"
-
 # Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
-mode = "ensemble"  # Change to "realtime" to use OpenAI Realtime Beta
-
-# ensemble mode requires a flow file:
-flow_file = "flows/experimance_flow.py"
+mode = "realtime"  # Change to "realtime" to use OpenAI Realtime Beta
 
 # Audio settings
 audio_in_enabled = true
@@ -55,7 +52,7 @@ openai_model = "gpt-4o"  # For ensemble mode
 
 # OpenAI Realtime settings (realtime mode only)
 openai_realtime_model = "gpt-4o-realtime-preview-2025-06-03"
-openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmerinfra
+openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
 turn_detection_threshold = 0.5
 turn_detection_silence_ms = 800
 
