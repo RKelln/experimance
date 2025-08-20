@@ -6,6 +6,7 @@ from experimance_common.logger import setup_logging
 from agent import AgentServiceBase, SERVICE_TYPE
 from agent.config import AgentServiceConfig
 from agent.vision.reolink_detector import ReolinkDetector
+from agent.tools import create_zmq_tool
 
 SERVICE_TYPE = "fire_agent"
 logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
@@ -24,6 +25,128 @@ class FireAgentService(AgentServiceBase):
         # No project-specific handlers yet for Fire
         logger.info("Fire agent handlers registered")
         return
+
+    def register_project_tools(self) -> None:
+        """Register Fire-specific tools with the backend."""
+        if not self.current_backend:
+            logger.warning("No backend available for tool registration")
+            return
+        
+        logger.info("Registering Fire project tools")
+        
+        # Create display_location tool
+        display_location_tool = create_zmq_tool(
+            tool_name="display_location",
+            message_type="StoryHeard",
+            zmq_service=self.zmq_service,
+            transcript_manager=self.current_backend.transcript_manager,
+            content_transformer=self._clean_story_content
+        )
+        
+        # Create update_location tool  
+        update_location_tool = create_zmq_tool(
+            tool_name="update_location", 
+            message_type="UpdateLocation",
+            zmq_service=self.zmq_service,
+            transcript_manager=self.current_backend.transcript_manager,
+            content_transformer=self._clean_story_content
+        )
+        
+        # Define tool schemas for Fire project
+        display_location_schema = {
+            "type": "function",
+            "function": {
+                "name": "display_location",
+                "description": "Call this when you have heard enough story to illustrate the first scene. Sends the story to the fire core service to generate visuals.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "Optional custom content to send (if not provided, uses current transcript)"
+                        }
+                    },
+                    "required": []
+                }
+            }
+        }
+        
+        update_location_schema = {
+            "type": "function",
+            "function": {
+                "name": "update_location",
+                "description": "Call this when the guest adds new or clarifying visual details to their story. Updates the existing visual scene.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "Optional custom content to send (if not provided, uses current transcript)"
+                        },
+                        "update_type": {
+                            "type": "string",
+                            "description": "Type of update (e.g., 'clarification', 'addition')",
+                            "enum": ["clarification", "addition", "correction", "detail"]
+                        }
+                    },
+                    "required": []
+                }
+            }
+        }
+        
+        # Register tools with backend including schemas
+        self.current_backend.register_tool(
+            "display_location", 
+            display_location_tool,
+            "Call this when you have heard enough story to illustrate the first scene. Sends the story to the fire core service to generate visuals.",
+            schema=display_location_schema
+        )
+        
+        self.current_backend.register_tool(
+            "update_location",
+            update_location_tool, 
+            "Call this when the guest adds new or clarifying visual details to their story. Updates the existing visual scene.",
+            schema=update_location_schema
+        )
+        
+        logger.info("Fire agent tools registered: display_location, update_location")
+        logger.info("Fire project tools registered successfully")
+
+    def _clean_story_content(self, content: str) -> str:
+        """
+        Clean and prepare story content for the fire core service.
+        
+        Args:
+            content: Raw transcript content
+            
+        Returns:
+            Cleaned content suitable for visual generation
+        """
+        # Remove excessive whitespace
+        content = " ".join(content.split())
+        
+        # Remove common filler words and conversational artifacts
+        filler_words = [
+            "um", "uh", "like", "you know", "I mean", "actually", 
+            "basically", "literally", "so", "well", "okay", "alright"
+        ]
+        
+        words = content.split()
+        filtered_words = []
+        
+        for word in words:
+            # Remove filler words (case insensitive)
+            clean_word = word.lower().strip(".,!?;:")
+            if clean_word not in filler_words:
+                filtered_words.append(word)
+        
+        cleaned_content = " ".join(filtered_words)
+        
+        # Ensure minimum content length
+        if len(cleaned_content.strip()) < 10:
+            return content  # Return original if cleaning removed too much
+        
+        return cleaned_content
 
     async def _initialize_background_tasks(self):
         """Initialize backend when audience is detected."""
@@ -77,6 +200,10 @@ class FireAgentService(AgentServiceBase):
             if backend_name == "pipecat":
                 from agent.backends.pipecat_backend import PipecatBackend
                 self.current_backend = PipecatBackend(self.config)
+                
+                # Register project-specific tools with the backend
+                self.register_project_tools()
+                
                 await self.current_backend.start()
                 logger.info("Pipecat backend started successfully")
             else:

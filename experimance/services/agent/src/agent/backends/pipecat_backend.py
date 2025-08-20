@@ -52,7 +52,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame, BotStoppedSpeakingFrame, TTSStartedFrame,
     TTSStoppedFrame, Frame, TranscriptionFrame,
     UserStoppedSpeakingFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame,
-    SystemFrame, CancelFrame, EndFrame
+    SystemFrame, CancelFrame, EndFrame, FunctionCallInProgressFrame, FunctionCallResultFrame
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat_flows import FlowManager, FlowArgs, FlowResult, FlowConfig
@@ -205,6 +205,58 @@ class SimpleResample16kFilter(SOXRStreamAudioResampler):
         # This method is required by the interface but may not be used
         # depending on how the filter is integrated
         pass
+
+class PipecatFunctionCallProcessor(FrameProcessor):
+    """
+    Processor that handles function calls from the OpenAI Realtime API.
+    """
+    
+    def __init__(self, backend: 'PipecatBackend'):
+        super().__init__()
+        self.backend = backend
+        
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Process frames to handle function calls."""
+        # Always call parent first to handle StartFrame and other pipeline frames
+        await super().process_frame(frame, direction)
+        
+        # Only log function-related frames to reduce spam
+        if isinstance(frame, FunctionCallInProgressFrame):
+            logger.debug(f"PipecatFunctionCallProcessor received frame: {type(frame).__name__}")
+        
+        # Debug: Add periodic logging to verify processor is active
+        if not hasattr(self, '_debug_counter'):
+            self._debug_counter = 0
+        self._debug_counter += 1
+        if self._debug_counter % 1000 == 0:
+            logger.debug(f"PipecatFunctionCallProcessor processed {self._debug_counter} frames")
+        
+        if isinstance(frame, FunctionCallInProgressFrame):
+            logger.info(f"Function call in progress: {frame.function_name} with args: {frame.arguments}")
+            
+            # Create ToolCall object
+            tool_call = ToolCall(
+                tool_name=frame.function_name,
+                parameters=frame.arguments
+            )
+            
+            # Execute the tool call
+            result = await self.backend.call_tool(tool_call)
+            
+            # Send result back to the pipeline
+            result_frame = FunctionCallResultFrame(
+                function_name=frame.function_name,
+                result=result,
+                tool_call_id=getattr(frame, 'tool_call_id', frame.function_name),
+                arguments=frame.arguments
+            )
+            await self.push_frame(result_frame, direction)
+            logger.info(f"Function call completed: {tool_call.tool_name}")
+            
+        else:
+            # Pass through other frames
+            await self.push_frame(frame, direction)
+
 
 class PipecatEventProcessor(FrameProcessor):
     """
@@ -1076,17 +1128,34 @@ class PipecatBackend(AgentBackend):
         else:   
             prompt = "Tell the user something has gone wrong with loading the agent configuration."
 
+        # Get available tools
+        available_tools = self.get_available_tools()
+        
+        logger.info(f"Creating OpenAI Realtime service with {len(available_tools) if available_tools else 0} tools")
+        if available_tools:
+            logger.debug(f"Tool schemas being sent to OpenAI: {[tool['function']['name'] for tool in available_tools]}")
+            # Log the full schemas for debugging
+            for tool in available_tools:
+                logger.debug(f"Full schema for {tool['function']['name']}: {tool}")
+        
         realtime_service = OpenAIRealtimeBetaLLMService(
             api_key=os.getenv("OPENAI_API_KEY", "failed"),
             session_properties=SessionProperties(
                 instructions=prompt,
                 voice="alloy",
                 turn_detection=TurnDetection(type="server_vad")
-            )
+            ),
+            # Add tools if available
+            tools=available_tools if available_tools else None
         )
+        
+        logger.info("OpenAI Realtime service created successfully")
         
         # Create event processor
         self.event_processor = PipecatEventProcessor(self)
+        
+        # Create function call processor for tool calling
+        self.function_call_processor = PipecatFunctionCallProcessor(self)
         
         # For realtime mode, we might need to handle transcription differently
         # since the OpenAI Realtime API handles conversation internally
@@ -1097,6 +1166,7 @@ class PipecatBackend(AgentBackend):
         # Create pipeline
         self.pipeline = Pipeline([
             self.transport.input(),
+            self.function_call_processor,  # Handle function calls
             realtime_service,
             self.transport.output(),
             self.event_processor
@@ -1243,15 +1313,80 @@ class PipecatBackend(AgentBackend):
         }
     
     def get_available_tools(self) -> List[Dict[str, Any]]:
-        """Get available tools for the current flow."""
-        # For now, return empty list - tools would be defined in flow config
-        return []
-    
+        """Get available tools for the current LLM service."""
+        logger.info(f"get_available_tools called. Registered tools: {list(self._available_tools.keys())}")
+        
+        # Convert registered tools to OpenAI function schema format
+        tools = []
+        for tool_name, tool_func in self._available_tools.items():
+            logger.debug(f"Creating tool schema for: {tool_name}")
+            
+            # Use provided schema if available, otherwise create a generic one
+            if tool_name in self._tool_schemas and self._tool_schemas[tool_name]:
+                tool_schema = self._tool_schemas[tool_name]
+                logger.debug(f"Using provided schema for {tool_name}")
+            else:
+                # Generic tool schema fallback
+                tool_schema = {
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": getattr(tool_func, "__doc__", f"Execute {tool_name}"),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                    }
+                }
+                logger.debug(f"Using generic schema for {tool_name}")
+            
+            tools.append(tool_schema)
+            logger.debug(f"Added tool schema for {tool_name}")
+        
+        logger.info(f"Returning {len(tools)} tool schemas to OpenAI")
+        return tools
+
     async def call_tool(self, tool_call: ToolCall) -> Dict[str, Any]:
         """Execute a tool call."""
-        # Tool calling would be handled by the flow manager
-        # For now, return empty result
-        return {"result": "Tool calling not yet implemented"}
+        tool_name = tool_call.tool_name
+        parameters = tool_call.parameters
+        
+        logger.debug(f"Executing tool call: {tool_name} with parameters: {parameters}")
+        
+        if tool_name not in self._available_tools:
+            error_msg = f"Tool '{tool_name}' not found. Available tools: {list(self._available_tools.keys())}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+        
+        try:
+            # Execute the tool function
+            tool_func = self._available_tools[tool_name]
+            
+            # Call the function with parameters
+            if asyncio.iscoroutinefunction(tool_func):
+                result = await tool_func(**parameters)
+            else:
+                result = tool_func(**parameters)
+            
+            logger.debug(f"Tool '{tool_name}' executed successfully")
+            
+            # Emit tool called event
+            await self.emit_event(AgentBackendEvent.TOOL_CALLED, {
+                "tool_name": tool_name,
+                "parameters": parameters,
+                "result": result
+            })
+            
+            # Add to transcript
+            await self.add_tool_call(tool_name, parameters, result)
+            
+            return {"result": result}
+            
+        except Exception as e:
+            error_msg = f"Error executing tool '{tool_name}': {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {"error": error_msg}
     
     def get_pipeline_task(self) -> Optional[asyncio.Task]:
         """Get the pipeline task for external management."""

@@ -70,6 +70,10 @@ class AgentServiceBase(BaseService):
         """Subclass can register project-specific ZMQ handlers."""
         return
 
+    def register_project_tools(self) -> None:
+        """Subclass can register project-specific tools with the backend."""
+        return
+
     # ---------------- Lifecycle ----------------
 
     async def start(self) -> None:
@@ -312,6 +316,9 @@ class AgentServiceBase(BaseService):
                 backend.add_event_callback(
                     AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, self._on_audio_output_issue
                 )
+
+                # Register project-specific tools with the backend
+                self.register_project_tools()
 
                 # Start the backend
                 await backend.start()  # type: ignore

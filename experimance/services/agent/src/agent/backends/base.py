@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable, AsyncGenerator, Union
+from typing import Any, Callable, Dict, List, Optional, AsyncGenerator, Union
 import asyncio
 import logging
 
@@ -120,6 +120,7 @@ class AgentBackend(ABC):
         self._event_callbacks: Dict[AgentBackendEvent, List[Callable]] = {}
         self._conversation_history: List[ConversationTurn] = []
         self._available_tools: Dict[str, Callable] = {}
+        self._tool_schemas: Dict[str, Optional[Dict[str, Any]]] = {}  # Store tool schemas
         self.conversation_started = False  # Track if conversation has started
         self.user_context = UserContext()  # User context for the session
         
@@ -348,7 +349,7 @@ class AgentBackend(ABC):
     # Tool Management
     # =========================================================================
     
-    def register_tool(self, name: str, func: Callable, description: str = "") -> None:
+    def register_tool(self, name: str, func: Callable, description: str = "", schema: Optional[Dict[str, Any]] = None) -> None:
         """
         Register a tool function that the agent can call.
         
@@ -356,8 +357,11 @@ class AgentBackend(ABC):
             name: Tool function name
             func: The callable function
             description: Human-readable description of the tool
+            schema: OpenAI function schema for the tool (optional)
         """
         self._available_tools[name] = func
+        if hasattr(self, '_tool_schemas'):
+            self._tool_schemas[name] = schema
         logger.info(f"Registered tool '{name}' with backend {self.__class__.__name__}")
     
     def unregister_tool(self, name: str) -> None:
@@ -380,21 +384,21 @@ class AgentBackend(ABC):
         """
         return self._available_tools.copy()
     
-    # @abstractmethod
-    # async def handle_tool_call(self, tool_call: ToolCall) -> Any:
-    #     """
-    #     Handle a tool call from the agent.
+    @abstractmethod
+    async def call_tool(self, tool_call: ToolCall) -> Dict[str, Any]:
+        """
+        Execute a tool call from the agent.
         
-    #     Args:
-    #         tool_call: The tool call to execute
+        Args:
+            tool_call: The tool call to execute
             
-    #     Returns:
-    #         Result of the tool call
+        Returns:
+            Dictionary containing the result of the tool call
             
-    #     Raises:
-    #         Exception: If tool call fails
-    #     """
-    #     pass
+        Raises:
+            Exception: If tool call fails
+        """
+        pass
     
     # =========================================================================
     # Event System
