@@ -690,6 +690,38 @@ class PipecatBackend(AgentBackend):
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass  # Expected when cancelling
                 
+                # Stop audio tasks FIRST to prevent race conditions with stream cleanup
+                if self.transport:
+                    try:
+                        # First, stop any running audio tasks from the transport streams
+                        transport_input = getattr(self.transport, '_input', None)
+                        transport_output = getattr(self.transport, '_output', None)
+                        
+                        task_timeout = 0.5 if self._shutdown_reason == "forced" else 1.0
+                        
+                        # Cancel audio tasks first to prevent them from writing to streams during cleanup
+                        if transport_output and hasattr(transport_output, '_media_sender'):
+                            media_sender = transport_output._media_sender
+                            if media_sender and hasattr(media_sender, '_cancel_audio_task'):
+                                logger.debug("Cancelling output audio task...")
+                                try:
+                                    await asyncio.wait_for(media_sender._cancel_audio_task(), timeout=task_timeout)
+                                except (asyncio.TimeoutError, Exception) as e:
+                                    logger.debug(f"Output audio task cancellation error: {e}")
+                        
+                        if transport_input and hasattr(transport_input, '_media_sender'):
+                            media_sender = transport_input._media_sender
+                            if media_sender and hasattr(media_sender, '_cancel_audio_task'):
+                                logger.debug("Cancelling input audio task...")
+                                try:
+                                    await asyncio.wait_for(media_sender._cancel_audio_task(), timeout=task_timeout)
+                                except (asyncio.TimeoutError, Exception) as e:
+                                    logger.debug(f"Input audio task cancellation error: {e}")
+                        
+                    except Exception as e:
+                        logger.debug(f"Audio task cancellation error: {e}")
+                
+                # Now handle pipeline shutdown
                 if is_natural_end and self._pipeline_task and not self._pipeline_task.done():
                     logger.debug("Natural conversation end - waiting for pipeline to complete")
                     try:
@@ -704,14 +736,13 @@ class PipecatBackend(AgentBackend):
                     logger.debug("Forced shutdown detected - cancelling pipeline immediately")
                     await self._force_cancel_pipeline()
                 
-                # Cleanup transport with timeout to prevent hanging on WebSocket disconnects
+                # Finally cleanup transport streams safely
                 if self.transport:
                     try:
-                        # Add timeout to transport cleanup to prevent hanging on WebSocket disconnects
+                        # Now cleanup transport streams safely
                         cleanup_timeout = 1.0 if self._shutdown_reason == "forced" else 2.0  # Faster for forced shutdown
                         await asyncio.wait_for(self.transport.cleanup(), timeout=cleanup_timeout)
                         
-                        # Clean up transport streams if available
                         transport_input = getattr(self.transport, '_input', None)
                         transport_output = getattr(self.transport, '_output', None)
                         
@@ -722,7 +753,7 @@ class PipecatBackend(AgentBackend):
                             await asyncio.wait_for(transport_output.cleanup(), timeout=stream_timeout)
                             
                     except asyncio.TimeoutError:
-                        logger.warning("Transport cleanup timed out - WebSocket connections may not have closed gracefully")
+                        logger.warning("Transport cleanup timed out - audio streams may not have closed gracefully")
                     except Exception as e:
                         logger.debug(f"Transport cleanup error: {e}")
                     
