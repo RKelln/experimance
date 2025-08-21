@@ -7,7 +7,7 @@ This is the simplest way to deploy the Experimance image generation server on va
 1. **Create vast.ai instance** with PyTorch template
 2. **Set environment variables**:
    ```
-   PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw
+   PROVISIONING_SCRIPT=https://raw.githubusercontent.com/RKelln/experimance/refs/heads/main/experimance/services/image_server/src/image_server/generators/vastai/server/vast_provisioning.sh
    ```
 3. **Start instance** - the script will automatically install everything
 4. **Access via Instance Portal** - Click "Open" → "Experimance Image Server"
@@ -16,14 +16,6 @@ This is the simplest way to deploy the Experimance image generation server on va
 
 - `PRELOAD_MODEL` - Model to preload on startup (default: "lightning")
 - `MODELS_DIR` - Where to store models (default: "/workspace/models")
-
-### Gist-based Deployment
-
-The provisioning script is hosted as a public gist for easy access:
-- **Gist URL**: https://gist.github.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14
-- **Raw Script URL**: https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw
-
-This allows vast.ai to download and execute the script without authentication while keeping your main repository private.
 
 ## What Gets Installed
 
@@ -87,8 +79,8 @@ supervisorctl restart experimance-image-server
 
 **Vast.ai GUI rejecting PROVISIONING_SCRIPT URL?**
 Try these alternatives:
-1. Use the shorter URL: `https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw`
-2. Use Vast.ai CLI instead: `vastai create instance OFFER_ID --env PROVISIONING_SCRIPT=https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw`
+1. Use the shorter URL: `https://raw.githubusercontent.com/RKelln/experimance/refs/heads/main/experimance/services/image_server/src/image_server/generators/vastai/server/vast_provisioning.sh`
+2. Use Vast.ai CLI instead: `vastai create instance OFFER_ID --env PROVISIONING_SCRIPT=https://raw.githubusercontent.com/RKelln/experimance/refs/heads/main/experimance/services/image_server/src/image_server/generators/vastai/server/vast_provisioning.sh`
 3. Copy the script content directly into the "On-Start Script" field instead of using PROVISIONING_SCRIPT
 
 **PROVISIONING_SCRIPT environment variable not working?**

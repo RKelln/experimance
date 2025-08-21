@@ -72,7 +72,8 @@ class VastAIManager:
         # See: https://cloud.vast.ai/template/readme/b28b2d2625172e089509d1c0331258b8
         # "Runs any custom setup script defined in the PROVISIONING_SCRIPT environment variable"
         # Using SCP provisioning as workaround until this is fixed
-        default_provisioning_url = "https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw"
+        #default_provisioning_url = "https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw"
+        default_provisioning_url = "https://raw.githubusercontent.com/RKelln/experimance/refs/heads/main/experimance/services/image_server/src/image_server/generators/vastai/server/vast_provisioning.sh"
         self.provisioning_script_url = provisioning_script_url or os.getenv("VASTAI_PROVISIONING_SCRIPT", default_provisioning_url)
         
         self.required_env_vars = {
@@ -553,6 +554,65 @@ class VastAIManager:
             entry = self._exclusion_list_data["instances"][instance_str]
             return True, entry.get("reason", "Unknown reason")
         return False, None
+    
+    def add_instance_to_exclusion_list(self, instance_id: int, reason: str, offer_id: Optional[int] = None):
+        """
+        Add an instance to the exclusion list, optionally with its offer_id.
+        
+        This method can exclude an instance even when we don't know its original offer_id,
+        which is useful when excluding existing instances created in previous sessions.
+        
+        Args:
+            instance_id: The VastAI instance ID to exclude
+            reason: Reason for exclusion
+            offer_id: Optional offer_id if known
+        """
+        current_time = time.time()
+        
+        # Add/update instance exclusion
+        if str(instance_id) in self._exclusion_list_data["instances"]:
+            self._exclusion_list_data["instances"][str(instance_id)]["failures"] += 1
+            self._exclusion_list_data["instances"][str(instance_id)]["last_failure"] = current_time
+            self._exclusion_list_data["instances"][str(instance_id)]["reason"] = reason
+            if offer_id:
+                self._exclusion_list_data["instances"][str(instance_id)]["offer_id"] = offer_id
+        else:
+            self._exclusion_list_data["instances"][str(instance_id)] = {
+                "reason": reason,
+                "timestamp": current_time,
+                "last_failure": current_time,
+                "failures": 1,
+                "offer_id": offer_id
+            }
+        
+        # If we know the offer_id, also exclude it
+        if offer_id:
+            if str(offer_id) in self._exclusion_list_data["offers"]:
+                self._exclusion_list_data["offers"][str(offer_id)]["failures"] += 1
+                self._exclusion_list_data["offers"][str(offer_id)]["last_failure"] = current_time
+                self._exclusion_list_data["offers"][str(offer_id)]["reason"] = reason
+                self._exclusion_list_data["offers"][str(offer_id)]["instance_id"] = instance_id
+            else:
+                self._exclusion_list_data["offers"][str(offer_id)] = {
+                    "reason": reason,
+                    "timestamp": current_time,
+                    "last_failure": current_time,
+                    "failures": 1,
+                    "instance_id": instance_id
+                }
+        
+        # Save to disk
+        self._save_exclusion_list()
+        
+        if offer_id:
+            logger.warning(f"🚫 Excluded instance {instance_id} and offer {offer_id}: {reason}")
+        else:
+            logger.warning(f"🚫 Excluded instance {instance_id} (offer unknown): {reason}")
+        
+        # Log current exclusion list stats
+        total_offers = len(self._exclusion_list_data["offers"])
+        total_instances = len(self._exclusion_list_data["instances"])
+        logger.info(f"📋 Exclusion list now contains {total_offers} offers, {total_instances} instances")
     
     def get_exclusion_list_stats(self) -> Dict[str, Any]:
         """Get statistics about the current exclusion list."""

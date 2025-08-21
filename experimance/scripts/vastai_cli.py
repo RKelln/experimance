@@ -26,7 +26,7 @@ Commands:
     stop           Stop an instance (auto-detects active instance)
     start          Start an instance (auto-detects active instance)
     restart        Restart an instance (auto-detects active instance)
-    destroy        Destroy an instance (auto-detects active instance)
+    destroy        Destroy an instance (auto-detects active instance) with optional offer exclusion
     health         Check health of the model server (auto-detects active instance)
     test-markers   Check for test provisioning markers (auto-detects active instance)
     test           Test image generation performance and report timing (auto-detects active instance)
@@ -435,6 +435,9 @@ def restart_instance(manager: VastAIManager, args: argparse.Namespace):
 
 def destroy_instance(manager: VastAIManager, args: argparse.Namespace):
     instance_id = getattr(args, 'instance_id', None)
+    exclude_offer = getattr(args, 'exclude', False)
+    exclude_reason = getattr(args, 'exclude_reason', 'Manually destroyed via CLI')
+    
     if instance_id is None:
         # If no specific instance ID provided, destroy ALL instances
         all_instances = manager.show_instances(raw=True)
@@ -449,12 +452,41 @@ def destroy_instance(manager: VastAIManager, args: argparse.Namespace):
             image = instance.get("image", "unknown")
             print(f"  - Instance {inst_id}: {status} ({image})")
         
+        if exclude_offer:
+            print(f"⚠️  --exclude flag will add ALL {len(all_instances)} instance offers to exclusion list")
+            confirm = input("Are you sure? (y/N): ").strip().lower()
+            if confirm != 'y':
+                print("❌ Operation cancelled")
+                return
+        
         # Destroy all instances
         destroyed_count = 0
+        excluded_count = 0
         for instance in all_instances:
             inst_id = instance.get("id")
             if inst_id is not None:
                 try:
+                    # Exclude offer if requested (before destroying)
+                    if exclude_offer:
+                        endpoint = manager.get_model_server_endpoint(inst_id)
+                        if endpoint and endpoint.offer_id:
+                            manager.add_offer_to_exclusion_list(
+                                endpoint.offer_id, 
+                                inst_id, 
+                                f"{exclude_reason} (batch destroy)"
+                            )
+                            excluded_count += 1
+                            print(f"🚫 Excluded offer {endpoint.offer_id} for instance {inst_id}")
+                        else:
+                            # Can't get offer_id, but we can still exclude the instance
+                            manager.add_instance_to_exclusion_list(
+                                inst_id, 
+                                f"{exclude_reason} (batch destroy)"
+                            )
+                            excluded_count += 1
+                            print(f"🚫 Excluded instance {inst_id} (offer unknown)")
+                    
+                    
                     result = manager.destroy_instance(inst_id)
                     print(f"✅ Destroyed instance {inst_id}")
                     destroyed_count += 1
@@ -464,11 +496,36 @@ def destroy_instance(manager: VastAIManager, args: argparse.Namespace):
                 print(f"❌ Instance missing ID: {instance}")
         
         print(f"Destroyed {destroyed_count}/{len(all_instances)} instances")
+        if exclude_offer and excluded_count > 0:
+            print(f"🚫 Excluded {excluded_count} offers from future use")
         return
     
     # Destroy specific instance by ID
-    result = manager.destroy_instance(instance_id)
-    print(json.dumps(result, indent=2))
+    try:
+        # Exclude offer if requested (before destroying)
+        if exclude_offer:
+            endpoint = manager.get_model_server_endpoint(instance_id)
+            if endpoint and endpoint.offer_id:
+                manager.add_offer_to_exclusion_list(
+                    endpoint.offer_id, 
+                    instance_id, 
+                    exclude_reason
+                )
+                print(f"🚫 Excluded offer {endpoint.offer_id} for instance {instance_id}: {exclude_reason}")
+            else:
+                # Can't get offer_id, but we can still exclude the instance
+                manager.add_instance_to_exclusion_list(
+                    instance_id, 
+                    exclude_reason
+                )
+                print(f"🚫 Excluded instance {instance_id} (offer unknown): {exclude_reason}")
+        
+        result = manager.destroy_instance(instance_id)
+        print(f"✅ Destroyed instance {instance_id}")
+        print(json.dumps(result, indent=2))
+        
+    except Exception as e:
+        print(f"❌ Failed to destroy instance {instance_id}: {e}")
 
 
 def test_provisioning_simple(manager: VastAIManager, instance_id: int):
@@ -1172,6 +1229,70 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
     print("=" * 60)
 
 
+def show_exclusion_stats(manager, args):
+    """Show statistics about the exclusion list."""
+    try:
+        stats = manager.get_exclusion_list_stats()
+        if stats['total_offers'] == 0 and stats['total_instances'] == 0:
+            print("✅ Exclusion list is empty - no offers or instances are currently excluded")
+            return
+        
+        print(f"📊 Exclusion List Statistics:")
+        print(f"   Total excluded offers: {stats['total_offers']}")
+        print(f"   Total excluded instances: {stats['total_instances']}")
+        print(f"   Recent exclusions (24h): {stats['recent_offers_24h']} offers, {stats['recent_instances_24h']} instances")
+        print(f"   Exclusion list file: {stats['exclusion_list_file']}")
+        
+    except Exception as e:
+        print(f"❌ Failed to get exclusion list stats: {e}")
+
+
+def clear_exclusion_list(manager, args):
+    """Clear the exclusion list."""
+    try:
+        stats = manager.get_exclusion_list_stats()
+        if stats['total_offers'] == 0:
+            print("✅ Exclusion list is already empty")
+            return
+        
+        if not args.confirm:
+            print(f"⚠️  This will remove {stats['total_offers']} offer(s) from the exclusion list")
+            print("   Use --confirm to proceed")
+            return
+        
+        manager.clear_exclusion_list()
+        print(f"✅ Cleared {stats['total_offers']} offer(s) from the exclusion list")
+        
+    except Exception as e:
+        print(f"❌ Failed to clear exclusion list: {e}")
+
+
+def exclude_offer(manager, args):
+    """Manually add an offer to the exclusion list."""
+    try:
+        manager.add_offer_to_exclusion_list(args.offer_id, reason=args.reason)
+        print(f"✅ Added offer {args.offer_id} to exclusion list")
+        print(f"   Reason: {args.reason}")
+        
+    except Exception as e:
+        print(f"❌ Failed to exclude offer {args.offer_id}: {e}")
+
+
+def exclude_instance(manager, args):
+    """Manually add an instance to the exclusion list."""
+    try:
+        offer_id = getattr(args, 'offer_id', None)  # Handle --offer-id flag  
+        manager.add_instance_to_exclusion_list(args.instance_id, args.reason, offer_id)
+        if offer_id:
+            print(f"✅ Added instance {args.instance_id} and offer {offer_id} to exclusion list")
+        else:
+            print(f"✅ Added instance {args.instance_id} to exclusion list (offer unknown)")
+        print(f"   Reason: {args.reason}")
+        
+    except Exception as e:
+        print(f"❌ Failed to exclude instance {args.instance_id}: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Manage Vast.ai instances for Experimance image_server",
@@ -1225,9 +1346,33 @@ def main():
     p_ep.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
 
     # stop/start/restart/destroy/health/test-markers/test
-    for cmd in ('stop', 'start', 'restart', 'destroy', 'health', 'test-markers'):
+    for cmd in ('stop', 'start', 'restart', 'health', 'test-markers'):
         p = subparsers.add_parser(cmd, help=f'{cmd.capitalize()} an instance')
         p.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
+
+    # destroy - special case with exclusion option
+    p_destroy = subparsers.add_parser('destroy', help='Destroy an instance')
+    p_destroy.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
+    p_destroy.add_argument('--exclude', action='store_true', help='Add the instance\'s offer to the exclusion list to prevent future use')
+    p_destroy.add_argument('--exclude-reason', type=str, default='Manually destroyed via CLI', help='Reason for excluding the offer (default: "Manually destroyed via CLI")')
+
+    # exclusion-stats - show exclusion list statistics
+    p_exclusion_stats = subparsers.add_parser('exclusion-stats', help='Show exclusion list statistics')
+    
+    # clear-exclusions - clear the exclusion list
+    p_clear_exclusions = subparsers.add_parser('clear-exclusions', help='Clear the exclusion list')
+    p_clear_exclusions.add_argument('--confirm', action='store_true', help='Confirm clearing the exclusion list')
+    
+    # exclude-offer - manually add an offer to the exclusion list
+    p_exclude_offer = subparsers.add_parser('exclude-offer', help='Manually add an offer to the exclusion list')
+    p_exclude_offer.add_argument('offer_id', type=int, help='Offer ID to exclude')
+    p_exclude_offer.add_argument('--reason', type=str, default='Manually excluded via CLI', help='Reason for excluding the offer (default: "Manually excluded via CLI")')
+
+    # exclude-instance - manually add an instance to the exclusion list
+    p_exclude_instance = subparsers.add_parser('exclude-instance', help='Manually add an instance to the exclusion list')
+    p_exclude_instance.add_argument('instance_id', type=int, help='Instance ID to exclude')
+    p_exclude_instance.add_argument('--reason', type=str, default='Manually excluded via CLI', help='Reason for excluding the instance (default: "Manually excluded via CLI")')
+    p_exclude_instance.add_argument('--offer-id', type=int, help='Offer ID if known (optional)')
 
     # test - image generation testing with additional options
     p_test = subparsers.add_parser('test', help='Test image generation on model server')
@@ -1274,6 +1419,14 @@ def main():
         restart_instance(manager, args)
     elif args.command == 'destroy':
         destroy_instance(manager, args)
+    elif args.command == 'exclusion-stats':
+        show_exclusion_stats(manager, args)
+    elif args.command == 'clear-exclusions':
+        clear_exclusion_list(manager, args)
+    elif args.command == 'exclude-offer':
+        exclude_offer(manager, args)
+    elif args.command == 'exclude-instance':
+        exclude_instance(manager, args)
     elif args.command == 'health':
         health_check(manager, args)
     elif args.command == 'test-markers':

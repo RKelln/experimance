@@ -36,6 +36,12 @@ except ImportError:
     DeepCacheSDHelper = None
     DEEPCACHE_AVAILABLE = False
 
+# Check if xformers should be disabled due to compatibility issues
+if os.getenv("XFORMERS_DISABLED") == "1" or os.getenv("DISABLE_XFORMERS") == "1":
+    os.environ["XFORMERS_DISABLED"] = "1" 
+    os.environ["DISABLE_XFORMERS"] = "1"
+    logger.info("xformers disabled via environment variables due to compatibility issues")
+
 from diffusers import ( # type: ignore (loaded on server not locally)
     StableDiffusionXLPipeline,
     StableDiffusionXLControlNetPipeline,
@@ -584,13 +590,19 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             **scheduler_config
         )
     
-    # Enable optimizations
-    if hasattr(pipe, 'enable_xformers_memory_efficient_attention'):
+    # Enable optimizations - only try xformers if not explicitly disabled
+    xformers_disabled = os.getenv("XFORMERS_DISABLED") == "1" or os.getenv("DISABLE_XFORMERS") == "1"
+    
+    if not xformers_disabled and hasattr(pipe, 'enable_xformers_memory_efficient_attention'):
         try:
             pipe.enable_xformers_memory_efficient_attention()
             logger.info("xformers memory optimization enabled")
         except Exception as e:
-            logger.warning(f"Could not enable xformers: {e}")
+            logger.warning(f"Could not enable xformers (this is normal if xformers was disabled for compatibility): {e}")
+    elif xformers_disabled:
+        logger.info("xformers explicitly disabled for CUDA compatibility")
+    else:
+        logger.info("xformers not available - using default PyTorch attention")
     
     # Move to GPU for maximum performance (no CPU offloading for production speed)
     if torch.cuda.is_available():

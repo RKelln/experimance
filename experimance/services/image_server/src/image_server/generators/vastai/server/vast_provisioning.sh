@@ -1,7 +1,7 @@
 #!/bin/bash
 # Vast.ai Provisioning Script for Experimance Image Generation
 # This script is designed to be used with the PROVISIONING_SCRIPT environment variable
-# URL: https://gist.githubusercontent.com/RKelln/21ad3ecb4be1c1d0d55a8f1524ff9b14/raw/vast_experimance_provisioning.sh
+# URL: https://raw.githubusercontent.com/RKelln/experimance/refs/heads/main/experimance/services/image_server/src/image_server/generators/vastai/server/vast_provisioning.sh
 
 cd /workspace/
 
@@ -97,18 +97,71 @@ else
     echo "⚠️  Unsupported CUDA version: ${CUDA_VERSION}, skipping xformers"
 fi
 
-# Install xformers if we have a valid index URL
+# Install xformers with compatibility testing
+XFORMERS_INSTALLED=false
+
 if [ -n "$INDEX_URL" ]; then
     # Use latest xformers only for PyTorch 2.7+ with CUDA 12.6/12.8
     if [[ "$PYTORCH_VERSION" == 2.7* ]] && ([[ "$CUDA_VERSION" == *"12.6"* ]] || [[ "$CUDA_VERSION" == *"12.8"* ]]); then
         echo "Installing latest xformers for PyTorch 2.7+ with CUDA 12.6/12.8..."
-        $PIP_CMD install --root-user-action=ignore xformers --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
+        if $PIP_CMD install --root-user-action=ignore xformers --no-deps --index-url "$INDEX_URL"; then
+            XFORMERS_INSTALLED=true
+        fi
     else
         echo "Installing xformers==0.0.28.post3 for PyTorch ${PYTORCH_VERSION} with CUDA ${CUDA_VERSION}..."
-        $PIP_CMD install --root-user-action=ignore xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL" || echo "⚠️  xformers install failed"
+        if $PIP_CMD install --root-user-action=ignore xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL"; then
+            XFORMERS_INSTALLED=true
+        fi
     fi
 else
     echo "⚠️  Skipping xformers installation due to unsupported CUDA version"
+fi
+
+# Test xformers compatibility if installed
+if [ "$XFORMERS_INSTALLED" = true ]; then
+    echo "Testing xformers compatibility..."
+    
+    # Test if xformers can be imported and used with current CUDA/PyTorch
+    XFORMERS_TEST_RESULT=$($PYTHON_CMD -c "
+import torch
+try:
+    import xformers
+    import xformers.ops
+    # Try to access flash attention module that's causing the issue
+    from xformers import flash_attn_3
+    print('SUCCESS')
+except Exception as e:
+    print(f'ERROR: {e}')
+    exit(1)
+" 2>&1)
+
+    if echo "$XFORMERS_TEST_RESULT" | grep -q "SUCCESS"; then
+        echo "✅ xformers compatibility test passed"
+    else
+        echo "❌ xformers compatibility test failed: $XFORMERS_TEST_RESULT"
+        echo "Uninstalling incompatible xformers to prevent runtime errors..."
+        
+        # Uninstall xformers
+        $PIP_CMD uninstall -y xformers || echo "⚠️ Failed to uninstall xformers"
+        
+        # Set environment variables to disable xformers in applications
+        echo "export XFORMERS_DISABLED=1" >> /etc/environment
+        echo "export DISABLE_XFORMERS=1" >> /etc/environment
+        
+        # Also set for current session
+        export XFORMERS_DISABLED=1
+        export DISABLE_XFORMERS=1
+        
+        echo "✅ xformers disabled due to compatibility issues - diffusers will use standard PyTorch attention"
+    fi
+else
+    echo "⚠️ xformers installation failed or skipped"
+    # Set environment variables to disable xformers
+    echo "export XFORMERS_DISABLED=1" >> /etc/environment
+    echo "export DISABLE_XFORMERS=1" >> /etc/environment
+    export XFORMERS_DISABLED=1
+    export DISABLE_XFORMERS=1
+    echo "✅ xformers disabled - diffusers will use standard PyTorch attention"
 fi
 
 # Clone or update the experimance repository
@@ -268,6 +321,13 @@ echo "Using Python: \$PYTHON_CMD"
 export MODELS_DIR=\${MODELS_DIR:-$MODELS_DIR}
 export LOG_LEVEL=\${LOG_LEVEL:-info}
 export PRELOAD_MODEL=\${PRELOAD_MODEL:-lightning}
+
+# Import xformers compatibility settings from system environment
+if grep -q "XFORMERS_DISABLED=1" /etc/environment 2>/dev/null; then
+    export XFORMERS_DISABLED=1
+    export DISABLE_XFORMERS=1
+    echo "xformers disabled due to compatibility issues"
+fi
 
 # Create directories
 mkdir -p "\$MODELS_DIR"
