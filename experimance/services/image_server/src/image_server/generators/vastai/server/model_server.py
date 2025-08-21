@@ -179,6 +179,44 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.benchmark = True
 
+# 2) Configure CUDA memory allocator to reduce fragmentation
+# This helps with OOM issues on cards with limited VRAM
+if not os.getenv("PYTORCH_CUDA_ALLOC_CONF"):
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    print("Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to reduce CUDA memory fragmentation")
+
+# 3) Detect available VRAM and set memory management strategy
+def get_available_vram_gb() -> float:
+    """Get available VRAM in GB"""
+    if torch.cuda.is_available():
+        return torch.cuda.get_device_properties(0).total_memory / (1024**3)
+    return 0.0
+
+AVAILABLE_VRAM_GB = get_available_vram_gb()
+print(f"Detected {AVAILABLE_VRAM_GB:.1f}GB VRAM")
+
+# Memory management strategy based on available VRAM
+# High VRAM (>20GB): Full performance, no memory optimization penalties
+# Medium VRAM (12-20GB): Enable some memory optimizations with minimal speed impact
+# Low VRAM (<12GB): Aggressive memory optimization, accept speed penalties
+MEMORY_STRATEGY = "high" if AVAILABLE_VRAM_GB > 20 else ("medium" if AVAILABLE_VRAM_GB >= 12 else "low")
+print(f"Using memory management strategy: {MEMORY_STRATEGY}")
+
+# 4) Enable memory efficient attention based on strategy and xformers availability
+ENABLE_MEMORY_EFFICIENT_ATTENTION = MEMORY_STRATEGY in ["medium", "low"]
+ENABLE_CPU_OFFLOAD = MEMORY_STRATEGY == "low"
+ENABLE_SEQUENTIAL_CPU_OFFLOAD = MEMORY_STRATEGY == "low" and AVAILABLE_VRAM_GB < 8
+
+# 2) Memory optimization settings
+# Set PyTorch CUDA memory allocator to use expandable segments to reduce fragmentation
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+# 3) Enable memory efficient attention fallback if xformers is disabled
+if os.getenv("XFORMERS_DISABLED") == "1" or os.getenv("DISABLE_XFORMERS") == "1":
+    # Use PyTorch's scaled_dot_product_attention which is more memory efficient than vanilla attention
+    os.environ["DIFFUSERS_USE_TORCH_2_ATTN"] = "1"
+    print("Enabled PyTorch 2.0 memory-efficient attention as xformers fallback")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -590,32 +628,158 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             **scheduler_config
         )
     
-    # Enable optimizations - only try xformers if not explicitly disabled
+    # Enable memory-efficient optimizations for consumer GPUs
+    memory_efficient = os.getenv("MEMORY_EFFICIENT", "auto")  # auto, true, false
+    
+    # Auto-detect if we should use memory efficient mode based on VRAM
+    if memory_efficient == "auto" and torch.cuda.is_available():
+        # Get GPU memory in GB
+        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        # Enable memory efficient mode for GPUs with <= 20GB VRAM
+        memory_efficient = "true" if gpu_memory_gb <= 20 else "false"
+        logger.info(f"Auto-detected GPU memory: {gpu_memory_gb:.1f}GB, memory_efficient={memory_efficient}")
+    
+    if memory_efficient == "true":
+        logger.info("Enabling memory-efficient optimizations for consumer GPU...")
+        
+        # Enable CPU offloading for VAE (saves ~1GB VRAM)
+        pipe.enable_vae_slicing()  # Process VAE in slices to reduce memory
+        pipe.enable_vae_tiling()   # Process VAE in tiles for very large images
+        
+        # Enable model CPU offloading (moves unused models to CPU)
+        # This saves significant VRAM but adds some latency
+        if hasattr(pipe, 'enable_model_cpu_offload'):
+            pipe.enable_model_cpu_offload()
+            logger.info("Enabled model CPU offloading - unused components moved to CPU")
+        
+        # Enable attention slicing (reduces memory at cost of some speed)
+        if hasattr(pipe, 'enable_attention_slicing'):
+            pipe.enable_attention_slicing("auto")  # Let diffusers choose optimal slice size
+            logger.info("Enabled attention slicing for memory efficiency")
+            
+        # Set lower precision for text encoders if possible (saves ~500MB each)
+        if hasattr(pipe, 'text_encoder') and pipe.text_encoder is not None:
+            pipe.text_encoder.to(dtype=torch.float16)
+        if hasattr(pipe, 'text_encoder_2') and pipe.text_encoder_2 is not None:
+            pipe.text_encoder_2.to(dtype=torch.float16)
+            
+    else:
+        logger.info("Memory-efficient mode disabled - using maximum performance settings")
+    
+    # Enable optimizations based on memory strategy
     xformers_disabled = os.getenv("XFORMERS_DISABLED") == "1" or os.getenv("DISABLE_XFORMERS") == "1"
     
+    # Try xformers first (best performance if available)
     if not xformers_disabled and hasattr(pipe, 'enable_xformers_memory_efficient_attention'):
         try:
             pipe.enable_xformers_memory_efficient_attention()
             logger.info("xformers memory optimization enabled")
         except Exception as e:
             logger.warning(f"Could not enable xformers (this is normal if xformers was disabled for compatibility): {e}")
+            # Fall back to PyTorch memory efficient attention if needed
+            if ENABLE_MEMORY_EFFICIENT_ATTENTION:
+                try:
+                    pipe.enable_model_cpu_offload = False  # Ensure we try memory efficient attention first
+                    # This uses PyTorch's built-in memory efficient attention
+                    if hasattr(pipe, 'enable_attention_slicing'):
+                        pipe.enable_attention_slicing(1)  # Enable attention slicing for memory efficiency
+                        logger.info("Enabled PyTorch attention slicing for memory efficiency")
+                except Exception as attention_e:
+                    logger.warning(f"Could not enable PyTorch attention slicing: {attention_e}")
     elif xformers_disabled:
         logger.info("xformers explicitly disabled for CUDA compatibility")
+        # Use PyTorch memory efficient attention as fallback
+        if ENABLE_MEMORY_EFFICIENT_ATTENTION:
+            try:
+                if hasattr(pipe, 'enable_attention_slicing'):
+                    pipe.enable_attention_slicing(1)
+                    logger.info("Enabled PyTorch attention slicing as xformers alternative")
+            except Exception as e:
+                logger.warning(f"Could not enable attention slicing: {e}")
     else:
         logger.info("xformers not available - using default PyTorch attention")
     
-    # Move to GPU for maximum performance (no CPU offloading for production speed)
+    # Apply memory optimizations based on strategy
+    if MEMORY_STRATEGY == "low":
+        logger.info("Applying aggressive memory optimizations for low VRAM systems")
+        
+        # Enable various memory saving features
+        if hasattr(pipe, 'enable_attention_slicing'):
+            pipe.enable_attention_slicing(1)
+            logger.info("Enabled attention slicing")
+        
+        if hasattr(pipe, 'enable_vae_slicing'):
+            pipe.enable_vae_slicing()
+            logger.info("Enabled VAE slicing")
+        
+        if hasattr(pipe, 'enable_vae_tiling') and AVAILABLE_VRAM_GB < 10:
+            pipe.enable_vae_tiling()
+            logger.info("Enabled VAE tiling for <10GB VRAM")
+            
+        # For very low VRAM, use sequential CPU offload (slowest but uses least VRAM)
+        if ENABLE_SEQUENTIAL_CPU_OFFLOAD:
+            if hasattr(pipe, 'enable_sequential_cpu_offload'):
+                pipe.enable_sequential_cpu_offload()
+                logger.info("Enabled sequential CPU offload for <8GB VRAM (slowest but most memory efficient)")
+        elif ENABLE_CPU_OFFLOAD:
+            # Regular CPU offload (faster than sequential, more VRAM than sequential)
+            if hasattr(pipe, 'enable_model_cpu_offload'):
+                pipe.enable_model_cpu_offload()
+                logger.info("Enabled model CPU offload for low VRAM")
+                
+    elif MEMORY_STRATEGY == "medium":
+        logger.info("Applying moderate memory optimizations for medium VRAM systems")
+        
+        # Only enable the most effective optimizations with minimal speed impact
+        if hasattr(pipe, 'enable_vae_slicing'):
+            pipe.enable_vae_slicing()
+            logger.info("Enabled VAE slicing (minimal speed impact)")
+    
+    else:  # high VRAM
+        logger.info("High VRAM detected - no memory optimization penalties applied")
+    
+    # Move to GPU with memory-aware strategy
     if torch.cuda.is_available():
-        pipe = pipe.to("cuda")
-        # Ensure all components are consistently in float16 after GPU move
-        pipe.unet.to(device="cuda", dtype=torch.float16)
-        pipe.vae.to(device="cuda", dtype=torch.float16)
-        pipe.controlnet.to(device="cuda", dtype=torch.float16)
-        if hasattr(pipe, 'text_encoder'):
-            pipe.text_encoder.to(device="cuda", dtype=torch.float16)
-        if hasattr(pipe, 'text_encoder_2'):
-            pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
-        logger.info("Pipeline moved to GPU with consistent float16 precision")
+        if MEMORY_STRATEGY == "high":
+            # High VRAM: Load everything to GPU for maximum performance
+            pipe = pipe.to("cuda")
+            # Ensure all components are consistently in float16 after GPU move
+            pipe.unet.to(device="cuda", dtype=torch.float16)
+            pipe.vae.to(device="cuda", dtype=torch.float16)
+            pipe.controlnet.to(device="cuda", dtype=torch.float16)
+            if hasattr(pipe, 'text_encoder'):
+                pipe.text_encoder.to(device="cuda", dtype=torch.float16)
+            if hasattr(pipe, 'text_encoder_2'):
+                pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
+            logger.info("Pipeline moved to GPU with consistent float16 precision (high VRAM mode)")
+        
+        elif not ENABLE_CPU_OFFLOAD and not ENABLE_SEQUENTIAL_CPU_OFFLOAD:
+            # Medium VRAM: Load to GPU but let memory optimizations handle offloading as needed
+            pipe = pipe.to("cuda")
+            pipe.unet.to(device="cuda", dtype=torch.float16)
+            pipe.vae.to(device="cuda", dtype=torch.float16)
+            pipe.controlnet.to(device="cuda", dtype=torch.float16)
+            if hasattr(pipe, 'text_encoder'):
+                pipe.text_encoder.to(device="cuda", dtype=torch.float16)
+            if hasattr(pipe, 'text_encoder_2'):
+                pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
+            logger.info("Pipeline moved to GPU with memory optimizations enabled")
+        
+        else:
+            # Low VRAM: Don't manually move to GPU, let CPU offload handle it
+            logger.info("Using CPU offload - pipeline placement managed automatically")
+            # Still ensure float16 for components that are on GPU
+            pipe.unet.to(dtype=torch.float16)
+            pipe.vae.to(dtype=torch.float16)
+            pipe.controlnet.to(dtype=torch.float16)
+    
+    # Force garbage collection after model loading to clean up any temporary objects
+    if MEMORY_STRATEGY in ["medium", "low"]:
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info("Performed garbage collection and CUDA cache cleanup")
     
     # Preload all known LoRAs for this model to avoid loading delays during generation
     preload_known_loras(pipe, cache_key)
@@ -840,13 +1004,16 @@ async def healthcheck() -> Dict[str, Any]:
             total_memory = torch.cuda.get_device_properties(0).total_memory
             allocated_memory = torch.cuda.memory_allocated()
             cached_memory = torch.cuda.memory_reserved()
+            free_memory = total_memory - cached_memory
             
             gpu_memory = {
                 "allocated_gb": allocated_memory / (1024**3),
                 "cached_gb": cached_memory / (1024**3),
                 "total_gb": total_memory / (1024**3),
-                "free_gb": (total_memory - cached_memory) / (1024**3),
-                "usage_percent": (allocated_memory / total_memory) * 100
+                "free_gb": free_memory / (1024**3),
+                "usage_percent": (allocated_memory / total_memory) * 100,
+                "fragmentation_gb": (cached_memory - allocated_memory) / (1024**3),
+                "memory_strategy": MEMORY_STRATEGY
             }
         
         # Determine overall health status
@@ -884,6 +1051,8 @@ async def healthcheck() -> Dict[str, Any]:
         result["ready_for_inference"] = is_ready_for_inference
         result["models_available"] = list(MODEL_CONFIG.keys())
         result["controlnets_available"] = list(CONTROLNET_CONFIG.keys())
+        result["memory_efficient_mode"] = os.getenv("MEMORY_EFFICIENT", "auto")
+        result["xformers_disabled"] = os.getenv("XFORMERS_DISABLED") == "1"
         
         return result
         
@@ -1018,6 +1187,10 @@ async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
         # Generate the image
         logger.info(f"Generating image with prompt: {data.prompt[:50]}...")
         
+        # Clear any cached memory before generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         # Get model cache key for DeepCache management
         model_cache_key = f"{data.model}_{data.controlnet}"
         
@@ -1039,6 +1212,10 @@ async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
                 generator=generator
             )
         
+        # Clear memory after generation to prevent accumulation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         # Note: We don't disable DeepCache here anymore - it stays enabled for subsequent generations
         # until the setting changes or the model is unloaded
         

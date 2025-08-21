@@ -359,6 +359,9 @@ export MODELS_DIR=\${MODELS_DIR:-$MODELS_DIR}
 export LOG_LEVEL=\${LOG_LEVEL:-info}
 export PRELOAD_MODEL=\${PRELOAD_MODEL:-lightning}
 
+# Enable memory-efficient mode for consumer GPUs (auto-detects based on VRAM)
+export MEMORY_EFFICIENT=\${MEMORY_EFFICIENT:-auto}
+
 # Import xformers compatibility settings from system environment
 if grep -q "XFORMERS_DISABLED=1" /etc/environment 2>/dev/null; then
     export XFORMERS_DISABLED=1
