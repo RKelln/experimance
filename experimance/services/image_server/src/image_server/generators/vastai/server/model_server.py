@@ -40,7 +40,7 @@ except ImportError:
 if os.getenv("XFORMERS_DISABLED") == "1" or os.getenv("DISABLE_XFORMERS") == "1":
     os.environ["XFORMERS_DISABLED"] = "1" 
     os.environ["DISABLE_XFORMERS"] = "1"
-    logger.info("xformers disabled via environment variables due to compatibility issues")
+    print("xformers disabled via environment variables due to compatibility issues")
 
 from diffusers import ( # type: ignore (loaded on server not locally)
     StableDiffusionXLPipeline,
