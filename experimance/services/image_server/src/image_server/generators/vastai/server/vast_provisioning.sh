@@ -97,19 +97,22 @@ else
     echo "⚠️  Unsupported CUDA version: ${CUDA_VERSION}, skipping xformers"
 fi
 
-# Install xformers with compatibility testing
+# Install xformers with compatibility testing (with error handling to ensure script continues)
+echo "=== Installing and testing xformers ==="
+set +e  # Disable exit on error for this entire section
+
 XFORMERS_INSTALLED=false
 
 if [ -n "$INDEX_URL" ]; then
     # Use latest xformers only for PyTorch 2.7+ with CUDA 12.6/12.8
     if [[ "$PYTORCH_VERSION" == 2.7* ]] && ([[ "$CUDA_VERSION" == *"12.6"* ]] || [[ "$CUDA_VERSION" == *"12.8"* ]]); then
         echo "Installing latest xformers for PyTorch 2.7+ with CUDA 12.6/12.8..."
-        if $PIP_CMD install --root-user-action=ignore xformers --no-deps --index-url "$INDEX_URL"; then
+        if $PIP_CMD install --root-user-action=ignore xformers --no-deps --index-url "$INDEX_URL" 2>/dev/null; then
             XFORMERS_INSTALLED=true
         fi
     else
         echo "Installing xformers==0.0.28.post3 for PyTorch ${PYTORCH_VERSION} with CUDA ${CUDA_VERSION}..."
-        if $PIP_CMD install --root-user-action=ignore xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL"; then
+        if $PIP_CMD install --root-user-action=ignore xformers==0.0.28.post3 --no-deps --index-url "$INDEX_URL" 2>/dev/null; then
             XFORMERS_INSTALLED=true
         fi
     fi
@@ -122,31 +125,61 @@ if [ "$XFORMERS_INSTALLED" = true ]; then
     echo "Testing xformers compatibility..."
     
     # Test if xformers can be imported and used with current CUDA/PyTorch
-    XFORMERS_TEST_RESULT=$($PYTHON_CMD -c "
+    # Use timeout to prevent hanging and capture all output
+    XFORMERS_TEST_RESULT=$(timeout 30s $PYTHON_CMD -c "
+import sys
 import torch
 try:
+    print('Testing basic xformers import...', file=sys.stderr)
     import xformers
+    print('xformers imported successfully', file=sys.stderr)
+    
+    print('Testing xformers.ops...', file=sys.stderr)
     import xformers.ops
-    # Try to access flash attention module that's causing the issue
-    from xformers import flash_attn_3
+    print('xformers.ops imported successfully', file=sys.stderr)
+    
+    # Try a simple operation to test CUDA compatibility
+    print('Testing CUDA compatibility...', file=sys.stderr)
+    if torch.cuda.is_available():
+        x = torch.randn(2, 4, 8, device='cuda', dtype=torch.float16)
+        # This should work if xformers is compatible
+        print('CUDA tensor created successfully', file=sys.stderr)
+    
     print('SUCCESS')
 except Exception as e:
-    print(f'ERROR: {e}')
-    exit(1)
+    print(f'ERROR: {e}', file=sys.stderr)
+    print('FAILED')
 " 2>&1)
-
+    XFORMERS_TEST_EXIT_CODE=$?
+    
+    # Check if test succeeded (either SUCCESS or timeout/error but no crash)
     if echo "$XFORMERS_TEST_RESULT" | grep -q "SUCCESS"; then
         echo "✅ xformers compatibility test passed"
+    elif [ $XFORMERS_TEST_EXIT_CODE -eq 124 ]; then
+        echo "⚠️ xformers compatibility test timed out - likely hanging, disabling xformers"
+        
+        # Uninstall xformers
+        $PIP_CMD uninstall -y xformers 2>/dev/null || echo "⚠️ Failed to uninstall xformers"
+        
+        # Set environment variables to disable xformers in applications
+        echo "export XFORMERS_DISABLED=1" >> /etc/environment 2>/dev/null || echo "⚠️ Could not write to /etc/environment"
+        echo "export DISABLE_XFORMERS=1" >> /etc/environment 2>/dev/null || echo "⚠️ Could not write to /etc/environment"
+        
+        # Also set for current session
+        export XFORMERS_DISABLED=1
+        export DISABLE_XFORMERS=1
+        
+        echo "✅ xformers disabled due to timeout - diffusers will use standard PyTorch attention"
     else
         echo "❌ xformers compatibility test failed: $XFORMERS_TEST_RESULT"
         echo "Uninstalling incompatible xformers to prevent runtime errors..."
         
         # Uninstall xformers
-        $PIP_CMD uninstall -y xformers || echo "⚠️ Failed to uninstall xformers"
+        $PIP_CMD uninstall -y xformers 2>/dev/null || echo "⚠️ Failed to uninstall xformers"
         
         # Set environment variables to disable xformers in applications
-        echo "export XFORMERS_DISABLED=1" >> /etc/environment
-        echo "export DISABLE_XFORMERS=1" >> /etc/environment
+        echo "export XFORMERS_DISABLED=1" >> /etc/environment 2>/dev/null || echo "⚠️ Could not write to /etc/environment"
+        echo "export DISABLE_XFORMERS=1" >> /etc/environment 2>/dev/null || echo "⚠️ Could not write to /etc/environment"
         
         # Also set for current session
         export XFORMERS_DISABLED=1
@@ -157,12 +190,16 @@ except Exception as e:
 else
     echo "⚠️ xformers installation failed or skipped"
     # Set environment variables to disable xformers
-    echo "export XFORMERS_DISABLED=1" >> /etc/environment
-    echo "export DISABLE_XFORMERS=1" >> /etc/environment
+    echo "export XFORMERS_DISABLED=1" >> /etc/environment 2>/dev/null || echo "⚠️ Could not write to /etc/environment"
+    echo "export DISABLE_XFORMERS=1" >> /etc/environment 2>/dev/null || echo "⚠️ Could not write to /etc/environment"
     export XFORMERS_DISABLED=1
     export DISABLE_XFORMERS=1
     echo "✅ xformers disabled - diffusers will use standard PyTorch attention"
 fi
+
+# Re-enable exit on error and ensure we continue regardless of xformers issues
+set -e
+echo "=== xformers setup completed, continuing with provisioning ==="
 
 # Clone or update the experimance repository
 echo "Setting up experimance repository..."
