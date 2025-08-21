@@ -568,7 +568,7 @@ class AgentService(BaseService):
             return
             
         # Register display callback with the backend's transcript manager
-        self.current_backend.transcript_manager.add_display_callback(
+        self.current_backend.transcript_manager.register_async_callback(
             self._display_transcript_callback
         )
         

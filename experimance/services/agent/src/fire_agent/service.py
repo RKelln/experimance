@@ -1,12 +1,15 @@
 from __future__ import annotations
 import asyncio
 import os
+from typing import Any, Dict
 
 from experimance_common.logger import setup_logging
+from experimance_common.transcript_manager import TranscriptMessage, TranscriptMessageType
 from agent import AgentServiceBase, SERVICE_TYPE
 from agent.config import AgentServiceConfig
 from agent.vision.reolink_detector import ReolinkDetector
 from agent.tools import create_zmq_tool
+from agent.backends.base import AgentBackendEvent
 
 SERVICE_TYPE = "fire_agent"
 logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
@@ -26,12 +29,19 @@ class FireAgentService(AgentServiceBase):
         logger.info("Fire agent handlers registered")
         return
 
+    def post_backend_startup(self) -> None:
+        """Perform actions after the backend has started."""
+        if hasattr(self.current_backend, "transcript_manager") and self.current_backend.transcript_manager:
+            self.current_backend.transcript_manager.register_async_callback(self._on_transcript_message)
+
     def register_project_tools(self) -> None:
         """Register Fire-specific tools with the backend."""
         if not self.current_backend:
             logger.warning("No backend available for tool registration")
             return
         
+        return # no tools for now
+
         logger.info("Registering Fire project tools")
         
         # Create display_location tool
@@ -40,7 +50,6 @@ class FireAgentService(AgentServiceBase):
             message_type="StoryHeard",
             zmq_service=self.zmq_service,
             transcript_manager=self.current_backend.transcript_manager,
-            content_transformer=self._clean_story_content
         )
         
         # Create update_location tool  
@@ -49,7 +58,6 @@ class FireAgentService(AgentServiceBase):
             message_type="UpdateLocation",
             zmq_service=self.zmq_service,
             transcript_manager=self.current_backend.transcript_manager,
-            content_transformer=self._clean_story_content
         )
         
         # Define tool schemas for Fire project
@@ -108,45 +116,9 @@ class FireAgentService(AgentServiceBase):
             "Call this when the guest adds new or clarifying visual details to their story. Updates the existing visual scene.",
             schema=update_location_schema
         )
-        
+
         logger.info("Fire agent tools registered: display_location, update_location")
         logger.info("Fire project tools registered successfully")
-
-    def _clean_story_content(self, content: str) -> str:
-        """
-        Clean and prepare story content for the fire core service.
-        
-        Args:
-            content: Raw transcript content
-            
-        Returns:
-            Cleaned content suitable for visual generation
-        """
-        # Remove excessive whitespace
-        content = " ".join(content.split())
-        
-        # Remove common filler words and conversational artifacts
-        filler_words = [
-            "um", "uh", "like", "you know", "I mean", "actually", 
-            "basically", "literally", "so", "well", "okay", "alright"
-        ]
-        
-        words = content.split()
-        filtered_words = []
-        
-        for word in words:
-            # Remove filler words (case insensitive)
-            clean_word = word.lower().strip(".,!?;:")
-            if clean_word not in filler_words:
-                filtered_words.append(word)
-        
-        cleaned_content = " ".join(filtered_words)
-        
-        # Ensure minimum content length
-        if len(cleaned_content.strip()) < 10:
-            return content  # Return original if cleaning removed too much
-        
-        return cleaned_content
 
     async def _initialize_background_tasks(self):
         """Initialize backend when audience is detected."""
@@ -183,35 +155,12 @@ class FireAgentService(AgentServiceBase):
             # start voice chat backend, since it won't be started by audience detection
             logger.info("Starting conversation backend immediately since audience detection is disabled")
             await self._start_backend_for_conversation()
-        
+
         logger.info("Fire agent conversation started")
     
     async def _stop_background_tasks(self):
         if self.audience_detector:
             await self.audience_detector.stop()
-
-    async def _initialize_backend(self):
-        """Initialize the selected agent backend."""
-        backend_name = getattr(self.config, 'agent_backend', 'pipecat').lower()
-        
-        logger.info(f"Initializing {backend_name} backend for Fire agent...")
-
-        try:
-            if backend_name == "pipecat":
-                from agent.backends.pipecat_backend import PipecatBackend
-                self.current_backend = PipecatBackend(self.config)
-                
-                # Register project-specific tools with the backend
-                self.register_project_tools()
-                
-                await self.current_backend.start()
-                logger.info("Pipecat backend started successfully")
-            else:
-                raise ValueError(f"Unsupported backend: {backend_name}")
-                
-        except Exception as e:
-            logger.error(f"Failed to initialize {backend_name} backend: {e}")
-            raise
 
     async def _audience_detection_loop(self):
         """Continuously monitor for audience presence."""
@@ -232,3 +181,49 @@ class FireAgentService(AgentServiceBase):
                 logger.warning("Audience detector not initialized, skipping detection loop")
             
             if not await self._sleep_if_running(self.config.vision.audience_detection_interval): break
+
+    async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle new transcription data."""
+        logger.debug(f"Transcription received: {data}")
+
+    async def _on_transcript_message(self, message: TranscriptMessage):
+        """Handle new transcript message."""
+        
+        # Only process final (non-partial) user utterances
+        if message.is_partial:
+            logger.debug(f"Skipping transcript message - partial: {message.is_partial}, type: {message.message_type}")
+            return
+            
+        # Get the latest user utterance content
+        content = message.content.strip()
+        if not content or len(content) <= 1:  # Skip very short utterances
+            logger.debug(f"Skipping short utterance: '{content}'")
+            return
+            
+        logger.debug(f"Streaming transcript to fire_core: '{content[:100]}{'...' if len(content) > 100 else ''}'")
+        
+        # Stream the transcript to fire_core for processing
+        # Let fire_core decide when to generate prompts based on accumulated transcripts
+        try:
+            # Ensure we have a speaker_id (required field)
+            speaker_id = message.speaker_id or "unknown"
+            
+            from experimance_common.schemas import TranscriptUpdate, MessageType
+            transcript_message = TranscriptUpdate(
+                content=content,
+                speaker_id=speaker_id,
+                speaker_display_name=message.speaker_display_name,
+                session_id=message.session_id,
+                turn_id=message.turn_id,
+                confidence=message.confidence,
+                timestamp=str(message.timestamp),
+                is_partial=message.is_partial,
+                duration=message.duration
+            )
+            
+            await self.zmq_service.publish(transcript_message, MessageType.TRANSCRIPT_UPDATE)
+            logger.debug(f"Successfully streamed transcript to fire_core")
+            
+        except Exception as e:
+            logger.error(f"Failed to stream transcript to fire_core: {e}")
+            self.record_error(e, is_fatal=False, custom_message="Failed to stream transcript to fire_core")

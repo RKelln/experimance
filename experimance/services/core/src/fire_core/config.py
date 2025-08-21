@@ -132,7 +132,7 @@ class LLMConfig(BaseModel):
         description="API key for the LLM provider"
     )
     
-    max_tokens: int = Field(
+    max_completion_tokens: int = Field(
         default=500,
         description="Maximum tokens for LLM responses",
         ge=100,
@@ -229,7 +229,7 @@ class FireCoreConfig(BaseServiceConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["agent"],  # Subscribe to agent messages
-                topics=[MessageType.STORY_HEARD, MessageType.UPDATE_LOCATION]
+                topics=[MessageType.STORY_HEARD, MessageType.UPDATE_LOCATION, MessageType.TRANSCRIPT_UPDATE]
             ),
             workers={
                 "image_server": WorkerConfig(

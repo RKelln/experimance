@@ -20,7 +20,7 @@ max_megapixels = 1.1  # Keep tiles around 1MP for reasonable generation time
 # LLM provider configuration
 provider = "openai"
 model = "gpt-4o"
-max_tokens = 500
+max_completion_tokens = 150
 temperature = 0.7
 timeout = 30.0
 system_prompt_or_file = "system_prompt_t2i_prompt.md"

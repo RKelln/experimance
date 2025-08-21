@@ -6,6 +6,12 @@ providing speech-to-text, LLM conversation, and text-to-speech capabilities in a
 
 Based on the working ensemble implementation from flows_test.py with proper shutdown handling.
 
+Function Calling Approach:
+- Tools are passed to OpenAI LLM service via the `tools` parameter (standard Pipecat approach)
+- PipecatFunctionCallProcessor handles execution of FunctionCallInProgressFrame events
+- This processor properly handles StartFrame and other pipeline events to avoid frame processing errors
+- Pipecat handles the OpenAI function calling protocol, we just execute the functions
+
 Audio Health Monitoring:
 - If audio crashes occur, set `_enable_audio_health_monitoring = True` in __init__ method
 - This enables comprehensive health checks and recovery mechanisms
@@ -208,28 +214,17 @@ class SimpleResample16kFilter(SOXRStreamAudioResampler):
 
 class PipecatFunctionCallProcessor(FrameProcessor):
     """
-    Processor that handles function calls from the OpenAI Realtime API.
+    Processor that handles function calls from the OpenAI LLM API.
     """
     
-    def __init__(self, backend: 'PipecatBackend'):
-        super().__init__()
+    def __init__(self, backend: 'PipecatBackend', **kwargs):
+        super().__init__(**kwargs)
         self.backend = backend
         
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Process frames to handle function calls."""
         # Always call parent first to handle StartFrame and other pipeline frames
         await super().process_frame(frame, direction)
-        
-        # Only log function-related frames to reduce spam
-        if isinstance(frame, FunctionCallInProgressFrame):
-            logger.debug(f"PipecatFunctionCallProcessor received frame: {type(frame).__name__}")
-        
-        # Debug: Add periodic logging to verify processor is active
-        if not hasattr(self, '_debug_counter'):
-            self._debug_counter = 0
-        self._debug_counter += 1
-        if self._debug_counter % 1000 == 0:
-            logger.debug(f"PipecatFunctionCallProcessor processed {self._debug_counter} frames")
         
         if isinstance(frame, FunctionCallInProgressFrame):
             logger.info(f"Function call in progress: {frame.function_name} with args: {frame.arguments}")
@@ -358,24 +353,7 @@ class PipecatEventProcessor(FrameProcessor):
                     await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
                         "reason": "idle_timeout"
                     })
-        
-        # Handle transcription frames
-        # elif isinstance(frame, TranscriptionFrame):
-        #     if frame.text and frame.text.strip():
-        #         await self.backend.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
-        #             "content": frame.text,
-        #             "speaker": "user",  # TranscriptionFrame is typically from user speech
-        #             "is_partial": getattr(frame, 'is_partial', False)
-        #         })
-        
-        # # Handle agent text responses for transcription
-        # elif isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
-        #     if frame.text and frame.text.strip():
-        #         await self.backend.emit_event(AgentBackendEvent.TRANSCRIPTION_RECEIVED, {
-        #             "content": frame.text,
-        #             "speaker": "agent",  # TextFrame from LLM is agent response
-        #             "is_partial": False
-        #         })
+        # Note: transcription handled through transcription manager
             
         # Forward the frame to the next processor
         await self.push_frame(frame, direction)
@@ -583,7 +561,7 @@ class PipecatBackend(AgentBackend):
         """Load flow configuration from the specified flow file."""
         flow_file = self.pipecat_config.flow_file
         if not flow_file:
-            raise ValueError("Flow file must be specified in the configuration")
+            raise ValueError("Flow file must be specified to load flow configuration")
         flow_path = Path(flow_file)
         if not flow_path.exists():
             flow_path = AGENT_SERVICE_DIR / flow_file
@@ -697,7 +675,7 @@ class PipecatBackend(AgentBackend):
             
         try:
             # Add timeout to prevent hanging during shutdown
-            async with asyncio.timeout(2.0):
+            async with asyncio.timeout(1.0):
                 await self._process_transcript_frame(frame)
         except asyncio.TimeoutError:
             logger.warning("Transcript update timed out during shutdown")
@@ -1003,9 +981,21 @@ class PipecatBackend(AgentBackend):
             logger.info("Creating OpenAI LLM service...")
             
             try:
+                # Get available tools if not using flows
+                available_tools = None
+                if not self.pipecat_config.flow_file and self._available_tools:
+                    available_tools = self.get_available_tools()
+                    logger.info(f"Configuring OpenAI LLM with {len(available_tools)} tools")
+                elif not self.pipecat_config.flow_file:
+                    logger.info("No tools available for OpenAI LLM")
+                else:
+                    logger.info("Using flows - tools will be handled by flow manager")
+                
+                # Create LLM service with tools (if available) - let Pipecat handle function calling natively
                 llm = OpenAILLMService(
                     api_key=os.getenv("OPENAI_API_KEY"),
-                    model=self.pipecat_config.openai_model or "gpt-4o-mini"
+                    model=self.pipecat_config.openai_model or "gpt-4o-mini",
+                    tools=available_tools  # Pipecat handles function calling internally
                 )
                 logger.info("OpenAI LLM service created successfully")
             except Exception as e:
@@ -1069,17 +1059,32 @@ class PipecatBackend(AgentBackend):
         # Build pipeline components list - audio resampling now handled by transport filter
         pipeline_components = [
             self.transport.input(),
-            stt_mute_processor,
+        ]
+        if self.pipecat_config.flow_file:
+            pipeline_components.append(stt_mute_processor)
+        
+        pipeline_components.extend([
             stt,
             transcript_processor.user(),
             context_aggregator.user(),
+        ])
+        
+        # Add simplified function call processor if tools are available and not using flows
+        if not self.pipecat_config.flow_file and self._available_tools:
+            logger.info("Adding function call processor for tool execution")
+            self.function_call_processor = PipecatFunctionCallProcessor(self)
+            pipeline_components.append(self.function_call_processor)
+        
+        # Continue with LLM and remaining components
+        # Note: Tools are passed to OpenAI service, processor only handles execution
+        pipeline_components.extend([
             llm,
             tts,
             self.transport.output(),
             transcript_processor.assistant(),
             context_aggregator.assistant(),
             self.event_processor
-        ]
+        ])
         
         # Create pipeline
         self.pipeline = Pipeline(pipeline_components)
@@ -1091,29 +1096,64 @@ class PipecatBackend(AgentBackend):
         self.task = PipelineTask(self.pipeline)
         logger.info("Pipeline task created successfully")
         
-        # Create flow manager
-        flow_config = self._load_flow_config()
-        self._flow_config = flow_config  # Store for later use in transitions
-        
-        self.flow_manager = FlowManager(
-            task=self.task,
-            llm=llm,
-            context_aggregator=context_aggregator,
-            flow_config=flow_config
-        )
+        # Check if we should use flows or direct tool calling
+        if self.pipecat_config.flow_file:
+            # Create flow manager for flow-based conversation
+            logger.info("Flow file specified, creating flow manager...")
+            flow_config = self._load_flow_config()
+            self._flow_config = flow_config  # Store for later use in transitions
+            
+            self.flow_manager = FlowManager(
+                task=self.task,
+                llm=llm,
+                context_aggregator=context_aggregator,
+                flow_config=flow_config
+            )
 
-        # Store agent service reference in flow manager state for flow functions to access
-        if hasattr(self, 'agent_service') and self.agent_service:
-            self.flow_manager.state["_agent_service"] = self.agent_service
-            logger.debug("Agent service reference stored in flow manager state")
+            # Store agent service reference in flow manager state for flow functions to access
+            if hasattr(self, 'agent_service') and self.agent_service:
+                self.flow_manager.state["_agent_service"] = self.agent_service
+                logger.debug("Agent service reference stored in flow manager state")
+            else:
+                logger.warning("No agent service reference available for flow manager")
+
+            # Initialize the flow manager with the initial node
+            try:
+                await self.flow_manager.initialize()
+            except Exception as e:
+                logger.error(f"Failed to initialize flow manager: {e}")
         else:
-            logger.warning("No agent service reference available for flow manager")
-
-        # Initialize the flow manager with the initial node
-        try:
-            await self.flow_manager.initialize()
-        except Exception as e:
-            logger.error(f"Failed to initialize flow manager: {e}")
+            # No flow file - set up direct tool calling similar to realtime mode
+            logger.info("No flow file specified, setting up direct tool calling...")
+            
+            # Load system prompt if available
+            if self.config.backend_config.prompt_path is not None:
+                prompt = load_prompt(self.config.backend_config.prompt_path)
+                logger.info(f"Loaded system prompt from {self.config.backend_config.prompt_path}")
+            else:
+                prompt = "You are a helpful AI assistant. Please assist the user with their questions."
+                logger.warning("No prompt file configured, using default prompt")
+            
+            # Set the system prompt in the context
+            try:
+                # Add system message to the context
+                context.messages.append({
+                    "role": "system",
+                    "content": prompt
+                })
+                logger.info("System prompt added to context successfully")
+            except Exception as e:
+                logger.error(f"Failed to set system prompt: {e}")
+                # Fallback - let the LLM handle it without explicit system context
+                logger.warning("Continuing without explicit system prompt in context")
+            
+            # Get available tools and configure LLM for tool calling
+            available_tools = self.get_available_tools()
+            if available_tools:
+                logger.info(f"Tools available for ensemble mode: {len(available_tools)}")
+                # Tools are passed to OpenAI service, PipecatFunctionCallProcessor handles execution
+            else:
+                logger.info("No tools available, ensemble mode will work without tool calling")
 
     
     async def _create_realtime_pipeline(self) -> None:
@@ -1154,8 +1194,12 @@ class PipecatBackend(AgentBackend):
         # Create event processor
         self.event_processor = PipecatEventProcessor(self)
         
-        # Create function call processor for tool calling
-        self.function_call_processor = PipecatFunctionCallProcessor(self)
+        # Add simplified function call processor if tools are available
+        if available_tools:
+            logger.info("Adding function call processor for realtime mode")
+            self.function_call_processor = PipecatFunctionCallProcessor(self)
+        else:
+            self.function_call_processor = None
         
         # For realtime mode, we might need to handle transcription differently
         # since the OpenAI Realtime API handles conversation internally
@@ -1163,14 +1207,19 @@ class PipecatBackend(AgentBackend):
         
         assert self.transport is not None, "Transport must be created successfully"
         
-        # Create pipeline
-        self.pipeline = Pipeline([
-            self.transport.input(),
-            self.function_call_processor,  # Handle function calls
-            realtime_service,
+        # Create pipeline - add function call processor if tools are available
+        pipeline_components = [self.transport.input()]
+        
+        if self.function_call_processor:
+            pipeline_components.append(self.function_call_processor)
+            
+        pipeline_components.extend([
+            realtime_service,  # Realtime service handles function calls internally
             self.transport.output(),
             self.event_processor
         ])
+        
+        self.pipeline = Pipeline(pipeline_components)
 
         self.task = PipelineTask(self.pipeline)
     

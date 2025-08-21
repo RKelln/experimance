@@ -74,6 +74,10 @@ class AgentServiceBase(BaseService):
         """Subclass can register project-specific tools with the backend."""
         return
 
+    def post_backend_startup(self) -> None:
+        """Subclass can perform actions after the backend has started."""
+        return
+
     # ---------------- Lifecycle ----------------
 
     async def start(self) -> None:
@@ -322,7 +326,9 @@ class AgentServiceBase(BaseService):
 
                 # Start the backend
                 await backend.start()  # type: ignore
-                
+
+                self.post_backend_startup()
+
                 logger.info(f"Successfully initialized {backend_name} backend")
             else:
                 logger.info(f"Agent service started in placeholder mode (no {backend_name} backend)")
@@ -465,6 +471,11 @@ class AgentServiceBase(BaseService):
     # =========================================================================
     # Event Handlers
     # =========================================================================
+
+    async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle new transcription data."""
+        pass
+
 
     async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle conversation ended event."""

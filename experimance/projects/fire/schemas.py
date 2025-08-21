@@ -61,6 +61,7 @@ class MessageType(StringComparableEnum):
     # Fires-specific message types
     STORY_HEARD = "StoryHeard"
     UPDATE_LOCATION = "UpdateLocation"
+    TRANSCRIPT_UPDATE = "TranscriptUpdate"
 
 
 class SuggestTimePeriodPayload(MessageBase):
@@ -85,3 +86,17 @@ class UpdateLocation(MessageBase):
     content: str  # Update content/instructions
     update_type: Optional[str] = None  # Type of update (e.g., "clarification", "addition")
     timestamp: Optional[str] = None
+
+
+class TranscriptUpdate(MessageBase):
+    """Message to stream transcript utterances to fire_core for processing."""
+    type: MessageType = MessageType.TRANSCRIPT_UPDATE
+    content: str  # The transcript content/utterance
+    speaker_id: str  # Speaker identification (required)
+    speaker_display_name: Optional[str] = None  # Human-readable speaker name
+    session_id: Optional[str] = None  # Session identifier
+    turn_id: Optional[str] = None  # Turn identifier within session
+    confidence: Optional[float] = None  # Confidence score
+    timestamp: Optional[str] = None  # When the utterance was captured
+    is_partial: bool = False  # Whether this is a partial/interim result
+    duration: Optional[float] = None  # Duration of the utterance

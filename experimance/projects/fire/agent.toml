@@ -21,7 +21,7 @@ prompt_path="projects/fire/fire_spirit_prompt.md"
 
 [backend_config.pipecat]
 # Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
-mode = "realtime"  # Change to "realtime" to use OpenAI Realtime Beta
+mode = "ensemble"  # Change to "realtime" to use OpenAI Realtime Beta
 
 # Audio settings
 audio_in_enabled = true
@@ -60,8 +60,14 @@ turn_detection_silence_ms = 800
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 
+# Ensemble mode provider settings
+[backend_config.pipecat.ensemble]
+stt = "assemblyai"  # Speech-to-text provider
+llm = "openai"      # Language model provider  
+tts = "cartesia"    # Text-to-speech provider
+
 [vision]
-audience_detection_enabled = true
+audience_detection_enabled = false
 reolink_enabled = true
 
 # Reolink Camera Settings

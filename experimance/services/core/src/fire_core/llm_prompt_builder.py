@@ -18,6 +18,11 @@ from .llm import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+class InsufficientContentException(Exception):
+    """Raised when there's insufficient content to generate an image prompt."""
+    pass
+
+
 class LLMPromptBuilder:
     """
     Creates image generation prompts using LLM analysis of stories.
@@ -109,42 +114,70 @@ class LLMPromptBuilder:
             
             if result == "<invalid>" or "invalid" in result.lower():
                 logger.warning(f"LLM returned invalid response ({result}), using fallback prompt")
-            else: #try to parse json
+            else: # try to parse json
                 # Attempt to parse the JSON response
                 try:
                     data = json.loads(result)
                 except json.JSONDecodeError:
                     # Debug: Log the raw response
-                    logger.debug(f"Raw LLM response: {repr(data)}")
+                    logger.debug(f"Raw LLM response: {repr(result)}")
                     
                     # Clean up the response - remove markdown code blocks if present
                     json_content = result.strip()
                     if json_content.startswith("```json"):
                         # Remove opening ```json
                         json_content = json_content[7:]
-                    if json_content.startswith("```"):
+                    elif json_content.startswith("```"):
                         # Remove opening ``` (fallback)
                         json_content = json_content[3:]
                     if json_content.endswith("```"):
                         # Remove closing ```
                         json_content = json_content[:-3]
+                    
+                    # Also handle single backticks
+                    if json_content.startswith("`") and json_content.endswith("`"):
+                        json_content = json_content[1:-1]
+                    
                     json_content = json_content.strip()
 
                     data = json.loads(json_content)
+                
+                # Check the status from the new system prompt format
+                status = data.get("status", "ready")  # Default to ready for backward compatibility
+                logger.debug(f"LLM response status: {status}, data: {data}")
+                
+                if status == "insufficient":
+                    reason = data.get("reason", "LLM determined insufficient content")
+                    logger.info(f"LLM determined insufficient content: {reason}")
+                    raise InsufficientContentException(reason)
+                    
+                elif status == "invalid":
+                    reason = data.get("reason", "LLM determined invalid content")
+                    logger.warning(f"LLM determined invalid content: {reason}")
+                    # Use fallback for invalid content
+                    data = {"prompt": "A cinematic landscape scene"}
+                    
+                elif status == "ready":
+                    # Content is ready for generation
+                    logger.info("LLM determined content is ready for image generation")
 
+        except InsufficientContentException:
+            # Re-raise this exception to be caught by the caller
+            raise
         except Exception as e:
             logger.error(f"LLM prompt generation failed: {e}")
             data = {
                 "prompt": "A cinematic landscape scene",
             }
-        finally:
-            return self._elements_to_prompt(
-                prompt_elements=data.get("prompt", "").strip().split(","),
-                negative_elements=data.get("negative_prompt", "").strip().split(","),
-                prefix=prefix,
-                suffix=suffix,
-                negative=negative
-            )
+        
+        # Only return if we didn't raise an exception
+        return self._elements_to_prompt(
+            prompt_elements=data.get("prompt", "").strip().split(","),
+            negative_elements=data.get("negative_prompt", "").strip().split(","),
+            prefix=prefix,
+            suffix=suffix,
+            negative=negative
+        )
 
     async def build_panorama_prompt(
         self,
