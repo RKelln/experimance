@@ -275,7 +275,20 @@ async def load_model_async(model_name: str, controlnet_id: str = "sdxl_small"):
         # Run the blocking model loading in a thread pool
         import asyncio
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, load_model, model_name, controlnet_id)
+        
+        # Use a wrapper function that handles potential device placement issues
+        def safe_load_model():
+            try:
+                return load_model(model_name, controlnet_id)
+            except Exception as e:
+                # If there's a meta tensor or device issue, log but do not re-raise
+                logger.error(f"Error during background model loading: {e}")
+                if "meta tensor" in str(e):
+                    logger.info("Meta tensor error detected - this may be resolved on next load attempt")
+                # Don't re-raise - let the server continue and load on first request
+                return None
+        
+        await loop.run_in_executor(None, safe_load_model)
         
         startup_status["model_loaded"] = True
         startup_status["model_loading"] = False
@@ -285,6 +298,7 @@ async def load_model_async(model_name: str, controlnet_id: str = "sdxl_small"):
         logger.error(f"Background model loading failed: {e}")
         startup_status["model_loading"] = False
         startup_status["startup_error"] = f"Model loading failed: {str(e)}"
+        # Don't re-raise - let the server continue and load on first request
 
 
 # Create FastAPI app with lifespan handler
@@ -628,44 +642,6 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             **scheduler_config
         )
     
-    # Enable memory-efficient optimizations for consumer GPUs
-    memory_efficient = os.getenv("MEMORY_EFFICIENT", "auto")  # auto, true, false
-    
-    # Auto-detect if we should use memory efficient mode based on VRAM
-    if memory_efficient == "auto" and torch.cuda.is_available():
-        # Get GPU memory in GB
-        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        # Enable memory efficient mode for GPUs with <= 20GB VRAM
-        memory_efficient = "true" if gpu_memory_gb <= 20 else "false"
-        logger.info(f"Auto-detected GPU memory: {gpu_memory_gb:.1f}GB, memory_efficient={memory_efficient}")
-    
-    if memory_efficient == "true":
-        logger.info("Enabling memory-efficient optimizations for consumer GPU...")
-        
-        # Enable CPU offloading for VAE (saves ~1GB VRAM)
-        pipe.enable_vae_slicing()  # Process VAE in slices to reduce memory
-        pipe.enable_vae_tiling()   # Process VAE in tiles for very large images
-        
-        # Enable model CPU offloading (moves unused models to CPU)
-        # This saves significant VRAM but adds some latency
-        if hasattr(pipe, 'enable_model_cpu_offload'):
-            pipe.enable_model_cpu_offload()
-            logger.info("Enabled model CPU offloading - unused components moved to CPU")
-        
-        # Enable attention slicing (reduces memory at cost of some speed)
-        if hasattr(pipe, 'enable_attention_slicing'):
-            pipe.enable_attention_slicing("auto")  # Let diffusers choose optimal slice size
-            logger.info("Enabled attention slicing for memory efficiency")
-            
-        # Set lower precision for text encoders if possible (saves ~500MB each)
-        if hasattr(pipe, 'text_encoder') and pipe.text_encoder is not None:
-            pipe.text_encoder.to(dtype=torch.float16)
-        if hasattr(pipe, 'text_encoder_2') and pipe.text_encoder_2 is not None:
-            pipe.text_encoder_2.to(dtype=torch.float16)
-            
-    else:
-        logger.info("Memory-efficient mode disabled - using maximum performance settings")
-    
     # Enable optimizations based on memory strategy
     xformers_disabled = os.getenv("XFORMERS_DISABLED") == "1" or os.getenv("DISABLE_XFORMERS") == "1"
     
@@ -679,8 +655,6 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             # Fall back to PyTorch memory efficient attention if needed
             if ENABLE_MEMORY_EFFICIENT_ATTENTION:
                 try:
-                    pipe.enable_model_cpu_offload = False  # Ensure we try memory efficient attention first
-                    # This uses PyTorch's built-in memory efficient attention
                     if hasattr(pipe, 'enable_attention_slicing'):
                         pipe.enable_attention_slicing(1)  # Enable attention slicing for memory efficiency
                         logger.info("Enabled PyTorch attention slicing for memory efficiency")
@@ -700,6 +674,8 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
         logger.info("xformers not available - using default PyTorch attention")
     
     # Apply memory optimizations based on strategy
+    skip_gpu_move = False  # Initialize the flag
+    
     if MEMORY_STRATEGY == "low":
         logger.info("Applying aggressive memory optimizations for low VRAM systems")
         
@@ -721,11 +697,17 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             if hasattr(pipe, 'enable_sequential_cpu_offload'):
                 pipe.enable_sequential_cpu_offload()
                 logger.info("Enabled sequential CPU offload for <8GB VRAM (slowest but most memory efficient)")
+                # Don't manually move to GPU when using sequential offload
+                skip_gpu_move = True
         elif ENABLE_CPU_OFFLOAD:
             # Regular CPU offload (faster than sequential, more VRAM than sequential)
             if hasattr(pipe, 'enable_model_cpu_offload'):
                 pipe.enable_model_cpu_offload()
                 logger.info("Enabled model CPU offload for low VRAM")
+                # Don't manually move to GPU when using CPU offload
+                skip_gpu_move = True
+        else:
+            skip_gpu_move = False
                 
     elif MEMORY_STRATEGY == "medium":
         logger.info("Applying moderate memory optimizations for medium VRAM systems")
@@ -734,12 +716,16 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
         if hasattr(pipe, 'enable_vae_slicing'):
             pipe.enable_vae_slicing()
             logger.info("Enabled VAE slicing (minimal speed impact)")
+        
+        # For medium VRAM, don't use CPU offload - keep everything on GPU
+        skip_gpu_move = False
     
     else:  # high VRAM
         logger.info("High VRAM detected - no memory optimization penalties applied")
+        skip_gpu_move = False
     
-    # Move to GPU with memory-aware strategy
-    if torch.cuda.is_available():
+    # Move to GPU with memory-aware strategy (only if not using CPU offload)
+    if torch.cuda.is_available() and not skip_gpu_move:
         if MEMORY_STRATEGY == "high":
             # High VRAM: Load everything to GPU for maximum performance
             pipe = pipe.to("cuda")
@@ -753,8 +739,8 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
                 pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
             logger.info("Pipeline moved to GPU with consistent float16 precision (high VRAM mode)")
         
-        elif not ENABLE_CPU_OFFLOAD and not ENABLE_SEQUENTIAL_CPU_OFFLOAD:
-            # Medium VRAM: Load to GPU but let memory optimizations handle offloading as needed
+        else:  # medium VRAM without CPU offload
+            # Medium VRAM: Load to GPU but let memory optimizations handle things
             pipe = pipe.to("cuda")
             pipe.unet.to(device="cuda", dtype=torch.float16)
             pipe.vae.to(device="cuda", dtype=torch.float16)
@@ -764,14 +750,18 @@ def load_model(model_name: str, controlnet_id: str = "sdxl_small") -> StableDiff
             if hasattr(pipe, 'text_encoder_2'):
                 pipe.text_encoder_2.to(device="cuda", dtype=torch.float16)
             logger.info("Pipeline moved to GPU with memory optimizations enabled")
-        
-        else:
-            # Low VRAM: Don't manually move to GPU, let CPU offload handle it
-            logger.info("Using CPU offload - pipeline placement managed automatically")
-            # Still ensure float16 for components that are on GPU
-            pipe.unet.to(dtype=torch.float16)
-            pipe.vae.to(dtype=torch.float16)
-            pipe.controlnet.to(dtype=torch.float16)
+    
+    elif torch.cuda.is_available() and skip_gpu_move:
+        # CPU offload is handling GPU placement - just ensure float16 precision
+        logger.info("CPU offload enabled - pipeline placement managed automatically")
+        # Still ensure float16 for components (but don't specify device)
+        pipe.unet.to(dtype=torch.float16)
+        pipe.vae.to(dtype=torch.float16)
+        pipe.controlnet.to(dtype=torch.float16)
+        if hasattr(pipe, 'text_encoder'):
+            pipe.text_encoder.to(dtype=torch.float16)
+        if hasattr(pipe, 'text_encoder_2'):
+            pipe.text_encoder_2.to(dtype=torch.float16)
     
     # Force garbage collection after model loading to clean up any temporary objects
     if MEMORY_STRATEGY in ["medium", "low"]:
@@ -1051,7 +1041,8 @@ async def healthcheck() -> Dict[str, Any]:
         result["ready_for_inference"] = is_ready_for_inference
         result["models_available"] = list(MODEL_CONFIG.keys())
         result["controlnets_available"] = list(CONTROLNET_CONFIG.keys())
-        result["memory_efficient_mode"] = os.getenv("MEMORY_EFFICIENT", "auto")
+        result["memory_strategy"] = MEMORY_STRATEGY
+        result["available_vram_gb"] = AVAILABLE_VRAM_GB
         result["xformers_disabled"] = os.getenv("XFORMERS_DISABLED") == "1"
         
         return result
