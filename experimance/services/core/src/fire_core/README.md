@@ -30,11 +30,7 @@ uv run -m fire_core.cli --conversation forest_memories --delay 2
 
 ## State Machine
 
-### Core States
-- **Idle**: Initial state, waiting for first input
-- **Listening**: Ready to receive stories, transcripts, and location updates
-- **BaseImage**: Generating base panorama image (cannot be interrupted)
-- **Tiles**: Generating high-resolution tiles (can be cancelled for new requests)
+The service uses a **request-centric state management** approach where all state transitions are centralized in the `_state_monitor_task()` method. The old CoreState enum has been removed in favor of individual request state tracking.
 
 ### Request States  
 - **QUEUED**: Request created and waiting to be processed
@@ -57,6 +53,14 @@ Key settings:
 
 ## Architecture
 
+### Centralized State Management
+
+**Request-Centric Design**
+- All state management is centralized in the `_state_monitor_task()` method
+- Individual requests track their own lifecycle states (QUEUED → WAITING_BASE → etc.)
+- No global service state - the service orchestrates multiple concurrent requests
+- State transitions are handled in a single monitoring loop for consistency
+
 ### Smart Interruption System
 
 **"Base Images Always Complete" Policy**
@@ -74,29 +78,29 @@ Key settings:
 ### Components
 
 - **Transcript Accumulator**: Collects streaming conversation updates
-- **LLM Processing**: Background analysis using ActiveRequest state management
+- **LLM Processing**: Background analysis using request state management  
 - **Request Queue**: FIFO queue with intelligent interruption capabilities
+- **State Monitor**: Centralized state management in `_state_monitor_task()` method
 - **Tiler**: Calculates optimal tiling strategy for seamless display
-- **State Machine**: Orchestrates the complete pipeline with proper cancellation
 
 ### Message Flow
 
 #### Story-based Flow
 ```
-StoryHeard → LLM Analysis → Base Image Request → Base Image Ready →
-Tile Requests → Tile Images Ready → Complete
+StoryHeard → LLM Analysis → Queue Request → Base Image Request → 
+Base Image Ready → Tile Requests → Tile Images Ready → Complete
 ```
 
 #### Transcript-based Flow  
 ```
 TranscriptUpdate → Accumulator → Background LLM → Smart Interruption →
-Queue Management → Base Image → Tiles → Complete
+Queue Management → State Monitor → Base Image → Tiles → Complete
 ```
 
-#### Interruption Flow
+#### State Management Flow
 ```
-New Transcript → Cancel Old LLM → Create New Request → Smart Queue →
-Base Completes → New Base Starts → Enhanced Prompt
+Request Queued → State Monitor → Start Processing → Image Generation →
+State Transitions → Completion → Queue Next Request
 ```
 
 ### Tiling Strategy
@@ -206,6 +210,12 @@ uv run -m fire_core.cli --list-prompts
 - Manages worker response handling
 
 ### Real-time Behavior
+
+**Display Management**
+- Display clearing only occurs when transcript session ID changes
+- Within the same conversation, new images render over existing content
+- Smooth visual transitions without unnecessary blanking
+- Session-based display state tracking prevents flicker
 
 **Transcript Processing**
 - Accumulates conversation messages in sessions

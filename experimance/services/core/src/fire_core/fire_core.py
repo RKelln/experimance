@@ -47,14 +47,6 @@ AGENTS = ['llm', 'agent', 'assistant', 'fire_agent', 'experimance_agent']
 logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
 
 
-class CoreState(Enum):
-    """Core service states."""
-    IDLE = "idle"
-    LISTENING = "listening" 
-    BASE_IMAGE = "base_image"
-    TILES = "tiles"
-
-
 class RequestState(Enum):
     """Request lifecycle states."""
     QUEUED = "queued"
@@ -108,6 +100,16 @@ class ActiveRequest:
     # Background task management
     processing_task: Optional[asyncio.Task] = None
     
+    # Timeout tracking
+    base_image_request_time: Optional[float] = None
+    tile_requests_sent: Dict[str, float] = field(default_factory=dict)  # request_id -> timestamp
+    state_transition_time: float = field(default_factory=time.time)
+    
+    # Timeouts (in seconds)
+    IMAGE_TIMEOUT: float = 20.0
+    LLM_TIMEOUT: float = 30.0
+    STATE_TIMEOUT: float = 60.0
+    
     def can_be_interrupted(self) -> bool:
         """
         Check if this request can be safely interrupted.
@@ -152,6 +154,104 @@ class ActiveRequest:
             True if request has reached a terminal state
         """
         return self.state in [RequestState.COMPLETED, RequestState.CANCELLED]
+    
+    def transition_to_state(self, new_state: RequestState):
+        """
+        Transition to a new state and update timing.
+        
+        Args:
+            new_state: The new state to transition to
+        """
+        old_state = self.state
+        self.state = new_state
+        self.state_transition_time = time.time()
+        
+        # State-specific timing updates
+        if new_state == RequestState.WAITING_BASE:
+            self.base_image_request_time = time.time()
+    
+    def is_timed_out(self, current_time: float) -> bool:
+        """
+        Check if this request has timed out based on its current state.
+        
+        Args:
+            current_time: The current timestamp
+            
+        Returns:
+            True if the request has timed out
+        """
+        state_duration = current_time - self.state_transition_time
+        
+        if self.state == RequestState.PROCESSING_LLM:
+            return state_duration > self.LLM_TIMEOUT
+        elif self.state == RequestState.WAITING_BASE and self.base_image_request_time:
+            return (current_time - self.base_image_request_time) > self.IMAGE_TIMEOUT
+        elif self.state == RequestState.WAITING_TILES:
+            # Check if any tile requests have timed out
+            for request_time in self.tile_requests_sent.values():
+                if (current_time - request_time) > self.IMAGE_TIMEOUT:
+                    return True
+            return False
+        elif self.state == RequestState.QUEUED:
+            # Queued requests should have a much longer timeout to allow for processing
+            return state_duration > (self.STATE_TIMEOUT * 3)  # 3 minutes for queued requests
+        elif self.state == RequestState.BASE_READY:
+            # Base ready should timeout quickly to move to tiles or completion
+            return state_duration > 5.0  # 5 seconds
+        
+        return False
+    
+    def get_timed_out_tiles(self, current_time: float) -> List[str]:
+        """
+        Get list of tile request IDs that have timed out.
+        
+        Args:
+            current_time: The current timestamp
+            
+        Returns:
+            List of timed out tile request IDs
+        """
+        timed_out = []
+        for request_id, request_time in self.tile_requests_sent.items():
+            if (current_time - request_time) > self.IMAGE_TIMEOUT:
+                timed_out.append(request_id)
+        return timed_out
+    
+    def mark_tile_request_sent(self, tile_request_id: str):
+        """
+        Mark that a tile request has been sent.
+        
+        Args:
+            tile_request_id: The ID of the tile request
+        """
+        self.tile_requests_sent[tile_request_id] = time.time()
+    
+    def mark_tile_completed(self, tile_request_id: str):
+        """
+        Mark that a tile request has completed.
+        
+        Args:
+            tile_request_id: The ID of the tile request
+        """
+        self.tile_requests_sent.pop(tile_request_id, None)
+    
+    def get_pending_tile_count(self) -> int:
+        """
+        Get the number of pending tile requests.
+        
+        Returns:
+            Number of pending tile requests
+        """
+        return len(self.tile_requests_sent)
+    
+    def all_tiles_completed(self) -> bool:
+        """
+        Check if all tiles have been completed.
+        
+        Returns:
+            True if all tiles are completed
+        """
+        return len(self.completed_tiles) >= self.total_tiles
     
     async def cancel(self):
         """
@@ -198,7 +298,6 @@ class FireCoreService(BaseService):
         )
         
         self.config = config
-        self.core_state = CoreState.IDLE  # services already have state, we track core state
         self.current_request: Optional[ActiveRequest] = None
         self.llm_processing_request: Optional[ActiveRequest] = None  # Tracks LLM processing for transcripts
         self.pending_image_requests: Dict[str, tuple] = {}  # request_id -> (type, timestamp) - tracks images sent to image_server
@@ -206,6 +305,9 @@ class FireCoreService(BaseService):
         
         # Transcript accumulation for streaming updates
         self.transcript_accumulator = TranscriptAccumulator()
+        
+        # Track current display session to avoid unnecessary clearing
+        self.current_display_session_id: Optional[str] = None
         
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
@@ -267,8 +369,8 @@ class FireCoreService(BaseService):
         # Start ZMQ service
         await self.zmq_service.start()
         
-        # Transition to listening state
-        await self._transition_to_state(CoreState.LISTENING)
+        # Service is ready to process requests
+        logger.info("🔄 Fire core service ready - idle and waiting for requests")
         
         await super().start()
     
@@ -284,20 +386,6 @@ class FireCoreService(BaseService):
         
         await super().stop()
     
-    async def _transition_to_state(self, new_state: CoreState):
-        """Transition to a new state with logging."""
-        import time
-        old_state = self.core_state
-        self.core_state = new_state
-        self._state_enter_time = time.time()  # Track when we entered this state
-        logger.info(f"🔄 State transition: {old_state.value} → {new_state.value}")
-        
-        # State-specific actions
-        if new_state == CoreState.LISTENING:
-            # Clear any old request when returning to listening
-            logger.info("👂 Ready to listen for new transcripts")
-            await self.cancel_current_request()
-
     async def cancel_current_request(self):
         """
         Cancel the current image request, if any.
@@ -373,36 +461,15 @@ class FireCoreService(BaseService):
     async def start_request_processing(self, request: ActiveRequest):
         """Start processing a request by transitioning through states."""
         self.current_request = request
-        request.state = RequestState.WAITING_BASE
+        request.transition_to_state(RequestState.WAITING_BASE)
         
         logger.info(f"🚀 STARTING request processing: {request.request_id}")
         
-        # Send clear display message
-        await self._send_clear_display()
-        
-        # Transition to base image generation
-        await self._transition_to_state(CoreState.BASE_IMAGE)
+        # Starting base image generation
+        logger.info("🔄 Transitioning to base image generation")
         
         # Request base panorama image
         await self._request_base_image()
-
-    async def process_next_queued_request(self):
-        """Process the next queued request if we're in listening state."""
-        if self.core_state != CoreState.LISTENING or not self.request_queue:
-            if self.request_queue:
-                logger.debug(f"Cannot process queued request - wrong state: {self.core_state.value}")
-            return
-            
-        if self.current_request is not None:
-            logger.warning("Cannot process queued request - current request still active")
-            return
-        
-        # Get the next request from queue
-        next_request = self.request_queue.pop(0)
-        logger.info(f"🚀 PROCESSING queued request {next_request.request_id} (queue size: {len(self.request_queue)})")
-        
-        # Start processing this request
-        await self.start_request_processing(next_request)
 
     async def _handle_story_heard(self, topic: str, message_data: MessageDataType):
         """
@@ -422,9 +489,6 @@ class FireCoreService(BaseService):
             logger.info(f"Story heard: {len(str(story.content))} chars")
             
             await self.cancel_current_request()
-            
-            # Send clear display message
-            await self._send_clear_display()
 
             # Analyze story to infer location
             logger.info("Analyzing story with LLM")
@@ -438,12 +502,10 @@ class FireCoreService(BaseService):
             request_id = self.queue_new_request(base_prompt)
             logger.info(f"Queued story-based request {request_id}")
             
-            # Try to process the queued request
-            await self.process_next_queued_request()
+            # Request processing will be handled by _state_monitor_task
             
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Failed to process story")
-            await self._transition_to_state(CoreState.LISTENING)
 
     async def _handle_update_message(self, topic: str, message_data: MessageDataType):
         """
@@ -489,7 +551,7 @@ class FireCoreService(BaseService):
                 return
 
             # ALWAYS log incoming transcripts so we can see what's being received
-            logger.info(f"🎙️  TRANSCRIPT [{transcript.session_id}] {transcript.speaker_id}: '{transcript.content}' [State: {self.core_state.value}]")
+            logger.info(f"🎙️  TRANSCRIPT [{transcript.session_id}] {transcript.speaker_id}: '{transcript.content}'")
             
             # Update accumulator (quick, synchronous operation)
             current_time = time.time()
@@ -498,6 +560,13 @@ class FireCoreService(BaseService):
             if (self.transcript_accumulator.session_id != transcript.session_id or 
                 (current_time - self.transcript_accumulator.last_update_time) > 300):  # 5 minute timeout
                 logger.info(f"📝 Starting new transcript accumulation session: {transcript.session_id}")
+                
+                # Clear display for new conversation session
+                if self.current_display_session_id != transcript.session_id:
+                    logger.info(f"🖼️  NEW SESSION detected - clearing display (was: {self.current_display_session_id}, now: {transcript.session_id})")
+                    await self._send_clear_display()
+                    self.current_display_session_id = transcript.session_id
+                
                 self.transcript_accumulator = TranscriptAccumulator(
                     session_id=transcript.session_id,
                     messages=[],
@@ -593,30 +662,6 @@ class FireCoreService(BaseService):
                 
                 logger.info("✅ LLM decided to generate prompt based on accumulated transcripts")
                 
-                # *** SMART INTERRUPTION LOGIC ***
-                # Implements priority system: new requests take precedence
-                # but "base images always complete" rule is respected
-                
-                if self.current_request or self.core_state != CoreState.LISTENING:
-                    logger.info(f"🔄 Interrupting existing request/state ({self.core_state.value}) for new transcript-based image")
-                    
-                    if self.current_request and self.current_request.can_be_interrupted():
-                        logger.info("🚫 Current request can be safely interrupted - cancelling completely")
-                        await self.cancel_current_request()
-                        
-                    elif self.current_request and self.current_request.is_generating_base():
-                        logger.info("📸 Base image generating - will complete but cancel future tiles")
-                        await self.cancel_tile_generation()
-                        
-                    elif self.current_request and self.current_request.is_generating_tiles():
-                        logger.info("🧩 Tiles generating - cancelling tiles, base already displayed")
-                        await self.cancel_tile_generation()
-                        
-                    else:
-                        logger.debug("🟢 Ready to process transcript - no interruption needed")
-                else:
-                    logger.debug("🟢 System ready - no current request to interrupt")
-                
                 # Queue the new request
                 request_id = self.queue_new_request(image_prompt)
                 logger.info(f"🖼️ Queued transcript-based request {request_id} (total queue: {len(self.request_queue)})")
@@ -626,8 +671,7 @@ class FireCoreService(BaseService):
                 self.transcript_accumulator.processed_count = len(self.transcript_accumulator.messages)
                 logger.info(f"📝 Marked {self.transcript_accumulator.processed_count - old_processed_count} messages as processed")
                 
-                # Try to process the queued request
-                await self.process_next_queued_request()
+                # Request processing will be handled by _state_monitor_task
                 
                 logger.debug("✅ BACKGROUND PROCESSING: Transcript processing completed successfully")
                 
@@ -680,9 +724,6 @@ class FireCoreService(BaseService):
             
             await self.cancel_current_request()
             
-            # Send clear display message
-            await self._send_clear_display()
-            
             # Create direct image prompt (no LLM processing)
             base_prompt = ImagePrompt(
                 prompt=prompt,
@@ -696,15 +737,12 @@ class FireCoreService(BaseService):
             request_id = self.queue_new_request(base_prompt)
             logger.info(f"Queued debug request {request_id}")
             
-            # Try to process the queued request
-            await self.process_next_queued_request()
+            # Request processing will be handled by _state_monitor_task
 
             logger.debug("Debug prompt processed successfully")
             
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Failed to process debug prompt")
-            await self._transition_to_state(CoreState.LISTENING)
-
     
     async def _handle_worker_response(self, worker_name: str, response_data):
         """
@@ -776,8 +814,8 @@ class FireCoreService(BaseService):
             # Add other parameters as needed
         )
         
-        # Track pending request with timestamp
-        import time
+        # Track pending request with timestamp and update ActiveRequest
+        self.current_request.base_image_request_time = time.time()
         self.pending_image_requests[request_id] = ("base", time.time())
         logger.debug(f"🕒 Added base image request to pending: {request_id}")
         
@@ -790,12 +828,11 @@ class FireCoreService(BaseService):
             logger.error(f"🔥 FAILED to send image request to image_server: {e}")
             # Remove the pending request since it failed
             self.pending_image_requests.pop(request_id, None)
+            self.current_request.base_image_request_time = None
             
             # Return to listening state immediately on failure and try next queued request
             logger.warning("🔄 Image server unavailable - returning to listening state and processing queue")
-            await self._transition_to_state(CoreState.LISTENING)
-            # Process next queued request if available
-            await self.process_next_queued_request()
+            # Request processing will be handled by _state_monitor_task
             return
     
     async def _handle_base_image_ready(self, response: ImageReady):
@@ -809,6 +846,7 @@ class FireCoreService(BaseService):
         base_image_path = response.uri.replace("file://", "") if response.uri.startswith("file://") else response.uri
         self.current_request.base_image_path = base_image_path
         logger.debug(f"Base image path: {base_image_path}")
+        
         # Load and store the base image in memory
         try:
             self.current_request.base_image = Image.open(base_image_path)
@@ -826,23 +864,9 @@ class FireCoreService(BaseService):
         
         await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
         
-        # Mark base image as ready - update request state
-        self.current_request.state = RequestState.BASE_READY
-        
-        # Check if we should proceed with tiles or if there are queued requests
-        if self.request_queue:
-            logger.info(f"📸 Base image complete but {len(self.request_queue)} requests queued - showing base only and processing next")
-            # Don't generate tiles, just show the base and prepare for next request
-            self.current_request.state = RequestState.COMPLETED
-            await self._transition_to_state(CoreState.LISTENING)
-            await self.process_next_queued_request()
-        else:
-            # Normal flow - transition to tile generation
-            logger.info("📸 Base image complete - proceeding to tile generation")
-            self.current_request.state = RequestState.WAITING_TILES
-            await self._transition_to_state(CoreState.TILES)
-            # Start tile generation
-            await self._request_all_tiles()
+        # Mark base image as ready - state management handled by _state_monitor_task
+        self.current_request.transition_to_state(RequestState.BASE_READY)
+        logger.info("📸 Base image complete - state updated to BASE_READY")
     
     async def _request_all_tiles(self):
         """Request generation of all tiles."""
@@ -898,9 +922,8 @@ class FireCoreService(BaseService):
             strength=self.config.rendering.tile_strength # type: ignore (dynamic import)
         )
         
-        # Track pending request
-        # Track pending request with timestamp
-        import time
+        # Track pending request using ActiveRequest's tracking
+        self.current_request.mark_tile_request_sent(request_id)
         self.pending_image_requests[request_id] = (f"tile_{tile_spec.tile_index}", time.time())
         
         # Send render request
@@ -915,6 +938,10 @@ class FireCoreService(BaseService):
             return
         
         logger.info(f"Tile {tile_index} ready")
+        
+        # Mark tile as completed in ActiveRequest tracking
+        request_id = f"{self.current_request.request_id}_tile_{tile_index}"
+        self.current_request.mark_tile_completed(request_id)
         
         # Store completed tile
         self.current_request.completed_tiles[tile_index] = response.uri
@@ -964,16 +991,8 @@ class FireCoreService(BaseService):
         
         await self.zmq_service.publish(display_message)
         
-        # Check if all tiles completed
-        if len(self.current_request.completed_tiles) >= self.current_request.total_tiles:
-            logger.info("🧩 All tiles completed, marking request as complete")
-            self.current_request.state = RequestState.COMPLETED
-            await self._transition_to_state(CoreState.LISTENING)
-            
-            # Process next queued request if any
-            if self.request_queue:
-                logger.info(f"🔄 Processing next queued request ({len(self.request_queue)} remaining)")
-            await self.process_next_queued_request()
+        # State management handled by _state_monitor_task
+        logger.debug(f"Tile {tile_index} completed - {len(self.current_request.completed_tiles)}/{self.current_request.total_tiles} done")
     
     async def _send_clear_display(self):
         """Send clear message to display service."""
@@ -985,88 +1004,143 @@ class FireCoreService(BaseService):
         logger.info("Sent clear display message")
     
     async def _state_monitor_task(self):
-        """Monitor state transitions and timeouts."""
-        import time
+        """
+        Monitor and manage all ActiveRequest state transitions and timeouts.
         
-        # Much shorter timeout for faster recovery when image server is unavailable
-        IMAGE_TIMEOUT = 20.0
-
+        This is the central hub for request lifecycle management, handling:
+        1. Timeout detection for all requests
+        2. Request state transitions  
+        3. Queueing and processing logic
+        4. Cleanup of completed/cancelled requests
+        
+        The method runs multiple processing loops each cycle:
+        - Loop 1: Process timeouts and mark requests as cancelled
+        - Loop 2: Remove completed/cancelled requests from queue
+        - Loop 3: Process request state transitions
+        - Loop 4: Start processing next queued request if ready
+        """
         while self.running:
             current_time = time.time()
             
-            # Debug logging every 10 seconds to show current state AND ZMQ status
-            if hasattr(self, '_last_debug_log'):
-                if current_time - self._last_debug_log > 10.0:
-                    # Check ZMQ service status
-                    zmq_status = "Unknown"
-                    if hasattr(self, 'zmq_service') and self.zmq_service:
-                        zmq_status = f"Running={getattr(self.zmq_service, 'running', 'Unknown')}"
-                        if hasattr(self.zmq_service, 'subscriber') and self.zmq_service.subscriber:
-                            zmq_status += f", Subscriber={getattr(self.zmq_service.subscriber, 'running', 'Unknown')}"
-                    
-                    logger.info(f"🔍 STATE DEBUG: {self.core_state.value}, current_request: {'Yes' if self.current_request else 'None'}, queue: {len(self.request_queue)}, pending: {len(self.pending_image_requests)}, ZMQ: {zmq_status}")
-                    self._last_debug_log = current_time
-            else:
+            # Debug logging every 10 seconds 
+            if not hasattr(self, '_last_debug_log') or (current_time - self._last_debug_log > 10.0):
+                # Check ZMQ service status
+                zmq_status = "Unknown"
+                if hasattr(self, 'zmq_service') and self.zmq_service:
+                    zmq_status = f"Running={getattr(self.zmq_service, 'running', 'Unknown')}"
+                    if hasattr(self.zmq_service, 'subscriber') and self.zmq_service.subscriber:
+                        zmq_status += f", Subscriber={getattr(self.zmq_service.subscriber, 'running', 'Unknown')}"
+                
+                current_req_info = f"{self.current_request.request_id}:{self.current_request.state.value}" if self.current_request else "None"
+                logger.info(f"🔍 STATE DEBUG: Current={current_req_info}, Queue={len(self.request_queue)}, Pending={len(self.pending_image_requests)}, ZMQ={zmq_status}")
                 self._last_debug_log = current_time
-            
-            # Check for image request timeouts
-            expired_requests = []
-            for request_id, (request_type, timestamp) in self.pending_image_requests.items():
-                if current_time - timestamp > IMAGE_TIMEOUT:
-                    expired_requests.append((request_id, request_type))
-            
-            # Handle expired requests
-            for request_id, request_type in expired_requests:
-                logger.warning(f"⏰ Image request TIMEOUT: {request_type} (request_id: {request_id}) after {IMAGE_TIMEOUT}s - image_server likely unavailable")
-                self.pending_image_requests.pop(request_id, None)
-                
-                # If it's a base image timeout and we're in base_image state, fall back to listening
-                if request_type == "base" and self.core_state == CoreState.BASE_IMAGE:
-                    logger.info("Base image timeout - returning to listening and processing queue")
 
-                    # CRITICAL FIX: Reset processed count so new transcripts can trigger LLM
-                    if hasattr(self, 'transcript_accumulator') and self.transcript_accumulator.processed_count > 0:
-                        old_count = self.transcript_accumulator.processed_count
-                        self.transcript_accumulator.processed_count = 0
-                        logger.warning(f"🔄 RESET processed_count from {old_count} to 0 - new transcripts can now trigger LLM")
+            # ===== LOOP 1: Process timeouts for all requests =====
+            await self._process_request_timeouts(current_time)
+            
+            # ===== LOOP 2: Remove completed/cancelled requests =====
+            await self._cleanup_completed_requests()
+            
+            # ===== LOOP 3: Process current request state transitions =====
+            await self._process_current_request_transitions()
+            
+            # ===== LOOP 4: Start next queued request if ready =====
+            await self._process_request_queue()
 
-                    await self._transition_to_state(CoreState.LISTENING)
-                    # Process next queued request if available
-                    await self.process_next_queued_request()
-                    
-                    # Send a clear display message
-                    display_message = DisplayMedia(
-                        content_type=ContentType.CLEAR,
-                        fade_in=10.0
-                    )
-                    await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
+            await self._sleep_if_running(0.1)  # Check every 0.1 seconds for faster recovery
+
+    async def _process_request_timeouts(self, current_time: float):
+        """Process timeouts for all requests and mark them as timed out."""
+        
+        # Check current request for timeout
+        if self.current_request and self.current_request.is_timed_out(current_time):
+            logger.warning(f"⏰ Current request {self.current_request.request_id} timed out in state {self.current_request.state.value}")
+            
+            if self.current_request.state == RequestState.WAITING_BASE:
+                logger.info("Base image timeout - clearing request to allow queue processing")
+                # Reset processed count so new transcripts can trigger LLM
+                if hasattr(self, 'transcript_accumulator') and self.transcript_accumulator.processed_count > 0:
+                    old_count = self.transcript_accumulator.processed_count
+                    self.transcript_accumulator.processed_count = 0
+                    logger.warning(f"🔄 RESET processed_count from {old_count} to 0 - new transcripts can now trigger LLM")
                 
-                # For tile timeouts, continue with other tiles or timeout completely
-                elif request_type.startswith("tile_") and self.core_state == CoreState.TILES:
-                    logger.warning(f"🧩 Tile timeout: {request_type}")
-                    # If too many tiles timeout, give up and return to listening
-                    remaining_tile_requests = [req_id for req_id, (req_type, _) in self.pending_image_requests.items() if req_type.startswith("tile_")]
-                    if len(remaining_tile_requests) == 0:
-                        logger.info("🔄 All tiles timed out - returning to listening and processing queue")
-                        await self._transition_to_state(CoreState.LISTENING)
-                        await self.process_next_queued_request()
+                # Clear display and mark request as cancelled
+                display_message = DisplayMedia(content_type=ContentType.CLEAR, fade_in=10.0)
+                await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
+                await self.current_request.cancel()
+                
+            elif self.current_request.state == RequestState.WAITING_TILES:
+                # Handle individual tile timeouts
+                timed_out_tiles = self.current_request.get_timed_out_tiles(current_time)
+                for tile_request_id in timed_out_tiles:
+                    logger.warning(f"🧩 Tile timeout: {tile_request_id}")
+                    self.current_request.mark_tile_completed(tile_request_id)
+                    self.pending_image_requests.pop(tile_request_id, None)
+                
+                # If no more tiles pending or too many timeouts, complete the request
+                if self.current_request.get_pending_tile_count() == 0:
+                    logger.info("🔄 All tiles completed or timed out - marking request complete")
+                    self.current_request.transition_to_state(RequestState.COMPLETED)
             
-            # Check for state-specific timeouts with shorter durations
-            if self.core_state == CoreState.BASE_IMAGE:
-                # If we've been in base_image state too long without pending requests, reset
-                if not self.pending_image_requests and current_time > getattr(self, '_state_enter_time', 0) + IMAGE_TIMEOUT:
-                    logger.warning("Base image state timeout with no pending requests - returning to listening")
-                    await self._transition_to_state(CoreState.LISTENING)
-                    await self.process_next_queued_request()
-                    
-            elif self.core_state == CoreState.TILES:
-                # Similar logic for tiles state with slightly longer timeout
-                if not self.pending_image_requests and current_time > getattr(self, '_state_enter_time', 0) + IMAGE_TIMEOUT * 1.5:
-                    logger.warning("Tiles state timeout with no pending requests - returning to listening")
-                    await self._transition_to_state(CoreState.LISTENING)
-                    await self.process_next_queued_request()
+            # Mark as cancelled for other timeout cases if not already completed
+            if not self.current_request.is_completed():
+                await self.current_request.cancel()
+                
+        # Check queued requests for timeout (LLM processing, etc.)
+        for request in self.request_queue:
+            if request.is_timed_out(current_time):
+                logger.warning(f"⏰ Queued request {request.request_id} timed out in state {request.state.value}")
+                await request.cancel()
+                
+        # Clean up expired pending image requests
+        expired_requests = []
+        for request_id, (request_type, timestamp) in self.pending_image_requests.items():
+            if current_time - timestamp > ActiveRequest.IMAGE_TIMEOUT:
+                expired_requests.append(request_id)
+        
+        for request_id in expired_requests:
+            logger.warning(f"⏰ Removing expired pending image request: {request_id}")
+            self.pending_image_requests.pop(request_id, None)
+
+    async def _cleanup_completed_requests(self):
+        """Remove completed or cancelled requests from the queue."""
+        self.request_queue = [req for req in self.request_queue if not req.is_completed()]
+        
+        # Clear current request if it's completed
+        if self.current_request and self.current_request.is_completed():
+            logger.info(f"🧹 Cleaning up completed current request {self.current_request.request_id}")
+            self.current_request = None
+
+    async def _process_current_request_transitions(self):
+        """Process state transitions for the current request."""
+        if not self.current_request:
+            return
             
-            await self._sleep_if_running(1.0)  # Check every 1 second for faster recovery
+        # Handle BASE_READY -> TILES transition
+        if self.current_request.state == RequestState.BASE_READY:
+            if self.request_queue:
+                # Higher priority requests waiting - skip tiles and complete
+                logger.info(f"📸 Base ready but {len(self.request_queue)} requests queued - completing without tiles")
+                self.current_request.transition_to_state(RequestState.COMPLETED)
+            else:
+                # Normal flow - start tile generation
+                logger.info("📸 Base ready - starting tile generation")
+                self.current_request.transition_to_state(RequestState.WAITING_TILES)
+                await self._request_all_tiles()
+        
+        # Handle WAITING_TILES -> COMPLETED transition
+        elif self.current_request.state == RequestState.WAITING_TILES:
+            if self.current_request.all_tiles_completed():
+                logger.info("🧩 All tiles completed, marking request as complete")
+                self.current_request.transition_to_state(RequestState.COMPLETED)
+
+    async def _process_request_queue(self):
+        """Start processing the next queued request if conditions are met."""
+        if (not self.current_request and self.request_queue):
+            # Process next request regardless of core state, as long as no current request
+            next_request = self.request_queue.pop(0)
+            logger.info(f"🚀 PROCESSING queued request {next_request.request_id} (queue size: {len(self.request_queue)})")
+            await self.start_request_processing(next_request)
 
 
 async def run_fire_core_service(
