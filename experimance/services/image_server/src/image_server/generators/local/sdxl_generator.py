@@ -234,7 +234,9 @@ class LocalSDXLGenerator(ImageGenerator):
         height = kwargs.get("height", self.cfg.height)
         seed = kwargs.get("seed")
         strength = kwargs.get("strength", self.cfg.strength)
-        
+
+        logger.debug(f"Generating image with prompt: {prompt}, strength: {strength}")
+
         # Check if we'll be doing img2img generation
         will_do_img2img = image is not None or image_b64 is not None
         

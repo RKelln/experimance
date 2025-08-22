@@ -894,8 +894,8 @@ class FireCoreService(BaseService):
             negative_prompt=tile_prompt.negative_prompt,
             width=tile_spec.generated_width,
             height=tile_spec.generated_height,
-            reference_image=reference_image  # Add reference image
-            # strength=self.config.rendering.tile_strength  # TODO: Add strength parameter to RenderRequest if needed
+            reference_image=reference_image,  # Add reference image
+            strength=self.config.rendering.tile_strength # type: ignore (dynamic import)
         )
         
         # Track pending request
@@ -989,8 +989,8 @@ class FireCoreService(BaseService):
         import time
         
         # Much shorter timeout for faster recovery when image server is unavailable
-        IMAGE_TIMEOUT = 5.0  # Reduced from 10 to 5 seconds
-        
+        IMAGE_TIMEOUT = 20.0
+
         while self.running:
             current_time = time.time()
             
@@ -1022,7 +1022,7 @@ class FireCoreService(BaseService):
                 
                 # If it's a base image timeout and we're in base_image state, fall back to listening
                 if request_type == "base" and self.core_state == CoreState.BASE_IMAGE:
-                    logger.info("� Base image timeout - returning to listening and processing queue")
+                    logger.info("Base image timeout - returning to listening and processing queue")
 
                     # CRITICAL FIX: Reset processed count so new transcripts can trigger LLM
                     if hasattr(self, 'transcript_accumulator') and self.transcript_accumulator.processed_count > 0:
@@ -1037,7 +1037,7 @@ class FireCoreService(BaseService):
                     # Send a clear display message
                     display_message = DisplayMedia(
                         content_type=ContentType.CLEAR,
-                        fade_in=1.0
+                        fade_in=10.0
                     )
                     await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
                 
@@ -1055,14 +1055,14 @@ class FireCoreService(BaseService):
             if self.core_state == CoreState.BASE_IMAGE:
                 # If we've been in base_image state too long without pending requests, reset
                 if not self.pending_image_requests and current_time > getattr(self, '_state_enter_time', 0) + IMAGE_TIMEOUT:
-                    logger.warning("� Base image state timeout with no pending requests - returning to listening")
+                    logger.warning("Base image state timeout with no pending requests - returning to listening")
                     await self._transition_to_state(CoreState.LISTENING)
                     await self.process_next_queued_request()
                     
             elif self.core_state == CoreState.TILES:
                 # Similar logic for tiles state with slightly longer timeout
                 if not self.pending_image_requests and current_time > getattr(self, '_state_enter_time', 0) + IMAGE_TIMEOUT * 1.5:
-                    logger.warning("� Tiles state timeout with no pending requests - returning to listening")
+                    logger.warning("Tiles state timeout with no pending requests - returning to listening")
                     await self._transition_to_state(CoreState.LISTENING)
                     await self.process_next_queued_request()
             
