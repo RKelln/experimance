@@ -28,10 +28,6 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.local.sdxl_generator import LocalSDXLConfig
 
-# For future use when other generators are implemented:
-#from image_server.generators.mock.mock_generator import MockGeneratorConfig
-#from image_server.generators.sdxl.sdxl_generator import SDXLGeneratorConfig
-#from image_server.generators.openai.openai_generator import OpenAIGeneratorConfig
 
 DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVICE_DIR)
 

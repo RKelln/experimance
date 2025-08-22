@@ -2,13 +2,11 @@
 """
 CLI utility for testing the Fire Core Service.
 
-This utility allows users to test the Fire Core         logger.info(f"CLI client started:")
-        logger.info(f"  Agent channel (stories): tcp://*:{DEFAULT_PORTS['agent']} (binding)")
-        logger.info(f"  Updates channel (prompts): tcp://localhost:{DEFAULT_PORTS['updates']} (connecting)")
-        
-        await asyncio.sleep(2.0)  # Allow connections to establishce by sending:
+This utility allows users to test the Fire Core service by sending:
 1. Story transcripts (StoryHeard messages) for full pipeline testing
 2. Direct prompts (debug-only mode) for prompt-to-image testing
+3. Transcript conversations (sequential agent/user messages via TranscriptUpdate)
+4. Individual transcript updates (single TranscriptUpdate messages)
 
 $ uv run -m fire_core.cli
 """
@@ -26,7 +24,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from experimance_common.constants import DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
-from experimance_common.schemas import MessageType, StoryHeard # type: ignore
+from experimance_common.schemas import MessageType, StoryHeard, TranscriptUpdate # type: ignore
 from experimance_common.zmq.components import PublisherComponent
 from experimance_common.zmq.config import PublisherConfig
 
@@ -91,6 +89,38 @@ SAMPLE_PROMPTS = {
     "coastal_scene": "Rocky coastline with crashing waves, sea stacks, seabirds, dramatic cliffs, tide pools, stormy sky, panoramic ocean view",
     
     "prairie_vista": "Rolling grasslands with scattered oak trees, wildflowers, big sky with dramatic clouds, wind patterns visible in the grass, endless horizon"
+}
+
+# Sample transcript conversations for testing
+SAMPLE_TRANSCRIPT_CONVERSATIONS = {
+    "forest_memories": [
+        {"speaker_id": "user", "speaker_name": "Visitor", "content": "I've been thinking about my childhood memories of forests."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Tell me more about those forest memories. What do you remember most vividly?"},
+        {"speaker_id": "user", "speaker_name": "Visitor", "content": "There was this incredible old-growth forest near my grandmother's cabin. The trees were so tall, like ancient pillars reaching up to heaven."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Those ancient trees hold so much wisdom. Can you describe what the forest felt like to you?"},
+        {"speaker_id": "user", "speaker_name": "Visitor", "content": "It felt sacred, you know? The sunlight would filter through in these golden shafts, and there were wildflowers everywhere - lupines, paintbrush, mountain asters."},
+        {"speaker_id": "user", "speaker_name": "Visitor", "content": "And there was this crystal-clear stream winding through the rocks. Sometimes I could hear loons calling from the lake beyond."},
+    ],
+    
+    "desert_journey": [
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "I once traveled through the Sonoran Desert. It was unlike anything I'd ever experienced."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "The desert has its own unique beauty. What struck you most about that journey?"},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "The vastness, first of all. Miles and miles of rust-colored earth stretching to the horizon."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "And these ancient saguaro cacti everywhere, like sentinels with their arms reaching up to the crimson sky."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "The saguaros are ancient wisdom keepers. How did the desert make you feel?"},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "At sunset, when the sky turned all these incredible colors, I felt so small but also connected to something eternal."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "At night, the stars were brilliant - you could see the Milky Way stretching across the entire sky."},
+    ],
+    
+    "mountain_reflection": [
+        {"speaker_id": "user", "speaker_name": "Hiker", "content": "I found this hidden alpine lake high in the Rockies last summer."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Mountain lakes hold special magic. Tell me about this discovery."},
+        {"speaker_id": "user", "speaker_name": "Hiker", "content": "It was nestled between these granite peaks, the water so clear I could see trout swimming deep below."},
+        {"speaker_id": "user", "speaker_name": "Hiker", "content": "The snow-capped summits reflected perfectly in the still surface, like a mirror image of the sky itself."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "That reflection speaks to the connection between earth and sky. What else did you notice?"},
+        {"speaker_id": "user", "speaker_name": "Hiker", "content": "Alpine wildflowers everywhere along the shoreline - purple lupines, yellow glacier lilies, tiny mountain forget-me-nots."},
+        {"speaker_id": "user", "speaker_name": "Hiker", "content": "The silence was profound. Just the gentle lapping of water and the distant call of a hawk."},
+    ]
 }
 
 
@@ -173,6 +203,53 @@ class FireCoreClient:
         
         return request_id
 
+    async def send_transcript_update(self, content: str, speaker_id: str, speaker_display_name: Optional[str] = None, 
+                                   session_id: Optional[str] = None, is_partial: bool = False) -> str:
+        """Send a TranscriptUpdate message via the agent channel."""
+        request_id = str(uuid.uuid4())
+        
+        transcript_message = TranscriptUpdate(
+            request_id=request_id,
+            content=content,
+            speaker_id=speaker_id,
+            speaker_display_name=speaker_display_name or speaker_id,
+            session_id=session_id or f"cli_session_{int(time.time())}",
+            timestamp=str(time.time()),
+            is_partial=is_partial
+        )
+        
+        logger.info(f"Sending transcript update via agent channel: [{speaker_id}] '{content}'")
+        assert self.agent_publisher is not None, "Agent publisher not initialized"
+        await self.agent_publisher.publish(transcript_message, MessageType.TRANSCRIPT_UPDATE)
+        
+        return request_id
+
+    async def send_conversation(self, conversation: List[Dict[str, str]], session_id: Optional[str] = None, 
+                              delay_between_messages: float = 2.0) -> List[str]:
+        """Send a full conversation as a series of transcript updates."""
+        if session_id is None:
+            session_id = f"cli_conversation_{int(time.time())}"
+        
+        request_ids = []
+        logger.info(f"Starting conversation with {len(conversation)} messages (session: {session_id})")
+        
+        for i, msg in enumerate(conversation):
+            request_id = await self.send_transcript_update(
+                content=msg["content"],
+                speaker_id=msg["speaker_id"], 
+                speaker_display_name=msg.get("speaker_name", msg["speaker_id"]),
+                session_id=session_id
+            )
+            request_ids.append(request_id)
+            
+            # Add delay between messages to simulate realistic conversation flow
+            if i < len(conversation) - 1:  # Don't wait after the last message
+                logger.info(f"Waiting {delay_between_messages}s before next message...")
+                await asyncio.sleep(delay_between_messages)
+        
+        logger.info(f"Conversation complete - sent {len(request_ids)} transcript updates")
+        return request_ids
+
 
 async def interactive_mode(debug: bool = False):
     """Run the client in interactive mode with a menu-based interface."""
@@ -190,11 +267,13 @@ async def interactive_mode(debug: bool = False):
             print("\n=== Fire Core Testing Menu ===")
             print("  1. Send story transcript (full pipeline via agent channel)")
             print("  2. Send direct prompt (debug mode via updates channel)")  
-            print("  3. Send custom story")
-            print("  4. Send custom prompt")
+            print("  3. Send transcript conversation (sequential agent/user messages)")
+            print("  4. Send single transcript update")
+            print("  5. Send custom story")
+            print("  6. Send custom prompt")
             print("  0. Exit")
 
-            choice = input("\nChoose option (0-4): ").strip()
+            choice = input("\nChoose option (0-6): ").strip()
 
             if choice == "0":
                 break
@@ -249,6 +328,56 @@ async def interactive_mode(debug: bool = False):
                     print("Invalid input. Please enter a number.")
 
             elif choice == "3":
+                # Send transcript conversation
+                print("\nAvailable transcript conversations:")
+                conversation_options = list(SAMPLE_TRANSCRIPT_CONVERSATIONS.keys())
+                for i, name in enumerate(conversation_options):
+                    print(f"  {i+1}. {name.replace('_', ' ').title()}")
+                
+                conv_choice = input(f"Choose conversation (1-{len(conversation_options)}): ").strip()
+                try:
+                    conv_index = int(conv_choice) - 1
+                    if 0 <= conv_index < len(conversation_options):
+                        conv_name = conversation_options[conv_index]
+                        conversation = SAMPLE_TRANSCRIPT_CONVERSATIONS[conv_name]
+                        
+                        print(f"\nSending conversation: {conv_name}")
+                        print(f"Will send {len(conversation)} transcript messages sequentially...")
+                        
+                        # Ask for delay between messages
+                        delay_input = input("Delay between messages in seconds (default 2.0): ").strip()
+                        try:
+                            delay = float(delay_input) if delay_input else 2.0
+                        except ValueError:
+                            delay = 2.0
+                            
+                        request_ids = await client.send_conversation(conversation, delay_between_messages=delay)
+                        print(f"Conversation sent with {len(request_ids)} transcript updates")
+                        print("Check the fire_core service logs to see processing results.")
+                    else:
+                        print("Invalid conversation selection.")
+                except ValueError:
+                    print("Invalid input. Please enter a number.")
+
+            elif choice == "4":
+                # Send single transcript update
+                speaker_id = input("\nEnter speaker ID (e.g., 'user', 'agent'): ").strip()
+                if not speaker_id:
+                    speaker_id = "user"
+                
+                speaker_name = input(f"Enter speaker display name (default: {speaker_id}): ").strip()
+                if not speaker_name:
+                    speaker_name = speaker_id
+                
+                content = input("Enter transcript content: ").strip()
+                if content:
+                    request_id = await client.send_transcript_update(content, speaker_id, speaker_name)
+                    print(f"Transcript update sent with ID: {request_id}")
+                    print("Check the fire_core service logs to see processing results.")
+                else:
+                    print("No content entered.")
+
+            elif choice == "5":
                 # Send custom story
                 print("\nEnter your custom story (press Ctrl+D when finished):")
                 lines = []
@@ -267,7 +396,7 @@ async def interactive_mode(debug: bool = False):
                 else:
                     print("No story content entered.")
 
-            elif choice == "4":
+            elif choice == "6":
                 # Send custom prompt
                 prompt_content = input("\nEnter your custom prompt: ").strip()
                 if prompt_content:
@@ -278,7 +407,7 @@ async def interactive_mode(debug: bool = False):
                     print("No prompt content entered.")
 
             else:
-                print("Invalid option. Please choose 0-4.")
+                print("Invalid option. Please choose 0-6.")
 
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -313,6 +442,31 @@ async def command_line_mode(args):
             request_id = await client.send_debug_prompt(prompt_content)
             print(f"Prompt sent via updates channel with ID: {request_id}")
             print("Check the fire_core service logs to see processing results.")
+        
+        elif args.conversation:
+            # Send transcript conversation
+            if args.conversation in SAMPLE_TRANSCRIPT_CONVERSATIONS:
+                conversation = SAMPLE_TRANSCRIPT_CONVERSATIONS[args.conversation]
+                delay = args.delay if args.delay is not None else 2.0
+                
+                print(f"Sending conversation: {args.conversation}")
+                print(f"Will send {len(conversation)} transcript messages with {delay}s delays...")
+                
+                request_ids = await client.send_conversation(conversation, delay_between_messages=delay)
+                print(f"Conversation sent with {len(request_ids)} transcript updates")
+                print("Check the fire_core service logs to see processing results.")
+            else:
+                print(f"Unknown conversation: {args.conversation}")
+                print("Available conversations:", list(SAMPLE_TRANSCRIPT_CONVERSATIONS.keys()))
+        
+        elif args.transcript:
+            # Send single transcript update
+            speaker_id = args.speaker_id or "user"
+            speaker_name = args.speaker_name or speaker_id
+            
+            request_id = await client.send_transcript_update(args.transcript, speaker_id, speaker_name)
+            print(f"Transcript update sent with ID: {request_id}")
+            print("Check the fire_core service logs to see processing results.")
 
     finally:
         await client.stop()
@@ -337,6 +491,31 @@ def main():
         help="Direct prompt to send (use prompt name or full text)"
     )
     parser.add_argument(
+        "--conversation", "-c",
+        type=str,
+        help="Transcript conversation to send (use conversation name from samples)"
+    )
+    parser.add_argument(
+        "--transcript", "-t",
+        type=str,
+        help="Single transcript message to send"
+    )
+    parser.add_argument(
+        "--speaker-id",
+        type=str,
+        help="Speaker ID for transcript messages (default: 'user')"
+    )
+    parser.add_argument(
+        "--speaker-name",
+        type=str,
+        help="Speaker display name for transcript messages (default: same as speaker-id)"
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        help="Delay between messages in conversations (default: 2.0 seconds)"
+    )
+    parser.add_argument(
         "--debug", "-D",
         action="store_true",
         help="Enable debug logging for more detailed output"
@@ -350,6 +529,11 @@ def main():
         "--list-prompts",
         action="store_true",
         help="List available sample prompts and exit"
+    )
+    parser.add_argument(
+        "--list-conversations",
+        action="store_true",
+        help="List available sample transcript conversations and exit"
     )
     
     args = parser.parse_args()
@@ -367,6 +551,19 @@ def main():
         for name, prompt in SAMPLE_PROMPTS.items():
             print(f"  {name}: {prompt}")
         return
+    
+    # List sample conversations if requested
+    if args.list_conversations:
+        print("Available sample transcript conversations:")
+        for name, conversation in SAMPLE_TRANSCRIPT_CONVERSATIONS.items():
+            print(f"  {name}: {len(conversation)} messages")
+            for i, msg in enumerate(conversation[:3]):  # Show first 3 messages as preview
+                speaker = msg.get('speaker_name', msg['speaker_id'])
+                content = msg['content'][:50] + "..." if len(msg['content']) > 50 else msg['content']
+                print(f"    {i+1}. {speaker}: {content}")
+            if len(conversation) > 3:
+                print(f"    ... and {len(conversation) - 3} more messages")
+        return
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -376,10 +573,10 @@ def main():
     # Check for interactive mode or required parameters
     if args.interactive:
         asyncio.run(interactive_mode(args.debug))
-    elif args.story or args.prompt:
+    elif args.story or args.prompt or args.conversation or args.transcript:
         asyncio.run(command_line_mode(args))
     else:
-        print("Error: Either --interactive mode, --story, or --prompt must be specified.")
+        print("Error: Either --interactive mode, --story, --prompt, --conversation, or --transcript must be specified.")
         parser.print_help()
         return 1
     
