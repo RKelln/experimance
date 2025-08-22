@@ -360,7 +360,9 @@ void main(){
 }
 '''
 
-VS_PARTICLES = r'''
+# BACKUP OF ORIGINAL COMPLEX SHADERS - COMMENTED OUT FOR REFERENCE
+'''
+ORIGINAL_VS_PARTICLES = r"""
 #version 330 core
 layout(location=0) in vec2 aUV;      // base position in [0,1]
 layout(location=1) in float aDepth;  // pseudo-depth in meters
@@ -433,13 +435,31 @@ void main(){
     vec2 clip = pos * 2.0 - 1.0;
     gl_Position = vec4(clip, 0.0, 1.0);
 
-    // Variable point size based on speed for streak effect
-    float speed = length(vVelocity);
-    gl_PointSize = uPointSize * (1.0 + speed * 2.0);
+    // Much more size variation for natural firefly appearance
+    float size_seed = hash(aSeed + vec2(42.0, 17.0));
+    
+    // Create a wide range of sizes - from very small to quite large fireflies
+    float size_variation;
+    if (size_seed < 0.3) {
+        // 30% small fireflies
+        size_variation = 0.4 + size_seed * 0.4; // 0.4 to 0.8 range
+    } else if (size_seed < 0.7) {
+        // 40% medium fireflies  
+        size_variation = 0.8 + (size_seed - 0.3) * 0.75; // 0.8 to 1.1 range
+    } else {
+        // 30% large fireflies
+        size_variation = 1.1 + (size_seed - 0.7) * 1.0; // 1.1 to 1.4 range
+    }
+    
+    // Add depth-based variation (closer = larger, farther = smaller)
+    float depth_scale = mix(1.3, 0.7, vDepth);
+    
+    // Combine all size factors
+    gl_PointSize = uPointSize * size_variation * depth_scale;
 }
-'''
+"""
 
-FS_PARTICLES = r'''
+ORIGINAL_FS_PARTICLES = r"""
 #version 330 core
 in vec2  vUV;
 in float vDepth;
@@ -448,98 +468,364 @@ in vec2  vSeed;
 in vec2  vVelocity; // velocity direction from vertex shader
 out vec4 fragColor;
 
-uniform sampler2D uDepth;   // scene depth for occlusion
-uniform sampler2D uTrees;   // soften edges in foliage
+uniform sampler2D uDepth;   // scene depth for occlusion (keep for compatibility)
+uniform sampler2D uTrees;   // soften edges in foliage (keep for compatibility)
 uniform float uXStretch;
 uniform float uTwinkle;     // 0..1
 uniform float uAudioEnergy; // 0..1
 
-// HSV -> RGB (simple)
-vec3 hsv2rgb(vec3 c){
-    vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
-    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+float rand(vec2 co) {
+    return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main(){
-    // Create oriented firefly streak instead of circle
-    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    // Get distance from center of point sprite - EXACT SAME AS WORKING TEST
+    vec2 p = gl_PointCoord * 2.0 - 1.0;  // Convert to -1 to 1 range
+    float distance = length(p);  // Actual distance from center
     
-    // Simple approach: directly use random orientation from vertex shader
-    // vVelocity already contains random cos/sin direction
-    vec2 orientation = normalize(vVelocity);
+    // Discard pixels outside circular boundary to prevent square artifacts
+    if (distance > 1.0) discard;
     
-    // Project the point onto the orientation axis
-    float along = dot(p, orientation);        // distance along the streak direction
-    float across = dot(p, vec2(-orientation.y, orientation.x)); // distance perpendicular
+    // Per-firefly variation - using the exact same technique as the working test
+    float variation = rand(vSeed + vec2(0.123, 0.456)) * 0.2 + 0.8; // 0.8 to 1.0 range (your settings)
     
-    // Account for stretch in the across direction only
-    across *= uXStretch;
+    // Use the EXACT Shadertoy technique that worked in the test
+    float firefly_size = 0.16 * variation;  // Your optimal settings from test
+    float center_intensity = max(firefly_size / distance - firefly_size, 0.0);
     
-    // Create an elongated ellipse - shorter and thicker than before
-    float streak_length = 1.4 + 0.3 * sin(vSeed.x * 12.0);  // 1.4-1.7x length (was 2.0-2.5x)
-    float streak_width = 0.6 + 0.15 * sin(vSeed.y * 15.0);  // 0.6-0.75x width (was 0.4-0.5x)
+    // Add the exact outer glow from your test settings
+    float outer_glow = exp(-3.5 * distance) * 0.50 * variation;
     
-    float ellipse = (along * along) / (streak_length * streak_length) + 
-                    (across * across) / (streak_width * streak_width);
+    // Add edge smoothing exactly like the working test
+    float edge_fade = smoothstep(0.9, 1.0, distance);
+    outer_glow *= (1.0 - edge_fade);
     
-    if(ellipse > 1.0) discard;
-    float r2 = ellipse;
+    float total_intensity = center_intensity + outer_glow;
     
-    if(r2 > 1.0) discard;
+    // Use the exact same color approach as the working test
+    vec3 base_color = vec3(1.0, 0.8, 0.4);  // Simple warm firefly color
+    
+    // Simple twinkle like the working test
+    float twinkle_phase = vSeed.y * 6.28 + uTwinkle * 4.0;
+    float twinkle = 0.85 + 0.3 * sin(twinkle_phase);
+    
+    // Apply exactly like the working test  
+    total_intensity *= twinkle;
+    
+    vec3 color = base_color * total_intensity;
+    fragColor = vec4(color, 1.0);  // additive blending handles transparency
+}
+"""
+'''
 
-    // Depth occlusion
-    float dScene = texture(uDepth, vUV).r;
-    float occl = smoothstep(-0.02, 0.10, dScene - vDepth); // behind -> 0 .. in front -> 1
-    
-    // Much lighter tree occlusion - don't completely hide fireflies in trees
-    float tree_mask = texture(uTrees, vUV).r;
-    occl *= mix(1.0, 0.9, tree_mask);  // only slightly dim in trees instead of 0.75
+# SIMPLE WORKING SHADER - COPIED FROM magic_demo_simple.py
+VS_PARTICLES = r"""
+#version 330 core
+layout(location=0) in vec2 aUV;      // base position in [0,1]
+layout(location=1) in float aDepth;  // pseudo-depth in meters
+layout(location=2) in vec2 aSeed;    // random seed
+layout(location=3) in float aHue;    // 0..1
 
-    // Multiple radial falloffs for strong bloom effect with pulse
-    float core = exp(-6.0 * r2);        // bright center
-    float mid_bloom = exp(-3.0 * r2);   // medium bloom
-    float wide_bloom = exp(-1.0 * r2);  // wide bloom
-    
-    // Enhanced pulse effect running along firefly body
-    float pulse_speed = 3.0 + 2.0 * sin(vSeed.y * 17.0);  // vary pulse speed per firefly
-    float pulse_phase = vSeed.x * 6.2831;  // unique phase per firefly
-    float pulse_time = uTwinkle * 8.0 + pulse_phase;
-    
-    // Create traveling pulse effect along the streak
-    float pulse_pos = fract(pulse_time * pulse_speed);  // 0-1 position along body
-    float body_pos = (along + streak_length) / (2.0 * streak_length);  // normalize body position 0-1
-    float pulse_distance = abs(body_pos - pulse_pos);
-    float pulse_intensity = exp(-15.0 * pulse_distance);  // sharp pulse
-    
-    // Not all fireflies get strong pulses - some are more steady
-    float pulse_strength = 0.3 + 0.7 * sin(vSeed.x * 23.0);  // 30-100% pulse strength
-    float pulse_effect = mix(1.0, 1.0 + pulse_intensity * 2.0, pulse_strength);
-    
-    float fall = (core + mid_bloom * 0.6 + wide_bloom * 0.3) * pulse_effect;
+out vec2  vUV;
+out float vDepth;
+out float vHue;
+out vec2  vSeed;
+out vec2  vVelocity; // pass velocity direction to fragment shader
 
-    // Twinkle & audio
-    float tw = 0.5 + 0.5 * sin(vSeed.x*17.0 + vSeed.y*23.0 + uAudioEnergy*2.4 + uTwinkle*10.0);
-    float base_intensity = mix(0.7, 1.6, tw);  // base twinkle range
-    
-    // Add depth-based brightness variation for more realistic depth
-    float depth_factor = (vDepth - 5.0) / 30.0;  // normalize depth from 5-35m to 0-1
-    float depth_dimming = mix(1.0, 0.15, depth_factor);  // far fireflies much dimmer (15% brightness)
-    
-    // Add extra random brightness variation per firefly
-    float brightness_variation = 0.3 + 0.7 * sin(vSeed.y * 23.0);  // 30-100% base brightness
-    
-    float I = base_intensity * depth_dimming * brightness_variation;
+uniform float uTime;
+uniform float uSpeed;
+uniform float uXStretch;
+uniform bool  uMirror;
 
-    // Add subtle color variation - slight hue shifts and saturation changes
-    float hue_variation = vHue + 0.05 * sin(vSeed.y * 19.0);  // ±5% hue shift
-    float sat_variation = 0.75 + 0.15 * sin(vSeed.x * 21.0);  // 75-90% saturation variation
-    
-    vec3 col = hsv2rgb(vec3(hue_variation, sat_variation, 1.0));
-    vec3 glow = col * fall * I * occl;
+uniform vec2  uResolution;
+uniform float uPointSize; // base size in px
 
-    // Much stronger additive bloom - especially visible in fog
-    fragColor = vec4(glow * 1.5, 1.0);  // 1.5x multiplier for stronger bloom
+// 2D pseudo-random noise for motion (deterministic)
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p){
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash(i + vec2(0,0));
+    float b = hash(i + vec2(1,0));
+    float c = hash(i + vec2(0,1));
+    float d = hash(i + vec2(1,1));
+    vec2 u = f*f*(3.0-2.0*f);
+    return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+
+vec2 contentUV(vec2 uv){
+    if(uMirror){
+        float t = fract(uv.x * 2.0);
+        uv.x = (t < 1.0) ? t : (2.0 - t);
+    }
+    return uv;
+}
+
+void main(){
+    // base uv in logical domain for motion
+    vec2 uv = contentUV(aUV);
+    float t = uTime * uSpeed;
+
+    // flow field drift (curl-ish via two perpendicular gradients)
+    float n1 = noise(uv * 1.7 + aSeed + vec2(0.0, t*0.2));
+    float n2 = noise(uv * 1.9 + aSeed.yx + vec2(t*0.2, 0.0));
+    vec2  dir = normalize(vec2(n1 - 0.5, n2 - 0.5) + 1e-3);
+
+    vec2 drift = dir * 0.08 * sin(t*0.7 + aSeed.x*6.2831);
+    vec2 pos = uv + drift;
+    // wrap
+    pos = fract(pos);
+
+    // Calculate velocity for oriented particles - pure random orientation
+    float orientationAngle = aSeed.x * 6.2831; // completely random 0-2π based on seed
+    float c = cos(orientationAngle);
+    float s = sin(orientationAngle);
+    vVelocity = vec2(c, s); // pure random direction
+
+    // Pass to fragment for occlusion and color
+    vUV = pos;
+    vDepth = aDepth;
+    vHue = aHue;
+    vSeed = aSeed;
+
+    // Convert to clip space
+    vec2 clip = pos * 2.0 - 1.0;
+    gl_Position = vec4(clip, 0.0, 1.0);
+
+    // Much more size variation for natural firefly appearance
+    float size_seed = hash(aSeed + vec2(42.0, 17.0));
+    
+    // Create a wide range of sizes - from very small to quite large fireflies
+    float size_variation;
+    if (size_seed < 0.3) {
+        // 30% small fireflies
+        size_variation = 0.4 + size_seed * 0.4; // 0.4 to 0.8 range
+    } else if (size_seed < 0.7) {
+        // 40% medium fireflies  
+        size_variation = 0.8 + (size_seed - 0.3) * 0.75; // 0.8 to 1.1 range
+    } else {
+        // 30% large fireflies
+        size_variation = 1.1 + (size_seed - 0.7) * 1.0; // 1.1 to 1.4 range
+    }
+    
+    // Add depth-based variation (closer = larger, farther = smaller)
+    float depth_scale = mix(1.3, 0.7, vDepth);
+    
+    // Combine all size factors
+    gl_PointSize = uPointSize * size_variation * depth_scale;
+}
+"""
+
+FS_PARTICLES = r"""
+#version 330 core
+in vec2  vUV;
+in float vDepth;
+in float vHue;
+in vec2  vSeed;
+in vec2  vVelocity; // velocity direction from vertex shader
+out vec4 fragColor;
+
+uniform sampler2D uDepth;   // scene depth for occlusion (keep for compatibility)
+uniform sampler2D uTrees;   // soften edges in foliage (keep for compatibility)
+uniform float uXStretch;
+uniform float uTwinkle;     // 0..1
+uniform float uAudioEnergy; // 0..1
+
+float rand(vec2 co) {
+    return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main(){
+    // Get distance from center of point sprite - EXACT SAME AS WORKING TEST
+    vec2 p = gl_PointCoord * 2.0 - 1.0;  // Convert to -1 to 1 range
+    float distance = length(p);  // Actual distance from center
+    
+    // Discard pixels outside circular boundary to prevent square artifacts
+    if (distance > 1.0) discard;
+    
+    // Per-firefly variation - using the exact same technique as the working test
+    float variation = rand(vSeed + vec2(0.123, 0.456)) * 0.2 + 0.8; // 0.8 to 1.0 range (your settings)
+    
+    // Use the EXACT Shadertoy technique that worked in the test
+    float firefly_size = 0.16 * variation;  // Your optimal settings from test
+    float center_intensity = max(firefly_size / distance - firefly_size, 0.0);
+    
+    // Add the exact outer glow from your test settings
+    float outer_glow = exp(-3.5 * distance) * 0.50 * variation;
+    
+    // Add edge smoothing exactly like the working test
+    float edge_fade = smoothstep(0.9, 1.0, distance);
+    outer_glow *= (1.0 - edge_fade);
+    
+    float total_intensity = center_intensity + outer_glow;
+    
+    // Use the exact same color approach as the working test
+    vec3 base_color = vec3(1.0, 0.8, 0.4);  // Simple warm firefly color
+    
+    // Simple twinkle like the working test
+    float twinkle_phase = vSeed.y * 6.28 + uTwinkle * 4.0;
+    float twinkle = 0.85 + 0.3 * sin(twinkle_phase);
+    
+    // Apply exactly like the working test  
+    total_intensity *= twinkle;
+    
+    vec3 color = base_color * total_intensity;
+    fragColor = vec4(color, 1.0);  // additive blending handles transparency
+}
+"""
+
+VS_PARTICLES_OLD = r'''
+#version 330 core
+layout(location=0) in vec2 aUV;      // base position in [0,1]
+layout(location=1) in float aDepth;  // pseudo-depth in meters
+layout(location=2) in vec2 aSeed;    // random seed
+layout(location=3) in float aHue;    // 0..1
+
+out vec2  vUV;
+out float vDepth;
+out float vHue;
+out vec2  vSeed;
+out vec2  vVelocity; // pass velocity direction to fragment shader
+
+uniform float uTime;
+uniform float uSpeed;
+uniform float uXStretch;
+uniform bool  uMirror;
+
+uniform vec2  uResolution;
+uniform float uPointSize; // base size in px
+
+// 2D pseudo-random noise for motion (deterministic)
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p){
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash(i + vec2(0,0));
+    float b = hash(i + vec2(1,0));
+    float c = hash(i + vec2(0,1));
+    float d = hash(i + vec2(1,1));
+    vec2 u = f*f*(3.0-2.0*f);
+    return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+
+vec2 contentUV(vec2 uv){
+    if(uMirror){
+        float t = fract(uv.x * 2.0);
+        uv.x = (t < 1.0) ? t : (2.0 - t);
+    }
+    return uv;
+}
+
+void main(){
+    // base uv in logical domain for motion
+    vec2 uv = contentUV(aUV);
+    float t = uTime * uSpeed;
+
+    // flow field drift (curl-ish via two perpendicular gradients)
+    float n1 = noise(uv * 1.7 + aSeed + vec2(0.0, t*0.2));
+    float n2 = noise(uv * 1.9 + aSeed.yx + vec2(t*0.2, 0.0));
+    vec2  dir = normalize(vec2(n1 - 0.5, n2 - 0.5) + 1e-3);
+
+    vec2 drift = dir * 0.08 * sin(t*0.7 + aSeed.x*6.2831);
+    vec2 pos = uv + drift;
+    // wrap
+    pos = fract(pos);
+
+    // Calculate velocity for oriented particles - pure random orientation
+    float orientationAngle = aSeed.x * 6.2831; // completely random 0-2π based on seed
+    float c = cos(orientationAngle);
+    float s = sin(orientationAngle);
+    vVelocity = vec2(c, s); // pure random direction
+
+    // Pass to fragment for occlusion and color
+    vUV = pos;
+    vDepth = aDepth;
+    vHue = aHue;
+    vSeed = aSeed;
+
+    // Convert to clip space
+    vec2 clip = pos * 2.0 - 1.0;
+    gl_Position = vec4(clip, 0.0, 1.0);
+
+    // Much more size variation for natural firefly appearance
+    float size_seed = hash(aSeed + vec2(42.0, 17.0));
+    
+    // Create a wide range of sizes - from very small to quite large fireflies
+    float size_variation;
+    if (size_seed < 0.3) {
+        // 30% small fireflies
+        size_variation = 0.4 + size_seed * 0.4; // 0.4 to 0.8 range
+    } else if (size_seed < 0.7) {
+        // 40% medium fireflies  
+        size_variation = 0.8 + (size_seed - 0.3) * 0.75; // 0.8 to 1.1 range
+    } else {
+        // 30% large fireflies
+        size_variation = 1.1 + (size_seed - 0.7) * 1.0; // 1.1 to 1.4 range
+    }
+    
+    // Add depth-based variation (closer = larger, farther = smaller)
+    float depth_scale = mix(1.3, 0.7, vDepth);
+    
+    // Combine all size factors
+    gl_PointSize = uPointSize * size_variation * depth_scale;
+}
+'''
+
+FS_PARTICLES_ORIGINAL = r'''
+#version 330 core
+in vec2  vUV;
+in float vDepth;
+in float vHue;
+in vec2  vSeed;
+in vec2  vVelocity; // velocity direction from vertex shader
+out vec4 fragColor;
+
+uniform sampler2D uDepth;   // scene depth for occlusion (keep for compatibility)
+uniform sampler2D uTrees;   // soften edges in foliage (keep for compatibility)
+uniform float uXStretch;
+uniform float uTwinkle;     // 0..1
+uniform float uAudioEnergy; // 0..1
+
+float rand(vec2 co) {
+    return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main(){
+    // Get distance from center of point sprite - EXACT SAME AS WORKING TEST
+    vec2 p = gl_PointCoord * 2.0 - 1.0;  // Convert to -1 to 1 range
+    float distance = length(p);  // Actual distance from center
+    
+    // Discard pixels outside circular boundary to prevent square artifacts
+    if (distance > 1.0) discard;
+    
+    // Per-firefly variation - using the exact same technique as the working test
+    float variation = rand(vSeed + vec2(0.123, 0.456)) * 0.2 + 0.8; // 0.8 to 1.0 range (your settings)
+    
+    // Use the EXACT Shadertoy technique that worked in the test
+    float firefly_size = 0.16 * variation;  // Your optimal settings from test
+    float center_intensity = max(firefly_size / distance - firefly_size, 0.0);
+    
+    // Add the exact outer glow from your test settings
+    float outer_glow = exp(-3.5 * distance) * 0.50 * variation;
+    
+    // Add edge smoothing exactly like the working test
+    float edge_fade = smoothstep(0.9, 1.0, distance);
+    outer_glow *= (1.0 - edge_fade);
+    
+    float total_intensity = center_intensity + outer_glow;
+    
+    // Use the exact same color approach as the working test
+    vec3 base_color = vec3(1.0, 0.8, 0.4);  // Simple warm firefly color
+    
+    // Simple twinkle like the working test
+    float twinkle_phase = vSeed.y * 6.28 + uTwinkle * 4.0;
+    float twinkle = 0.85 + 0.3 * sin(twinkle_phase);
+    
+    // Apply exactly like the working test  
+    total_intensity *= twinkle;
+    
+    vec3 color = base_color * total_intensity;
+    fragColor = vec4(color, 1.0);  // additive blending handles transparency
 }
 '''
 
@@ -560,9 +846,9 @@ class State:
         self.noise_scale = 1.2  # increased for more visible patterns
         self.wind = 0.25  # increased wind speed for more movement
 
-        # Lights - much smaller point size
+        # Lights - VERY large point size for maximum visibility
         self.lights_count = 640  # increased from 480 for more fireflies
-        self.point_size = 4.0  # reduced from 12.0 - much smaller fireflies
+        self.point_size = 64.0  # VERY large for maximum visibility (was 32.0)
         self.speed = 0.025  # much slower for nicer movement
         self.twinkle = 0.5
         self.audio_energy = 0.0
@@ -577,21 +863,21 @@ class State:
                 fog_color_low=(0.12,0.20,0.15),
                 fog_color_high=(0.25,0.35,0.25),
                 noise_scale=1.2, wind=0.25,  # increased for more visible movement
-                lights_count=600, point_size=4.0, speed=0.025, twinkle=0.5  # more fireflies
+                lights_count=600, point_size=64.0, speed=0.025, twinkle=0.5  # VERY large fireflies
             ),
             "moonlit": dict(
                 fog_base=0.22, fog_falloff=1.4,
                 fog_color_low=(0.08,0.12,0.18),
                 fog_color_high=(0.18,0.25,0.35),
                 noise_scale=1.0, wind=0.20,  # more visible movement
-                lights_count=550, point_size=3.5, speed=0.022, twinkle=0.6  # more fireflies
+                lights_count=550, point_size=56.0, speed=0.022, twinkle=0.6  # VERY large fireflies
             ),
             "dawn": dict(
                 fog_base=0.28, fog_falloff=1.3,
                 fog_color_low=(0.20,0.18,0.12),
                 fog_color_high=(0.40,0.32,0.20),
                 noise_scale=1.1, wind=0.22,  # more visible movement
-                lights_count=720, point_size=4.5, speed=0.028, twinkle=0.4  # more fireflies
+                lights_count=720, point_size=72.0, speed=0.028, twinkle=0.4  # VERY large fireflies
             ),
         }
 
@@ -672,29 +958,34 @@ class App:
         blu = make_random_tile(128, 128, seed=7)
         self.tex_blue = create_texture_2d(128, 128, gl.GL_R8, gl.GL_RED, gl.GL_UNSIGNED_BYTE, blu.ctypes.data_as(ctypes.c_void_p), wrap=gl.GL_REPEAT)
 
-        # Particles
+        # Simplified particles - just positions for simple shader
         self.max_particles = 2000
-        aUV, aDepth, aSeed, aHue = init_particles(self.max_particles)
-        self.n_particles = self.state.lights_count
+        
+        # Create simple random positions like in the simple demo
+        num_fireflies = int(self.state.lights_count) if isinstance(self.state.lights_count, (int, float)) else 100
+        positions = []
+        np.random.seed(42)  # consistent random placement
+        for i in range(num_fireflies):
+            x = np.random.uniform(-0.9, 0.9)  # random x position
+            y = np.random.uniform(-0.9, 0.9)  # random y position
+            positions.extend([x, y])
+        
+        self.positions = np.array(positions, dtype=np.float32)
+        self.n_particles = len(self.positions) // 2
 
-        # VBOs
+        # Simple VBO setup like in simple demo
         self.vao_pts = gl.GLuint()
         gl.glGenVertexArrays(1, ctypes.pointer(self.vao_pts))
         gl.glBindVertexArray(self.vao_pts)
-
-        def make_vbo(initial, loc, comps, dtype=gl.GL_FLOAT):
-            buf = gl.GLuint()
-            gl.glGenBuffers(1, ctypes.pointer(buf))
-            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, buf)
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, initial.nbytes, initial.ctypes.data, gl.GL_STATIC_DRAW)
-            gl.glEnableVertexAttribArray(loc)
-            gl.glVertexAttribPointer(loc, comps, dtype, gl.GL_FALSE, 0, ctypes.c_void_p(0))
-            return buf
-
-        self.vbo_uv   = make_vbo(aUV,   0, 2)
-        self.vbo_dep  = make_vbo(aDepth,1, 1)
-        self.vbo_seed = make_vbo(aSeed, 2, 2)
-        self.vbo_hue  = make_vbo(aHue,  3, 1)
+        
+        self.vbo_pos = gl.GLuint()
+        gl.glGenBuffers(1, ctypes.pointer(self.vbo_pos))
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_pos)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, self.positions.nbytes, self.positions.ctypes.data, gl.GL_STATIC_DRAW)
+        
+        # Set up vertex attribute - location 0 for aPosition
+        gl.glEnableVertexAttribArray(0)
+        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 8, ctypes.c_void_p(0))
 
         gl.glBindVertexArray(0)
 
@@ -816,26 +1107,24 @@ class App:
         # Pass C: particles (additive)
         gl.glBlendFunc(gl.GL_ONE, gl.GL_ONE)
         self.prog_pts.use()
-        # bind shared textures for occlusion
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self.tex_depth)
-        self.prog_pts['uDepth'] = 0
-        gl.glActiveTexture(gl.GL_TEXTURE1)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self.tex_trees)
-        self.prog_pts['uTrees'] = 1
+        # Note: depth and trees textures declared in shader but not used, so bindings removed
 
+        # Complex shader uniform assignments
         self.prog_pts['uTime'] = self.state.time
         self.prog_pts['uSpeed'] = self.state.speed
         self.prog_pts['uXStretch'] = float(self.state.x_stretch)
         self.prog_pts['uMirror'] = int(self.state.mirror)
-        # self.prog_pts['uResolution'] = (float(W), float(H))  # Unused, commented out
+        self.prog_pts['uResolution'] = (float(W), float(H))
         self.prog_pts['uPointSize'] = float(self.state.point_size)
-        self.prog_pts['uTwinkle'] = float(self.state.twinkle)
-        self.prog_pts['uAudioEnergy'] = float(self.state.audio_energy)
+        self.prog_pts['uTwinkle'] = self.state.twinkle
+        self.prog_pts['uAudioEnergy'] = getattr(self.state, 'audio_energy', 0.0)
 
         gl.glBindVertexArray(self.vao_pts)
         gl.glDrawArrays(gl.GL_POINTS, 0, self.n_particles)
         gl.glBindVertexArray(0)
+        
+        # Clean up - removed GL_PROGRAM_POINT_SIZE disable to keep point sprites working
+        # gl.glDisable(gl.GL_PROGRAM_POINT_SIZE)
 
         check_gl_error("draw")
 
