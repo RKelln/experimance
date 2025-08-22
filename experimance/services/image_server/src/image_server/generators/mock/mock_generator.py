@@ -72,7 +72,10 @@ class MockImageGenerator(ImageGenerator):
         immediate = kwargs.get('immediate', False)
         if not immediate:
             # Simulate some processing time
-            await asyncio.sleep(random.uniform(0.5, 2.5))
+            if self.config.delay > 0:
+                await asyncio.sleep(self.config.delay)
+            else:
+                await asyncio.sleep(random.uniform(0.5, 2.5))
         
         # If we have existing images and are configured to use them, pick one randomly
         if self.config.use_existing_images and self._existing_images:

@@ -13,6 +13,7 @@ class MockGeneratorConfig(BaseGeneratorConfig):
     text_color: tuple = (255, 255, 255)
     use_existing_images: bool = False
     existing_images_dir: Optional[Path] = None
+    delay: float = 0.0  # Delay in seconds before generating the image
     
     @field_validator('existing_images_dir')
     @classmethod
