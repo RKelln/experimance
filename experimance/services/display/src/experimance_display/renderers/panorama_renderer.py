@@ -69,8 +69,8 @@ vec4 fast_blur(vec2 tc) {
 
     vec2 texel = 1.0 / vec2(textureSize(scene_texture, 0));
     
-    // Increased blur radius for more dramatic effects - up to 9x9 kernel
-    int r = int(min(4.0, ceil(blur_sigma * 0.6)));
+    // Extreme blur radius for dramatic "clouds of color" effect - up to 49x49 kernel
+    int r = int(min(24.0, ceil(blur_sigma * 0.8)));
     float sigma2 = blur_sigma * blur_sigma;
     
     vec4 col = vec4(0.0);
@@ -124,9 +124,9 @@ void main()
         // No blur - direct sampling
         frag = texture(scene_texture, tc);
     } else {
-        // Enhanced box blur for more dramatic effects - up to 9x9 kernel
+        // Enhanced box blur for extreme "clouds of color" effect - up to 49x49 kernel
         vec2 texel = 1.0 / textureSize(scene_texture, 0);
-        int r = int(min(4.0, ceil(blur_sigma * 0.5)));
+        int r = int(min(24.0, ceil(blur_sigma * 0.8)));
         
         vec3 result = vec3(0.0);
         int samples = 0;
