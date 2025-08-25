@@ -4,19 +4,19 @@ monitor = 0
 fps_limit = 30
 vsync = true
 debug_overlay = true
-resolution = [3000, 500]  # Force specific resolution for testing
+resolution = [3840, 1080]  # Force specific resolution for testing
 #background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
 
 [panorama]
 enabled = true
 rescale = "width"  # Changed to shortest so we can see the entire panorama
-output_width = 11520  # 6x 1920 for 6 projectors total (includes mirroring)
+output_width = 5760 # 5760,11520  # 6x 1920 for 6 projectors total (includes mirroring)
 output_height = 1080
 blur = true
-start_blur = 12.0
+start_blur = 30.0
 end_blur = 0.0
-blur_duration = 10
-mirror = true
+blur_duration = 20
+mirror = false
 
 [panorama.tiles]
 width = 1920  # Smaller tiles to see more of them

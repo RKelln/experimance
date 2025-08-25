@@ -322,6 +322,48 @@ class PanoramaTile:
         except Exception as e:
             logger.warning(f"Could not create debug outline: {e}")
             return None
+
+    @staticmethod 
+    def create_debug_outline_from_dimensions(x: float, y: float, width: float, height: float, 
+                                           batch: pyglet.graphics.Batch, group: pyglet.graphics.Group, 
+                                           color: Tuple[int, int, int] = (255, 0, 0)) -> Optional[pyglet.shapes.Rectangle]:
+        """Create a debug outline rectangle using explicit dimensions.
+        
+        Args:
+            x, y: Position coordinates
+            width, height: Exact dimensions to use
+            batch: Pyglet batch to add the rectangle to
+            group: Pyglet group for rendering order 
+            color: RGB color for the outline (default: red)
+            
+        Returns:
+            The created rectangle shape, or None if creation failed
+        """
+        try:
+            from pyglet import shapes
+            
+            logger.debug(f"Creating debug outline from dimensions: input=({x}, {y}) {width}x{height}")
+            
+            # Create a sub-group with higher z-order to ensure debug rects render on top
+            class DebugGroup(pyglet.graphics.Group):
+                def __init__(self, parent_group):
+                    super().__init__(order=10, parent=parent_group)  # High order = render on top
+            
+            debug_group = DebugGroup(group)
+            
+            debug_rect = shapes.Rectangle(
+                x=x, y=y,
+                width=width, height=height,
+                color=color,
+                batch=batch, group=debug_group
+            )
+            # Start with opacity 0 - will be set by calling code based on debug mode
+            debug_rect.opacity = 0
+            logger.debug(f"Created debug outline from dimensions: {width}x{height} at ({x}, {y}), initial_opacity={debug_rect.opacity}")
+            return debug_rect
+        except Exception as e:
+            logger.warning(f"Could not create debug outline from dimensions: {e}")
+            return None
         
     def update(self, dt: float) -> None:
         """Update tile fade animation."""
@@ -422,7 +464,8 @@ class PanoramaRenderer(LayerRenderer):
         self._opacity = 1.0
         
         # Debug settings
-        self.debug_tiles = False  # Flag to enable/disable tile debug outlines
+        self.debug_tiles = False  # Flag to enable/disable tile debug outlines visibility
+        self.hide_tiles_for_debug = False  # Flag to temporarily hide tiles (shows only base image)
         
         logger.info(f"PanoramaRenderer initialized: {self.panorama_width}x{self.panorama_height}, "
                    f"mirror={self.panorama_config.mirror}")
@@ -780,9 +823,20 @@ class PanoramaRenderer(LayerRenderer):
                 self.tile_order.remove(tile_id)
         
         # Create original tile - use message fade_in for custom duration or config default
-        debug_rect = None
-        if self.debug_tiles:
-            debug_rect = PanoramaTile.create_debug_outline(sprite, self.batch, self.display)
+        # Always create debug rectangle, but control its visibility
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
+        debug_rect = PanoramaTile.create_debug_outline_from_dimensions(
+            tile_x_adjusted, tile_y_adjusted, 
+            target_tile_width, target_tile_height,
+            self.batch, self.capture,  # Use same group as tile but higher z-order
+            color=colors[len(self.tile_order) % len(colors)]  # Cycle through colors
+        )
+        if debug_rect:
+            # Set initial opacity based on debug_tiles flag (opacity 0 = invisible, >0 = visible)
+            debug_rect.opacity = 128 if self.debug_tiles else 0
+            logger.debug(f"Created debug rect for new tile {tile_id}: {debug_rect.width}x{debug_rect.height} at ({debug_rect.x}, {debug_rect.y}), target_size={target_tile_width}x{target_tile_height}, opacity={debug_rect.opacity}")
+        else:
+            logger.warning(f"Failed to create debug rect for new tile {tile_id}")
             
         if fade_in_duration is not None and fade_in_duration > 0:
             # Use custom fade duration from message
@@ -796,6 +850,12 @@ class PanoramaRenderer(LayerRenderer):
                                original_size=(image.width, image.height),
                                fade_duration=tile_config.fade_duration,
                                debug_rect=debug_rect)
+        
+        # Apply debug visibility state to new tile
+        if self.hide_tiles_for_debug:
+            sprite.visible = False
+            if debug_rect:
+                debug_rect.opacity = 0  # Hide debug rect when tiles are hidden for debug
             
         self.tiles[tile_id] = tile
         self.tile_order.append(tile_id)
@@ -907,15 +967,32 @@ class PanoramaRenderer(LayerRenderer):
         self.debug_tiles = enabled
         logger.info(f"Tile debug mode {'enabled' if enabled else 'disabled'}")
         
-        # Update existing tiles
+        # Update opacity of existing debug rectangles instead of visibility
+        target_opacity = 128 if enabled else 0  # Semi-transparent when visible, invisible when disabled
+        for tile_id, tile in self.tiles.items():
+            if tile.debug_rect:
+                tile.debug_rect.opacity = target_opacity
+                logger.debug(f"Set debug rect opacity for tile {tile_id}: {target_opacity} (size: {tile.debug_rect.width}x{tile.debug_rect.height})")
+            else:
+                logger.warning(f"Tile {tile_id} has no debug rect to toggle")
+    
+    def set_tiles_hidden_for_debug(self, hidden: bool) -> None:
+        """Hide or show tiles for debug purposes (allows seeing just the base image)."""
+        self.hide_tiles_for_debug = hidden
+        logger.info(f"Tiles {'hidden' if hidden else 'shown'} for debug mode")
+        
+        # Update tile visibility immediately
         for tile in self.tiles.values():
-            if enabled and not tile.debug_rect:
-                # Create debug outline for existing tile
-                tile.debug_rect = PanoramaTile.create_debug_outline(tile.sprite, self.batch, self.display)
-            elif not enabled and tile.debug_rect:
-                # Remove debug outline from existing tile
-                tile.debug_rect.delete()
-                tile.debug_rect = None
+            tile.sprite.visible = not hidden and self._visible
+            # Also hide debug rectangles when hiding tiles
+            if tile.debug_rect:
+                # Use opacity to control debug rect visibility: 0 if hidden, 128 if visible and debug enabled
+                should_show = (not hidden and self._visible and self.debug_tiles)
+                tile.debug_rect.opacity = 128 if should_show else 0
+    
+    def is_tiles_hidden_for_debug(self) -> bool:
+        """Check if tiles are currently hidden for debug purposes."""
+        return self.hide_tiles_for_debug
     
     def set_visibility(self, visible: bool) -> None:
         """Set renderer visibility."""
@@ -926,7 +1003,13 @@ class PanoramaRenderer(LayerRenderer):
             self.base_sprite.visible = visible
             
         for tile in self.tiles.values():
-            tile.sprite.visible = visible
+            # Respect both overall visibility and debug hide state
+            tile.sprite.visible = visible and not self.hide_tiles_for_debug
+            # Also update debug rectangles if they exist
+            if tile.debug_rect:
+                # Use opacity to control debug rect visibility: consider overall visibility, debug hide state, and debug enabled
+                should_show = (visible and not self.hide_tiles_for_debug and self.debug_tiles)
+                tile.debug_rect.opacity = 128 if should_show else 0
     
     def get_debug_info(self) -> Dict[str, Any]:
         """Get debug information about the panorama state."""
@@ -940,7 +1023,8 @@ class PanoramaRenderer(LayerRenderer):
             "panorama_size": f"{self.panorama_width}x{self.panorama_height}",
             "panorama_scale": self.panorama_scale,
             "mirror": self.panorama_config.mirror,
-            "debug_tiles": self.debug_tiles
+            "debug_tiles": self.debug_tiles,
+            "hide_tiles_for_debug": self.hide_tiles_for_debug
         }
     
     def clear_panorama(self, fade_duration: float = 3.0, blur_during_fade: bool = True) -> None:

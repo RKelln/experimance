@@ -219,11 +219,10 @@ class PanoramaTiler:
             generated_height = self.generated_tile_height
             
             if i > 0:  # All tiles except first get left overlap
-                # Add overlap while maintaining aspect ratio
+                # Add overlap horizontally but keep same height for consistent display
                 generated_width += overlap_generated
-                # Adjust height proportionally to maintain aspect ratio
-                aspect_ratio = self.generated_tile_width / self.generated_tile_height
-                generated_height = int(generated_width / aspect_ratio)
+                # DO NOT adjust height - all tiles should have same height when displayed
+                # The slight aspect ratio change is acceptable for overlap regions
             
             # Ensure dimensions are divisible by 8 (required by most image generation models)
             generated_width = round_to_multiple_of_8(generated_width)
@@ -330,10 +329,7 @@ class PanoramaTiler:
         crop_x = tile_spec.display_x
         crop_width = tile_spec.display_width
         
-        # For tiles with overlap, extend the crop to include overlap region
-        if tile_spec.overlap > 0:
-            crop_x = max(0, crop_x - tile_spec.overlap)
-            crop_width += tile_spec.overlap
+        # NOTE: display_x already accounts for overlap positioning, so no additional adjustment needed
         
         # Scale coordinates to base image space
         base_crop_x = int(crop_x * x_scale)
@@ -410,8 +406,12 @@ class PanoramaTiler:
 
         # Create alpha mask
         width, height = tile_image.size
-        blend_px = min(tile_spec.overlap, width // 2)  # Don't blend more than half the image
         
+        # Scale overlap from display space to generated image space
+        display_to_generated_ratio = self.generated_tile_width / self.display_tile_width
+        overlap_generated_px = int(tile_spec.overlap * display_to_generated_ratio) - 1
+        blend_px = max(3, min(overlap_generated_px, width // 2))  # Don't blend more than half the image
+
         # Use NumPy for efficient alpha mask creation
         alpha_array = np.full((height, width), 255, dtype=np.uint8)
         
@@ -427,7 +427,8 @@ class PanoramaTiler:
         tile_image.putalpha(alpha)
 
         logger.debug(
-            f"Applied left edge fade to tile {tile_spec.tile_index} with {blend_px}px overlap, {width}x{height}"
+            f"Applied left edge fade to tile {tile_spec.tile_index} with {blend_px}px overlap "
+            f"(scaled from {tile_spec.overlap}px display), {width}x{height}"
         )
         
         return tile_image

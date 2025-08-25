@@ -120,6 +120,16 @@ SAMPLE_TRANSCRIPT_CONVERSATIONS = {
         {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "That reflection speaks to the connection between earth and sky. What else did you notice?"},
         {"speaker_id": "user", "speaker_name": "Hiker", "content": "Alpine wildflowers everywhere along the shoreline - purple lupines, yellow glacier lilies, tiny mountain forget-me-nots."},
         {"speaker_id": "user", "speaker_name": "Hiker", "content": "The silence was profound. Just the gentle lapping of water and the distant call of a hawk."},
+    ],
+    
+    "session_change_test": [
+        {"speaker_id": "user", "speaker_name": "Visitor", "content": "I'd like to tell you about my forest memories.", "session_id": "session_1"},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Please, tell me about those memories.", "session_id": "session_1"},
+        {"speaker_id": "user", "speaker_name": "Visitor", "content": "There were these tall pines...", "session_id": "session_1"},
+        # Session change happens here - should trigger display clear
+        {"speaker_id": "user", "speaker_name": "New Visitor", "content": "Actually, I have a different story about deserts.", "session_id": "session_2"},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Tell me about the desert.", "session_id": "session_2"},
+        {"speaker_id": "user", "speaker_name": "New Visitor", "content": "The vast Sonoran desert was incredible...", "session_id": "session_2"},
     ]
 }
 
@@ -218,7 +228,7 @@ class FireCoreClient:
             is_partial=is_partial
         )
         
-        logger.info(f"Sending transcript update via agent channel: [{speaker_id}] '{content}'")
+        logger.info(f"Sending transcript update via agent channel: [{speaker_id}] '{content}' (session: {transcript_message.session_id})")
         assert self.agent_publisher is not None, "Agent publisher not initialized"
         await self.agent_publisher.publish(transcript_message, MessageType.TRANSCRIPT_UPDATE)
         
@@ -226,19 +236,29 @@ class FireCoreClient:
 
     async def send_conversation(self, conversation: List[Dict[str, str]], session_id: Optional[str] = None, 
                               delay_between_messages: float = 2.0) -> List[str]:
-        """Send a full conversation as a series of transcript updates."""
+        """Send a full conversation as a series of transcript updates.
+        
+        Each message in the conversation can optionally include a 'session_id' field.
+        If present, that session_id will be used for the message. If not present,
+        the session_id parameter (or generated default) will be used.
+        
+        This allows testing session changes within a conversation.
+        """
         if session_id is None:
             session_id = f"cli_conversation_{int(time.time())}"
         
         request_ids = []
-        logger.info(f"Starting conversation with {len(conversation)} messages (session: {session_id})")
+        logger.info(f"Starting conversation with {len(conversation)} messages (default session: {session_id})")
         
         for i, msg in enumerate(conversation):
+            # Use per-message session_id if provided, otherwise use conversation default
+            msg_session_id = msg.get("session_id", session_id)
+            
             request_id = await self.send_transcript_update(
                 content=msg["content"],
                 speaker_id=msg["speaker_id"], 
                 speaker_display_name=msg.get("speaker_name", msg["speaker_id"]),
-                session_id=session_id
+                session_id=msg_session_id
             )
             request_ids.append(request_id)
             

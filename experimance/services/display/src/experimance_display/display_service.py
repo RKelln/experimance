@@ -53,6 +53,8 @@ except Exception as e:
                 Q = 113
                 F11 = 65480
                 F1 = 65470
+                SPACE = 32
+                D = 100
     
     pyglet = MockPyglet()
     clock = pyglet.clock
@@ -225,6 +227,7 @@ class DisplayService(BaseService):
             # Register window event handlers
             self.window.on_draw = self._on_draw
             self.window.on_key_press = self._on_key_press
+            self.window.on_key_release = self._on_key_release
             self.window.on_close = self._on_close
             
             logger.info(f"Window initialized: {self.window.width}x{self.window.height}, fullscreen={self.config.display.fullscreen}")
@@ -640,6 +643,29 @@ class DisplayService(BaseService):
             # Toggle debug overlay
             self.config.display.debug_overlay = not self.config.display.debug_overlay
             logger.info(f"Debug overlay: {self.config.display.debug_overlay}")
+        elif symbol == key.SPACE:
+            # Hold space to hide tiles and show only base image (panorama debug mode)
+            if self.panorama_renderer:
+                if not self.panorama_renderer.is_tiles_hidden_for_debug():
+                    self.panorama_renderer.set_tiles_hidden_for_debug(True)
+        elif symbol == key.D:
+            # Toggle debug rectangles
+            if self.panorama_renderer:
+                current_state = getattr(self.panorama_renderer, 'debug_tiles', False)
+                tile_count = len(getattr(self.panorama_renderer, 'tiles', {}))
+                logger.info(f"Debug tiles toggle requested: current={current_state}, tiles_count={tile_count}")
+                self.panorama_renderer.set_debug_mode(not current_state)
+                logger.info(f"Debug tiles toggled: {not current_state}")
+            else:
+                logger.warning("Debug tiles toggle requested but no panorama renderer available")
+    
+    def _on_key_release(self, symbol, modifiers):
+        """Pyglet key release handler."""
+        if symbol == key.SPACE:
+            # Release space to show tiles again (panorama debug mode)
+            if self.panorama_renderer:
+                if self.panorama_renderer.is_tiles_hidden_for_debug():
+                    self.panorama_renderer.set_tiles_hidden_for_debug(False)
     
     def _on_close(self):
         """Pyglet window close handler."""

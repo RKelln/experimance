@@ -1068,8 +1068,8 @@ class FireCoreService(BaseService):
                     logger.warning(f"🔄 RESET processed_count from {old_count} to 0 - new transcripts can now trigger LLM")
                 
                 # Clear display and mark request as cancelled
-                display_message = DisplayMedia(content_type=ContentType.CLEAR, fade_in=10.0)
-                await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
+                #display_message = DisplayMedia(content_type=ContentType.CLEAR, fade_in=10.0)
+                #await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
                 await self.current_request.cancel()
                 
             elif self.current_request.state == RequestState.WAITING_TILES:
