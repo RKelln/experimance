@@ -62,12 +62,14 @@ class LocalSDXLConfig(BaseGeneratorConfig):
     strength: float = 0.4 # image-to-image strength, if image is passed into generator, 0-1, where 0 keeps the original image and 1 is and completely new image
     width: int = 1024
     height: int = 1024
-    compile_unet: bool = False  # Enable compilation for maximum inference speed, but only if generation params (size, etc.) remain the same
+    compile_unet: bool = False
     enable_xformers: bool = True
     enable_attention_slicing: bool = True
-    device: str = "cuda"
+    enable_vae_slicing: bool = False
+    enable_cpu_offload: bool = False  # CPU offloading - not needed on GPU 0
+    device: str = "cuda"  # Use generic cuda - explicit GPU IDs (cuda:0, cuda:1) cause issues
     models_dir: Path = MODELS_DIR
-    warmup_on_start: bool = True  # Generate a dummy image on startup to warm caches and trigger compilation
+    warmup_on_start: bool = True
 
     # Dependency injection hooks (used for lightweight/unit testing)
     # Using Any type and exclude from serialization since these are callables
@@ -120,15 +122,53 @@ class LocalSDXLGenerator(ImageGenerator):
             if field in kwargs:
                 setattr(self.cfg, field, kwargs[field])
 
-        # Resolve device
+        # Resolve device using environment-based approach instead of explicit GPU IDs
         if not self._cuda_available():  # Fall back to cpu if cuda missing
             self.cfg.device = "cpu"
+        else:    
+            # Use environment-based GPU selection instead of explicit device IDs
+            # This avoids the memory/performance issues with cuda:0, cuda:1 etc.
+            self.cfg.device = self._get_optimal_device()
+                
+            # Clear GPU memory cache
+            if torch is not None:
+                torch.cuda.empty_cache()
+                
             if _DIFFUSERS_AVAILABLE:
-                # ——— PERFORMANCE TWEAKS ———
-                # 1) Allow TF32 on Ampere+ and enable cudnn autotuner
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-                torch.backends.cudnn.benchmark = True
+                self._setup_pytorch_optimizations()
+
+    def _get_optimal_device(self) -> str:
+        """Select the optimal CUDA device using environment variables and PyTorch APIs.
+        
+        This avoids explicit device IDs (cuda:0, cuda:1) which cause memory/performance issues.
+        Instead uses PyTorch's native device selection and CUDA_VISIBLE_DEVICES.
+        
+        Returns:
+            str: Device string, either "cuda" or "cpu"
+        """
+        if not torch or not torch.cuda.is_available():
+            return "cpu"
+            
+        # Check if CUDA_VISIBLE_DEVICES is set to restrict devices
+        import os
+        visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES')
+        if visible_devices:
+            logger.info(f"CUDA_VISIBLE_DEVICES={visible_devices} - using environment device selection")
+        
+        # Use PyTorch's current device selection - much more reliable than explicit IDs
+        current_device = torch.cuda.current_device()
+        device_count = torch.cuda.device_count()
+        device_name = torch.cuda.get_device_name(current_device) if device_count > 0 else "Unknown"
+        
+        if visible_devices:
+            # When CUDA_VISIBLE_DEVICES is set, show both logical and physical GPU info
+            physical_gpu = visible_devices.split(',')[current_device] if ',' in visible_devices else visible_devices
+            logger.info(f"Using physical GPU {physical_gpu} ({device_name}) - appears as logical GPU {current_device}/{device_count-1} to PyTorch")
+        else:
+            logger.info(f"Using GPU {current_device}/{device_count-1}: {device_name}")
+        
+        # Always use generic "cuda" - PyTorch handles device selection internally
+        return "cuda"
 
 
     async def start(self):  # noqa: D401
@@ -188,6 +228,163 @@ class LocalSDXLGenerator(ImageGenerator):
 
     def _cuda_available(self) -> bool:
         return bool(torch and torch.cuda.is_available())  # type: ignore[attr-defined]
+
+    def _setup_pytorch_optimizations(self) -> None:
+        """Configure PyTorch optimizations for better performance and memory usage."""
+        if torch is None or not torch.cuda.is_available():
+            return
+
+        # 1) Enable TF32 for Ampere+ GPUs and CuDNN autotuner
+        torch.backends.cuda.matmul.allow_tf32 = True  # type: ignore[attr-defined]
+        torch.backends.cudnn.allow_tf32 = True  # type: ignore[attr-defined]
+        torch.backends.cudnn.benchmark = True  # type: ignore[attr-defined]
+        
+        # 2) Enable scaled dot product attention optimizations
+        torch.backends.cuda.enable_math_sdp(True)  # type: ignore[attr-defined]
+        torch.backends.cuda.enable_flash_sdp(True)  # type: ignore[attr-defined] 
+        torch.backends.cuda.enable_mem_efficient_sdp(True)  # type: ignore[attr-defined]
+        
+        # 3) Reduce memory fragmentation
+        if hasattr(torch.cuda, 'memory_pool_empty_cache'):
+            torch.cuda.memory_pool_empty_cache()  # type: ignore[attr-defined]
+
+    def _setup_environment_variables(self) -> None:
+        """Configure environment variables for optimal performance."""
+        import os
+        
+        # Reduce inductor warnings for smaller GPUs
+        os.environ.setdefault("TORCH_LOGS", "-inductor")
+        # Enable expandable segments to avoid memory fragmentation
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        # XFormers environment variables for GPU compatibility
+        os.environ.setdefault("XFORMERS_FORCE_DISABLE_TRITON", "1")
+        
+        # Disable max autotune for smaller GPUs to avoid warnings
+        if torch is not None:
+            torch._inductor.config.max_autotune = False  # type: ignore[attr-defined]
+
+    def _optimize_pipeline(self, pipe: Any) -> Any:  # type: ignore[type-arg]
+        """Apply optimizations to the pipeline for better performance and memory usage.
+        
+        Args:
+            pipe: The pipeline to optimize
+            
+        Returns:
+            The optimized pipeline
+        """
+        # XFormers optimization - do this first to know if we should skip attention slicing
+        xformers_enabled = False
+        if self.cfg.enable_xformers and hasattr(pipe, "enable_xformers_memory_efficient_attention"):
+            xformers_enabled = self._enable_xformers(pipe)
+            
+        # Memory optimizations - but avoid conflicts with XFormers/SDPA
+        if self.cfg.enable_attention_slicing and hasattr(pipe, "enable_attention_slicing"):
+            if xformers_enabled:
+                logger.info("Skipping attention slicing - XFormers is enabled (would cause serious slowdowns)")
+            elif torch is not None and hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
+                logger.info("Skipping attention slicing - PyTorch SDPA is available (would cause serious slowdowns)")
+            else:
+                # Use standard attention slicing with moderate slice size
+                pipe.enable_attention_slicing(1)
+                logger.debug("Enabled attention slicing with slice_size=1")
+            
+        if self.cfg.enable_vae_slicing and hasattr(pipe, "enable_vae_slicing"):
+            pipe.enable_vae_slicing()
+            logger.debug("Enabled VAE slicing for memory optimization")
+            
+        # Set attention processor - but only if XFormers wasn't enabled
+        if not xformers_enabled and hasattr(pipe, "unet") and hasattr(pipe.unet, "set_attn_processor"):
+            pipe.unet.set_attn_processor(AttnProcessor2_0())
+            logger.debug("Set AttnProcessor2_0 for optimized attention")
+
+        # CPU offloading if needed
+        self._setup_cpu_offloading(pipe)
+        
+        # Move to device and optimize memory format
+        pipe = pipe.to(self.cfg.device)
+        if torch is not None and torch.cuda.is_available():  # type: ignore[attr-defined]
+            self._setup_memory_format(pipe)
+            # Set TF32 for this pipeline specifically
+            torch.backends.cuda.matmul.allow_tf32 = True  # type: ignore[attr-defined]
+
+        # Compile UNet if requested
+        if self.cfg.compile_unet and hasattr(torch, "compile"):
+            self._compile_unet(pipe)
+            
+        return pipe
+
+    def _enable_xformers(self, pipe: Any) -> bool:  # type: ignore[type-arg]
+        """Enable XFormers memory efficient attention with proper error handling.
+        
+        Returns:
+            bool: True if XFormers was successfully enabled, False otherwise
+        """
+        try:
+            if torch is not None and torch.cuda.is_available() and "cuda:" in self.cfg.device:  # type: ignore[attr-defined]
+                gpu_id = int(self.cfg.device.split(":")[1]) if ":" in self.cfg.device else 0
+                with torch.cuda.device(gpu_id):  # type: ignore[attr-defined]
+                    import xformers
+                    logger.info(f"XFormers version: {xformers.__version__} on {self.cfg.device}")
+                    pipe.enable_xformers_memory_efficient_attention()
+                    logger.info(f"XFormers memory efficient attention enabled on {self.cfg.device}")
+                    return True
+            else:
+                pipe.enable_xformers_memory_efficient_attention()
+                logger.info(f"XFormers memory efficient attention enabled on {self.cfg.device}")
+                return True
+        except ImportError:
+            logger.warning("XFormers not installed - falling back to standard attention (may use more VRAM)")
+            return False
+        except Exception as e:
+            logger.warning(f"XFormers failed to enable on {self.cfg.device}: {e}")
+            logger.info("Falling back to standard attention (may use more VRAM)")
+            try:
+                import xformers
+                logger.info(f"XFormers is installed (version {xformers.__version__}) but failed to activate")
+            except ImportError:
+                logger.info("XFormers is not installed")
+            return False
+
+    def _setup_cpu_offloading(self, pipe: Any) -> None:  # type: ignore[type-arg]
+        """Setup CPU offloading for memory-constrained situations."""
+        # Only enable if explicitly requested via config
+        if not self.cfg.enable_cpu_offload:
+            return
+            
+        if hasattr(pipe, "enable_model_cpu_offload"):
+            try:
+                pipe.enable_model_cpu_offload()
+                logger.info(f"Enabled CPU offloading for {self.cfg.device} to save VRAM")
+            except Exception as e:
+                logger.warning(f"CPU offloading failed: {e}")
+        elif hasattr(pipe, "enable_sequential_cpu_offload"):
+            try:
+                pipe.enable_sequential_cpu_offload()
+                logger.info(f"Enabled sequential CPU offloading for {self.cfg.device} to save VRAM")
+            except Exception as e:
+                logger.warning(f"Sequential CPU offloading failed: {e}")
+
+    def _setup_memory_format(self, pipe: Any) -> None:  # type: ignore[type-arg]
+        """Setup optimal memory format for pipeline components."""
+        if torch is None:
+            return
+            
+        if hasattr(pipe, "unet") and pipe.unet is not None:
+            pipe.unet.to(memory_format=torch.channels_last)  # type: ignore[attr-defined]
+        if hasattr(pipe, "vae") and pipe.vae is not None:
+            pipe.vae.to(memory_format=torch.channels_last)  # type: ignore[attr-defined]
+        if hasattr(pipe, "controlnet") and pipe.controlnet is not None:
+            pipe.controlnet.to(memory_format=torch.channels_last)  # type: ignore[attr-defined]
+
+    def _compile_unet(self, pipe: Any) -> None:  # type: ignore[type-arg]
+        """Compile UNet for better performance."""
+        if not hasattr(pipe, "unet") or pipe.unet is None:
+            return
+            
+        try:  # pragma: no cover - compile path environment dependent
+            pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)  # type: ignore[attr-defined]
+        except Exception as e:
+            logger.debug("torch.compile failed: %s", e)
 
     def _detect_model_type(self, model: str) -> tuple[str, str, Optional[str]]:
         """Detect model type and return (type, resolved_path_or_id, filename_if_applicable).
@@ -347,11 +544,7 @@ class LocalSDXLGenerator(ImageGenerator):
 
         # Configure PyTorch for better performance and fewer warnings
         if torch is not None and torch.cuda.is_available():  # type: ignore[attr-defined]
-            # Reduce inductor warnings for smaller GPUs
-            import os
-            os.environ.setdefault("TORCH_LOGS", "-inductor")
-            # Disable max autotune for smaller GPUs to avoid warnings
-            torch._inductor.config.max_autotune = False  # type: ignore[attr-defined]
+            self._setup_environment_variables()
 
         self.cfg.models_dir.mkdir(parents=True, exist_ok=True)
         
@@ -439,32 +632,8 @@ class LocalSDXLGenerator(ImageGenerator):
         }
         pipe.scheduler = EulerDiscreteScheduler.from_config(scheduler_cfg)
 
-        # Optimisations
-        if self.cfg.enable_attention_slicing and hasattr(pipe, "enable_attention_slicing"):
-            pipe.enable_attention_slicing(1)
-        if self.cfg.enable_xformers and hasattr(pipe, "enable_xformers_memory_efficient_attention"):
-            try:
-                pipe.enable_xformers_memory_efficient_attention()
-            except Exception:
-                logger.debug("xFormers not available")
-        if hasattr(pipe, "enable_vae_slicing"):
-            pipe.enable_vae_slicing()
-        if hasattr(pipe, "unet") and hasattr(pipe.unet, "set_attn_processor"):
-            pipe.unet.set_attn_processor(AttnProcessor2_0())
-
-        pipe = pipe.to(self.cfg.device)
-        if torch.cuda.is_available():  # type: ignore[attr-defined]
-            pipe.unet.to(memory_format=torch.channels_last)
-            pipe.vae.to(memory_format=torch.channels_last)
-            if hasattr(pipe, "controlnet") and pipe.controlnet is not None:
-                pipe.controlnet.to(memory_format=torch.channels_last)
-            torch.backends.cuda.matmul.allow_tf32 = True  # type: ignore[attr-defined]
-
-        if self.cfg.compile_unet and hasattr(torch, "compile"):
-            try:  # pragma: no cover - compile path environment dependent
-                pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)  # type: ignore[attr-defined]
-            except Exception as e:
-                logger.debug("torch.compile failed: %s", e)
+        # Apply all optimizations to the pipeline
+        pipe = self._optimize_pipeline(pipe)
 
         self._pipeline = pipe
         model_type, _, _ = self._detect_model_type(self.cfg.model)
