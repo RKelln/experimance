@@ -52,7 +52,8 @@ class LLMPromptBuilder:
         ]
 
         self.tile_style = [
-            "ultra detailed"
+            "ultra detailed",
+            "sharp focus"
         ]
 
         self.quality_style = [

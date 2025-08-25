@@ -405,4 +405,5 @@ class DisplayMedia(MessageBase, ImageSource):
     fade_in: Optional[float] = None       # Fade in duration in seconds
     fade_out: Optional[float] = None      # Fade out duration in seconds
     position: Optional[tuple[int,int]|str] = None  # Position on screen (x, y) or anchor name ("top right")
+    size: Optional[tuple[int,int]] = None  # Size to scale the image for display (width, height)
     # Note: Context information (era, biome) added in project-specific extensions
