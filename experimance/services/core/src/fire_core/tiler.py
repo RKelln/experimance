@@ -157,6 +157,8 @@ class PanoramaTiler:
         # Calculate how many tiles we need horizontally
         num_tiles = math.ceil(panorama_display_width / self.display_tile_width)
         
+        logger.info(f"Tiler input: panorama={panorama_display_width}px, tile_width={self.display_tile_width}px → {num_tiles} tiles needed")
+        
         # Calculate overlap needed in display space
         if num_tiles == 1:
             overlap_display = 0
@@ -173,7 +175,7 @@ class PanoramaTiler:
             overlap_display = max(fitting_overlap, min_overlap_required)
             overlap_display = int(overlap_display)
             
-            logger.debug(
+            logger.info(
                 f"Overlap calculation: fitting={fitting_overlap:.1f}px, "
                 f"min_required={min_overlap_required:.1f}px, using={overlap_display}px"
             )
@@ -201,9 +203,15 @@ class PanoramaTiler:
                 display_x = (i * self.display_tile_width) - overlap_display
                 display_width = self.display_tile_width + overlap_display  # Base width + left overlap
             
+            logger.info(f"Tile {i}: raw_position={i * self.display_tile_width}, "
+                       f"overlap_shift={overlap_display}, final_x={display_x}, width={display_width}")
+            
             # Clamp to panorama bounds for the last tile
             if display_x + display_width > panorama_display_width:
+                old_width = display_width
                 display_width = panorama_display_width - display_x
+                logger.info(f"Tile {i}: clamped width from {old_width} to {display_width} "
+                           f"(x={display_x} + width={display_width} = {display_x + display_width} ≤ {panorama_display_width})")
             
             # Calculate generated dimensions (includes overlap extension)
             # With left-edge-only fading, only add left overlap for non-first tiles
@@ -456,7 +464,7 @@ class PanoramaTiler:
                     'display_size': (t.display_width, t.display_height),
                     'generated_size': (t.generated_width, t.generated_height),
                     'generated_megapixels': (t.generated_width * t.generated_height) / 1_000_000,
-                    'has_left_fade': t.has_left_fade
+                    'overlap': t.overlap
                 }
                 for t in tiles
             ]

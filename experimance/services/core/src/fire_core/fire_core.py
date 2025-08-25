@@ -983,11 +983,14 @@ class FireCoreService(BaseService):
         display_message = DisplayMedia(
             content_type=ContentType.IMAGE,
             position=(tile_spec.display_x, tile_spec.display_y),  # Position in panorama space
+            size=(tile_spec.display_width, tile_spec.display_height),  # Target display size
             fade_in=1.5,  # Tile fade-in duration
             image_data=image_source.image_data,
             uri=image_source.uri,
         )
-        logger.debug(f"Sending tile {tile_index} to display at position {tile_spec.display_x}, {tile_spec.display_y}")
+        logger.debug(f"Sending tile {tile_index} to display at position ({tile_spec.display_x}, {tile_spec.display_y}) "
+                    f"with size ({tile_spec.display_width}, {tile_spec.display_height}) "
+                    f"from generated size ({tile_spec.generated_width}, {tile_spec.generated_height})")
         
         await self.zmq_service.publish(display_message)
         
@@ -1023,17 +1026,17 @@ class FireCoreService(BaseService):
             current_time = time.time()
             
             # Debug logging every 10 seconds 
-            if not hasattr(self, '_last_debug_log') or (current_time - self._last_debug_log > 10.0):
-                # Check ZMQ service status
-                zmq_status = "Unknown"
-                if hasattr(self, 'zmq_service') and self.zmq_service:
-                    zmq_status = f"Running={getattr(self.zmq_service, 'running', 'Unknown')}"
-                    if hasattr(self.zmq_service, 'subscriber') and self.zmq_service.subscriber:
-                        zmq_status += f", Subscriber={getattr(self.zmq_service.subscriber, 'running', 'Unknown')}"
+            # if not hasattr(self, '_last_debug_log') or (current_time - self._last_debug_log > 10.0):
+            #     # Check ZMQ service status
+            #     zmq_status = "Unknown"
+            #     if hasattr(self, 'zmq_service') and self.zmq_service:
+            #         zmq_status = f"Running={getattr(self.zmq_service, 'running', 'Unknown')}"
+            #         if hasattr(self.zmq_service, 'subscriber') and self.zmq_service.subscriber:
+            #             zmq_status += f", Subscriber={getattr(self.zmq_service.subscriber, 'running', 'Unknown')}"
                 
-                current_req_info = f"{self.current_request.request_id}:{self.current_request.state.value}" if self.current_request else "None"
-                logger.info(f"🔍 STATE DEBUG: Current={current_req_info}, Queue={len(self.request_queue)}, Pending={len(self.pending_image_requests)}, ZMQ={zmq_status}")
-                self._last_debug_log = current_time
+            #     current_req_info = f"{self.current_request.request_id}:{self.current_request.state.value}" if self.current_request else "None"
+            #     logger.info(f"🔍 STATE DEBUG: Current={current_req_info}, Queue={len(self.request_queue)}, Pending={len(self.pending_image_requests)}, ZMQ={zmq_status}")
+            #     self._last_debug_log = current_time
 
             # ===== LOOP 1: Process timeouts for all requests =====
             await self._process_request_timeouts(current_time)

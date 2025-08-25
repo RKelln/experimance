@@ -52,22 +52,14 @@ class LLMPromptBuilder:
         ]
 
         self.tile_style = [
-            "ultra detailed",
-            "professional photography", 
-            "masterpiece composition",
-            "enhanced detail"
+            "ultra detailed"
         ]
 
-        # Fallback style keywords if LLM fails
         self.quality_style = [
             "dreamlike",
             "cinematic lighting",
             "high detail",
-            "photorealistic",
-            "8k resolution",
-            "sharp focus",
-            "dramatic contrast",
-            "rich textures"
+            "8k resolution"
         ]
 
         self.negative_style = [

@@ -266,12 +266,14 @@ class PanoramaTile:
     """Represents a single tile in the panorama with position and fade state."""
     
     def __init__(self, sprite: pyglet.sprite.Sprite, position: Tuple[int, int], 
-                 tile_id: str, original_size: Tuple[int, int], fade_duration: float = 3.0):
+                 tile_id: str, original_size: Tuple[int, int], fade_duration: float = 3.0,
+                 debug_rect=None):
         self.sprite = sprite
         self.position = position  # (x, y) position in panorama space
         self.tile_id = tile_id
         self.original_size = original_size  # (width, height) of original image
         self.fade_duration = fade_duration
+        self.debug_rect = debug_rect  # Optional debug rectangle (injected)
         
         # Fade state
         self.fade_timer = 0.0
@@ -280,6 +282,46 @@ class PanoramaTile:
         
         # Store opacity when clearing starts (for smooth transition from current state)
         self._clearing_start_opacity: Optional[int] = None
+
+    def cleanup(self) -> None:
+        """Clean up resources used by the tile."""
+        self.sprite.delete()
+        if self.debug_rect:
+            self.debug_rect.delete()
+    
+    @staticmethod
+    def create_debug_outline(sprite: pyglet.sprite.Sprite, batch: pyglet.graphics.Batch, 
+                           group: pyglet.graphics.Group, color: Tuple[int, int, int] = (255, 0, 0)) -> Optional[pyglet.shapes.Rectangle]:
+        """Create a debug outline rectangle for a sprite.
+        
+        Args:
+            sprite: The sprite to create an outline for
+            batch: Pyglet batch to add the rectangle to
+            group: Pyglet group for rendering order
+            color: RGB color for the outline (default: red)
+            
+        Returns:
+            The created rectangle shape, or None if creation failed
+        """
+        try:
+            from pyglet import shapes
+            
+            # Calculate outline dimensions based on sprite's scaled size
+            scaled_width = sprite.width * sprite.scale
+            scaled_height = sprite.height * sprite.scale
+            
+            debug_rect = shapes.Rectangle(
+                x=sprite.x, y=sprite.y,
+                width=scaled_width, height=scaled_height,
+                color=color,
+                batch=batch, group=group
+            )
+            debug_rect.opacity = 128  # Semi-transparent
+            logger.debug(f"Created debug outline: {scaled_width}x{scaled_height} at ({sprite.x}, {sprite.y})")
+            return debug_rect
+        except Exception as e:
+            logger.warning(f"Could not create debug outline: {e}")
+            return None
         
     def update(self, dt: float) -> None:
         """Update tile fade animation."""
@@ -378,6 +420,9 @@ class PanoramaRenderer(LayerRenderer):
         # Visibility
         self._visible = True
         self._opacity = 1.0
+        
+        # Debug settings
+        self.debug_tiles = False  # Flag to enable/disable tile debug outlines
         
         logger.info(f"PanoramaRenderer initialized: {self.panorama_width}x{self.panorama_height}, "
                    f"mirror={self.panorama_config.mirror}")
@@ -655,10 +700,16 @@ class PanoramaRenderer(LayerRenderer):
         tile_config = self.panorama_config.tiles
         rescale_mode = tile_config.rescale or self.panorama_config.rescale
         
-        # Tile target dimensions are specified in panorama space
-        # These represent the final size the tile should have in the panorama
-        target_tile_width = tile_config.width
-        target_tile_height = tile_config.height
+        # Tile target dimensions - use size from message if provided, otherwise use config
+        message_size = message.get('size')
+        if message_size and isinstance(message_size, (list, tuple)) and len(message_size) == 2:
+            target_tile_width, target_tile_height = message_size
+            logger.debug(f"Using message-provided tile size: {target_tile_width}x{target_tile_height}")
+        else:
+            # Fallback to config-based dimensions
+            target_tile_width = tile_config.width
+            target_tile_height = tile_config.height
+            logger.debug(f"Using config tile size: {target_tile_width}x{target_tile_height}")
         
         logger.debug(f"Tile target size: {target_tile_width}x{target_tile_height} (in panorama space)")
         logger.debug(f"Input image size: {image.width}x{image.height}")
@@ -715,7 +766,8 @@ class PanoramaRenderer(LayerRenderer):
         sprite.scale = scale_factor
         
         logger.info(f"Tile {request_id}: {image.width}x{image.height} → {target_tile_width}x{target_tile_height} "
-                   f"at ({tile_x_adjusted}, {tile_y_adjusted}) scale={scale_factor:.3f}")
+                   f"at ({tile_x_adjusted}, {tile_y_adjusted}) scale={scale_factor:.3f}"
+                   f" scaled_size=({image.width * scale_factor:.1f}x{image.height * scale_factor:.1f})")
         
         # Remove old tiles if they exist
         # Generate unique ID if request_id is None to avoid collisions
@@ -723,21 +775,27 @@ class PanoramaRenderer(LayerRenderer):
         
         if tile_id in self.tiles:
             old_tile = self.tiles[tile_id]
-            old_tile.sprite.delete()
+            old_tile.cleanup()
             if tile_id in self.tile_order:
                 self.tile_order.remove(tile_id)
         
         # Create original tile - use message fade_in for custom duration or config default
+        debug_rect = None
+        if self.debug_tiles:
+            debug_rect = PanoramaTile.create_debug_outline(sprite, self.batch, self.display)
+            
         if fade_in_duration is not None and fade_in_duration > 0:
             # Use custom fade duration from message
             tile = PanoramaTile(sprite, (tile_x, tile_y), tile_id, 
                                original_size=(image.width, image.height),
-                               fade_duration=fade_in_duration)
+                               fade_duration=fade_in_duration,
+                               debug_rect=debug_rect)
         else:
             # Use config fade duration for built-in animation
             tile = PanoramaTile(sprite, (tile_x, tile_y), tile_id, 
                                original_size=(image.width, image.height),
-                               fade_duration=tile_config.fade_duration)
+                               fade_duration=tile_config.fade_duration,
+                               debug_rect=debug_rect)
             
         self.tiles[tile_id] = tile
         self.tile_order.append(tile_id)
@@ -844,6 +902,21 @@ class PanoramaRenderer(LayerRenderer):
             for tile in self.tiles.values():
                 tile.update(dt)
     
+    def set_debug_mode(self, enabled: bool) -> None:
+        """Enable or disable debug outlines for tiles."""
+        self.debug_tiles = enabled
+        logger.info(f"Tile debug mode {'enabled' if enabled else 'disabled'}")
+        
+        # Update existing tiles
+        for tile in self.tiles.values():
+            if enabled and not tile.debug_rect:
+                # Create debug outline for existing tile
+                tile.debug_rect = PanoramaTile.create_debug_outline(tile.sprite, self.batch, self.display)
+            elif not enabled and tile.debug_rect:
+                # Remove debug outline from existing tile
+                tile.debug_rect.delete()
+                tile.debug_rect = None
+    
     def set_visibility(self, visible: bool) -> None:
         """Set renderer visibility."""
         self._visible = visible
@@ -866,7 +939,8 @@ class PanoramaRenderer(LayerRenderer):
             "current_blur": self.current_blur,
             "panorama_size": f"{self.panorama_width}x{self.panorama_height}",
             "panorama_scale": self.panorama_scale,
-            "mirror": self.panorama_config.mirror
+            "mirror": self.panorama_config.mirror,
+            "debug_tiles": self.debug_tiles
         }
     
     def clear_panorama(self, fade_duration: float = 3.0, blur_during_fade: bool = True) -> None:
@@ -908,7 +982,8 @@ class PanoramaRenderer(LayerRenderer):
         
         # Remove all tile sprites
         for tile in self.tiles.values():
-            tile.sprite.delete()
+            # Use the tile's cleanup method which handles both sprite and debug_rect
+            tile.cleanup()
             # Clean up clearing state
             tile._clearing_start_opacity = None
         

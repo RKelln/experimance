@@ -35,9 +35,9 @@ Try infer location based on story content.
    (what people would see while sitting around the fire without including the fire itself).
 3. Assemble a prompt using the template:
     "{location} at {time}, {list of important elements of location or story}, {weather/lighting}, {mood keywords}"
-4. The prompt should be approximately 60 tokens in length. Downstream will append "cinematic, ultra-detailed," etc.
+4. The prompt should be approximately 55 tokens in length. Downstream will append "cinematic, ultra-detailed," etc.
 5. Avoid depictions of people that could be identifiable
-6. Be concrete & sensory but only include elements that affect the visuals (no sounds or smells):
+6. Be concrete & sensory but ONLY VISUAL ELEMENTS (NO sounds or smells):
     Concrete nouns: weathered red barn, misty pine forest, cobbled courtyard
     Sensory adjectives: glistening, soft golden light
 7. Optionally include a recommended negative prompt (things that should not be present), 

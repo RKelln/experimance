@@ -399,8 +399,6 @@ class DisplayService(BaseService):
                 logger.error(f"Invalid display media message type: {message.get('type')}")
                 return
             
-            logger.debug(f"Received DisplayMedia: {message.get('content_type')}")
-            
             # Route to appropriate renderer based on configuration and content type
             match message.get("content_type"):
                 case ContentType.IMAGE:
