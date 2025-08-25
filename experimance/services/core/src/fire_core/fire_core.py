@@ -859,7 +859,9 @@ class FireCoreService(BaseService):
         display_message = DisplayMedia(
             content_type=ContentType.IMAGE,
             uri=response.uri,
-            fade_in=2.0  # Base image fade-in duration
+            request_id=self.current_request.request_id,  # Include request ID for proper crossfade tracking
+            fade_in=5.0,  # Base image fade-in duration
+            fade_out=2.0  # Base image fade-out duration
         )
         
         await self.zmq_service.publish(display_message, MessageType.DISPLAY_MEDIA)
@@ -984,7 +986,9 @@ class FireCoreService(BaseService):
             content_type=ContentType.IMAGE,
             position=(tile_spec.display_x, tile_spec.display_y),  # Position in panorama space
             size=(tile_spec.display_width, tile_spec.display_height),  # Target display size
-            fade_in=1.5,  # Tile fade-in duration
+            request_id=f"{self.current_request.request_id}_tile_{tile_index}",  # Include tile-specific request ID
+            fade_in=1.0,  # Tile fade-in duration
+            fade_out=0.5,  # Tile fade-out duration
             image_data=image_source.image_data,
             uri=image_source.uri,
         )

@@ -19,6 +19,7 @@ Features:
 
 import logging
 import asyncio
+import time
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 import math
@@ -391,10 +392,11 @@ class PanoramaRenderer(LayerRenderer):
         
         self.panorama_config = config.panorama
         
-        # Base image state
-        self.base_image = None
-        self.base_sprite = None
-        self.base_image_id = None
+        # Base image state - support multiple sprites for smooth crossfade
+        self.base_image = None  # Keep reference to current/latest image
+        self.base_sprites = {}  # Dict of image_id -> {'sprite': sprite, 'fade_timer': float, 'fade_duration': float, 'is_fading': bool}
+        self.base_image_id = None  # ID of the current/target base image
+        self.base_cleanup_delay = 0.5  # Seconds to wait after new image is fully faded before cleaning up old ones
         
         # Panorama dimensions - set these first before creating framebuffer
         self.panorama_width = self.panorama_config.output_width
@@ -441,7 +443,7 @@ class PanoramaRenderer(LayerRenderer):
         self.current_blur = self.panorama_config.start_blur
         self.current_blur_sigma = self.panorama_config.start_blur
         
-        # Base image opacity fade-in
+        # Base image opacity fade-in - now handles multiple sprites
         self.base_fade_timer = 0.0
         self.base_fade_duration = 0.0
         self.base_fading = False
@@ -583,7 +585,7 @@ class PanoramaRenderer(LayerRenderer):
     def is_visible(self) -> bool:
         """Check if the layer should be rendered."""
         return (self._visible and self.panorama_config.enabled and 
-                (self.base_sprite is not None or len(self.tiles) > 0))
+                (len(self.base_sprites) > 0 or len(self.tiles) > 0))
     
     @property
     def opacity(self) -> float:
@@ -596,9 +598,10 @@ class PanoramaRenderer(LayerRenderer):
         self._opacity = max(0.0, min(1.0, value))
         base_opacity = int(255 * self._opacity)
         
-        # Only update base image sprite - no mirror sprites with shader approach
-        if self.base_sprite:
-            self.base_sprite.opacity = base_opacity
+        # Update all base image sprites with global layer opacity
+        for base_data in self.base_sprites.values():
+            if base_data['sprite']:
+                base_data['sprite'].opacity = base_opacity
     
     async def handle_display_media(self, message: MessageDataType) -> None:
         """Handle DisplayMedia message for panorama content."""
@@ -653,43 +656,35 @@ class PanoramaRenderer(LayerRenderer):
             logger.error(f"Error handling panorama display media: {e}", exc_info=True)
     
     def _handle_base_image(self, image: pyglet.image.AbstractImage, request_id: str, message: Dict[str, Any]) -> None:
-        """Handle base image for panorama."""
+        """Handle base image for panorama with smooth crossfade support."""
+        # Generate unique ID if request_id is None to prevent collisions
+        if request_id is None:
+            request_id = f"base_image_{int(time.time() * 1000000)}"  # microsecond timestamp
+            logger.debug(f"Generated missing base image request_id: {request_id}")
+        
         logger.info(f"Setting panorama base image: {request_id}")
         
         # Extract fade_in duration from message
         fade_in_duration = message.get('fade_in')
         
-        # Clear any existing base image sprites
-        if self.base_sprite:
-            self.base_sprite.delete()
-            self.base_sprite = None
-        
-        # Don't transform the image - use sprite scaling instead
-        # This is more reliable and handles mirroring better
+        # Don't delete existing base sprites - we'll fade in the new one on top
+        # and clean up old ones after the transition completes
         
         # Set image anchor point to bottom-left (pyglet default) for consistent positioning
-        # This ensures (0,0) places the bottom-left corner of the image at (0,0)
         image.anchor_x = 0
-        image.anchor_y = 0  # Bottom of image at coordinate y
+        image.anchor_y = 0
 
         # Create sprite at panorama origin (no screen scaling here)
-        # Sprites work in panorama space, shader handles all screen scaling
         sprite = pyglet.sprite.Sprite(image, x=0, y=0, 
                                       batch=self.batch, group=self.capture, z=0)
         
-        # Set initial group opacity for fade-in effect (affects entire panorama)
-        if fade_in_duration is not None and fade_in_duration > 0:
-            self.opacity = 0.0  # Start transparent for fade-in
-        else:
-            self.opacity = 1.0  # Full opacity immediately
-        
         # Calculate target dimensions for the base image
         if self.panorama_config.mirror:
-            target_width = self.panorama_width / 2  # Half of framebuffer width
+            target_width = self.panorama_width / 2
             target_height = self.panorama_height
             logger.info(f"Mirroring mode: scaling base image to fill left half ({target_width}x{target_height})")
         else:
-            target_width = self.panorama_width  # Full framebuffer width
+            target_width = self.panorama_width
             target_height = self.panorama_height
             logger.info(f"No mirroring: scaling base image to full framebuffer ({target_width}x{target_height})")
         
@@ -705,25 +700,39 @@ class PanoramaRenderer(LayerRenderer):
         else:  # "shortest" - maintain aspect ratio
             final_scale = min(scale_x, scale_y)
         
-        # Apply the scaling (sprites work in panorama space)
+        # Apply the scaling
         sprite.scale = final_scale
         
         logger.info(f"Base image: {image.width}x{image.height} → {target_width:.0f}x{target_height:.0f} "
                    f"(scale: {final_scale:.3f})")
         
+        # Set initial opacity for fade-in
+        if fade_in_duration is not None and fade_in_duration > 0:
+            sprite.opacity = 0  # Start transparent for individual sprite fade-in
+        else:
+            sprite.opacity = 255  # Full opacity immediately
+        
+        # Update current base image references
         self.base_image = image
-        self.base_sprite = sprite
         self.base_image_id = request_id
         
-        # Start opacity fade-in if specified
-        if fade_in_duration is not None and fade_in_duration > 0:
-            self._start_base_opacity_fade(fade_in_duration)
+        # Add sprite to the collection with fade state
+        fade_duration = fade_in_duration if fade_in_duration is not None and fade_in_duration > 0 else 0.0
+        self.base_sprites[request_id] = {
+            'sprite': sprite,
+            'fade_timer': 0.0,
+            'fade_duration': fade_duration,
+            'is_fading': fade_duration > 0,
+            'cleanup_delay': 0.0  # Timer for cleaning up old sprites after this one is fully faded
+        }
         
         logger.info(f"Base image setup complete at ({sprite.x}, {sprite.y}) with scale {sprite.scale}")
+        if fade_duration > 0:
+            logger.info(f"Starting fade-in over {fade_duration}s")
         if self.panorama_config.mirror:
             logger.info("Shader-based mirroring enabled")
         
-        # Start blur transition independently (uses config blur_duration, not fade_in_duration)
+        # Start blur transition for the new base image (independent of fade)
         self._start_blur_transition()
     
     def _handle_tile(self, image: pyglet.image.AbstractImage, request_id: str, 
@@ -734,6 +743,12 @@ class PanoramaRenderer(LayerRenderer):
             return
             
         tile_x, tile_y = position
+        
+        # Generate unique ID if request_id is None to prevent collisions
+        if request_id is None:
+            request_id = f"tile_{tile_x}_{tile_y}_{int(time.time() * 1000000)}"  # microsecond timestamp
+            logger.debug(f"Generated missing tile request_id: {request_id}")
+            
         logger.info(f"Adding panorama tile: {request_id} at ({tile_x}, {tile_y})")
         
         # Extract fade_in duration from message for tile fade duration
@@ -860,12 +875,6 @@ class PanoramaRenderer(LayerRenderer):
         self.tiles[tile_id] = tile
         self.tile_order.append(tile_id)
     
-    def _start_base_opacity_fade(self, fade_duration: float) -> None:
-        """Start opacity fade-in for entire panorama group."""
-        self.base_fade_timer = 0.0
-        self.base_fade_duration = fade_duration
-        self.base_fading = True
-    
     def _start_blur_transition(self) -> None:
         """Start the blur transition for the base image."""
         if not self.blur_enabled:
@@ -892,20 +901,20 @@ class PanoramaRenderer(LayerRenderer):
                     f"{self.panorama_config.end_blur} over {effective_blur_duration}s")
     
     def update(self, dt: float) -> None:
-        """Update panorama animations."""
+        """Update panorama animations with smooth crossfade support."""
         # Handle clearing/fading
         if self.is_clearing:
             self.clear_timer += dt
             progress = min(self.clear_timer / self.clear_duration, 1.0)
             
-            # Fade out entire panorama using group opacity
-            group_opacity = 1.0 - progress
-            self.opacity = group_opacity
+            # Fade out all base sprites individually during clearing
+            for base_data in self.base_sprites.values():
+                if base_data['sprite'] and hasattr(base_data, '_clearing_start_opacity'):
+                    base_data['sprite'].opacity = int(base_data['_clearing_start_opacity'] * (1.0 - progress))
             
             # Handle individual tiles that were already fading when clear started
             for tile in self.tiles.values():
                 if tile._clearing_start_opacity is not None:
-                    # Fade out from the opacity the tile had when clearing started
                     tile.sprite.opacity = int(tile._clearing_start_opacity * (1.0 - progress))
             
             # Increase blur during fade if enabled
@@ -927,20 +936,52 @@ class PanoramaRenderer(LayerRenderer):
                 logger.info("Panorama clear complete")
                 return
         
-        # Update base image opacity fade-in (affects entire panorama group)
-        if self.base_fading and self.base_sprite:
-            self.base_fade_timer += dt
-            progress = min(self.base_fade_timer / self.base_fade_duration, 1.0)
+        # Update individual base image fade-ins and cleanup
+        sprites_to_remove = []
+        current_sprite_fully_faded = False
+        
+        for image_id, base_data in self.base_sprites.items():
+            sprite = base_data['sprite']
+            if not sprite:
+                continue
+                
+            # Update fade-in animation for this sprite
+            if base_data['is_fading']:
+                base_data['fade_timer'] += dt
+                progress = min(base_data['fade_timer'] / base_data['fade_duration'], 1.0)
+                
+                # Fade in this specific sprite
+                sprite.opacity = int(255 * progress)
+                
+                if progress >= 1.0:
+                    base_data['is_fading'] = False
+                    base_data['cleanup_delay'] = 0.0  # Start cleanup delay timer
+                    logger.debug(f"Base image {image_id} fade complete")
+                    
+                    # Check if this is the current/newest base image
+                    if image_id == self.base_image_id:
+                        current_sprite_fully_faded = True
             
-            # Fade in entire panorama group
-            self.opacity = progress
-            
-            if progress >= 1.0:
-                self.base_fading = False
+            # Handle cleanup delay for old sprites after current one is fully faded
+            elif image_id != self.base_image_id:  # This is an old sprite
+                if current_sprite_fully_faded or not any(data['is_fading'] for data in self.base_sprites.values()):
+                    # Current sprite is done OR no sprites are fading - start cleanup delay
+                    base_data['cleanup_delay'] += dt
+                    if base_data['cleanup_delay'] >= self.base_cleanup_delay:
+                        sprites_to_remove.append(image_id)
+        
+        # Clean up old sprites
+        for image_id in sprites_to_remove:
+            if image_id in self.base_sprites:
+                sprite = self.base_sprites[image_id]['sprite']
+                if sprite:
+                    sprite.delete()
+                del self.base_sprites[image_id]
+                logger.debug(f"Cleaned up old base sprite: {image_id}")
         
         # Update blur transition (only if blur enabled, not clearing and we have content)
         if (self.blur_enabled and not self.is_clearing and 
-            self.blur_active and self.base_sprite):
+            self.blur_active and len(self.base_sprites) > 0):
             self.blur_timer += dt
             # Use the stored effective duration
             effective_duration = getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)
@@ -952,7 +993,7 @@ class PanoramaRenderer(LayerRenderer):
             
             # Update the current blur sigma for the shader
             self.current_blur_sigma = self.current_blur
-            self._update_blur_effect()  # Update blur group with new parameters
+            self._update_blur_effect()
             if progress >= 1.0:
                 self.blur_active = False
                 logger.debug("Blur transition complete")
@@ -998,9 +1039,10 @@ class PanoramaRenderer(LayerRenderer):
         """Set renderer visibility."""
         self._visible = visible
         
-        # Update sprite visibility
-        if self.base_sprite:
-            self.base_sprite.visible = visible
+        # Update all base sprite visibility
+        for base_data in self.base_sprites.values():
+            if base_data['sprite']:
+                base_data['sprite'].visible = visible
             
         for tile in self.tiles.values():
             # Respect both overall visibility and debug hide state
@@ -1013,9 +1055,21 @@ class PanoramaRenderer(LayerRenderer):
     
     def get_debug_info(self) -> Dict[str, Any]:
         """Get debug information about the panorama state."""
+        # Get info about base sprites
+        base_sprite_info = {}
+        for image_id, base_data in self.base_sprites.items():
+            base_sprite_info[image_id] = {
+                'is_fading': base_data['is_fading'],
+                'fade_timer': base_data['fade_timer'],
+                'fade_duration': base_data['fade_duration'],
+                'opacity': base_data['sprite'].opacity if base_data['sprite'] else 0
+            }
+        
         return {
             "panorama_enabled": self.panorama_config.enabled,
             "base_image_id": self.base_image_id,
+            "base_sprites_count": len(self.base_sprites),
+            "base_sprites": base_sprite_info,
             "tiles_count": len(self.tiles),
             "tile_ids": list(self.tiles.keys()),
             "blur_active": self.blur_active,
@@ -1039,16 +1093,18 @@ class PanoramaRenderer(LayerRenderer):
         self.clear_timer = 0.0
         self.clear_duration = fade_duration or 1.0
         
+        # Stop all base sprite fade animations and store their current opacity
+        for base_data in self.base_sprites.values():
+            if base_data['sprite']:
+                base_data['is_fading'] = False
+                base_data['_clearing_start_opacity'] = base_data['sprite'].opacity
+                logger.debug(f"Stopped fade animation for base sprite, current opacity: {base_data['sprite'].opacity}")
+        
         # Stop all ongoing tile fade animations and store their current opacity
         for tile in self.tiles.values():
             tile.is_fading = False
-            # Store the current opacity so we can fade from it
             tile._clearing_start_opacity = tile.sprite.opacity
             logger.debug(f"Stopped fade animation for tile {tile.tile_id}, current opacity: {tile.sprite.opacity}")
-        
-        # Stop base image fade-in if active
-        if self.base_fading:
-            self.base_fading = False
         
         if blur_during_fade:
             # Store original blur to restore later
@@ -1056,19 +1112,19 @@ class PanoramaRenderer(LayerRenderer):
     
     def _clear_all_sprites(self) -> None:
         """Immediately remove all sprites from the panorama."""
-        # Remove base image sprites
-        if self.base_sprite:
-            self.base_sprite.delete()
-            self.base_sprite = None
+        # Remove all base image sprites
+        for base_data in self.base_sprites.values():
+            if base_data['sprite']:
+                base_data['sprite'].delete()
+                base_data['sprite'] = None
         
+        self.base_sprites.clear()
         self.base_image = None
         self.base_image_id = None
         
         # Remove all tile sprites
         for tile in self.tiles.values():
-            # Use the tile's cleanup method which handles both sprite and debug_rect
             tile.cleanup()
-            # Clean up clearing state
             tile._clearing_start_opacity = None
         
         self.tiles.clear()
@@ -1135,15 +1191,20 @@ class PanoramaRenderer(LayerRenderer):
         self._calculate_panorama_transform()
         
         # Update existing sprite groups (positions don't change - they're in panorama space)
-        if self.base_sprite:
-            # Update base sprite to use new capture group (position stays the same)
-            old_sprite = self.base_sprite
-            self.base_sprite = pyglet.sprite.Sprite(
-                old_sprite.image, x=0, y=0,
-                batch=self.batch, group=self.capture, z=0
-            )
-            self.base_sprite.scale = old_sprite.scale  # Keep panorama scale
-            old_sprite.delete()
+        for image_id, base_data in list(self.base_sprites.items()):
+            if base_data['sprite']:
+                # Update base sprite to use new capture group (position stays the same)
+                old_sprite = base_data['sprite']
+                new_sprite = pyglet.sprite.Sprite(
+                    old_sprite.image, x=0, y=0,
+                    batch=self.batch, group=self.capture, z=0
+                )
+                new_sprite.scale = old_sprite.scale  # Keep panorama scale
+                new_sprite.opacity = old_sprite.opacity  # Keep current opacity
+                
+                # Update the sprite reference and clean up old sprite
+                base_data['sprite'] = new_sprite
+                old_sprite.delete()
         
         # Update tile groups (positions don't change - they're in panorama space)
         for tile in self.tiles.values():
