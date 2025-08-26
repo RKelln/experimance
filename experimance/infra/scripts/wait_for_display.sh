@@ -2,7 +2,7 @@
 # Simple, working display wait script
 set -u
 
-timeout=1800
+timeout=0
 interval=2
 debug=${WAIT_DISPLAY_DEBUG:-false}
 
@@ -139,40 +139,41 @@ setup_display_env_if_needed() {
 
 log "Waiting for display (timeout=${timeout}s)"
 start=$(date +%s)
-deadline=$((start + timeout))
 
-while [ $(date +%s) -lt $deadline ]; do
+# Single iteration of the display checks (extracted so we can reuse it
+# for both the infinite and timed loops without duplicating code).
+perform_check_iteration() {
     connected_display=false
     working_display=false
     wayland_ready=false
-    
+
     if has_connected_display; then
         connected_display=true
         [ "$debug" = true ] && log "Found connected DRM display"
     fi
-    
+
     if has_working_display; then
         working_display=true
         [ "$debug" = true ] && log "Found working DRM display (with EDID)"
     fi
-    
+
     if has_wayland; then
         wayland_ready=true
         [ "$debug" = true ] && log "Found Wayland socket"
     fi
-    
+
     # If we have a working display or wayland, we're good
     if [ "$working_display" = true ] || [ "$wayland_ready" = true ]; then
         elapsed=$(($(date +%s) - start))
         log "Display ready after ${elapsed}s (working_display=$working_display wayland=$wayland_ready)"
         exit 0
     fi
-    
+
     # If we have hardware display but it's not working (No Signal state), try to fix it
     if [ "$connected_display" = true ] && [ "$working_display" = false ]; then
         [ "$debug" = true ] && log "Connected display found but not working - attempting fix"
         fix_no_signal
-        
+
         # Check again after fix attempt
         if has_working_display; then
             working_display=true
@@ -181,7 +182,7 @@ while [ $(date +%s) -lt $deadline ]; do
             wayland_ready=true
             [ "$debug" = true ] && log "Hardware display not working but Wayland environment setup successful"
         fi
-        
+
         # Try once more after fixes
         if [ "$working_display" = true ] || [ "$wayland_ready" = true ]; then
             elapsed=$(($(date +%s) - start))
@@ -189,18 +190,32 @@ while [ $(date +%s) -lt $deadline ]; do
             exit 0
         fi
     fi
-    
+
     [ "$debug" = true ] && log "No working display detected, waiting..."
-    sleep $interval
-done
+}
 
-# After timeout, try to setup Wayland environment as fallback
-# (This handles the case where projector is off but we want services to start anyway)
-log "Timeout reached, attempting to setup Wayland environment as fallback..."
-if setup_display_env_if_needed; then
-    log "Display ready via fallback Wayland setup (drm=false wayland=true)"
-    exit 0
+# If timeout is <= 0, wait indefinitely; otherwise loop until the deadline.
+if [ "${timeout:-0}" -le 0 ] 2>/dev/null; then
+    log "Timeout <= 0, waiting indefinitely for display"
+    while true; do
+        perform_check_iteration
+        sleep $interval
+    done
+else
+    deadline=$((start + timeout))
+    while [ $(date +%s) -lt $deadline ]; do
+        perform_check_iteration
+        sleep $interval
+    done
+
+    # After timeout, try to setup Wayland environment as fallback
+    # (This handles the case where projector is off but we want services to start anyway)
+    log "Timeout reached, attempting to setup Wayland environment as fallback..."
+    if setup_display_env_if_needed; then
+        log "Display ready via fallback Wayland setup (drm=false wayland=true)"
+        exit 0
+    fi
+
+    log "Timeout after ${timeout}s - no display found"
+    exit 1
 fi
-
-log "Timeout after ${timeout}s - no display found"
-exit 1
