@@ -67,22 +67,42 @@ llm = "openai"      # Language model provider
 tts = "cartesia"    # Text-to-speech provider
 
 [vision]
-audience_detection_enabled = false
-reolink_enabled = true
-
-# Reolink Camera Settings
-reolink_host = "192.168.2.229"          # Your camera IP
-reolink_user = "admin"                  # Camera username (can override with REOLINK_USER env var)
-# reolink_password - NEVER set here! Use REOLINK_PASSWORD environment variable in .env file
-reolink_https = true                    # Use HTTPS (recommended)
-reolink_channel = 0                     # Camera channel (usually 0)
-reolink_hysteresis_count = 3            # Readings needed for state change (stability)
-reolink_timeout = 2                     # Timeout for checking for people
+audience_detection_enabled = true
 
 # Audience Detection Settings  
-audience_detection_interval = 1.0       # Check camera every second
+audience_detection_interval = 1.5       # Check camera every 1.5 seconds (slightly slower for stability)
 conversation_cooldown_duration = 30     # 30s between conversations
 cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves then returns
+
+[reolink]
+# Fire project specific Reolink Camera Settings with asymmetric hysteresis and YOLO11 detection
+enabled = true
+host = "192.168.2.229"                  # Your camera IP
+user = "admin"                          # Camera username (can override with REOLINK_USER env var)
+# reolink_password - NEVER set here! Use REOLINK_PASSWORD environment variable in .env file
+https = true                            # Use HTTPS (recommended)
+channel = 0                             # Camera channel (usually 0)
+timeout = 2                             # Timeout for checking for people
+
+# Asymmetric hysteresis - different thresholds for detecting vs losing audience
+# With YOLO11n detection, we can be much more responsive due to higher reliability
+hysteresis_present = 3                  # Quick to detect presence (YOLO11n is reliable)
+hysteresis_absent = 8                   # Slower to lose presence (12 seconds at 1.5s intervals)
+
+# Person detection method configuration
+detection_method = "yolo11"             # Detection method: "hog", "yolo11", or "hybrid"
+
+# YOLO11 detection settings
+yolo_confidence_threshold = 0.6         # Minimum confidence for person detection (0.0-1.0)
+yolo_edge_filter_percent = 0.15         # Filter detections near edges (0.0-0.5)
+yolo_min_person_width = 40              # Minimum person width in pixels
+yolo_min_person_height = 80             # Minimum person height in pixels
+yolo_max_detections = 10                # Maximum detections to process per frame
+yolo_input_size = 640                   # YOLO input size (320=fast, 640=balanced, 1280=accurate)
+yolo_device = "cpu"                     # Device: "cpu", "cuda", "mps"
+yolo_model_name = "yolo11n.pt"          # Model: yolo11n.pt (nano), yolo11s.pt (small), etc.
+yolo_save_debug_frames = false          # Save annotated frames for debugging
+yolo_debug_frame_interval = 10          # Save every Nth frame when debugging
 
 [transcript]
 # Transcript management
@@ -98,3 +118,9 @@ human_speaker_name = "Visitor"
 # Transcript archival
 save_transcripts = true
 
+[osc]
+enabled = true
+host = "localhost"
+port = 5580
+address_prefix = "fire/"
+presence_address = "presence/"
