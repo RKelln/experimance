@@ -1,15 +1,20 @@
 from __future__ import annotations
 import asyncio
 import os
-from typing import Any, Dict
+from typing import Any, Dict, cast, Optional
 
 from experimance_common.logger import setup_logging
 from experimance_common.transcript_manager import TranscriptMessage, TranscriptMessageType
 from agent import AgentServiceBase, SERVICE_TYPE
-from agent.config import AgentServiceConfig
+from .config import FireAgentServiceConfig
 from agent.vision.reolink_detector import ReolinkDetector
+from agent.vision.reolink_frame_detector import ReolinkFrameDetector
+from agent.vision.yolo_person_detector import YOLO11PersonDetector
 from agent.tools import create_zmq_tool
 from agent.backends.base import AgentBackendEvent
+
+# Use the original pythonosc for simple, non-blocking UDP sends
+from pythonosc.udp_client import SimpleUDPClient
 
 SERVICE_TYPE = "fire_agent"
 logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
@@ -17,11 +22,20 @@ logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
 class FireAgentService(AgentServiceBase):
     """Minimal voice-only agent for the Fire project using Reolink camera detection."""
 
-    def __init__(self, config: AgentServiceConfig):
+    def __init__(self, config: FireAgentServiceConfig):
         super().__init__(config=config)
+        
+        # Cast config to the correct type for linter
+        self.config = cast(FireAgentServiceConfig, config)
 
         self.audience_detector = None
         self.current_presence = None
+
+                # OSC client
+        self.osc_client: Optional[SimpleUDPClient] = None
+        self.osc_presence_address = f"{self.config.osc.address_prefix}/{self.config.osc.presence_address}/"
+        # Clean up double slashes
+        self.osc_presence_address = self.osc_presence_address.replace("//", "/")
 
     def register_project_handlers(self) -> None:
         """Register Fire-specific message handlers."""
@@ -31,8 +45,8 @@ class FireAgentService(AgentServiceBase):
 
     def post_backend_startup(self) -> None:
         """Perform actions after the backend has started."""
-        if hasattr(self.current_backend, "transcript_manager") and self.current_backend.transcript_manager:
-            self.current_backend.transcript_manager.register_async_callback(self._on_transcript_message)
+        if hasattr(self.current_backend, "transcript_manager") and self.current_backend.transcript_manager:  # type: ignore
+            self.current_backend.transcript_manager.register_async_callback(self._on_transcript_message) # type: ignore
 
     def register_project_tools(self) -> None:
         """Register Fire-specific tools with the backend."""
@@ -124,29 +138,58 @@ class FireAgentService(AgentServiceBase):
         """Initialize backend when audience is detected."""
         logger.info("Audience detected - starting Fire agent conversation")
 
+        # Initialize OSC client if enabled
+        if self.config.osc.enabled:
+            try:
+                # Simple UDP client - no connection needed, just create it
+                self.osc_client = SimpleUDPClient(self.config.osc.host, self.config.osc.port)
+                logger.info(f"OSC client initialized - {self.config.osc.host}:{self.config.osc.port}")
+            except Exception as e:
+                logger.error(f"Failed to initialize OSC client: {e}")
+                self.osc_client = None
+
         # start audience detector
         # Automatic discovery with optional known IP
-        if self.config.vision.audience_detection_enabled and self.config.vision.reolink_enabled:
+        if self.config.vision.audience_detection_enabled and self.config.reolink.enabled:
             # Get credentials from environment variables
-            reolink_user = os.getenv("REOLINK_USER", self.config.vision.reolink_user)
+            reolink_user = os.getenv("REOLINK_USER", self.config.reolink.user)
             reolink_password = os.getenv("REOLINK_PASSWORD")
             
             if not reolink_password:
                 logger.error("REOLINK_PASSWORD environment variable is required for camera authentication")
                 raise ValueError("Reolink password not configured - set REOLINK_PASSWORD in .env file")
             
-            # start reolink camera
+            # Use hybrid detection: camera AI trigger + YOLO precision
+            # Auto-discover camera if host not specified or use known IP as hint
+            known_ip = self.config.reolink.host if self.config.reolink.host else None
+            
+            logger.info(f"Initializing hybrid Reolink detector with discovery (known_ip: {known_ip})")
+            
+            # Create YOLO configuration from reolink config  
+            yolo_config = {}
+            if hasattr(self.config.reolink, 'yolo') and self.config.reolink.yolo:
+                # Convert Pydantic model to dict for YOLO detector
+                yolo_config = self.config.reolink.yolo.dict()
+            
             self.audience_detector = await ReolinkDetector.create_with_discovery(
-                known_ip=self.config.vision.reolink_host,  # Optional for fastest path
+                known_ip=known_ip,
                 user=reolink_user,
                 password=reolink_password,
-                https=self.config.vision.reolink_https,
-                channel=self.config.vision.reolink_channel,
-                timeout=self.config.vision.reolink_timeout
+                https=self.config.reolink.https,
+                channel=self.config.reolink.channel,
+                timeout=self.config.reolink.timeout,
+                hysteresis_present=self.config.reolink.hysteresis_present,
+                hysteresis_absent=self.config.reolink.hysteresis_absent,
+                hybrid_mode=True,  # Enable hybrid camera AI + YOLO detection
+                yolo_config=yolo_config,
+                yolo_absent_threshold=5,  # YOLO absent readings before switching back to monitoring
+                yolo_check_interval=1.0   # Seconds between YOLO checks in active mode
             )
-            # Start the detector (initialize session and authenticate)
+            
+            # Start the detector (initialize HTTP session and login)
             await self.audience_detector.start()
-            logger.info("Reolink detector started successfully")
+            
+            logger.info("Hybrid Reolink detector initialized successfully")
             
             # start polling camera
             self.add_task(self._audience_detection_loop())
@@ -156,31 +199,146 @@ class FireAgentService(AgentServiceBase):
             logger.info("Starting conversation backend immediately since audience detection is disabled")
             await self._start_backend_for_conversation()
 
+        # Send initial OSC signal (no audience present at startup)
+        if self.osc_client:
+            self._send_osc_presence(False)
+
         logger.info("Fire agent conversation started")
     
     async def _stop_background_tasks(self):
         if self.audience_detector:
             await self.audience_detector.stop()
+        
+        # Send final absence signal before stopping OSC
+        if self.osc_client:
+            try:
+                self._send_osc_presence(False)
+                logger.debug("Final absence signal sent")
+            except Exception as e:
+                logger.error(f"Error sending final OSC signal: {e}")
+            finally:
+                # SimpleUDPClient doesn't need explicit closing
+                self.osc_client = None
+                logger.info("OSC client stopped")
 
     async def _audience_detection_loop(self):
-        """Continuously monitor for audience presence."""
+        """Continuously monitor for audience presence using hybrid detection."""
+        last_person_count = None  # Track person count changes for vision messages
+        
         while self.running:
             # if presence detected, send signal and start conversation
             if self.audience_detector:
-                presence = await self.audience_detector.check_audience_present()
-                if presence != self.current_presence:
-                    self.current_presence = presence
-                    if presence:
-                        logger.info("Audience detected, starting conversation backend")
-                        await self._start_backend_for_conversation()
-                    else:
-                        logger.info("No audience detected, stopping conversation backend")
-                        if self.current_backend:
-                            await self.current_backend.graceful_shutdown()
+                try:
+                    # Use hybrid detection (camera AI + YOLO)
+                    presence = await self.audience_detector.check_audience_present()
+                    
+                    # Get detection stats for logging
+                    stats = self.audience_detector.get_stats()
+                    
+                    # Send vision context messages when person count changes (only in YOLO mode)
+                    if (stats.get('detection_mode') == 'active' and 
+                        self.current_backend and 
+                        'current_person_count' in stats):
+                        
+                        current_count = stats['current_person_count']
+                        
+                        # Only send vision message if person count has changed
+                        if current_count != last_person_count:
+                            # Format vision context message
+                            if current_count == 0:
+                                vision_context = "<vision: No people detected>"
+                            elif current_count == 1:
+                                vision_context = "<vision: One person detected>"
+                            else:
+                                vision_context = f"<vision: {current_count} people detected>"
+                            
+                            # Send vision context to LLM
+                            await self.current_backend.send_message(vision_context, speaker="system")
+                            logger.debug(f"Vision update: {vision_context}")
+                            
+                            # Update tracking
+                            last_person_count = current_count
+                    
+                    # Debug logging with detection info
+                    logger.debug(f"Hybrid detection - Presence: {presence}, "
+                               f"Mode: {stats.get('detection_mode', 'simple')}, "
+                               f"Checks: {stats['total_checks']}, "
+                               f"Switches: {stats.get('mode_switches', 0)}")
+                    
+                    # Check for state changes
+                    if presence != self.current_presence:
+                        if presence:
+                            logger.info("Hybrid detector: Audience detected")
+                            await self.audience_detected()
+                        else:
+                            logger.info("Hybrid detector: Audience left")
+                            await self._audience_left()
+                            # Reset person count tracking when audience leaves
+                            last_person_count = None
+                        
+                        # Update current presence after processing
+                        self.current_presence = presence
+                        
+                except Exception as e:
+                    logger.error(f"Error in hybrid detection: {e}")
+                    await asyncio.sleep(1.0)  # Brief pause on error
+                    continue
+                    
             else:
                 logger.warning("Audience detector not initialized, skipping detection loop")
-            
+                await asyncio.sleep(5)
+
             if not await self._sleep_if_running(self.config.vision.audience_detection_interval): break
+
+    def _send_osc_presence(self, present: bool) -> None:
+        """Send OSC presence signal using simple UDP client (fire-and-forget)."""
+        if not self.osc_client:
+            return
+        
+        try:
+            # Send 1 for present, 0 for absent
+            value = 1 if present else 0
+            
+            # Simple fire-and-forget UDP send
+            self.osc_client.send_message(self.osc_presence_address, value)
+            
+            logger.info(f"OSC presence signal sent: {self.osc_presence_address} = {value} ({'present' if present else 'absent'})")
+        except Exception as e:
+            logger.error(f"Failed to send OSC presence signal: {e}")
+
+    async def _send_proactive_greeting(self) -> None:
+        """Send a proactive greeting to visitors after a short delay."""
+        try:
+            # Wait for the configured greeting delay
+            await asyncio.sleep(self.config.greeting_delay)
+            
+            # Send proactive greeting prompt
+            greeting_prompt = self.config.greeting_prompt
+            logger.info("Sending proactive greeting to visitor")
+            if self.current_backend:
+                await self.current_backend.send_message(greeting_prompt, speaker="system")
+            
+        except Exception as e:
+            logger.error(f"Failed to send proactive greeting: {e}")
+
+    async def audience_detected(self) -> None:
+        """Handle audience detection event."""
+        logger.info("Audience detected")
+        # Send OSC signal as simple fire-and-forget
+        self._send_osc_presence(True)
+        await self._start_backend_for_conversation()
+        
+        # Send proactive greeting if enabled (run in background)
+        if self.config.proactive_greeting_enabled:
+            asyncio.create_task(self._send_proactive_greeting())
+
+    async def _audience_left(self) -> None:
+        """Handle audience left event."""
+        logger.info("Audience left")
+        # Send OSC signal as simple fire-and-forget  
+        self._send_osc_presence(False)
+        if self.current_backend:
+            await self.current_backend.graceful_shutdown()
 
     async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle new transcription data."""
@@ -208,7 +366,7 @@ class FireAgentService(AgentServiceBase):
             # Ensure we have a speaker_id (required field)
             speaker_id = message.speaker_id or "unknown"
             
-            from experimance_common.schemas import TranscriptUpdate, MessageType
+            from experimance_common.schemas import TranscriptUpdate, MessageType # type: ignore (dynamic import)
             transcript_message = TranscriptUpdate(
                 content=content,
                 speaker_id=speaker_id,

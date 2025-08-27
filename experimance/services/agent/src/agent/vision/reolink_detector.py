@@ -9,6 +9,7 @@ import asyncio
 import time
 import logging
 from typing import Dict, Any, Optional
+from enum import Enum
 
 import aiohttp
 import urllib3
@@ -20,12 +21,27 @@ urllib3.disable_warnings(InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
+class DetectionMode(Enum):
+    """Detection modes for hybrid detector."""
+    MONITORING = "monitoring"  # Using camera AI only
+    ACTIVE = "active"         # Using YOLO on camera frames
+
+
 class ReolinkDetector:
     """
-    Simple audience detector using Reolink camera AI.
+    Smart hybrid audience detector using Reolink camera.
     
-    Polls camera's AI alarm status for person detection with hysteresis
-    to avoid rapid state changes.
+    Two modes of operation:
+    1. MONITORING: Uses camera's AI detection as a lightweight trigger (low CPU)
+    2. ACTIVE: Uses YOLO on camera frames for precise detection (higher CPU)
+    
+    Flow:
+    - Starts in MONITORING mode, polling camera AI
+    - Camera AI detection triggers switch to ACTIVE mode  
+    - YOLO handles precise detection and "all clear" detection
+    - Returns to MONITORING when YOLO confirms no people present
+    
+    This provides the best of both worlds: efficiency + accuracy.
     """
     
     @classmethod
@@ -106,7 +122,13 @@ class ReolinkDetector:
         https: bool = True,
         timeout: int = 10,
         channel: int = 0,
-        hysteresis_count: int = 3  # Number of consistent readings needed for state change
+        hysteresis_present: Optional[int] = None,  # Readings needed to confirm present, default 3
+        hysteresis_absent: Optional[int] = None,   # Readings needed to confirm absent, default 3
+        # Hybrid mode parameters
+        hybrid_mode: bool = False,                 # Enable hybrid camera AI + YOLO detection
+        yolo_config: Optional[Dict[str, Any]] = None,  # YOLO configuration dictionary
+        yolo_absent_threshold: int = 5,            # YOLO "absent" readings before switching back to monitoring
+        yolo_check_interval: float = 1.0          # Seconds between YOLO checks in active mode
     ):
         self.host = host
         self.user = user
@@ -114,7 +136,23 @@ class ReolinkDetector:
         self.https = https
         self.timeout = timeout
         self.channel = channel
-        self.hysteresis_count = hysteresis_count
+        
+        # Asymmetric hysteresis - default to symmetric if not specified
+        self.hysteresis_present = hysteresis_present if hysteresis_present is not None else 3
+        self.hysteresis_absent = hysteresis_absent if hysteresis_absent is not None else 3
+        
+        # Hybrid mode configuration
+        self.hybrid_mode = hybrid_mode
+        self.yolo_config = yolo_config or {}
+        self.yolo_absent_threshold = yolo_absent_threshold
+        self.yolo_check_interval = yolo_check_interval
+        
+        # Detection mode state
+        self._detection_mode = DetectionMode.MONITORING
+        self._yolo_detector = None
+        self._yolo_absent_count = 0  # Consecutive "absent" readings from YOLO
+        self._mode_switches = 0
+        self._current_person_count = 0  # Current detected person count from YOLO
         
         # Simple state tracking with hysteresis
         self._current_state = False  # Current stable state
@@ -133,6 +171,10 @@ class ReolinkDetector:
         
     async def start(self):
         """Initialize the detector."""
+        if self._session is not None:
+            logger.debug("Detector already started, skipping initialization")
+            return
+            
         connector = aiohttp.TCPConnector(ssl=False)
         self._session = aiohttp.ClientSession(
             connector=connector,
@@ -142,10 +184,23 @@ class ReolinkDetector:
         # Login to get authentication token
         try:
             await self._login()
-            logger.info(f"Simple Reolink detector ready: {self.host}")
+            logger.info(f"Reolink detector ready: {self.host}")
         except Exception as e:
             logger.error(f"Failed to connect to Reolink camera: {e}")
             raise
+        
+        # Initialize YOLO detector if hybrid mode is enabled
+        if self.hybrid_mode:
+            try:
+                from .yolo_person_detector import YOLO11PersonDetector
+                self._yolo_detector = YOLO11PersonDetector.from_dict(self.yolo_config)
+                logger.info(f"✅ Hybrid mode enabled: Camera AI + YOLO detection")
+            except ImportError as e:
+                logger.error(f"❌ Hybrid mode failed: YOLO detector not available: {e}")
+                self.hybrid_mode = False
+            except Exception as e:
+                logger.error(f"❌ Hybrid mode failed: Could not initialize YOLO: {e}")
+                self.hybrid_mode = False
     
     async def stop(self):
         """Clean up resources."""
@@ -155,8 +210,14 @@ class ReolinkDetector:
                 await self._logout()
             except Exception:
                 pass  # Ignore logout errors during cleanup
-            await self._session.close()
-            self._session = None
+            
+            # Close session safely
+            try:
+                await self._session.close()
+            except Exception:
+                pass  # Ignore close errors during cleanup
+            finally:
+                self._session = None
     
     async def _login(self):
         """Login to camera and get authentication token."""
@@ -287,28 +348,146 @@ class ReolinkDetector:
             
             return data[0].get("value", {})
     
+    async def _capture_frame(self):
+        """Capture a frame from the camera for YOLO processing."""
+        if not self._session:
+            raise RuntimeError("Session not initialized")
+        
+        protocol = "https" if self.https else "http"
+        url = f"{protocol}://{self.host}/cgi-bin/api.cgi?cmd=Snap&channel={self.channel}&token={self._token}"
+        
+        async with self._session.get(url) as response:
+            response.raise_for_status()
+            
+            # Return raw image data
+            image_data = await response.read()
+            
+            # Decode image using OpenCV
+            import numpy as np
+            import cv2
+            
+            image_array = np.frombuffer(image_data, dtype=np.uint8)
+            frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                raise ValueError("Failed to decode camera frame")
+            
+            return frame
+    
     async def check_audience_present(self) -> bool:
         """
-        Check if audience is present with hysteresis.
+        Check if audience is present using hybrid detection (camera AI + YOLO).
         
         Returns:
             bool: True if audience detected (stable state)
         """
         try:
-            # Get raw detection from camera
-            person_detected = await self._check_person_detected()
-            self._total_checks += 1
+            if not self.hybrid_mode or self._yolo_detector is None:
+                # Simple mode: just use camera AI with hysteresis
+                person_detected = await self._check_person_detected()
+                self._total_checks += 1
+                
+                logger.debug(f"Reolink raw detection: {person_detected} (check #{self._total_checks})")
+                
+                # Apply hysteresis
+                stable_state = self._apply_hysteresis(person_detected)
+                return stable_state
             
-            # Apply hysteresis
-            stable_state = self._apply_hysteresis(person_detected)
-            
-            return stable_state
-            
+            else:
+                # Hybrid mode: switch between camera AI and YOLO
+                return await self._hybrid_detection()
+                
         except Exception as e:
             self._connection_errors += 1
-            logger.warning(f"Camera check failed: {e}")
+            logger.warning(f"Detection check failed: {e}")
             # Return last known state on error
             return self._current_state
+    
+    async def _hybrid_detection(self) -> bool:
+        """
+        Hybrid detection using camera AI as trigger and YOLO for precision.
+        
+        State machine:
+        MONITORING -> ACTIVE: When camera AI detects person
+        ACTIVE -> MONITORING: When YOLO detects no person for threshold count
+        """
+        self._total_checks += 1
+        
+        if self._detection_mode == DetectionMode.MONITORING:
+            # Monitor using camera AI (lightweight)
+            camera_ai_detected = await self._check_person_detected()
+            
+            logger.debug(f"MONITORING: Camera AI detection = {camera_ai_detected}")
+            
+            if camera_ai_detected:
+                # Camera AI triggered - switch to ACTIVE mode
+                self._detection_mode = DetectionMode.ACTIVE
+                self._yolo_absent_count = 0
+                self._mode_switches += 1
+                
+                logger.info(f"🎯 Camera AI triggered - switching to ACTIVE mode (switch #{self._mode_switches})")
+                
+                # Immediately run YOLO check
+                return await self._yolo_detection()
+            else:
+                # No trigger, stay in monitoring
+                return self._current_state
+        
+        elif self._detection_mode == DetectionMode.ACTIVE:
+            # Active YOLO detection
+            return await self._yolo_detection()
+        
+        else:
+            logger.error(f"Invalid detection mode: {self._detection_mode}")
+            return self._current_state
+    
+    async def _yolo_detection(self) -> bool:
+        """Run YOLO detection on current camera frame."""
+        try:
+            # Capture frame from camera
+            frame = await self._capture_frame()
+            
+            # Run YOLO detection
+            people_count, max_confidence, detections = self._yolo_detector.detect_people(frame)
+            
+            # Store current person count
+            self._current_person_count = people_count
+            
+            yolo_detected = people_count > 0
+            
+            # Only log YOLO results when interesting (detection changes or high confidence)
+            if yolo_detected != self._current_state or max_confidence > 0.8:
+                logger.debug(f"ACTIVE: YOLO detected {people_count} people (conf={max_confidence:.3f})")
+            
+            if yolo_detected:
+                # YOLO detected people - reset absent counter
+                self._yolo_absent_count = 0
+                
+                # Apply hysteresis for presence detection
+                stable_state = self._apply_hysteresis(True)
+                return stable_state
+            
+            else:
+                # YOLO detected no people - increment absent counter
+                self._yolo_absent_count += 1
+                self._current_person_count = 0  # No people detected                logger.debug(f"ACTIVE: No people detected, absent_count={self._yolo_absent_count}/{self.yolo_absent_threshold}")
+                
+                if self._yolo_absent_count >= self.yolo_absent_threshold:
+                    # Switch back to monitoring mode
+                    self._detection_mode = DetectionMode.MONITORING
+                    self._mode_switches += 1
+                    
+                    logger.info(f"🔄 YOLO confirmed no people - switching to MONITORING mode (switch #{self._mode_switches})")
+                
+                # Apply hysteresis for absence detection
+                stable_state = self._apply_hysteresis(False)
+                return stable_state
+                
+        except Exception as e:
+            logger.error(f"YOLO detection error: {e}")
+            # On YOLO error, fall back to camera AI
+            camera_ai_detected = await self._check_person_detected()
+            return self._apply_hysteresis(camera_ai_detected)
     
     async def _check_person_detected(self) -> bool:
         """Get person detection status from camera AI."""
@@ -321,15 +500,23 @@ class ReolinkDetector:
         # The response is flat - people info is directly in the result
         people_alarm = result.get("people", {})
         
+        # Debug logging for API response
+        logger.debug(f"Reolink AI API response: people_alarm={people_alarm}")
+        
         # Check if people detection is supported and active
         if people_alarm.get("support", 0) != 1:
             logger.warning("People detection not supported by camera")
             return False
         
-        return people_alarm.get("alarm_state", 0) == 1
+        alarm_state = people_alarm.get("alarm_state", 0)
+        detected = alarm_state == 1
+        
+        logger.debug(f"Reolink people detection: support={people_alarm.get('support')}, alarm_state={alarm_state}, detected={detected}")
+        
+        return detected
     
     def _apply_hysteresis(self, new_reading: bool) -> bool:
-        """Apply hysteresis to avoid rapid state changes."""
+        """Apply asymmetric hysteresis to avoid rapid state changes."""
         
         # Count consecutive readings of the same value
         if new_reading == self._last_reading:
@@ -338,28 +525,61 @@ class ReolinkDetector:
             self._reading_count = 1
             self._last_reading = new_reading
         
+        # Determine required threshold based on target state
+        required_count = self.hysteresis_present if new_reading else self.hysteresis_absent
+        
+        # Debug logging only when approaching or reaching threshold
+        if self._reading_count <= required_count or new_reading != self._current_state:
+            current_state_str = "present" if self._current_state else "absent"
+            new_reading_str = "present" if new_reading else "absent"
+            logger.debug(f"Hysteresis: raw={new_reading_str}, stable={current_state_str}, consecutive={self._reading_count}/{required_count}")
+        
         # Change state only after enough consistent readings
-        if (self._reading_count >= self.hysteresis_count and 
+        if (self._reading_count >= required_count and 
             new_reading != self._current_state):
             
+            old_state = self._current_state
             self._current_state = new_reading
             self._state_changes += 1
             
             state_name = "present" if new_reading else "absent" 
-            logger.info(f"Audience state changed to: {state_name}")
+            logger.info(f"Audience state changed to: {state_name} (after {self._reading_count} consecutive {new_reading_str} readings)")
         
         return self._current_state
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get simple detector statistics."""
-        return {
+        """Get detector statistics including hybrid mode info."""
+        stats = {
             'current_state': self._current_state,
             'total_checks': self._total_checks,
             'connection_errors': self._connection_errors,
             'state_changes': self._state_changes,
-            'hysteresis_count': self.hysteresis_count,
-            'consecutive_readings': self._reading_count
+            'hysteresis_present': self.hysteresis_present,
+            'hysteresis_absent': self.hysteresis_absent,
+            'consecutive_readings': self._reading_count,
+            'last_reading': self._last_reading,
         }
+        
+        # Add hybrid mode stats
+        if self.hybrid_mode:
+            stats.update({
+                'hybrid_mode': True,
+                'detection_mode': self._detection_mode.value,
+                'mode_switches': self._mode_switches,
+                'yolo_absent_count': self._yolo_absent_count,
+                'yolo_absent_threshold': self.yolo_absent_threshold,
+                'yolo_available': self._yolo_detector is not None,
+                'current_person_count': self._current_person_count
+            })
+            
+            # Add YOLO stats if available
+            if self._yolo_detector:
+                yolo_stats = self._yolo_detector.get_statistics()
+                stats['yolo_stats'] = yolo_stats
+        else:
+            stats['hybrid_mode'] = False
+            
+        return stats
     
     def get_detection_stats(self) -> Dict[str, Any]:
         """Get detection statistics (alias for get_stats for compatibility)."""

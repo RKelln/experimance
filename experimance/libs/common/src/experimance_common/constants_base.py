@@ -215,6 +215,7 @@ __all__ = [
     # Other directories
     "LOGS_DIR",
     "DATA_DIR",
+    "MODELS_DIR",
     # Config helpers
     "get_project_config_path"
 ]
