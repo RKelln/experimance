@@ -622,7 +622,9 @@ class PanoramaRenderer(LayerRenderer):
             # Only treat as clear if explicitly flagged or if both content and uri are empty
             if clear_flag or (content is None and uri is None):
                 logger.info(f"Clear command received: {request_id}")
-                fade_duration = message.get('fade_in', 3.0)
+                # For clear messages, prefer fade_out (semantic), fallback to fade_in, then default
+                fade_duration = message.get('fade_out') or message.get('fade_in', 3.0)
+                logger.info(f"Clearing panorama with {fade_duration}s fade-out duration")
                 self.clear_panorama(fade_duration=fade_duration, blur_during_fade=True)
                 return
             
