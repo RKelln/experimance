@@ -106,7 +106,7 @@ class ActiveRequest:
     state_transition_time: float = field(default_factory=time.time)
     
     # Timeouts (in seconds)
-    IMAGE_TIMEOUT: float = 20.0
+    IMAGE_TIMEOUT: float = 25.0
     LLM_TIMEOUT: float = 30.0
     STATE_TIMEOUT: float = 60.0
     
@@ -1011,6 +1011,9 @@ class FireCoreService(BaseService):
                 image_data=None,  # No image data if using file URI
             )
         
+        # Check if this is the final tile
+        is_final_tile = (len(self.current_request.completed_tiles) >= self.current_request.total_tiles)
+        
         # Send tile to display with position
         display_message = DisplayMedia(
             content_type=ContentType.IMAGE,
@@ -1021,15 +1024,18 @@ class FireCoreService(BaseService):
             fade_out=0.5,  # Tile fade-out duration
             image_data=image_source.image_data,
             uri=image_source.uri,
+            final_tile=is_final_tile,  # Set flag for blur acceleration
         )
         logger.debug(f"Sending tile {tile_index} to display at position ({tile_spec.display_x}, {tile_spec.display_y}) "
                     f"with size ({tile_spec.display_width}, {tile_spec.display_height}) "
-                    f"from generated size ({tile_spec.generated_width}, {tile_spec.generated_height})")
+                    f"from generated size ({tile_spec.generated_width}, {tile_spec.generated_height}) "
+                    f"final_tile={is_final_tile}")
         
         await self.zmq_service.publish(display_message)
         
         # State management handled by _state_monitor_task
-        logger.debug(f"Tile {tile_index} completed - {len(self.current_request.completed_tiles)}/{self.current_request.total_tiles} done")
+        logger.debug(f"Tile {tile_index} completed - {len(self.current_request.completed_tiles)}/{self.current_request.total_tiles} done"
+                    + (f" (FINAL TILE)" if is_final_tile else ""))
     
     async def _send_clear_display(self):
         """Send clear message to display service."""

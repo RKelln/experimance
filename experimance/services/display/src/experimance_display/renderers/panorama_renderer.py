@@ -452,12 +452,6 @@ class PanoramaRenderer(LayerRenderer):
         self.tiles: Dict[str, PanoramaTile] = {}  # tile_id -> PanoramaTile
         self.tile_order: List[str] = []  # Track tile addition order
         
-        # Clearing/fading state
-        self.is_clearing = False
-        self.clear_timer = 0.0
-        self.clear_duration = 3.0  # Default fade out duration
-        self.clear_target_blur = self.config.panorama.start_blur
-        
         # Calculate scaling and projection
         self._calculate_panorama_transform()
         
@@ -469,6 +463,26 @@ class PanoramaRenderer(LayerRenderer):
         self.debug_tiles = False  # Flag to enable/disable tile debug outlines visibility
         self.hide_tiles_for_debug = False  # Flag to temporarily hide tiles (shows only base image)
         
+        # Create singleton black image for clears - calculate appropriate size
+        if self.panorama_config.mirror:
+            black_width = self.panorama_width // 2  # Half width for mirroring
+            black_height = self.panorama_height
+        else:
+            black_width = self.panorama_width
+            black_height = self.panorama_height
+        
+        # Create a solid black image that we can reuse
+        black_data = bytearray(black_width * black_height * 4)  # RGBA
+        for i in range(0, len(black_data), 4):
+            black_data[i:i+4] = [0, 0, 0, 255]  # Black with full alpha
+        
+        self._black_image: Optional[pyglet.image.ImageData] = pyglet.image.ImageData(
+            black_width, black_height, 'RGBA', bytes(black_data)
+        )
+        self._black_image.anchor_x = 0
+        self._black_image.anchor_y = 0
+        
+        logger.info(f"Created singleton black image for clears: {black_width}x{black_height}")
         logger.info(f"PanoramaRenderer initialized: {self.panorama_width}x{self.panorama_height}, "
                    f"mirror={self.panorama_config.mirror}")
         
@@ -624,8 +638,10 @@ class PanoramaRenderer(LayerRenderer):
                 logger.info(f"Clear command received: {request_id}")
                 # For clear messages, prefer fade_out (semantic), fallback to fade_in, then default
                 fade_duration = message.get('fade_out') or message.get('fade_in', 3.0)
-                logger.info(f"Clearing panorama with {fade_duration}s fade-out duration")
-                self.clear_panorama(fade_duration=fade_duration, blur_during_fade=True)
+                logger.info(f"Clearing panorama with {fade_duration}s fade-out duration - using black base image")
+                
+                # Create a black base image and use the existing crossfade system
+                self._create_black_base_image(fade_duration, request_id or "clear")
                 return
             
             if content_type != ContentType.IMAGE:
@@ -736,6 +752,37 @@ class PanoramaRenderer(LayerRenderer):
         
         # Start blur transition for the new base image (independent of fade)
         self._start_blur_transition()
+    
+    def _create_black_base_image(self, fade_duration: float, request_id: str) -> None:
+        """Create a black base image using the existing crossfade system for clearing."""
+        logger.info(f"Creating black base image for clear with {fade_duration}s fade-in: {request_id}")
+        
+        # Use the singleton black image (already sized correctly)
+        black_image = self._black_image
+        if black_image is None:
+            logger.error("Singleton black image is None, cannot create clear sprite")
+            return
+        
+        # Create sprite using the existing base image system
+        sprite = pyglet.sprite.Sprite(black_image, x=0, y=0, 
+                                      batch=self.batch, group=self.capture, z=0)
+        sprite.scale = 1.0  # Already at target size
+        sprite.opacity = 0  # Start transparent for fade-in
+        
+        # Add to the existing base_sprites system - it will handle crossfade automatically
+        self.base_sprites[request_id] = {
+            'sprite': sprite,
+            'fade_timer': 0.0,
+            'fade_duration': fade_duration,
+            'is_fading': True,
+            'cleanup_delay': 0.0
+        }
+        
+        # Update current references
+        self.base_image = black_image
+        self.base_image_id = request_id
+        
+        logger.info(f"Black base image created: {black_image.width}x{black_image.height} with {fade_duration}s fade-in (using singleton)")
     
     def _handle_tile(self, image: pyglet.image.AbstractImage, request_id: str, 
                     position: Tuple[int, int] | str, message: Dict[str, Any]) -> None:
@@ -876,6 +923,16 @@ class PanoramaRenderer(LayerRenderer):
             
         self.tiles[tile_id] = tile
         self.tile_order.append(tile_id)
+        
+        # Check if this is the final tile and accelerate blur if needed
+        is_final_tile = message.get('final_tile', False)
+        if is_final_tile:
+            logger.info(f"Final tile received: {tile_id}")
+            if self.blur_active:
+                self._accelerate_blur_transition()
+                logger.info(f"Accelerating blur transition to complete within 1 second")
+            else:
+                logger.info(f"Blur transition not active, no acceleration needed")
     
     def _start_blur_transition(self) -> None:
         """Start the blur transition for the base image."""
@@ -902,42 +959,42 @@ class PanoramaRenderer(LayerRenderer):
         logger.debug(f"Starting blur transition: {self.panorama_config.start_blur} → "
                     f"{self.panorama_config.end_blur} over {effective_blur_duration}s")
     
+    def _accelerate_blur_transition(self) -> None:
+        """Accelerate the blur transition by halving the remaining time."""
+        if not self.blur_active:
+            return
+            
+        # Calculate how much blur progress we've made
+        effective_duration = getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)
+        if effective_duration <= 0:
+            return
+            
+        current_progress = min(self.blur_timer / effective_duration, 1.0)
+        remaining_progress = 1.0 - current_progress
+        
+        if remaining_progress <= 0:
+            # Already complete, nothing to accelerate
+            return
+            
+        # Calculate remaining time at current rate
+        remaining_time_original = effective_duration - self.blur_timer
+        
+        # Halve the remaining time (or minimum 0.5 seconds to avoid too aggressive acceleration)
+        target_remaining_duration = max(0.5, remaining_time_original * 0.4)
+        
+        # Recalculate the effective duration to achieve the target
+        # new_effective_duration = current_time + target_remaining_time
+        new_effective_duration = self.blur_timer + target_remaining_duration
+        
+        # Update the stored duration
+        self._effective_blur_duration = new_effective_duration
+        
+        logger.info(f"Accelerating blur transition: {current_progress:.2f} progress, "
+                   f"{remaining_progress:.2f} remaining will complete in {target_remaining_duration:.1f}s "
+                   f"(was {remaining_time_original:.1f}s remaining, now halved with {target_remaining_duration:.1f}s minimum)")
+    
     def update(self, dt: float) -> None:
         """Update panorama animations with smooth crossfade support."""
-        # Handle clearing/fading
-        if self.is_clearing:
-            self.clear_timer += dt
-            progress = min(self.clear_timer / self.clear_duration, 1.0)
-            
-            # Fade out all base sprites individually during clearing
-            for base_data in self.base_sprites.values():
-                if base_data['sprite'] and hasattr(base_data, '_clearing_start_opacity'):
-                    base_data['sprite'].opacity = int(base_data['_clearing_start_opacity'] * (1.0 - progress))
-            
-            # Handle individual tiles that were already fading when clear started
-            for tile in self.tiles.values():
-                if tile._clearing_start_opacity is not None:
-                    tile.sprite.opacity = int(tile._clearing_start_opacity * (1.0 - progress))
-            
-            # Increase blur during fade if enabled
-            if self.blur_active and hasattr(self, 'original_blur'):
-                self.current_blur_sigma = self.original_blur + (self.clear_target_blur * progress)
-            
-            # Complete clearing when fade is done
-            if progress >= 1.0:
-                self.is_clearing = False
-                self._clear_all_sprites()
-                # Reset blur to initial value if blur is enabled
-                if self.blur_enabled:
-                    self.current_blur_sigma = self.panorama_config.start_blur
-                else:
-                    self.current_blur_sigma = 0.0
-                # Clean up original_blur if it was set
-                if hasattr(self, 'original_blur'):
-                    delattr(self, 'original_blur')
-                logger.info("Panorama clear complete")
-                return
-        
         # Update individual base image fade-ins and cleanup
         sprites_to_remove = []
         current_sprite_fully_faded = False
@@ -981,9 +1038,8 @@ class PanoramaRenderer(LayerRenderer):
                 del self.base_sprites[image_id]
                 logger.debug(f"Cleaned up old base sprite: {image_id}")
         
-        # Update blur transition (only if blur enabled, not clearing and we have content)
-        if (self.blur_enabled and not self.is_clearing and 
-            self.blur_active and len(self.base_sprites) > 0):
+        # Update blur transition (only if blur enabled and we have content)
+        if (self.blur_enabled and self.blur_active and len(self.base_sprites) > 0):
             self.blur_timer += dt
             # Use the stored effective duration
             effective_duration = getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)
@@ -1000,10 +1056,9 @@ class PanoramaRenderer(LayerRenderer):
                 self.blur_active = False
                 logger.debug("Blur transition complete")
         
-        # Update tile fades (only if not clearing)
-        if not self.is_clearing:
-            for tile in self.tiles.values():
-                tile.update(dt)
+        # Update tile fades
+        for tile in self.tiles.values():
+            tile.update(dt)
     
     def set_debug_mode(self, enabled: bool) -> None:
         """Enable or disable debug outlines for tiles."""
@@ -1076,41 +1131,14 @@ class PanoramaRenderer(LayerRenderer):
             "tile_ids": list(self.tiles.keys()),
             "blur_active": self.blur_active,
             "current_blur": self.current_blur,
+            "blur_progress": (self.blur_timer / getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)) if self.blur_active else 0.0,
+            "blur_accelerated": hasattr(self, '_effective_blur_duration') and self._effective_blur_duration != self.panorama_config.blur_duration,
             "panorama_size": f"{self.panorama_width}x{self.panorama_height}",
             "panorama_scale": self.panorama_scale,
             "mirror": self.panorama_config.mirror,
             "debug_tiles": self.debug_tiles,
             "hide_tiles_for_debug": self.hide_tiles_for_debug
         }
-    
-    def clear_panorama(self, fade_duration: float = 3.0, blur_during_fade: bool = True) -> None:
-        """Start clearing/fading out the panorama.
-        
-        Args:
-            fade_duration: Duration of fade out in seconds
-            blur_during_fade: Whether to increase blur during fade
-        """
-        logger.info(f"Starting panorama clear with {fade_duration}s fade")
-        self.is_clearing = True
-        self.clear_timer = 0.0
-        self.clear_duration = fade_duration or 1.0
-        
-        # Stop all base sprite fade animations and store their current opacity
-        for base_data in self.base_sprites.values():
-            if base_data['sprite']:
-                base_data['is_fading'] = False
-                base_data['_clearing_start_opacity'] = base_data['sprite'].opacity
-                logger.debug(f"Stopped fade animation for base sprite, current opacity: {base_data['sprite'].opacity}")
-        
-        # Stop all ongoing tile fade animations and store their current opacity
-        for tile in self.tiles.values():
-            tile.is_fading = False
-            tile._clearing_start_opacity = tile.sprite.opacity
-            logger.debug(f"Stopped fade animation for tile {tile.tile_id}, current opacity: {tile.sprite.opacity}")
-        
-        if blur_during_fade:
-            # Store original blur to restore later
-            self.original_blur = self.current_blur_sigma
     
     def _clear_all_sprites(self) -> None:
         """Immediately remove all sprites from the panorama."""
@@ -1150,6 +1178,10 @@ class PanoramaRenderer(LayerRenderer):
         if self.blur_quad:
             self.blur_quad.delete()
             self.blur_quad = None
+        
+        # Clean up singleton black image
+        if hasattr(self, '_black_image'):
+            self._black_image = None
         
         # Framebuffer and texture will be cleaned up by pyglet
         self.framebuffer = None
