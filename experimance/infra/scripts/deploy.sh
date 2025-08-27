@@ -62,10 +62,34 @@ error() {
     exit 1
 }
 
+# Platform detection
+detect_platform() {
+    case "$(uname -s)" in
+        Linux*)     PLATFORM=linux ;;
+        Darwin*)    PLATFORM=macos ;;
+        CYGWIN*|MINGW*) PLATFORM=windows ;;
+        *)          PLATFORM=unknown ;;
+    esac
+    
+    log "Detected platform: $PLATFORM"
+}
+
 # Configuration
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 SYSTEMD_DIR="/etc/systemd/system"
+
+# Detect platform early
+detect_platform
+
+# Helper function to get the correct group for chown operations
+get_chown_group() {
+    if [[ "$PLATFORM" == "macos" ]]; then
+        echo "staff"
+    else
+        echo "$RUNTIME_USER"
+    fi
+}
 
 # Default values
 PROJECT="${1:-experimance}"
@@ -183,10 +207,19 @@ get_project_services() {
     fi
 }
 
+# Portable alternative to readarray for zsh compatibility
+load_services_array() {
+    local project="$1"
+    SERVICES=()
+    while IFS= read -r line; do
+        SERVICES+=("$line")
+    done < <(get_project_services "$project")
+}
+
 # Services to manage (dynamically determined)
 # For install action, we'll populate this after installing dependencies
 if [[ "$ACTION" != "install" ]]; then
-    readarray -t SERVICES < <(get_project_services "$PROJECT")
+    load_services_array "$PROJECT"
 else
     # For install action, we'll detect services after dependencies are installed
     SERVICES=()
@@ -334,6 +367,21 @@ install_reset_on_input() {
 }
 
 install_systemd_files() {
+    case "$PLATFORM" in
+        linux)
+            install_systemd_files_linux
+            ;;
+        macos)
+            install_launchd_files_macos
+            ;;
+        *)
+            log "Skipping service installation on unsupported platform: $PLATFORM"
+            ;;
+    esac
+}
+
+# Linux systemd installation (renamed from original function)
+install_systemd_files_linux() {
     if [[ "$USE_SYSTEMD" != true ]]; then
         log "Skipping systemd installation in development mode"
         return
@@ -451,6 +499,112 @@ install_systemd_files() {
     log "Note: Instance services are now created and linked. Use 'sudo ./deploy.sh $PROJECT start' to start them"
 }
 
+# macOS launchd installation
+install_launchd_files_macos() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        log "Skipping launchd installation in development mode"
+        return
+    fi
+    
+    log "Installing launchd service files for macOS..."
+    
+    # Create launchd directory
+    local launchd_dir
+    if [[ "$MODE" == "prod" ]]; then
+        launchd_dir="/Library/LaunchDaemons"
+    else
+        launchd_dir="$HOME/Library/LaunchAgents"
+    fi
+    
+    mkdir -p "$launchd_dir"
+    
+    # Convert systemd templates to launchd plist files
+    local files_created=0
+    for service in "${SERVICES[@]}"; do
+        if create_launchd_plist "$service" "$launchd_dir"; then
+            files_created=$((files_created + 1))
+        fi
+    done
+    
+    log "launchd service files installed: $files_created services"
+    log "Note: Use './deploy.sh $PROJECT start' to load and start services"
+}
+
+create_launchd_plist() {
+    local service="$1"
+    local launchd_dir="$2"
+    local service_type="${service%@*}"
+    local plist_file="$launchd_dir/com.experimance.$service.plist"
+    
+    # Determine the correct paths based on platform
+    local uv_path="/opt/homebrew/bin/uv"
+    if [[ ! -x "$uv_path" ]]; then
+        # Try Intel Mac path
+        uv_path="/usr/local/bin/uv"
+        if [[ ! -x "$uv_path" ]]; then
+            # Try user installation
+            uv_path="$HOME/.local/bin/uv"
+        fi
+    fi
+    
+    cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.experimance.$service</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>$uv_path</string>
+        <string>run</string>
+        <string>-m</string>
+        <string>experimance_$service_type</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>$REPO_DIR</string>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <key>StandardErrorPath</key>
+    <string>/var/log/experimance_$service.log</string>
+    
+    <key>StandardOutPath</key>
+    <string>/var/log/experimance_$service.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>EXPERIMANCE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:\$HOME/.local/bin:/usr/bin:/bin</string>
+    </dict>
+    
+    <key>UserName</key>
+    <string>$RUNTIME_USER</string>
+</dict>
+</plist>
+EOF
+
+    # Set proper ownership and permissions
+    if [[ "$MODE" == "prod" ]]; then
+        chown root:wheel "$plist_file"
+        chmod 644 "$plist_file"
+    else
+        chown "$RUNTIME_USER:staff" "$plist_file"
+        chmod 644 "$plist_file"
+    fi
+    
+    log "✓ Created launchd service: $plist_file"
+    return 0
+}
+
 # Download file from Google Drive using uvx gdown
 download_google_drive_file() {
     local file_id="$1"
@@ -477,41 +631,44 @@ download_google_drive_file() {
 setup_directories() {
     log "Setting up directories..."
     
+    # Get correct group for this platform
+    CHOWN_GROUP=$(get_chown_group)
+    
     # Create cache directory
     if [[ "$MODE" == "prod" ]]; then
         # Production: use /var/cache/experimance
         mkdir -p /var/cache/experimance
-        chown "$RUNTIME_USER:$RUNTIME_USER" /var/cache/experimance
+        chown "$RUNTIME_USER:$CHOWN_GROUP" /var/cache/experimance
         log "Created production cache directory: /var/cache/experimance"
         
         # Production: use /var/log/experimance
         mkdir -p /var/log/experimance
-        chown "$RUNTIME_USER:$RUNTIME_USER" /var/log/experimance
+        chown "$RUNTIME_USER:$CHOWN_GROUP" /var/log/experimance
         chmod 775 /var/log/experimance
         log "Created production log directory: /var/log/experimance"
     else
         # Development: use local cache directory
         mkdir -p "$REPO_DIR/cache"
-        chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/cache"
+        chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/cache"
         log "Created development cache directory: $REPO_DIR/cache"
     fi
     
     # Create log directory if it doesn't exist
     mkdir -p "$REPO_DIR/logs"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/logs"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/logs"
     
     # Create images directory if it doesn't exist
     mkdir -p "$REPO_DIR/media/images/generated"
     mkdir -p "$REPO_DIR/media/images/mocks"
     mkdir -p "$REPO_DIR/media/video"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/images"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/images/generated"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/images/mocks"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/video"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/images"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/images/generated"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/images/mocks"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/video"
     
     # create transcripts directory
     mkdir -p "$REPO_DIR/transcripts"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/transcripts"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/transcripts"
 
     # Download and extract media bundle from Google drive
     # https://drive.google.com/file/d/1JPf4biReYj1qwWXsb0R_ZVcVrzM94XeE/view?usp=drive_link
@@ -534,7 +691,7 @@ setup_directories() {
                     log "Continuing installation without media files..."
                     return
                 fi
-                chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
+                chown "$RUNTIME_USER:$CHOWN_GROUP" "$ZIP_FILE"
             else
                 log "Media bundle zip already present at $ZIP_FILE"
                 
@@ -551,7 +708,7 @@ setup_directories() {
                         log "Continuing installation without media files..."
                         return
                     fi
-                    chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
+                    chown "$RUNTIME_USER:$CHOWN_GROUP" "$ZIP_FILE"
                 fi
             fi
 
@@ -565,7 +722,7 @@ setup_directories() {
                     log "Continuing installation without media files..."
                 else
                     log "Media bundle extracted successfully"
-                    chown -R "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media"
+                    chown -R "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media"
                 fi
             else
                 warn "Cannot extract media bundle: 'unzip' not found"
@@ -582,6 +739,23 @@ setup_directories() {
 
 # Define the complete list of required system packages
 get_required_packages() {
+    local package_type="${1:-default}"
+    
+    case "$PLATFORM" in
+        linux)
+            get_required_packages_linux "$package_type"
+            ;;
+        macos)
+            get_required_packages_macos "$package_type"
+            ;;
+        *)
+            error "Unsupported platform: $PLATFORM"
+            ;;
+    esac
+}
+
+# Linux package requirements
+get_required_packages_linux() {
     # Essential build tools that should be checked by command
     local build_tools=("make" "gcc")
     
@@ -634,6 +808,55 @@ get_required_packages() {
     esac
 }
 
+# macOS package requirements
+get_required_packages_macos() {
+    # Essential build tools (checked differently on macOS)
+    local build_tools=("xcode-select")
+    
+    # Homebrew packages (equivalent to apt_packages)
+    local brew_packages=(
+        # Build tools (make is included in Xcode Command Line Tools)
+        # "build-essential" -> Xcode Command Line Tools
+        
+        # Development libraries
+        "openssl"           # libssl-dev
+        "zlib"              # zlib1g-dev  
+        "bzip2"             # libbz2-dev
+        "readline"          # libreadline-dev
+        "sqlite"            # libsqlite3-dev
+        "curl"              # curl (usually pre-installed)
+        "git"               # git (usually pre-installed via Xcode)
+        "xz"                # xz-utils
+        "tcl-tk"            # tk-dev (different name on macOS)
+        "libxml2"           # libxml2-dev
+        "xmlsec1"           # libxmlsec1-dev
+        "libffi"            # libffi-dev
+        "gdbm"              # libgdbm-dev
+        
+        # Audio/Video
+        "portaudio"         # portaudio19-dev
+        "ffmpeg"            # ffmpeg
+        
+        # Note: v4l-utils, libv4l-dev, uvcdynctrl, guvcview -> Not needed on macOS
+        # macOS uses AVFoundation framework instead
+        # evtest -> Not available on macOS (use different input monitoring)
+        # lm-sensors -> Not available on macOS (use built-in sensors)
+        # supercollider available via brew if needed
+    )
+    
+    case "${1:-brew}" in
+        "build_tools")
+            printf '%s\n' "${build_tools[@]}"
+            ;;
+        "brew")
+            printf '%s\n' "${brew_packages[@]}"
+            ;;
+        *)
+            printf '%s\n' "${brew_packages[@]}"
+            ;;
+    esac
+}
+
 # Check if system build dependencies are installed
 check_build_dependencies() {
     local missing_deps=()
@@ -642,7 +865,18 @@ check_build_dependencies() {
     while IFS= read -r tool; do
         case "$tool" in
             "gcc")
-                if ! command -v gcc >/dev/null 2>&1; then missing_deps+=("build-essential"); fi
+                if ! command -v gcc >/dev/null 2>&1; then 
+                    if [[ "$PLATFORM" == "linux" ]]; then
+                        missing_deps+=("build-essential")
+                    elif [[ "$PLATFORM" == "macos" ]]; then
+                        missing_deps+=("xcode-command-line-tools")
+                    fi
+                fi
+                ;;
+            "xcode-select")
+                if ! xcode-select -p &>/dev/null; then
+                    missing_deps+=("xcode-command-line-tools")
+                fi
                 ;;
             *)
                 if ! command -v "$tool" >/dev/null 2>&1; then missing_deps+=("$tool"); fi
@@ -651,13 +885,23 @@ check_build_dependencies() {
     done < <(get_required_packages "build_tools")
     
     # Check each package (skip build tools as they're handled above)
-    while IFS= read -r package; do
-        if [[ "$package" != "make" && "$package" != "build-essential" ]]; then
-            if ! dpkg -l "$package" 2>/dev/null | grep -q "^ii"; then
-                missing_deps+=("$package")
+    if [[ "$PLATFORM" == "linux" ]]; then
+        while IFS= read -r package; do
+            if [[ "$package" != "make" && "$package" != "build-essential" ]]; then
+                if ! dpkg -l "$package" 2>/dev/null | grep -q "^ii"; then
+                    missing_deps+=("$package")
+                fi
             fi
-        fi
-    done < <(get_required_packages "apt")
+        done < <(get_required_packages "apt")
+    elif [[ "$PLATFORM" == "macos" ]]; then
+        while IFS= read -r package; do
+            if [[ "$package" != "make" ]]; then  # make comes with Xcode tools
+                if ! brew list "$package" &>/dev/null; then
+                    missing_deps+=("$package")
+                fi
+            fi
+        done < <(get_required_packages "brew")
+    fi
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         warn "Missing system build dependencies required for Python compilation:"
@@ -665,8 +909,26 @@ check_build_dependencies() {
             echo "  - $dep"
         done
         echo ""
-        echo "The following packages need to be installed:"
-        echo "  sudo apt install $(get_required_packages "apt" | tr '\n' ' ')"
+        
+        if [[ "$PLATFORM" == "linux" ]]; then
+            echo "The following packages need to be installed:"
+            echo "  sudo apt install $(get_required_packages "apt" | tr '\n' ' ')"
+        elif [[ "$PLATFORM" == "macos" ]]; then
+            if [[ " ${missing_deps[*]} " =~ " xcode-command-line-tools " ]]; then
+                echo "Xcode Command Line Tools need to be installed:"
+                echo "  xcode-select --install"
+            fi
+            local brew_deps=()
+            for dep in "${missing_deps[@]}"; do
+                if [[ "$dep" != "xcode-command-line-tools" ]]; then
+                    brew_deps+=("$dep")
+                fi
+            done
+            if [[ ${#brew_deps[@]} -gt 0 ]]; then
+                echo "The following Homebrew packages need to be installed:"
+                echo "  brew install ${brew_deps[*]}"
+            fi
+        fi
         echo ""
         
         if [[ "$MODE" == "prod" ]]; then
@@ -742,6 +1004,81 @@ install_system_dependencies() {
     fi
 }
 
+# macOS dependency installation
+install_system_dependencies_macos() {
+    log "Installing system dependencies for macOS..."
+    
+    # Determine the actual user (not root if using sudo)
+    local actual_user="$RUNTIME_USER"
+    if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+        actual_user="$SUDO_USER"
+        log "Running as root via sudo, will install Homebrew as user: $actual_user"
+    fi
+    
+    # Check for Xcode Command Line Tools
+    if ! xcode-select -p &>/dev/null; then
+        log "Installing Xcode Command Line Tools..."
+        xcode-select --install
+        log "Please complete the Xcode Command Line Tools installation and re-run this script"
+        exit 1
+    fi
+    
+    # Function to run commands as the actual user
+    run_as_user() {
+        if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+            # Running as root via sudo, delegate to actual user
+            sudo -u "$actual_user" -H bash -c "$1"
+        else
+            # Running as regular user
+            bash -c "$1"
+        fi
+    }
+    
+    # Check for Homebrew
+    if ! run_as_user "command -v brew &>/dev/null"; then
+        log "Installing Homebrew as user $actual_user..."
+        if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+            # Install Homebrew as the sudo user, not root
+            sudo -u "$actual_user" -H bash -c '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        else
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        
+        # Add Homebrew to PATH for current session
+        if [[ -x /opt/homebrew/bin/brew ]]; then
+            export PATH="/opt/homebrew/bin:$PATH"
+        elif [[ -x /usr/local/bin/brew ]]; then
+            export PATH="/usr/local/bin:$PATH"
+        fi
+    fi
+    
+    # Install packages as the actual user (Homebrew requirement)
+    local packages_to_install
+    packages_to_install=$(get_required_packages_macos "brew" | tr '\n' ' ')
+    
+    log "Installing Homebrew packages as user $actual_user: $packages_to_install"
+    
+    # Create the brew command with proper PATH
+    local brew_cmd='
+        if [[ -x /opt/homebrew/bin/brew ]]; then
+            export PATH="/opt/homebrew/bin:$PATH"
+            BREW_CMD="/opt/homebrew/bin/brew"
+        elif [[ -x /usr/local/bin/brew ]]; then
+            export PATH="/usr/local/bin:$PATH" 
+            BREW_CMD="/usr/local/bin/brew"
+        else
+            BREW_CMD="brew"
+        fi
+        $BREW_CMD install '"$packages_to_install"'
+    '
+    
+    if ! run_as_user "$brew_cmd"; then
+        error "Failed to install Homebrew packages. Some packages may have different names on macOS or may not be available."
+    fi
+    
+    log "System dependencies installed via Homebrew"
+}
+
 # Ask about Python optimization flags
 ask_python_optimization() {
     if [[ "$MODE" == "prod" ]]; then
@@ -774,7 +1111,17 @@ install_dependencies() {
     if check_build_dependencies; then
         log "System build dependencies already installed"
     else
-        install_system_dependencies
+        case "$PLATFORM" in
+            linux)
+                install_system_dependencies
+                ;;
+            macos)
+                install_system_dependencies_macos
+                ;;
+            *)
+                error "Unsupported platform: $PLATFORM"
+                ;;
+        esac
     fi
     
     if [[ "$MODE" == "prod" ]]; then
@@ -1092,11 +1439,25 @@ else:
 
 start_services() {
     if [[ "$USE_SYSTEMD" != true ]]; then
-        warn "Development mode: Services not started via systemd"
+        warn "Development mode: Services not started via system service manager"
         warn "Use './scripts/dev <service>' to run individual services in development"
         return
     fi
     
+    case "$PLATFORM" in
+        linux)
+            start_services_linux
+            ;;
+        macos)
+            start_services_macos
+            ;;
+        *)
+            error "Service management not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+start_services_linux() {
     log "Starting services for project $PROJECT..."
     
     # First, reload systemd configuration to pick up any changes
@@ -1196,12 +1557,75 @@ start_services() {
     log "Start operation complete"
 }
 
+start_services_macos() {
+    log "Starting services for project $PROJECT using launchd..."
+    
+    # Determine launchd directory
+    local launchd_dir
+    if [[ "$MODE" == "prod" ]]; then
+        launchd_dir="/Library/LaunchDaemons"
+    else
+        launchd_dir="$HOME/Library/LaunchAgents"
+    fi
+    
+    # Start individual services
+    for service in "${SERVICES[@]}"; do
+        local plist_file="$launchd_dir/com.experimance.$service.plist"
+        local service_label="com.experimance.$service"
+        
+        if [[ -f "$plist_file" ]]; then
+            log "Processing service: $service_label"
+            
+            # Check if already loaded
+            if launchctl list | grep -q "$service_label"; then
+                log "$service_label is already loaded"
+                # Try to start if not running
+                if ! launchctl start "$service_label" 2>/dev/null; then
+                    log "$service_label may already be running"
+                fi
+            else
+                log "Loading and starting $service_label..."
+                if launchctl load "$plist_file"; then
+                    log "✓ Loaded $service_label"
+                    sleep 1
+                    # Verify it's running
+                    if launchctl list | grep -q "$service_label"; then
+                        log "✓ Confirmed $service_label is active"
+                    else
+                        warn "⚠ $service_label loaded but not found in active services"
+                    fi
+                else
+                    error "✗ Failed to load $service_label"
+                fi
+            fi
+        else
+            error "Service plist file not found: $plist_file"
+        fi
+    done
+    
+    log "Start operation complete"
+}
+
 stop_services() {
     if [[ "$USE_SYSTEMD" != true ]]; then
-        warn "Development mode: No systemd services to stop"
+        warn "Development mode: No system services to stop"
         return
     fi
     
+    case "$PLATFORM" in
+        linux)
+            stop_services_linux
+            ;;
+        macos)
+            stop_services_macos
+            ;;
+        *)
+            error "Service management not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+stop_services_linux() {
     log "Stopping services for project $PROJECT..."
     
     # Check if target exists and is loaded
@@ -1274,6 +1698,52 @@ stop_services() {
     log "Stop operation complete"
 }
 
+stop_services_macos() {
+    log "Stopping services for project $PROJECT using launchd..."
+    
+    # Determine launchd directory
+    local launchd_dir
+    if [[ "$MODE" == "prod" ]]; then
+        launchd_dir="/Library/LaunchDaemons"
+    else
+        launchd_dir="$HOME/Library/LaunchAgents"
+    fi
+    
+    # Stop individual services
+    for service in "${SERVICES[@]}"; do
+        local plist_file="$launchd_dir/com.experimance.$service.plist"
+        local service_label="com.experimance.$service"
+        
+        if [[ -f "$plist_file" ]]; then
+            log "Processing service: $service_label"
+            
+            # Check if loaded
+            if launchctl list | grep -q "$service_label"; then
+                log "Unloading $service_label..."
+                if launchctl unload "$plist_file"; then
+                    log "✓ Unloaded $service_label"
+                    
+                    # Wait and verify it's gone
+                    sleep 1
+                    if ! launchctl list | grep -q "$service_label"; then
+                        log "✓ Confirmed $service_label is stopped"
+                    else
+                        warn "⚠ $service_label may still be running"
+                    fi
+                else
+                    warn "Failed to unload $service_label"
+                fi
+            else
+                log "$service_label is not loaded"
+            fi
+        else
+            warn "Service plist file not found: $plist_file"
+        fi
+    done
+    
+    log "Stop operation complete"
+}
+
 restart_services() {
     log "Restarting services for project $PROJECT..."
     stop_services
@@ -1284,6 +1754,20 @@ restart_services() {
 status_services() {
     log "Checking status of services for project $PROJECT..."
     
+    case "$PLATFORM" in
+        linux)
+            status_services_linux
+            ;;
+        macos)
+            status_services_macos
+            ;;
+        *)
+            warn "Service status checking not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+status_services_linux() {
     echo -e "\n${BLUE}=== Systemd Template Files Status ===${NC}"
     
     # Check if template files exist (these are the actual files we install)
@@ -1382,6 +1866,54 @@ status_services() {
     fi
 }
 
+status_services_macos() {
+    echo -e "\n${BLUE}=== Launchd Service Files Status ===${NC}"
+    
+    # Determine launchd directory
+    local launchd_dir
+    if [[ "$MODE" == "prod" ]]; then
+        launchd_dir="/Library/LaunchDaemons"
+    else
+        launchd_dir="$HOME/Library/LaunchAgents"
+    fi
+    
+    # Check if plist files exist
+    for service in "${SERVICES[@]}"; do
+        local plist_file="$launchd_dir/com.experimance.$service.plist"
+        if [[ -f "$plist_file" ]]; then
+            echo -e "${GREEN}✓${NC} Service plist exists: com.experimance.$service.plist"
+        else
+            echo -e "${RED}✗${NC} Service plist missing: com.experimance.$service.plist"
+        fi
+    done
+    
+    echo -e "\n${BLUE}=== Service Status ===${NC}"
+    for service in "${SERVICES[@]}"; do
+        local service_label="com.experimance.$service"
+        
+        if launchctl list | grep -q "$service_label"; then
+            # Service is loaded, check its status
+            local pid=$(launchctl list | grep "$service_label" | awk '{print $1}')
+            local exit_code=$(launchctl list | grep "$service_label" | awk '{print $2}')
+            
+            if [[ "$pid" != "-" ]]; then
+                echo -e "${GREEN}✓${NC} $service_label: running (PID: $pid)"
+            elif [[ "$exit_code" == "0" ]]; then
+                echo -e "${YELLOW}○${NC} $service_label: loaded but not running (last exit: $exit_code)"
+            else
+                echo -e "${RED}✗${NC} $service_label: failed (exit code: $exit_code)"
+            fi
+        else
+            echo -e "${RED}?${NC} $service_label: not loaded"
+        fi
+    done
+    
+    echo -e "\n${BLUE}=== Recent Logs ===${NC}"
+    echo "Check system logs with:"
+    echo "  log show --predicate 'process == \"experimance_core\"' --last 10m"
+    echo "  log stream --predicate 'process CONTAINS \"experimance\"'"
+}
+
 # Scheduling functions
 setup_schedule() {
     local start_schedule="$1"
@@ -1456,73 +1988,100 @@ main() {
             if [[ "$MODE" == "dev" ]]; then
                 log "=== DEVELOPMENT INSTALL ==="
                 log "This will set up the project for development testing only"
-                log "No systemd services will be installed"
+                log "No system services will be installed"
+                
+                # Warn if running dev mode with sudo
+                if [[ "$EUID" -eq 0 ]]; then
+                    warn "Development mode does not require root privileges!"
+                    if [[ -n "${SUDO_USER:-}" ]]; then
+                        warn "Consider running without sudo: ./infra/scripts/deploy.sh $PROJECT install dev"
+                        warn "Continuing with Homebrew running as user: $SUDO_USER"
+                    else
+                        warn "Running as root user. This may cause issues with Homebrew on macOS."
+                    fi
+                fi
             elif [[ "$MODE" == "prod" ]]; then
                 log "=== PRODUCTION INSTALL ==="
                 log "This will set up the project for production deployment"
-                log "Systemd services will be installed and can be managed"
-                check_root
+                if [[ "$PLATFORM" == "linux" ]]; then
+                    log "Systemd services will be installed and can be managed"
+                    check_root
+                elif [[ "$PLATFORM" == "macos" ]]; then
+                    log "Launchd services will be installed and can be managed"
+                    if [[ "$USE_SYSTEMD" == true ]] && [[ $EUID -ne 0 ]]; then
+                        error "Production mode on macOS requires root privileges for LaunchDaemons. Run with sudo."
+                    fi
+                fi
             fi
             
             check_user
             install_dependencies
             # Re-populate SERVICES array after dependencies are installed
-            readarray -t SERVICES < <(get_project_services "$PROJECT")
+            load_services_array "$PROJECT"
             check_project
             install_systemd_files
-            install_reset_on_input
-            create_symlink "$(pwd)"
+            if [[ "$PLATFORM" == "linux" ]]; then
+                install_reset_on_input
+            fi
+            if [[ "$PLATFORM" == "linux" ]]; then
+                create_symlink "$(pwd)"
+            fi
             setup_directories
 
-            # add user to groups as needed
-            local group_added=false
-            # add user to video group if not already a member
-            if ! id -nG "$RUNTIME_USER" | grep -qw "video"; then
-                log "Adding $RUNTIME_USER to video group for webcam access"
-                if [[ "$MODE" == "prod" ]]; then
-                    usermod -aG video "$RUNTIME_USER"
+            # Group management for hardware access (Linux only)
+            if [[ "$PLATFORM" == "linux" ]]; then
+                # add user to groups as needed
+                local group_added=false
+                # add user to video group if not already a member
+                if ! id -nG "$RUNTIME_USER" | grep -qw "video"; then
+                    log "Adding $RUNTIME_USER to video group for webcam access"
+                    if [[ "$MODE" == "prod" ]]; then
+                        usermod -aG video "$RUNTIME_USER"
+                    else
+                        sudo usermod -aG video "$RUNTIME_USER"
+                    fi
+                    group_added=true
                 else
-                    sudo usermod -aG video "$RUNTIME_USER"
+                    log "$RUNTIME_USER is already a member of the video group"
                 fi
-                group_added=true
-            else
-                log "$RUNTIME_USER is already a member of the video group"
-            fi
-            
-            # add user to audio group if not already a member
-            if ! id -nG "$RUNTIME_USER" | grep -qw "audio"; then
-                log "Adding $RUNTIME_USER to audio group for audio device access"
-                if [[ "$MODE" == "prod" ]]; then
-                    usermod -aG audio "$RUNTIME_USER"
+                
+                # add user to audio group if not already a member
+                if ! id -nG "$RUNTIME_USER" | grep -qw "audio"; then
+                    log "Adding $RUNTIME_USER to audio group for audio device access"
+                    if [[ "$MODE" == "prod" ]]; then
+                        usermod -aG audio "$RUNTIME_USER"
+                    else
+                        sudo usermod -aG audio "$RUNTIME_USER"
+                    fi
+                    group_added=true
                 else
-                    sudo usermod -aG audio "$RUNTIME_USER"
+                    log "$RUNTIME_USER is already a member of the audio group"
                 fi
-                group_added=true
-            else
-                log "$RUNTIME_USER is already a member of the audio group"
-            fi
 
-            # add user to input group if not already a member
-            if ! id -nG "$RUNTIME_USER" | grep -qw "input"; then
-                log "Adding $RUNTIME_USER to input group for input device access"
-                if [[ "$MODE" == "prod" ]]; then
-                    usermod -aG input "$RUNTIME_USER"
+                # add user to input group if not already a member
+                if ! id -nG "$RUNTIME_USER" | grep -qw "input"; then
+                    log "Adding $RUNTIME_USER to input group for input device access"
+                    if [[ "$MODE" == "prod" ]]; then
+                        usermod -aG input "$RUNTIME_USER"
+                    else
+                        sudo usermod -aG input "$RUNTIME_USER"
+                    fi
+                    group_added=true
                 else
-                    sudo usermod -aG input "$RUNTIME_USER"
+                    log "$RUNTIME_USER is already a member of the input group"
                 fi
-                group_added=true
+                
+                # Inform user about group membership activation if groups were added
+                if [[ "$group_added" == true ]] && [[ "$MODE" == "dev" ]]; then
+                    echo ""
+                    warn "New group membership added. To activate group access:"
+                    warn "  Option 1: Log out and log back in (recommended)"
+                    warn "  Option 2: Run 'newgrp video', 'newgrp audio', and/or 'newgrp input' to start a new shell with groups active"
+                    warn "  Option 3: Restart your terminal session"
+                    echo ""
+                fi
             else
-                log "$RUNTIME_USER is already a member of the input group"
-            fi
-            
-            # Inform user about group membership activation if groups were added
-            if [[ "$group_added" == true ]] && [[ "$MODE" == "dev" ]]; then
-                echo ""
-                warn "New group membership added. To activate group access:"
-                warn "  Option 1: Log out and log back in (recommended)"
-                warn "  Option 2: Run 'newgrp video', 'newgrp audio', and/or 'newgrp input' to start a new shell with groups active"
-                warn "  Option 3: Restart your terminal session"
-                echo ""
+                log "Device access permissions are managed by macOS system settings"
             fi
             
             if [[ "$MODE" == "dev" ]]; then

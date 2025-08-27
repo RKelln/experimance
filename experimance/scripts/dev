@@ -366,8 +366,11 @@ get_available_services() {
     fi
 }
 
-# Get available services
-readarray -t AVAILABLE_SERVICES < <(get_available_services "$PROJECT_ENV")
+# Get available services (bash 3.2 compatible)
+AVAILABLE_SERVICES=()
+while IFS= read -r line; do
+    AVAILABLE_SERVICES[${#AVAILABLE_SERVICES[@]}]="$line"
+done < <(get_available_services "$PROJECT_ENV")
 
 # Parse command line arguments
 REQUESTED_SERVICES=()

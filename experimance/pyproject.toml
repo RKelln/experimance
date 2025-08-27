@@ -30,7 +30,7 @@ dependencies = [
     "aiohttp>=3.11.18",
     "fal-client>=0.6.0",
     "pyglet>=2.1.6",
-    "pyrealsense2>=2.55.1.6486",
+    "pyrealsense2>=2.55.1.6486; platform_system != 'Darwin'",
     "pipecat-ai[assemblyai,cartesia,elevenlabs,openai]>=0.0.76",
     "pipecat-ai-flows>=0.0.18",
     "psutil>=7.0.0",
