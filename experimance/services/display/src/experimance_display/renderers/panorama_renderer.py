@@ -404,6 +404,7 @@ class PanoramaRenderer(LayerRenderer):
         
         # Blur post-processing setup - always use post-processing architecture
         self.blur_enabled = self.panorama_config.blur
+        self.blur_velocity = 1.0 # allows for the blur to be sped up or slowed down due to state/messages
         logger.info(f"Panorama blur {'enabled' if self.blur_enabled else 'DISABLED'} (config.panorama.blur={self.panorama_config.blur})")
         
         # PanoramaRenderer is the parent group for post-processing (blur or no-op)
@@ -963,36 +964,9 @@ class PanoramaRenderer(LayerRenderer):
         """Accelerate the blur transition by halving the remaining time."""
         if not self.blur_active:
             return
-            
-        # Calculate how much blur progress we've made
-        effective_duration = getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)
-        if effective_duration <= 0:
-            return
-            
-        current_progress = min(self.blur_timer / effective_duration, 1.0)
-        remaining_progress = 1.0 - current_progress
-        
-        if remaining_progress <= 0:
-            # Already complete, nothing to accelerate
-            return
-            
-        # Calculate remaining time at current rate
-        remaining_time_original = effective_duration - self.blur_timer
-        
-        # Halve the remaining time (or minimum 0.5 seconds to avoid too aggressive acceleration)
-        target_remaining_duration = max(0.5, remaining_time_original * 0.4)
-        
-        # Recalculate the effective duration to achieve the target
-        # new_effective_duration = current_time + target_remaining_time
-        new_effective_duration = self.blur_timer + target_remaining_duration
-        
-        # Update the stored duration
-        self._effective_blur_duration = new_effective_duration
-        
-        logger.info(f"Accelerating blur transition: {current_progress:.2f} progress, "
-                   f"{remaining_progress:.2f} remaining will complete in {target_remaining_duration:.1f}s "
-                   f"(was {remaining_time_original:.1f}s remaining, now halved with {target_remaining_duration:.1f}s minimum)")
-    
+
+        self.blur_velocity = 2.0
+
     def update(self, dt: float) -> None:
         """Update panorama animations with smooth crossfade support."""
         # Update individual base image fade-ins and cleanup
@@ -1040,10 +1014,9 @@ class PanoramaRenderer(LayerRenderer):
         
         # Update blur transition (only if blur enabled and we have content)
         if (self.blur_enabled and self.blur_active and len(self.base_sprites) > 0):
-            self.blur_timer += dt
-            # Use the stored effective duration
-            effective_duration = getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)
-            progress = min(self.blur_timer / effective_duration, 1.0)
+            self.blur_timer += dt * self.blur_velocity
+
+            progress = min(self.blur_timer / self.panorama_config.blur_duration, 1.0)
             
             # Interpolate blur value
             blur_range = self.panorama_config.end_blur - self.panorama_config.start_blur
@@ -1054,6 +1027,7 @@ class PanoramaRenderer(LayerRenderer):
             self._update_blur_effect()
             if progress >= 1.0:
                 self.blur_active = False
+                self.blur_velocity = 1.0
                 logger.debug("Blur transition complete")
         
         # Update tile fades
