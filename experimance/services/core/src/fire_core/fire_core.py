@@ -582,6 +582,11 @@ class FireCoreService(BaseService):
                     await self._send_clear_display()
                     self.current_display_session_id = transcript.session_id
                 
+                # Reset LLM prompt memory for new session to allow fresh image generation
+                if self.last_generated_prompt is not None:
+                    logger.info(f"🧠 RESET LLM prompt memory for new session - previous prompt will not block new generation")
+                    self.last_generated_prompt = None
+                
                 self.transcript_accumulator = TranscriptAccumulator(
                     session_id=transcript.session_id,
                     messages=[],
