@@ -441,8 +441,8 @@ class LocalSDXLGenerator(ImageGenerator):
         if will_do_img2img and strength > 0:
             # Calculate effective steps: total_steps * strength
             effective_steps = gen_steps * strength
-            # We want exactly 6 effective steps for good quality
-            target_effective_steps = 6
+            # We want exactly 4 effective steps for good quality
+            target_effective_steps = 4
             if effective_steps < target_effective_steps:
                 # Calculate the exact steps needed to get target_effective_steps
                 compensated_steps = int(target_effective_steps / strength)
