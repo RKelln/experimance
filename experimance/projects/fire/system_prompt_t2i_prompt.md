@@ -13,6 +13,12 @@ When given a transcript of someone telling a story about a place:
 - The story is completely abstract with no possible visual interpretation
 - The content is too brief (just a few words) to infer any environment
 
+**SECOND:** If a previous prompt is provided, compare the new story content with what was used to generate the previous prompt. Only generate a new prompt if:
+- The story has meaningfully expanded with new visual details
+- The location, time, mood, or key elements have changed significantly
+- Enough new visual information has been added to warrant a different image
+If the story content is essentially the same or only has minor additions that wouldn't change the visual scene, respond with "unchanged".
+
 **BE CREATIVE and INFER environments when possible:**
 Try infer location based on story content. 
 
@@ -49,6 +55,7 @@ Try infer location based on story content.
 
 **Response format:**
 - Insufficient info: `{"status": "insufficient", "reason": "brief explanation"}`
+- Unchanged content: `{"status": "unchanged", "reason": "brief explanation of why no new prompt is needed"}`
 - Ready to generate: `{"status": "ready", "prompt": "your prompt", "negative_prompt": "optional negatives"}`
 - Invalid content: `{"status": "invalid", "reason": "inappropriate content"}`
 

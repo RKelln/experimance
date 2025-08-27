@@ -36,7 +36,7 @@ from experimance_common.zmq.zmq_utils import prepare_image_source
 
 from .config import FireCoreConfig, ImagePrompt
 from .llm import LLMProvider, get_llm_provider
-from .llm_prompt_builder import InsufficientContentException, LLMPromptBuilder
+from .llm_prompt_builder import InsufficientContentException, UnchangedContentException, LLMPromptBuilder
 from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
 
 from experimance_common.logger import setup_logging
@@ -309,6 +309,9 @@ class FireCoreService(BaseService):
         # Track current display session to avoid unnecessary clearing
         self.current_display_session_id: Optional[str] = None
         
+        # Track last generated prompt for deduplication
+        self.last_generated_prompt: Optional[ImagePrompt] = None
+        
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
         
@@ -494,13 +497,25 @@ class FireCoreService(BaseService):
             logger.info("Analyzing story with LLM")
             
             # Create base image prompt
-            base_prompt = await self.prompt_builder.build_prompt(
-                story.content
-            )
-            
-            # Queue the new request
-            request_id = self.queue_new_request(base_prompt)
-            logger.info(f"Queued story-based request {request_id}")
+            try:
+                base_prompt = await self.prompt_builder.build_prompt(
+                    story.content,
+                    previous_prompt=self.last_generated_prompt
+                )
+                
+                # Store the successfully generated prompt
+                self.last_generated_prompt = base_prompt
+                
+                # Queue the new request
+                request_id = self.queue_new_request(base_prompt)
+                logger.info(f"Queued story-based request {request_id}")
+                
+            except UnchangedContentException as e:
+                logger.info(f"Story content unchanged, skipping image generation: {e}")
+                return  # Don't queue a new request
+            except InsufficientContentException as e:
+                logger.info(f"Insufficient content for image generation: {e}")
+                return  # Don't queue a new request
             
             # Request processing will be handled by _state_monitor_task
             
@@ -652,7 +667,10 @@ class FireCoreService(BaseService):
             # Ask LLM to decide if we should generate a prompt using the existing prompt builder
             try:
                 logger.debug("🤖 BACKGROUND: Starting LLM call")
-                image_prompt = await self.prompt_builder.build_prompt(full_context)
+                image_prompt = await self.prompt_builder.build_prompt(
+                    full_context,
+                    previous_prompt=self.last_generated_prompt
+                )
                 logger.debug("✅ BACKGROUND: LLM call completed")
                 
                 # Check if this LLM processing request was cancelled while running
@@ -662,6 +680,9 @@ class FireCoreService(BaseService):
                 
                 logger.info("✅ LLM decided to generate prompt based on accumulated transcripts")
                 
+                # Store the successfully generated prompt
+                self.last_generated_prompt = image_prompt
+                
                 # Queue the new request
                 request_id = self.queue_new_request(image_prompt)
                 logger.info(f"🖼️ Queued transcript-based request {request_id} (total queue: {len(self.request_queue)})")
@@ -669,17 +690,26 @@ class FireCoreService(BaseService):
                 # Mark these messages as processed
                 old_processed_count = self.transcript_accumulator.processed_count
                 self.transcript_accumulator.processed_count = len(self.transcript_accumulator.messages)
-                logger.info(f"📝 Marked {self.transcript_accumulator.processed_count - old_processed_count} messages as processed")
+                logger.info(f"� Marked {self.transcript_accumulator.processed_count - old_processed_count} messages as processed")
                 
                 # Request processing will be handled by _state_monitor_task
-                
                 logger.debug("✅ BACKGROUND PROCESSING: Transcript processing completed successfully")
                 
                 # Mark LLM processing as completed
                 if self.llm_processing_request:
                     self.llm_processing_request.state = RequestState.COMPLETED
                 
-            except InsufficientContentException:
+            except UnchangedContentException as e:
+                logger.info(f"Transcript content unchanged, skipping image generation: {e}")
+                # Mark these messages as processed even though we didn't generate a new prompt
+                old_processed_count = self.transcript_accumulator.processed_count
+                self.transcript_accumulator.processed_count = len(self.transcript_accumulator.messages)
+                logger.debug(f"Marked {self.transcript_accumulator.processed_count - old_processed_count} messages as processed (unchanged)")
+                # Mark LLM processing as completed
+                if self.llm_processing_request:
+                    self.llm_processing_request.state = RequestState.COMPLETED
+                
+            except InsufficientContentException as e:
                 logger.debug("⏸️  LLM decided not to generate prompt yet, waiting for more content")
                 # Mark LLM processing as completed even if insufficient content
                 if self.llm_processing_request:
@@ -1004,11 +1034,12 @@ class FireCoreService(BaseService):
     async def _send_clear_display(self):
         """Send clear message to display service."""
         clear_message = DisplayMedia(
-            content_type=ContentType.CLEAR
+            content_type=ContentType.CLEAR,
+            fade_out=10.0   # Duration to fade out/clear content
         )
         
         await self.zmq_service.publish(clear_message)
-        logger.info("Sent clear display message")
+        logger.info("Sent clear display message with 10.0s fade-out")
     
     async def _state_monitor_task(self):
         """

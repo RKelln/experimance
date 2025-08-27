@@ -23,6 +23,11 @@ class InsufficientContentException(Exception):
     pass
 
 
+class UnchangedContentException(Exception):
+    """Raised when the content hasn't changed enough to warrant a new prompt."""
+    pass
+
+
 class LLMPromptBuilder:
     """
     Creates image generation prompts using LLM analysis of stories.
@@ -78,6 +83,7 @@ class LLMPromptBuilder:
         prefix: Optional[List[str]] = None,
         suffix: Optional[List[str]] = None,
         negative: Optional[List[str]] = None,
+        previous_prompt: Optional[ImagePrompt] = None,
     ) -> ImagePrompt:
         """
         Build an image generation prompt using LLM analysis.
@@ -87,19 +93,33 @@ class LLMPromptBuilder:
             prefix: Optional list of keywords to prepend to the prompt
             suffix: Optional list of keywords to append to the prompt
             negative: Optional list of keywords to include in negative prompt
+            previous_prompt: Optional previous ImagePrompt for deduplication
             
         Returns:
             ImagePrompt with LLM-generated prompt and metadata
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate a prompt
+            UnchangedContentException: When content hasn't changed enough to warrant a new prompt
         """
         # fallback prompt
         data = {
             "prompt": "A cinematic landscape scene",
         }
         try:
+            # Prepare the content for the LLM with consistent prefix for better caching
+            llm_content = f"STORY TRANSCRIPT:\n{story_content}"
+            
+            # Append previous prompt info if available
+            if previous_prompt:
+                llm_content += f"\n\nPREVIOUS PROMPT:\n{previous_prompt.prompt}"
+                if previous_prompt.negative_prompt:
+                    llm_content += f"\nPREVIOUS NEGATIVE PROMPT:\n{previous_prompt.negative_prompt}"
+            
             # Query the LLM
             logger.info(f"Querying LLM for prompt generation: {story_content[:100]}...")
             result = await self.llm.query(
-                content=story_content,
+                content=llm_content,
             )
             if result is None:
                 raise ValueError("LLM returned no result")
@@ -144,6 +164,11 @@ class LLMPromptBuilder:
                     logger.info(f"LLM determined insufficient content: {reason}")
                     raise InsufficientContentException(reason)
                     
+                elif status == "unchanged":
+                    reason = data.get("reason", "LLM determined content unchanged")
+                    logger.info(f"LLM determined content unchanged: {reason}")
+                    raise UnchangedContentException(reason)
+                    
                 elif status == "invalid":
                     reason = data.get("reason", "LLM determined invalid content")
                     logger.warning(f"LLM determined invalid content: {reason}")
@@ -155,6 +180,9 @@ class LLMPromptBuilder:
                     logger.info("LLM determined content is ready for image generation")
 
         except InsufficientContentException:
+            # Re-raise this exception to be caught by the caller
+            raise
+        except UnchangedContentException:
             # Re-raise this exception to be caught by the caller
             raise
         except Exception as e:
@@ -175,21 +203,28 @@ class LLMPromptBuilder:
     async def build_panorama_prompt(
         self,
         story_content: str,
+        previous_prompt: Optional[ImagePrompt] = None,
     ) -> ImagePrompt:
         """
         Build a prompt for a panorama using LLM.
         
         Args:
             story_content: Original story text
+            previous_prompt: Optional previous ImagePrompt for deduplication
 
         Returns:
             ImagePrompt optimized for panorama generation
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate a prompt
+            UnchangedContentException: When content hasn't changed enough to warrant a new prompt
         """
 
         return await self.build_prompt(
             story_content=story_content,
             prefix=self.panorama_style,
-            suffix=self.quality_style
+            suffix=self.quality_style,
+            previous_prompt=previous_prompt
         )
     
     def _elements_to_prompt(
@@ -280,21 +315,28 @@ class LLMPromptBuilder:
     async def build_tile_prompt(
         self,
         story_content: str,
+        previous_prompt: Optional[ImagePrompt] = None,
     ) -> ImagePrompt:
         """
         Build a prompt for a tile using LLM.
         
         Args:
             story_content: Original story text
+            previous_prompt: Optional previous ImagePrompt for deduplication
 
         Returns:
             ImagePrompt optimized for tile generation
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate a prompt
+            UnchangedContentException: When content hasn't changed enough to warrant a new prompt
         """
 
         return await self.build_prompt(
             story_content=story_content,
             prefix=self.tile_style,
-            suffix=self.quality_style
+            suffix=self.quality_style,
+            previous_prompt=previous_prompt
         )
 
     
@@ -318,6 +360,18 @@ class LLMPromptBuilder:
                 "status": "success",
                 "prompt": result.prompt,
                 "negative_prompt": result.negative_prompt if result.negative_prompt else "",
+            }
+            
+        except InsufficientContentException as e:
+            return {
+                "status": "insufficient",
+                "error": str(e),
+            }
+            
+        except UnchangedContentException as e:
+            return {
+                "status": "unchanged",
+                "error": str(e),
             }
             
         except Exception as e:
