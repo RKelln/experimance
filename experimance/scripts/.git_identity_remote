@@ -1,0 +1,50 @@
+#!/bin/bash
+# Git identity for remote work sessions
+# Usage: source .git_identity_remote
+# This sets git identity via environment variables for the current shell session only
+
+# Check if git identity is already set in this session
+if [[ -n "$GIT_AUTHOR_NAME" && -n "$GIT_AUTHOR_EMAIL" ]]; then
+    echo "Git identity already set for this session:"
+    echo "  Name: $GIT_AUTHOR_NAME"
+    echo "  Email: $GIT_AUTHOR_EMAIL"
+    return 0 2>/dev/null || exit 0
+fi
+
+# Check if running in VS Code integrated terminal
+if [[ "$TERM_PROGRAM" == "vscode" ]] || [[ -n "$VSCODE_IPC_HOOK_CLI" ]]; then
+    echo "Detected VS Code terminal - setting up git identity..."
+fi
+
+echo "Setting up git identity for this remote session..."
+echo "This will only affect git commands in this terminal session."
+echo ""
+
+# Prompt for name
+echo -n "Enter your name: "
+read git_name
+if [[ -z "$git_name" ]]; then
+    echo "Name cannot be empty. Exiting."
+    return 1 2>/dev/null || exit 1
+fi
+
+# Prompt for email  
+echo -n "Enter your email: "
+read git_email
+if [[ -z "$git_email" ]]; then
+    echo "Email cannot be empty. Exiting."
+    return 1 2>/dev/null || exit 1
+fi
+
+export GIT_AUTHOR_NAME="$git_name"
+export GIT_AUTHOR_EMAIL="$git_email"
+export GIT_COMMITTER_NAME="$git_name"
+export GIT_COMMITTER_EMAIL="$git_email"
+
+echo ""
+echo "Git identity set for this session:"
+echo "  Name: $GIT_AUTHOR_NAME"
+echo "  Email: $GIT_AUTHOR_EMAIL"
+echo ""
+echo "To commit: git add -A && git commit -m 'your message'"
+echo "To commit: git add -A && git commit -m 'your message'"
