@@ -76,6 +76,13 @@ class PipecatBackendConfig(BaseModel):
     audio_device_retry_attempts: int = Field(default=3, description="Number of times to retry audio device initialization on failure")
     audio_device_retry_delay: float = Field(default=1.0, description="Delay between audio device retry attempts (seconds)")
     
+    # Multi-channel audio output settings
+    multi_channel_output: bool = Field(default=False, description="Enable multi-channel audio output with delay support")
+    output_channels: int = Field(default=4, description="Number of output channels for multi-channel mode")
+    channel_delays: Dict[int, float] = Field(default_factory=dict, description="Per-channel delays in seconds for echo cancellation")
+    channel_volumes: Dict[int, float] = Field(default_factory=dict, description="Per-channel volume levels (0.0 to 1.0)")
+    max_delay_seconds: float = Field(default=1.0, description="Maximum delay buffer size in seconds")
+    
     # Voice Activity Detection settings
     vad_enabled: bool = Field(default=True, description="Enable voice activity detection using Silero VAD")
     

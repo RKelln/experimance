@@ -31,6 +31,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from .multi_channel_transport import MultiChannelAudioTransport, MultiChannelAudioTransportParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer
 from pipecat.services.whisper.stt import WhisperSTTService
@@ -65,7 +66,7 @@ from pipecat_flows import FlowManager, FlowArgs, FlowResult, FlowConfig
 
 from experimance_common.audio_utils import resolve_audio_device_index
 from experimance_common.constants import AGENT_SERVICE_DIR
-from .base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext, load_prompt
+from ..base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext, load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -374,7 +375,7 @@ class PipecatBackend(AgentBackend):
         self.pipeline: Optional[Pipeline] = None
         self.task: Optional[PipelineTask] = None
         self.runner: Optional[PipelineRunner] = None
-        self.transport: Optional[LocalAudioTransport] = None
+        self.transport: Optional[LocalAudioTransport | MultiChannelAudioTransport] = None
         self.flow_manager: Optional[FlowManager] = None
         self._pipeline_task: Optional[asyncio.Task] = None
         self._flow_config: Optional[FlowConfig] = None
@@ -841,7 +842,7 @@ class PipecatBackend(AgentBackend):
             # Always call parent class stop
             await super().stop()
     
-    def _create_transport(self) -> LocalAudioTransport:
+    def _create_transport(self) -> LocalAudioTransport | MultiChannelAudioTransport:
         """Create audio transport with retry logic for device resolution."""
         import time
         
@@ -948,10 +949,56 @@ class PipecatBackend(AgentBackend):
             transport_params.vad_analyzer = SileroVADAnalyzer(sample_rate=input_rate)
             logger.info(f"VAD enabled at {input_rate}Hz")
 
-        logger.info(f"Creating LocalAudioTransport with device rate: {self.pipecat_config.audio_in_sample_rate}Hz → pipeline rate: {input_rate}Hz")
-        transport = LocalAudioTransport(transport_params)
+        logger.info(f"Creating transport with device rate: {self.pipecat_config.audio_in_sample_rate}Hz → pipeline rate: {input_rate}Hz")
+        
+        # Check if multi-channel output is configured
+        if hasattr(self.pipecat_config, 'multi_channel_output') and self.pipecat_config.multi_channel_output:
+            transport = self._create_multi_channel_transport(transport_params, input_rate)
+        else:
+            transport = LocalAudioTransport(transport_params)
         
         return transport
+        
+    def _create_multi_channel_transport(self, standard_params: LocalAudioTransportParams, input_rate: int) -> MultiChannelAudioTransport:
+        """Create multi-channel audio transport with delay support.
+        
+        Args:
+            standard_params: Standard transport parameters to copy from.
+            input_rate: Input audio sample rate.
+            
+        Returns:
+            Configured multi-channel audio transport.
+        """
+        logger.info("Creating multi-channel audio transport...")
+        
+        # Create multi-channel transport parameters
+        mc_params = MultiChannelAudioTransportParams(
+            # Copy standard audio parameters
+            audio_in_enabled=standard_params.audio_in_enabled,
+            audio_out_enabled=standard_params.audio_out_enabled,
+            audio_in_channels=standard_params.audio_in_channels,
+            audio_out_channels=standard_params.audio_out_channels,
+            audio_in_sample_rate=standard_params.audio_in_sample_rate,
+            audio_out_sample_rate=standard_params.audio_out_sample_rate,
+            audio_in_filter=standard_params.audio_in_filter,
+            vad_analyzer=standard_params.vad_analyzer,
+            
+            # Input device configuration (reuse standard input)
+            input_device_index=standard_params.input_device_index,
+            
+            # Multi-channel output configuration - use standard audio output device fields
+            aggregate_device_index=getattr(self.pipecat_config, 'audio_output_device_index', None),
+            aggregate_device_name=getattr(self.pipecat_config, 'audio_output_device_name', None),
+            output_channels=getattr(self.pipecat_config, 'output_channels', 4),
+            channel_delays=getattr(self.pipecat_config, 'channel_delays', {}),
+            channel_volumes=getattr(self.pipecat_config, 'channel_volumes', {}),
+            max_delay_seconds=getattr(self.pipecat_config, 'max_delay_seconds', 1.0),
+        )
+        
+        logger.info(f"Multi-channel config: {mc_params.output_channels} channels, "
+                   f"delays: {mc_params.channel_delays}, volumes: {mc_params.channel_volumes}")
+        
+        return MultiChannelAudioTransport(mc_params)
         
 
     async def _create_ensemble_pipeline(self) -> None:
@@ -1046,8 +1093,9 @@ class PipecatBackend(AgentBackend):
         stt_mute_processor = STTMuteFilter(
             config=STTMuteConfig(
                 strategies={
-                    STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
-                    STTMuteStrategy.FUNCTION_CALL,
+                    #STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
+                    #STTMuteStrategy.FUNCTION_CALL,
+                    STTMuteStrategy.ALWAYS, # during bot speech
                 }
             ),
         )
@@ -1062,7 +1110,9 @@ class PipecatBackend(AgentBackend):
         ]
         if self.pipecat_config.flow_file:
             pipeline_components.append(stt_mute_processor)
-        
+        else:
+            pipeline_components.append(stt_mute_processor)
+
         pipeline_components.extend([
             stt,
             transcript_processor.user(),

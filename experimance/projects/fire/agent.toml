@@ -23,30 +23,6 @@ prompt_path="projects/fire/fire_spirit_prompt.md"
 # Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
 mode = "ensemble"  # Change to "realtime" to use OpenAI Realtime Beta
 
-# Audio settings
-audio_in_enabled = true
-audio_out_enabled = true
-audio_in_sample_rate = 48000
-audio_out_sample_rate = 48000
-
-# Audio device selection (comment out to use default devices)
-# Use `uv run python scripts/audio_recovery.py list` to list available devices
-# Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
-# For better performance, you can also specify device indices directly:
-audio_input_device_name = "AIRHUG"   # USB Conference microphone
-audio_output_device_name = "AIRHUG"  # USB Conference speaker
-# Alternatively, use indices for faster startup (uncomment to use):
-# audio_input_device_index = 6   # Yealink device index
-# audio_output_device_index = 6  # Yealink device index
-
-# Audio error handling
-suppress_audio_errors = true         # Suppress ALSA/JACK error messages
-audio_device_retry_attempts = 3      # Retry attempts for device initialization
-audio_device_retry_delay = 1.0       # Delay between retries (seconds)
-
-# Voice Activity Detection
-vad_enabled = true
-
 # LLM settings
 openai_model = "gpt-4o"  # For ensemble mode
 
@@ -60,6 +36,49 @@ turn_detection_silence_ms = 800
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 
+# Audio settings
+audio_in_enabled = true
+audio_out_enabled = true
+audio_in_sample_rate = 48000
+audio_out_sample_rate = 48000       # Standard sample rate compatible with Cartesia
+
+# Audio device selection (comment out to use default devices)
+# Use `uv run python scripts/audio_recovery.py list` to list available devices
+# Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
+# For better performance, you can also specify device indices directly:
+audio_input_device_name = "default"   # USB Conference microphone
+audio_output_device_name = "default"  # Use pipewire device for Virtual-Multi sink
+# Alternatively, use indices for faster startup (uncomment to use):
+# audio_input_device_index = 6   # Yealink device index
+# audio_output_device_index = 5  # Pipewire device index for Virtual-Multi sink
+
+# Audio error handling
+suppress_audio_errors = true         # Suppress ALSA/JACK error messages
+audio_device_retry_attempts = 3      # Retry attempts for device initialization
+audio_device_retry_delay = 1.0       # Delay between retries (seconds)
+
+# Voice Activity Detection
+vad_enabled = true
+
+# Multi-channel audio output (optional)
+# Enable this for dual speaker setup with echo cancellation delays
+multi_channel_output = false
+output_channels = 4                   # Total output channels
+
+# Per-channel delays (in seconds) for echo cancellation
+#[backend_config.pipecat.channel_delays]
+#0 = 0.120    # Laptop speakers
+#1 = 0.120    # Laptop speakers
+#2 = 0.000    # Bluetooth speakers
+#3 = 0.000    # Bluetooth speakers
+
+# Per-channel volumes (0.0 to 1.0)
+#[backend_config.pipecat.channel_volumes]
+#0 = 1.0    # Full volume USB
+#1 = 1.0    # Full volume USB
+#2 = 0.8    # Slightly lower volume for audio port to balance levels
+#3 = 0.8    # Slightly lower volume for audio port to balance levels
+
 # Ensemble mode provider settings
 [backend_config.pipecat.ensemble]
 stt = "assemblyai"  # Speech-to-text provider
@@ -67,7 +86,7 @@ llm = "openai"      # Language model provider
 tts = "cartesia"    # Text-to-speech provider
 
 [vision]
-audience_detection_enabled = true
+audience_detection_enabled = false
 
 # Audience Detection Settings  
 audience_detection_interval = 1.5       # Check camera every 1.5 seconds (slightly slower for stability)

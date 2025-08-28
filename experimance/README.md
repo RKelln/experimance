@@ -145,6 +145,9 @@ Experimance is currently comprised of a number of services:
   * Supports many flavours of TTS, STT and LLM
   * Integrated vision system to detect audience (CPU and VLM based)
   * [readme](services/agent/README.md)
+  * Multi-channel audio support with delay compensation for echo cancellation
+    * Useful for adding additional speakers for voice agent output for additional volume
+    * [Multi-channel audio documentation](docs/multi_channel_audio.md)
 * ## Display
   * Simple, `pyglet`-based display
   * Displays and transitions between images, displays video and text overlays
@@ -385,3 +388,13 @@ uv run -m pytest -k "ImageServer"
 
 See [`utils/tests/README.md`](utils/tests/README.md) and [`utils/tests/README_ZMQ_TESTS.md](utils/tests/README_ZMQ_TESTS.md) for more details.
 
+## Advanced Features Documentation
+
+For detailed documentation on advanced system features:
+
+- **[Multi-Channel Audio System](docs/multi_channel_audio.md)** - Complete guide to the multi-channel audio transport with delay compensation for echo cancellation
+- **[Multi-Channel Quick Reference](docs/multi_channel_quick_reference.md)** - Quick setup and configuration guide for multi-channel audio
+- **[Health System](docs/health_system.md)** - Service monitoring and health management
+- **[Image ZMQ Utilities](docs/image_zmq_utilities.md)** - Image processing and ZMQ integration
+- **[Logging System](docs/logging_system.md)** - Centralized logging and debugging
+- **[Transcript Display](docs/transcript_display_best_practices.md)** - Best practices for agent transcript display

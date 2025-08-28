@@ -286,7 +286,7 @@ class AgentServiceBase(BaseService):
 
         try:
             if backend_name == "pipecat":
-                from .backends.pipecat_backend import PipecatBackend
+                from .backends.pipecat.backend import PipecatBackend
                 # Pass self (agent service) to backend
                 self.current_backend = PipecatBackend(self.config, agent_service=self)
             else:
