@@ -193,15 +193,15 @@ class FireAgentService(AgentServiceBase):
             
             # start polling camera
             self.add_task(self._audience_detection_loop())
-        else:
+
+            # Send initial OSC signal (no audience present at startup)
+            if self.osc_client:
+                self._send_osc_presence(False)
+        else: # no audiencve detection
             logger.warning("Audience detection is disabled, no audience monitoring will occur")
             # start voice chat backend, since it won't be started by audience detection
             logger.info("Starting conversation backend immediately since audience detection is disabled")
-            await self._start_backend_for_conversation()
-
-        # Send initial OSC signal (no audience present at startup)
-        if self.osc_client:
-            self._send_osc_presence(False)
+            await self.audience_detected()
 
         logger.info("Fire agent conversation started")
     
@@ -309,14 +309,16 @@ class FireAgentService(AgentServiceBase):
     async def _send_proactive_greeting(self) -> None:
         """Send a proactive greeting to visitors after a short delay."""
         try:
-            # Wait for the configured greeting delay
-            await asyncio.sleep(self.config.greeting_delay)
-            
-            # Send proactive greeting prompt
+            if self.config.vision.audience_detection_enabled:
+                # Wait for the configured greeting delay if we've seen the audience
+                await asyncio.sleep(self.config.greeting_delay)
+
+            # Trigger the backend to generate a proactive greeting
             greeting_prompt = self.config.greeting_prompt
-            logger.info("Sending proactive greeting to visitor")
+            logger.info("Triggering proactive greeting from backend")
             if self.current_backend:
-                await self.current_backend.send_message(greeting_prompt, speaker="system")
+                # Use backend's trigger_response method to generate immediate LLM response
+                await self.current_backend.trigger_response(greeting_prompt)
             
         except Exception as e:
             logger.error(f"Failed to send proactive greeting: {e}")

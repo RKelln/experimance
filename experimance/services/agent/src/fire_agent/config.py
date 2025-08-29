@@ -141,6 +141,6 @@ class FireAgentServiceConfig(AgentServiceConfig):
         description="Delay in seconds before greeting visitors after detection"
     )
     greeting_prompt: str = Field(
-        default="You sense someone approaching your fire circle. Greet them warmly as the Fire Spirit you are.",
-        description="System prompt to trigger proactive greeting"
+        default="Please greet me warmly as the Fire Spirit you are. I've just arrived at your fire circle.",
+        description="User message to trigger proactive greeting"
     )

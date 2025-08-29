@@ -218,6 +218,26 @@ class AgentBackend(ABC):
         """
         pass
     
+    async def trigger_response(self, prompt: str) -> None:
+        """
+        Trigger the LLM to generate an immediate response based on the given prompt.
+        
+        This method should cause the LLM to process the prompt and generate a spoken response,
+        as if the user had just said the prompt. Different backends may implement this differently:
+        - Some might simulate user input
+        - Others might use direct TTS with LLM generation
+        - Some might use special backend-specific triggers
+        
+        Args:
+            prompt: The prompt to trigger the LLM response with
+        """
+        # Default implementation: fallback to sending as user message + TTS
+        # Backends should override this with more appropriate implementations
+        logger.warning(f"Backend {self.backend_name} using default trigger_response implementation")
+        await self.send_message(prompt, speaker="user")
+        # Note: This might not trigger immediate response in all backends
+        # Each backend should implement their own optimal approach
+    
     # @abstractmethod
     # async def get_conversation_history(self) -> List[ConversationTurn]:
     #     """

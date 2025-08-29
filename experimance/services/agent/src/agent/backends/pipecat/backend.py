@@ -1337,6 +1337,41 @@ class PipecatBackend(AgentBackend):
         except Exception as e:
             logger.error(f"Error sending message: {e}")
     
+    async def trigger_response(self, prompt: str) -> None:
+        """Trigger the LLM to generate an immediate response by simulating user input.
+        
+        This method simulates a user transcription to trigger the LLM pipeline to process
+        the prompt and generate a spoken response. This is the proper way to make the
+        agent speak proactively in Pipecat.
+        
+        Args:
+            prompt: The prompt to trigger the LLM response with
+        """
+        if not self.is_connected:
+            logger.warning("Backend not connected, cannot trigger response")
+            return
+            
+        try:
+            if self.task:
+                # Simulate a transcription frame to trigger LLM processing
+                from pipecat.frames.frames import TranscriptionFrame
+                import time
+                
+                # Create a transcription frame that looks like the user spoke the prompt
+                transcription_frame = TranscriptionFrame(
+                    text=prompt,
+                    user_id="visitor",
+                    timestamp=str(int(time.time())),
+                    language=Language.EN
+                )
+                
+                # Send the transcription frame to trigger LLM processing
+                await self.task.queue_frame(transcription_frame)
+                logger.debug(f"Sent transcription frame to trigger response: {prompt}")
+                
+        except Exception as e:
+            logger.error(f"Error triggering response: {e}")
+    
     async def interrupt_bot(self) -> None:
         """Interrupt the bot if it's currently speaking."""
         if self.task and self.is_connected:
