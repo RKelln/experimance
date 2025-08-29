@@ -217,7 +217,7 @@ class MultiChannelAudioTester:
             pipecat_config = config.get('backend_config', {}).get('pipecat', {})
             
             # Load device settings
-            device_name = pipecat_config.get('aggregate_device_name')
+            device_name = pipecat_config.get('audio_output_device_name', "default")
             if device_name:
                 device_idx = find_audio_device_by_name(device_name, input_device=False)
                 if device_idx is not None:
@@ -241,7 +241,7 @@ class MultiChannelAudioTester:
         except Exception as e:
             logger.error(f"Failed to load config: {e}")
     
-    def initialize_audio(self):
+    def initialize_audio(self, device_name:str="default"):
         """Initialize PyAudio streams."""
         try:
             with suppress_audio_errors():
@@ -249,10 +249,10 @@ class MultiChannelAudioTester:
                 
                 # Prefer PipeWire device if not explicitly specified
                 if self.output_device_index is None:
-                    pw_idx = find_audio_device_by_name("pipewire", input_device=False)
+                    pw_idx = find_audio_device_by_name(device_name, input_device=False)
                     if pw_idx is not None:
                         self.output_device_index = pw_idx
-                        logger.info(f"Using output device: pipewire (index {pw_idx})")
+                        logger.info(f"Using output device: {device_name} (index {pw_idx})")
                     else:
                         logger.warning("No output device specified, using PortAudio default")
 
