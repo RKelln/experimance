@@ -76,8 +76,8 @@ output_channels = 4                   # Total output channels
 #[backend_config.pipecat.channel_volumes]
 #0 = 1.0    # Full volume USB
 #1 = 1.0    # Full volume USB
-#2 = 0.8    # Slightly lower volume for audio port to balance levels
-#3 = 0.8    # Slightly lower volume for audio port to balance levels
+#2 = 1.0    # Slightly lower volume for audio port to balance levels
+#3 = 1.0    # Slightly lower volume for audio port to balance levels
 
 # Ensemble mode provider settings
 [backend_config.pipecat.ensemble]
