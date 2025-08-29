@@ -53,6 +53,7 @@ class AgentServiceBase(BaseService):
         self.current_backend: Optional[AgentBackend] = None
         self.is_conversation_active = False
         self.agent_speaking = False
+        self.user_speaking = False
         
         # Conversation cooldown state
         self.conversation_end_time: Optional[float] = None
@@ -63,6 +64,11 @@ class AgentServiceBase(BaseService):
         self._last_audio_issue_time = None
         self._audio_issue_threshold = 3  # Number of issues before attempting recovery
         self._audio_issue_window = 300  # 5 minutes window for counting issues
+
+    @property
+    def any_speaking(self) -> bool:
+        """True if either the agent or user is currently speaking."""
+        return self.agent_speaking or self.user_speaking
 
     # ---------------- Subclass hooks ----------------
 
@@ -418,6 +424,7 @@ class AgentServiceBase(BaseService):
             # Reset conversation state
             self.is_conversation_active = False
             self.agent_speaking = False
+            self.user_speaking = False
             
             logger.info("Conversation backend stopped successfully")
             
@@ -521,6 +528,8 @@ class AgentServiceBase(BaseService):
         # Update internal state
         if speaker == "agent":
             self.agent_speaking = True
+        else:  # Human/user speech
+            self.user_speaking = True
         
         # Reset speech end time when new speech starts (interrupts quiet period)
         self._last_speech_end_time = None
@@ -538,6 +547,8 @@ class AgentServiceBase(BaseService):
         # Update internal state
         if speaker == "agent":
             self.agent_speaking = False
+        else:  # Human/user speech
+            self.user_speaking = False
         
         # Track when speech ends for deep thoughts timing
         self._last_speech_end_time = time.time()

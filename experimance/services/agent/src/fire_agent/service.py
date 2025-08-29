@@ -31,7 +31,7 @@ class FireAgentService(AgentServiceBase):
         self.audience_detector = None
         self.current_presence = None
 
-                # OSC client
+        # OSC client
         self.osc_client: Optional[SimpleUDPClient] = None
         self.osc_presence_address = f"{self.config.osc.address_prefix}/{self.config.osc.presence_address}/"
         # Clean up double slashes
@@ -226,8 +226,8 @@ class FireAgentService(AgentServiceBase):
         last_person_count = None  # Track person count changes for vision messages
         
         while self.running:
-            # if presence detected, send signal and start conversation
-            if self.audience_detector:
+            # only check presence when no one is speaking so not to interrupt (audio) processing
+            if self.audience_detector and not self.any_speaking:
                 try:
                     # Use hybrid detection (camera AI + YOLO)
                     presence = await self.audience_detector.check_audience_present()
