@@ -86,6 +86,13 @@ class PipecatBackendConfig(BaseModel):
     # Voice Activity Detection settings
     vad_enabled: bool = Field(default=True, description="Enable voice activity detection using Silero VAD")
     
+    # STT Mute Filter settings
+    stt_mute_enabled: bool = Field(default=True, description="Enable STT mute filter to prevent user speech during certain conditions")
+    stt_mute_strategies: list[str] = Field(
+        default=["mute_until_first_bot_complete", "function_call"],
+        description="STT mute strategies to apply. Available: 'always', 'first_speech', 'function_call', 'mute_until_first_bot_complete' See: https://docs.pipecat.ai/guides/fundamentals/user-input-muting"
+    )
+    
     # STT settings (for ensemble mode)
     whisper_model: str = Field(default="tiny", description="Whisper model size (tiny, base, small, medium, large)")
     
@@ -93,7 +100,7 @@ class PipecatBackendConfig(BaseModel):
     openai_model: str = Field(default="gpt-4o-mini", description="OpenAI model to use (ensemble mode) or realtime model")
     
     # OpenAI Realtime settings (for realtime mode)
-    openai_realtime_model: str = Field(default="gpt-4o-realtime-preview-2025-06-03", description="OpenAI Realtime model")
+    openai_realtime_model: str = Field(default="gpt-4o-realtime", description="OpenAI Realtime model")
     openai_voice: str = Field(default="alloy", description="OpenAI Realtime voice (alloy, echo, fable, onyx, nova, shimmer)")
     turn_detection_threshold: float = Field(default=0.5, description="Voice activity detection threshold for realtime mode")
     turn_detection_silence_ms: int = Field(default=800, description="Silence duration in ms before turn ends")
@@ -103,6 +110,19 @@ class PipecatBackendConfig(BaseModel):
         default_factory=lambda: EnsembleSettings(stt="assemblyai", llm="openai", tts="cartesia"),
         description="Settings for ensemble mode, including TTS and STT providers"
     )
+    
+    @field_validator('stt_mute_strategies')
+    @classmethod
+    def validate_stt_mute_strategies(cls, v: list[str]) -> list[str]:
+        """Validate STT mute strategies."""
+        valid_strategies = {
+            "always", "custom", "first_speech", "function_call", "mute_until_first_bot_complete"
+        }
+        for strategy in v:
+            strategy_lower = strategy.lower()
+            if strategy_lower not in valid_strategies:
+                raise ValueError(f"Invalid STT mute strategy '{strategy}'. Valid options are: {', '.join(valid_strategies)}")
+        return [s.lower() for s in v]  # Normalize to lowercase
 
 
 class BackendConfig(BaseModel):

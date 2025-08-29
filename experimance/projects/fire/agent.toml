@@ -60,6 +60,15 @@ audio_device_retry_delay = 1.0       # Delay between retries (seconds)
 # Voice Activity Detection
 vad_enabled = true
 
+# STT Mute Filter settings
+stt_mute_enabled = true  # Enable STT mute filter to prevent user speech during certain conditions
+stt_mute_strategies = ["first_speech"]
+# Available strategies: "always", "first_speech", "function_call", "mute_until_first_bot_complete"
+# - "mute_until_first_bot_complete": Start muted and remain muted until the first bot utterance completes. Ensures the bot’s initial instructions are fully delivered.
+# - "function_call": Mute user input during function call execution
+# - "always": Always mute during bot speech (aggressive but prevents interruption)
+# - "first_speech": Mute only during the bot’s first speech utterance. Useful for introductions when you want the bot to complete its greeting before the user can speak.
+
 # Multi-channel audio output (optional)
 # Enable this for dual speaker setup with echo cancellation delays
 multi_channel_output = false

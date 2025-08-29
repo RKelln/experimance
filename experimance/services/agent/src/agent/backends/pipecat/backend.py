@@ -1000,6 +1000,37 @@ class PipecatBackend(AgentBackend):
         
         return MultiChannelAudioTransport(mc_params)
         
+    def _create_stt_mute_processor(self) -> STTMuteFilter:
+        """Create STT mute processor with configurable strategies."""
+        if not self.pipecat_config.stt_mute_enabled:
+            logger.info("STT mute filter disabled by configuration")
+            # Return a pass-through processor or handle this case appropriately
+            # For now, we'll create an empty STTMuteFilter
+            return STTMuteFilter(config=STTMuteConfig(strategies=set()))
+        
+        # Map string strategy names to STTMuteStrategy enum values
+        strategy_mapping = {
+            "always": STTMuteStrategy.ALWAYS,
+            "custom": STTMuteStrategy.CUSTOM,
+            "first_speech": STTMuteStrategy.FIRST_SPEECH,
+            "function_call": STTMuteStrategy.FUNCTION_CALL,
+            "mute_until_first_bot_complete": STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
+        }
+        
+        # Convert configured strategies to enum values
+        strategies = set()
+        for strategy_name in self.pipecat_config.stt_mute_strategies:
+            strategy_enum = strategy_mapping.get(strategy_name.lower())
+            if strategy_enum:
+                strategies.add(strategy_enum)
+            else:
+                logger.warning(f"Unknown STT mute strategy: {strategy_name}")
+        
+        logger.info(f"Creating STT mute processor with strategies: {[s.name for s in strategies]}")
+        
+        return STTMuteFilter(
+            config=STTMuteConfig(strategies=strategies)
+        )
 
     async def _create_ensemble_pipeline(self) -> None:
         """Create ensemble pipeline with separate STT/LLM/TTS services."""
@@ -1089,28 +1120,17 @@ class PipecatBackend(AgentBackend):
         # Register transcript event handler as instance method
         transcript_processor.event_handler("on_transcript_update")(self._on_transcript_update)
         
-        # Mute user during function calls
-        stt_mute_processor = STTMuteFilter(
-            config=STTMuteConfig(
-                strategies={
-                    #STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE,
-                    #STTMuteStrategy.FUNCTION_CALL,
-                    STTMuteStrategy.ALWAYS, # during bot speech
-                }
-            ),
-        )
-
         assert self.transport is not None, "Transport must be created successfully"
 
         logger.info("Creating pipeline with audio components...")
         
         # Build pipeline components list - audio resampling now handled by transport filter
-        pipeline_components = [
-            self.transport.input(),
-        ]
-        if self.pipecat_config.flow_file:
-            pipeline_components.append(stt_mute_processor)
-        else:
+        pipeline_components = [self.transport.input()]
+
+        # muting during bot speech
+        if self.pipecat_config.stt_mute_enabled:
+            # Create STT mute processor with configurable strategies
+            stt_mute_processor = self._create_stt_mute_processor()
             pipeline_components.append(stt_mute_processor)
 
         pipeline_components.extend([
