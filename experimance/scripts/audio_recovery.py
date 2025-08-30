@@ -265,6 +265,120 @@ def test_icusbaudio7d_device():
     return False
 
 
+def test_respeaker_device():
+    """Test specifically for ReSpeaker devices and their digital input."""
+    print("\n=== ReSpeaker Device Test ===")
+    devices = list_audio_devices()
+    
+    respeaker_devices = [d for d in devices if 'respeaker' in d['name'].lower() or 'array' in d['name'].lower() or 'seeed' in d['name'].lower()]
+    
+    if not respeaker_devices:
+        print("No ReSpeaker devices found in PyAudio device list")
+        
+        # Check if PipeWire can see it
+        try:
+            import subprocess
+            result = subprocess.run(['pactl', 'list', 'sources', 'short'], 
+                                  capture_output=True, text=True, timeout=5)
+            
+            if 'respeaker' in result.stdout.lower() or 'array' in result.stdout.lower():
+                print("✓ ReSpeaker found in PipeWire, but not accessible to PyAudio")
+                print("  This indicates PipeWire has exclusive control of the device")
+                print("  Try: uv run scripts/audio_recovery.py fix-respeaker")
+                return False
+            else:
+                print("✗ ReSpeaker not found in PipeWire either")
+                return False
+        except Exception as e:
+            print(f"Could not check PipeWire status: {e}")
+            return False
+    
+    # Test PyAudio accessible devices
+    for device in respeaker_devices:
+        print(f"Found ReSpeaker device: [{device['index']}] {device['name']}")
+        input_channels = device['max_input_channels']
+        output_channels = device['max_output_channels']
+        print(f"  Input channels: {input_channels}")
+        print(f"  Output channels: {output_channels}")
+        print(f"  Sample rate: {device['default_sample_rate']}Hz")
+        
+        if input_channels > 0:
+            print("  Status: Device input appears functional ✓")
+            print(f"  ✓ {input_channels} input channels available")
+            
+            # Test if we can actually record from it with correct ReSpeaker parameters
+            try:
+                import pyaudio
+                p = pyaudio.PyAudio()
+                
+                # ReSpeaker XVF3800 native parameters: 16kHz, 16-bit, 2ch
+                optimal_format = pyaudio.paInt16
+                optimal_rate = 16000
+                optimal_channels = 2
+                
+                print(f"  Testing with optimal ReSpeaker parameters:")
+                print(f"    Format: 16-bit PCM")
+                print(f"    Sample rate: {optimal_rate}Hz") 
+                print(f"    Channels: {optimal_channels} (stereo)")
+                
+                # Try to open the device for recording with optimal parameters
+                stream = p.open(
+                    format=optimal_format,
+                    channels=optimal_channels,
+                    rate=optimal_rate,
+                    input=True,
+                    input_device_index=device['index'],
+                    frames_per_buffer=1024,
+                    start=False
+                )
+                stream.close()
+                p.terminate()
+                
+                print("  ✓ Device can be opened with optimal parameters")
+                print(f"  ✓ Recommended config: audio_input_device_index = {device['index']}")
+                print(f"  ✓ Recommended config: audio_in_sample_rate = {optimal_rate}")
+                
+                # Check volume levels if this is the PipeWire bridge device
+                if 'respeaker' == device['name'].lower() and device['index'] == 8:
+                    print("  💡 Note: ReSpeaker digital input may be quieter than analog")
+                    print("     Consider adjusting volume levels in PipeWire if needed:")
+                    print("     pactl set-source-volume alsa_input.usb-Seeed_Studio_reSpeaker_XVF3800_4-Mic_Array_* 150%")
+                
+                return True
+                
+            except Exception as e:
+                print(f"  ⚠️  Device cannot be opened for recording: {e}")
+                
+                # Try with fallback parameters
+                try:
+                    p2 = pyaudio.PyAudio()
+                    stream2 = p2.open(
+                        format=pyaudio.paInt16,
+                        channels=min(input_channels, 2),
+                        rate=int(device['default_sample_rate']),
+                        input=True,
+                        input_device_index=device['index'],
+                        frames_per_buffer=1024,
+                        start=False
+                    )
+                    stream2.close()
+                    p2.terminate()
+                    
+                    print("  ✓ Device works with fallback parameters")
+                    return True
+                    
+                except Exception as e2:
+                    print(f"  ✗ Device failed with fallback parameters too: {e2}")
+                    return False
+        else:
+            print("  Status: Device has no input channels ✗")
+            print("  This means PyAudio cannot access the microphone")
+            print("  The device may be controlled by PipeWire/PulseAudio")
+            print("  Try: uv run scripts/audio_recovery.py fix-respeaker")
+    
+    return False
+
+
 def reset_icusbaudio7d():
     """Attempt to reset ICUSBAUDIO7D USB audio device with comprehensive approach."""
     print("\n=== Comprehensive ICUSBAUDIO7D Device Reset ===")
@@ -410,6 +524,192 @@ def validate_device():
     
     return icusb_valid and yealink_valid
 
+
+def fix_respeaker_pipewire_access():
+    """
+    Fix ReSpeaker access by configuring PipeWire to make device available to ALSA applications.
+    
+    This creates an ALSA PCM plugin that bridges to PipeWire for the ReSpeaker device.
+    """
+    print("\n=== Fixing ReSpeaker PipeWire Access ===")
+    print("This will configure ALSA to access ReSpeaker through PipeWire...")
+    
+    try:
+        import subprocess
+        import os
+        from pathlib import Path
+        
+        # Step 1: Check if ReSpeaker is available in PipeWire
+        print("Step 1: Checking PipeWire sources...")
+        result = subprocess.run(['pactl', 'list', 'sources', 'short'], 
+                              capture_output=True, text=True, timeout=5)
+        
+        respeaker_source = None
+        for line in result.stdout.split('\n'):
+            if ('respeaker' in line.lower() or 'array' in line.lower()) and 'iec958-stereo' in line:
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    respeaker_source = parts[1].strip()
+                    print(f"✓ Found ReSpeaker digital source: {respeaker_source}")
+                    break
+        
+        if not respeaker_source:
+            print("✗ ReSpeaker digital source not found in PipeWire")
+            print("  Make sure the device is plugged in and recognized")
+            return False
+        
+        # Step 2: Create ALSA configuration for PipeWire bridge
+        print("Step 2: Creating ALSA configuration...")
+        
+        home_dir = Path.home()
+        asoundrc_path = home_dir / ".asoundrc"
+        
+        # Backup existing .asoundrc if it exists
+        if asoundrc_path.exists():
+            backup_path = asoundrc_path.with_suffix('.asoundrc.backup')
+            subprocess.run(['cp', str(asoundrc_path), str(backup_path)])
+            print(f"  Backed up existing .asoundrc to {backup_path}")
+        
+        # Create new .asoundrc with ReSpeaker configuration
+        asoundrc_content = f'''# ALSA configuration for ReSpeaker access through PipeWire
+# Generated by audio_recovery.py
+
+# Use PulseAudio compatibility for better PyAudio support
+pcm.!default {{
+    type pulse
+}}
+ctl.!default {{
+    type pulse
+}}
+
+# ReSpeaker digital input device through PULSE - uniquely named to avoid conflicts
+pcm.seeed_respeaker_digital {{
+    type pulse
+    device "{respeaker_source}"
+}}
+
+# For debugging - route all to pulse by default
+pcm.pulse {{
+    type pulse
+}}
+ctl.pulse {{
+    type pulse
+}}
+'''
+        
+        with open(asoundrc_path, 'w') as f:
+            f.write(asoundrc_content)
+        
+        print(f"  Created ALSA configuration at {asoundrc_path}")
+        
+        # Step 3: Test the new configuration
+        print("Step 3: Testing ALSA configuration...")
+        
+        # Give ALSA a moment to reload the configuration
+        import time
+        time.sleep(2)
+        
+        # Test if the new device is accessible
+        try:
+            result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
+            print("  ALSA devices reloaded successfully")
+        except Exception as e:
+            print(f"  Warning: Could not reload ALSA devices: {e}")
+        
+        print("✓ ReSpeaker PipeWire access configuration completed")
+        print("\nTo use the ReSpeaker digital input in your config:")
+        print('  audio_input_device_name = "seeed_respeaker_digital"')
+        print("\nTo test the configuration:")
+        print("  arecord -D seeed_respeaker_digital -f cd /tmp/respeaker_test.wav")
+        print("  uv run scripts/list_audio_devices.py")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error fixing ReSpeaker PipeWire access: {e}")
+        return False
+
+
+def adjust_respeaker_volume(volume_percent=150):
+    """
+    Adjust ReSpeaker input volume levels to compensate for quiet digital input.
+    
+    Args:
+        volume_percent: Volume level as percentage (default 150% for boost)
+    """
+    print(f"\n=== Adjusting ReSpeaker Volume to {volume_percent}% ===")
+    
+    try:
+        import subprocess
+        
+        # Find the ReSpeaker source
+        result = subprocess.run(['pactl', 'list', 'sources', 'short'], 
+                              capture_output=True, text=True, timeout=5)
+        
+        respeaker_sources = []
+        for line in result.stdout.split('\n'):
+            if ('respeaker' in line.lower() or 'array' in line.lower()) and line.strip():
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    source_name = parts[1].strip()
+                    respeaker_sources.append(source_name)
+        
+        if not respeaker_sources:
+            print("✗ No ReSpeaker sources found")
+            return False
+        
+        # Adjust volume for each source
+        success = True
+        for source in respeaker_sources:
+            try:
+                print(f"Setting volume for {source}...")
+                subprocess.run(['pactl', 'set-source-volume', source, f'{volume_percent}%'], 
+                             timeout=5, check=True)
+                print(f"  ✓ Volume set to {volume_percent}%")
+            except Exception as e:
+                print(f"  ✗ Failed to set volume for {source}: {e}")
+                success = False
+        
+        if success:
+            print(f"✓ ReSpeaker volume adjusted to {volume_percent}%")
+            print("Test the audio levels with your application")
+        else:
+            print("⚠️  Some volume adjustments failed")
+            
+        return success
+        
+    except Exception as e:
+        print(f"✗ Error adjusting ReSpeaker volume: {e}")
+        return False
+
+
+def test_alsa_respeaker_access():
+    """Test if ReSpeaker is accessible through ALSA after PipeWire bridge setup."""
+    print("\n=== Testing ALSA ReSpeaker Access ===")
+    
+    try:
+        import subprocess
+        
+        # Test direct device access
+        print("Testing direct device access...")
+        result = subprocess.run(['arecord', '-D', 'respeaker', '--dump-hw-params'], 
+                              capture_output=True, text=True, timeout=5)
+        
+        if result.returncode == 0:
+            print("✓ ReSpeaker accessible through ALSA")
+            print("Hardware parameters:")
+            for line in result.stdout.split('\n'):
+                if line.strip() and not line.startswith('arecord:'):
+                    print(f"  {line}")
+            return True
+        else:
+            print("✗ ReSpeaker not accessible through ALSA")
+            print(f"Error: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        print(f"✗ Error testing ALSA access: {e}")
+        return False
 
 def fix_jack_shared_memory():
     """
@@ -658,13 +958,16 @@ def test_jack_audio_playback(test_file=None):
 def main():
     parser = argparse.ArgumentParser(description='Audio diagnostic and recovery tool')
     parser.add_argument('action', choices=[
-        'list', 'test', 'test-yealink', 'test-icusb', 'test-jack', 'test-audio', 'fix-jack',
-        'reset', 'reset-yealink', 'reset-icusb', 'force-reset', 
+        'list', 'test', 'test-yealink', 'test-icusb', 'test-respeaker', 'test-jack', 'test-audio', 'test-alsa-respeaker',
+        'fix-jack', 'fix-respeaker', 'adjust-respeaker-volume', 'reset', 'reset-yealink', 'reset-icusb', 'force-reset', 
         'validate', 'stop-services', 'restart-services'
-    ], help='Action to perform: list devices, test Yealink/ICUSBAUDIO7D/JACK, play test audio, fix JACK shared memory, reset devices, validate devices by name, or manage audio services')
+    ], help='Action to perform: list devices, test Yealink/ICUSBAUDIO7D/ReSpeaker/JACK, play test audio, fix JACK shared memory or ReSpeaker access, adjust ReSpeaker volume, reset devices, validate devices by name, or manage audio services')
     
     parser.add_argument('--file', '-f', type=str, 
                        help='Audio file to use for testing (default: media/audio/music/modern_loop.wav)')
+    
+    parser.add_argument('--volume', '-v', type=int, default=150,
+                       help='Volume level percentage for ReSpeaker adjustment (default: 150%)')
     
     args = parser.parse_args()
     
@@ -672,21 +975,31 @@ def main():
         if args.action == 'list':
             list_devices()
         elif args.action == 'test':
-            # Test both devices
+            # Test all supported devices
             print("Testing all supported devices...")
             yealink_ok = test_yealink_device()
             icusb_ok = test_icusbaudio7d_device()
+            respeaker_ok = test_respeaker_device()
             jack_ok = test_jack_system()
             
             print("\n=== Summary ===")
-            if not yealink_ok and not icusb_ok:
+            if not yealink_ok and not icusb_ok and not respeaker_ok:
                 print("⚠️  No supported devices found or all have issues")
-            elif not yealink_ok:
-                print("⚠️  Yealink device has issues")
-            elif not icusb_ok:
-                print("⚠️  ICUSBAUDIO7D device has issues")
             else:
-                print("✓ All supported devices appear functional")
+                if yealink_ok:
+                    print("✓ Yealink device appears functional")
+                else:
+                    print("⚠️  Yealink device has issues or not found")
+                    
+                if icusb_ok:
+                    print("✓ ICUSBAUDIO7D device appears functional")
+                else:
+                    print("⚠️  ICUSBAUDIO7D device has issues or not found")
+                    
+                if respeaker_ok:
+                    print("✓ ReSpeaker device appears functional")
+                else:
+                    print("⚠️  ReSpeaker device has issues or not found")
                 
             if jack_ok:
                 print("✓ JACK audio system is working")
@@ -697,6 +1010,10 @@ def main():
             test_yealink_device()
         elif args.action == 'test-icusb':
             test_icusbaudio7d_device()
+        elif args.action == 'test-respeaker':
+            test_respeaker_device()
+        elif args.action == 'test-alsa-respeaker':
+            test_alsa_respeaker_access()
         elif args.action == 'test-jack':
             test_jack_system()
         elif args.action == 'fix-jack':
@@ -711,6 +1028,31 @@ def main():
                 print("✓ JACK shared memory fix completed successfully")
             else:
                 print("⚠️  JACK fix had limited success - may need manual intervention")
+        elif args.action == 'fix-respeaker':
+            print("=== ReSpeaker PipeWire Access Fix ===")
+            print("This will configure ALSA to access ReSpeaker through PipeWire")
+            print("for better compatibility with PyAudio applications.\n")
+            
+            success = fix_respeaker_pipewire_access()
+            if success:
+                print("✓ ReSpeaker PipeWire access fix completed successfully")
+                print("\nTesting the fix...")
+                test_alsa_respeaker_access()
+                print("\nNow try: uv run scripts/list_audio_devices.py")
+            else:
+                print("⚠️  ReSpeaker fix failed - check the output above")
+        elif args.action == 'adjust-respeaker-volume':
+            print("=== ReSpeaker Volume Adjustment ===")
+            print(f"This will adjust ReSpeaker input volume to {args.volume}%")
+            print("to compensate for quiet digital input levels.\n")
+            
+            success = adjust_respeaker_volume(args.volume)
+            if success:
+                print("✓ ReSpeaker volume adjustment completed successfully")
+                print("\nTest audio levels with your application:")
+                print("  uv run scripts/audio_recovery.py test-respeaker")
+            else:
+                print("⚠️  ReSpeaker volume adjustment failed - check PipeWire status")
         elif args.action == 'test-audio':
             # Comprehensive audio test for gallery staff
             print("=== Comprehensive Audio Test for Gallery Staff ===")
@@ -724,7 +1066,7 @@ def main():
                 print("⚠️  JACK system not ready. Try running: uv run scripts/audio_recovery.py restart-services")
                 
         elif args.action == 'reset':
-            # Reset both devices with comprehensive approach
+            # Reset all supported devices with comprehensive approach
             print("Attempting comprehensive reset of all supported devices...")
             reset_yealink()
             reset_icusbaudio7d()
