@@ -387,3 +387,47 @@ class FireAgentService(AgentServiceBase):
         except Exception as e:
             logger.error(f"Failed to stream transcript to fire_core: {e}")
             self.record_error(e, is_fatal=False, custom_message="Failed to stream transcript to fire_core")
+
+    def _send_osc_speaking(self, speaker: str, is_speaking: bool) -> None:
+        """Send OSC speaking signal using simple UDP client (fire-and-forget)."""
+        if not self.osc_client:
+            return
+        
+        try:
+            # Send 1 for speaking, 0 for not speaking
+            value = 1 if is_speaking else 0
+
+            if speaker == "agent":
+                osc_speaking_address = self.config.osc.bot_speak_address
+            elif speaker == "user":
+                osc_speaking_address = self.config.osc.person_speak_address
+            else:
+                logger.warning(f"Unknown speaker: {speaker}")
+                return
+ 
+            # Simple fire-and-forget UDP send
+            self.osc_client.send_message(osc_speaking_address, value)
+
+            logger.info(f"OSC speaking signal sent: {osc_speaking_address} = {value} ({'speaking' if is_speaking else 'not speaking'})")
+        except Exception as e:
+            logger.error(f"Failed to send OSC speaking signal: {e}")
+
+    async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle speech detection event from pipecat backend."""
+        await super()._on_speech_detected(event, data)
+
+        if self.agent_speaking: 
+            self._send_osc_speaking(speaker="agent", is_speaking=True)
+
+        if self.user_speaking:
+            self._send_osc_speaking(speaker="user", is_speaking=True)
+
+    async def _on_speech_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle speech ended event from pipecat backend."""
+        await super()._on_speech_ended(event, data)
+
+        if self.agent_speaking:
+            self._send_osc_speaking(speaker="agent", is_speaking=False)
+
+        if self.user_speaking:
+            self._send_osc_speaking(speaker="user", is_speaking=False)

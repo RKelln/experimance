@@ -152,3 +152,5 @@ host = "localhost"
 port = 5580
 address_prefix = "fire/"
 presence_address = "presence/"
+person_speak_address = "speak/person/"
+bot_speak_address = "speak/bot"

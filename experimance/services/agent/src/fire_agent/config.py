@@ -28,22 +28,6 @@ class OSCConfig(BaseModel):
         description="Address prefix for OSC messages"
     )
 
-class OSCPresenceConfig(OSCConfig):
-    """OSC configuration with presence detection support."""
-
-    presence_address: str = Field(
-        default="/presence",
-        description="Address for OSC presence messages"
-    )
-    presence_present_value: int = Field(
-        default=1,
-        description="Value to send when presence is detected"
-    )
-    presence_absent_value: int = Field(
-        default=0,
-        description="Value to send when presence is not detected"
-    )
-
 class ReolinkConfig(BaseModel):
     """Base configuration for Reolink camera detection."""
     
@@ -105,15 +89,28 @@ class FireReolinkConfig(ReolinkConfig):
     )
 
 # Project-specific configurations can inherit from these base classes
-class FireOSCConfig(OSCPresenceConfig):
+class FireOSCConfig(OSCConfig):
     """Configuration for the Fire project OSC interface."""
     
     # Fire project defaults
     enabled: bool = True
     host: str = "localhost"
     port: int = 5580
-    address_prefix: str = "/fire"
-    presence_address: str = "/presence"
+
+    presence_address: str = Field(
+        default="/presence",
+        description="Address for OSC presence messages"
+    )
+
+    person_speak_address: str = Field(
+        default="/speaking",
+        description="Address for OSC speaking messages"
+    )
+
+    bot_speak_address: str = Field(
+        default="/bot/speaking",
+        description="Address for OSC bot speaking messages"
+    )
 
 
 class FireAgentServiceConfig(AgentServiceConfig):
