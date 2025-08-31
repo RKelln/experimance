@@ -2,28 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import random
 import time
 from typing import Any, Dict, Optional, cast
 
 from experimance_agent.config import ExperimanceAgentServiceConfig
-from experimance_common.logger import setup_logging
 from experimance_common.schemas import MessageType
 from experimance_common.zmq.config import MessageDataType
 # Note: Biome and RequestBiome are dynamically imported where needed
 from experimance_common.schemas import AudiencePresent  # type: ignore
 
-from agent import AgentServiceBase, SERVICE_TYPE
+from agent import AgentServiceBase
 from .deep_thoughts import DEEP_THOUGHTS
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 class ExperimanceAgentService(AgentServiceBase):
     """Experimance-specific specialization of the Agent service."""
 
     def __init__(self, config: ExperimanceAgentServiceConfig):
         super().__init__(config=config)
-        
+
         # Cast config to the correct type for linter
         self.config = cast(ExperimanceAgentServiceConfig, config)
 

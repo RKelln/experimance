@@ -37,9 +37,12 @@ from experimance_common.logger import setup_logging
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.service_state import ServiceState
 
+import logging
+
 SERVICE_TYPE = "agent"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+# Module-level logger for the base class
+logger = logging.getLogger(__name__)
 
 class AgentServiceBase(BaseService):
     """Base Agent service with shared lifecycle and hooks for specialization."""
@@ -47,6 +50,7 @@ class AgentServiceBase(BaseService):
     def __init__(self, config: AgentServiceConfig):
         super().__init__(service_type=SERVICE_TYPE, service_name=getattr(config, "service_name", "agent"))
         self.config = config
+    
         self.zmq_service = PubSubService(config.zmq)
 
         # Runtime state
@@ -127,7 +131,7 @@ class AgentServiceBase(BaseService):
         try:
             # Give background tasks a moment to exit their loops cleanly
             await asyncio.sleep(0.1)
-            
+
             logger.debug("Background tasks signaled to stop before ZMQ shutdown")
         except Exception as e:
             logger.debug(f"Error stopping background tasks: {e}")
@@ -141,9 +145,9 @@ class AgentServiceBase(BaseService):
             logger.debug("Audio resources cleaned up")
         except Exception as e:
             logger.debug(f"Error cleaning up audio resources: {e}")
-        
+
         logger.info(f"{self.service_name} stopped")
-        
+
         # Call super().stop() LAST
         await super().stop() # always in STOPPING state after this
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 import asyncio
+import logging
 import os
 from typing import Any, Dict, cast, Optional
 
-from experimance_common.logger import setup_logging
 from experimance_common.transcript_manager import TranscriptMessage, TranscriptMessageType
-from agent import AgentServiceBase, SERVICE_TYPE
+from agent import AgentServiceBase
 from .config import FireAgentServiceConfig
 from agent.vision.reolink_detector import ReolinkDetector
 from agent.vision.reolink_frame_detector import ReolinkFrameDetector
@@ -16,13 +16,14 @@ from agent.backends.base import AgentBackendEvent
 # Use the original pythonosc for simple, non-blocking UDP sends
 from pythonosc.udp_client import SimpleUDPClient
 
-SERVICE_TYPE = "fire_agent"
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+# Get the logger configured by the CLI system (avoids creating duplicate loggers)
+logger = logging.getLogger(__name__)
 
 class FireAgentService(AgentServiceBase):
     """Minimal voice-only agent for the Fire project using Reolink camera detection."""
 
     def __init__(self, config: FireAgentServiceConfig):
+        # Let the CLI logging system handle all logging - no separate logger needed
         super().__init__(config=config)
         
         # Cast config to the correct type for linter
