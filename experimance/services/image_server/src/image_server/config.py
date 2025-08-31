@@ -28,6 +28,9 @@ from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.local.sdxl_generator import LocalSDXLConfig
 
+# Import audio generator configs
+from image_server.generators.audio.audio_config import Prompt2AudioConfig
+
 
 DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVICE_DIR)
 
@@ -41,6 +44,22 @@ class GeneratorConfig(BaseModel):
     timeout: int = Field(
         default=60,
         description="Default timeout for image generation in seconds"
+    )
+
+
+class AudioGeneratorConfig(BaseModel):
+    """Configuration for audio generator selection and common settings."""
+    strategy: Literal["prompt2audio"] = Field(
+        default="prompt2audio",
+        description="Audio generation strategy to use."
+    )
+    timeout: int = Field(
+        default=120,
+        description="Default timeout for audio generation in seconds"
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Whether audio generation is enabled"
     )
 
 
@@ -93,6 +112,12 @@ class ImageServerConfig(BaseServiceConfig):
         description="Image generation settings"
     )
     
+    # Audio generator configuration
+    audio_generator: AudioGeneratorConfig = Field(
+        default_factory=AudioGeneratorConfig,
+        description="Audio generation settings"
+    )
+    
     # Strategy-specific configurations
     mock: MockGeneratorConfig = Field(
         default_factory=MockGeneratorConfig,
@@ -122,6 +147,12 @@ class ImageServerConfig(BaseServiceConfig):
     vastai: VastAIGeneratorConfig = Field(
         default_factory=VastAIGeneratorConfig,
         description="Configuration for VastAI generator"
+    )
+    
+    # Audio generator configurations
+    prompt2audio: Prompt2AudioConfig = Field(
+        default_factory=Prompt2AudioConfig,
+        description="Configuration for prompt-to-audio generator"
     )
     
     def get_generator_config(self, strategy: Optional[str] = None) -> Dict:

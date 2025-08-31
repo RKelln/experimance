@@ -1,10 +1,19 @@
-# Image Generators Guide
+# Generators Guide
 
-This document provides a comprehensive guide to the image generation system in the Experimance project, covering the existing generators and how to create new ones.
+This document provides a comprehensive guide to the generation systems in the Experimance project, covering both image and audio generators and how to create new ones.
 
 ## Overview
 
-The image generation system uses a modular architecture with the following components:
+The generation system uses a modular architecture supporting both **image** and **audio** generation with the following components:
+
+- **Base Generator Classes**: Provide common functionality including thread-safe queuing, request tracking, and lifecycle management
+- **Generator Configurations**: Pydantic models for type-safe configuration
+- **Generator Factory**: Creates and manages generator instances
+- **Specific Generators**: Individual implementations for different backends and modalities
+
+### Image Generation System
+
+The image generation system includes:
 
 - **Base Generator Class** (`generator.py`): Provides common functionality including thread-safe queuing, request tracking, and lifecycle management
 - **Generator Configurations** (`config.py`): Pydantic models for type-safe configuration
@@ -60,13 +69,13 @@ capabilities = generator.get_supported_capabilities()
 
 #### Current Generator Capabilities
 
-| Generator | IMG2IMG | ControlNet | Negative | Seeds | Schedulers | LoRA | Upscaling |
-|-----------|---------|------------|----------|-------|------------|------|-----------|
-| Mock | ✓ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ |
-| Local SDXL | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
-| VastAI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
-| FAL ComfyUI | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
-| FAL Lightning | ✓ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Generator     | IMG2IMG | ControlNet | Negative | Seeds | Schedulers | LoRA | Upscaling |
+| ------------- | ------- | ---------- | -------- | ----- | ---------- | ---- | --------- |
+| Mock          | ✓       | ✗          | ✓        | ✓     | ✗          | ✗    | ✗         |
+| Local SDXL    | ✓       | ✓          | ✓        | ✓     | ✓          | ✗    | ✗         |
+| VastAI        | ✓       | ✓          | ✓        | ✓     | ✓          | ✓    | ✗         |
+| FAL ComfyUI   | ✓       | ✓          | ✓        | ✓     | ✗          | ✓    | ✗         |
+| FAL Lightning | ✓       | ✗          | ✓        | ✓     | ✗          | ✗    | ✗         |
 
 ### Thread-Safe Queuing System
 
@@ -107,6 +116,85 @@ All generators inherit from the base `ImageGenerator` class, which provides:
 - Warmup functionality for faster subsequent generations
 
 **Use Cases**: Production local generation, full control over model and parameters
+
+### Audio Generation System
+
+The audio generation system provides text-to-audio capabilities with the following components:
+
+#### TangoFlux Generator (`audio/`)
+**Purpose**: High-quality text-to-audio synthesis using TangoFlux model  
+**Features**:
+- Text-to-audio generation using TangoFlux (declare-lab/TangoFlux)
+- CLAP-based audio similarity scoring for quality assessment
+- BGE embeddings for enhanced text understanding
+- Configurable model storage with centralized MODELS_DIR support
+- Audio format normalization and processing
+- PyTorch 2.4.0 with CUDA 12.1.x support
+
+**Configuration Options**:
+- `model_name`: TangoFlux model variant (default: "declare-lab/TangoFlux")
+- `clap_model`: CLAP model for audio similarity (default: "laion/clap-htsat-unfused")
+- `bge_model`: BGE embedding model (default: "BAAI/bge-large-en-v1.5")
+- `models_dir`: Directory for model storage (default: uses MODELS_DIR environment variable)
+- `sample_rate`: Output audio sample rate (default: 16000)
+- `duration`: Audio duration in seconds (default: 10.0)
+
+**Use Cases**: 
+- Environmental soundscapes for installations
+- Dynamic audio generation based on text descriptions
+- AI-generated background audio for interactive experiences
+
+#### Audio Dependencies
+
+The audio generation system requires the following dependencies (Linux/macOS only):
+- `soundfile>=0.12.1`: Audio file I/O
+- `librosa>=0.10.0`: Audio analysis and processing
+- `ffmpeg-normalize>=1.28.0`: Audio normalization
+- `torch==2.4.0`: PyTorch with CUDA 12.1.x (required by TangoFlux)
+- `torchaudio>=2.1.0`: Audio tensor operations
+- `transformers>=4.39.0`: HuggingFace model loading
+- `sentence-transformers>=2.2.2`: Text embeddings
+
+**Installation**:
+```bash
+# Install audio generation dependencies
+cd services/image_server
+uv sync --extra audio_gen
+
+# Download models to centralized location
+uv run python src/image_server/generators/audio/download_models.py
+```
+
+**CUDA Compatibility Note**: 
+TangoFlux requires exactly PyTorch 2.4.0, which uses CUDA 12.1.x runtime libraries. This is a requirement of the TangoFlux model and cannot be changed without breaking compatibility.
+
+### Audio Generator Architecture
+
+Audio generators extend the base generator pattern with audio-specific functionality:
+
+```python
+class AudioGenerator:
+    """Base class for audio generators."""
+    
+    def __init__(self, config: BaseAudioGeneratorConfig, **kwargs):
+        self.config = config
+        self.models_dir = config.models_dir
+    
+    async def generate_audio(self, prompt: str, **kwargs) -> str:
+        """Generate audio from text prompt. Returns path to audio file."""
+        pass
+    
+    def setup_model_cache(self, models_dir: Path):
+        """Configure HuggingFace cache for centralized model storage."""
+        pass
+```
+
+**Key Features**:
+- Centralized model storage in `MODELS_DIR`
+- Lazy model loading with caching
+- Audio format standardization
+- Quality assessment with CLAP similarity scoring
+- Thread-safe generation with proper cleanup
 
 ### VastAI Generator (`vastai/`)
 **Purpose**: Remote GPU instances via VastAI  
@@ -249,8 +337,9 @@ class YourServiceGenerator(ImageGenerator):
 
 ### Step 3: Register in Factory
 
-Add your generator to the factory registry:
+Add your generator to the appropriate factory registry:
 
+**For Image Generators:**
 ```python
 # generators/factory.py
 from .your_service.your_service_generator import YourServiceGenerator
@@ -261,6 +350,22 @@ GENERATORS = {
     "your_service": {
         "config_class": YourServiceConfig,
         "generator_class": YourServiceGenerator
+    },
+}
+```
+
+**For Audio Generators:**
+```python
+# generators/audio/factory.py (if separate audio factory exists)
+# or include in main factory with audio_ prefix
+from .your_audio_service.your_audio_generator import YourAudioGenerator
+from .your_audio_service.your_audio_config import YourAudioConfig
+
+AUDIO_GENERATORS = {
+    # ... existing audio generators ...
+    "your_audio_service": {
+        "config_class": YourAudioConfig,
+        "generator_class": YourAudioGenerator
     },
 }
 ```
@@ -305,6 +410,29 @@ async def test_your_service_generation():
         assert result.endswith(".png")
     finally:
         await generator.stop()
+```
+
+**For Audio Generators:**
+```python
+# generators/audio/test_audio_generator.py
+import pytest
+from pathlib import Path
+from .prompt2audio import TangoFluxGenerator
+from .audio_config import TangoFluxConfig
+
+@pytest.mark.asyncio
+async def test_audio_generation():
+    config = TangoFluxConfig(
+        model_name="declare-lab/TangoFlux",
+        duration=5.0,  # Shorter for testing
+        sample_rate=16000
+    )
+    
+    generator = TangoFluxGenerator(config)
+    audio_path = await generator.generate_audio("gentle rain")
+    
+    assert Path(audio_path).exists()
+    assert audio_path.endswith(".wav")
 ```
 
 ## Best Practices
@@ -365,8 +493,27 @@ async def test_your_service_generation():
 The service automatically discovers and uses registered generators:
 
 ```bash
-# Use your generator
+# Use your image generator
 uv run -m image_server --generator-strategy your_generator
+
+# Use audio generation features
+uv run -m image_server --enable-audio-generation
+```
+
+### Using Audio Generation
+```python
+# Example usage in code
+from image_server.generators.audio.prompt2audio import TangoFluxGenerator
+from image_server.generators.audio.audio_config import TangoFluxConfig
+
+config = TangoFluxConfig(
+    model_name="declare-lab/TangoFlux",
+    duration=10.0,
+    sample_rate=16000
+)
+
+generator = TangoFluxGenerator(config)
+audio_path = await generator.generate_audio("ocean waves crashing on a rocky shore")
 ```
 
 ### Configuration in TOML files
@@ -377,6 +524,15 @@ strategy = "your_generator"
 [your_generator]
 model_name = "premium-model"
 custom_param = 25
+
+# Audio generation configuration
+[audio_generator]
+model_name = "declare-lab/TangoFlux"
+clap_model = "laion/clap-htsat-unfused"
+bge_model = "BAAI/bge-large-en-v1.5"
+models_dir = "/path/to/models"  # or use MODELS_DIR env var
+sample_rate = 16000
+duration = 10.0
 ```
 
 Place API keys needed in `projects/<project_name>/.env`.

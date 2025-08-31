@@ -7,7 +7,7 @@ when PROJECT_ENV=fire.
 """
 
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from experimance_common.schemas_base import (
     StringComparableEnum, 
     SpaceTimeUpdate as _BaseSpaceTimeUpdate,
@@ -62,6 +62,10 @@ class MessageType(StringComparableEnum):
     STORY_HEARD = "StoryHeard"
     UPDATE_LOCATION = "UpdateLocation"
     TRANSCRIPT_UPDATE = "TranscriptUpdate"
+    
+    # Audio generation message types
+    AUDIO_RENDER_REQUEST = "AudioRenderRequest"
+    AUDIO_READY = "AudioReady"
 
 
 class SuggestTimePeriodPayload(MessageBase):
@@ -100,3 +104,32 @@ class TranscriptUpdate(MessageBase):
     timestamp: Optional[str] = None  # When the utterance was captured
     is_partial: bool = False  # Whether this is a partial/interim result
     duration: Optional[float] = None  # Duration of the utterance
+
+
+# Audio generation message types
+
+class AudioRenderRequest(MessageBase):
+    """Request to generate environmental audio from a text prompt."""
+    type: MessageType = MessageType.AUDIO_RENDER_REQUEST
+    
+    request_id: str  # Unique identifier for tracking the request
+    generator: Optional[str] = None  # Name of the audio generator to use
+    prompt: str  # Text description of the audio to generate
+    duration_s: Optional[int] = None  # Duration in seconds (overrides generator config)
+    style: Optional[str] = None  # Optional style hint for generation
+    seed: Optional[int] = None  # Optional seed for deterministic generation
+    metadata: Optional[Dict[str, Any]] = None  # Additional metadata
+
+
+class AudioReady(MessageBase):
+    """Event published when generated audio is ready."""
+    type: MessageType = MessageType.AUDIO_READY
+    
+    request_id: str  # Matching the original request ID
+    uri: str  # URI to the generated audio file (file://, http://, etc.)
+    prompt: Optional[str] = None  # The prompt used for generation
+    duration_s: Optional[float] = None  # Actual duration of the generated audio
+    is_loop: bool = True  # Whether the audio is seamlessly loopable
+    clap_similarity: Optional[float] = None  # CLAP similarity score if available
+    metadata: Optional[Dict[str, Any]] = None  # Additional metadata
+

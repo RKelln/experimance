@@ -27,7 +27,8 @@ dependencies = [
     "fal-client",
     "openai",
     "python-dotenv",
-    "tenacity"
+    "tenacity",
+    "tangoflux; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +47,18 @@ local_gen = [
     "tqdm>=4.64.0",
     "xformers>=0.0.23; platform_system=='Linux' and platform_machine=='x86_64'",
 ]
+audio_gen = [
+    # Audio processing (Linux/macOS only)
+    "soundfile>=0.12.1; sys_platform != 'win32'",
+    "librosa>=0.10.0; sys_platform != 'win32'",
+    "ffmpeg-normalize>=1.28.0; sys_platform != 'win32'",
+    # ML frameworks (if not already available)
+    "torch>=2.1.0; sys_platform != 'win32'",
+    "torchaudio>=2.1.0; sys_platform != 'win32'",
+    "transformers>=4.39.0; sys_platform != 'win32'",
+    # CLAP and text embeddings
+    "sentence-transformers>=2.2.2; sys_platform != 'win32'",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -63,3 +76,6 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+
+[tool.uv.sources]
+tangoflux = { git = "https://github.com/declare-lab/TangoFlux" }
