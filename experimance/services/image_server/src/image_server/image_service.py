@@ -116,6 +116,37 @@ class ImageServerService(BaseService):
 
             # Start any generators that need to be pre-warmed
             await self.generator_manager.start()
+            
+            # Initialize audio generator if enabled
+            if (AUDIO_SUPPORT and 
+                hasattr(self.config, 'audio_generator') and 
+                getattr(self.config.audio_generator, 'enabled', False)):
+                logger.info("Initializing audio generator manager...")
+                # Initialize audio generator manager on startup if audio is enabled
+                try:
+                    from image_server.generators.audio.audio_factory import AudioGeneratorManager
+                    
+                    # Get audio configuration from TOML config
+                    audio_configs = {}
+                    if hasattr(self.config, 'prompt2audio') and self.config.prompt2audio:
+                        # Convert Pydantic model to dict
+                        if hasattr(self.config.prompt2audio, 'model_dump'):
+                            audio_configs['prompt2audio'] = self.config.prompt2audio.model_dump()
+                        else:
+                            audio_configs['prompt2audio'] = dict(self.config.prompt2audio)
+                        
+                        logger.info(f"Loaded prompt2audio config with subprocess: {audio_configs['prompt2audio'].get('use_subprocess', False)}")
+                    
+                    self.audio_generator_manager = AudioGeneratorManager(
+                        default_strategy="prompt2audio",
+                        output_dir=str(self.config.cache_dir / "audio"),
+                        timeout=getattr(self.config, 'audio_timeout', 120),
+                        default_configs=audio_configs  # Pass the audio config from TOML
+                    )
+                    logger.info("Audio generator manager initialized")
+                    
+                except Exception as e:
+                    logger.warning(f"Audio generator initialization failed: {e}")
 
             # Register periodic cache cleanup task (run every 10 minutes)
             self.add_task(self._periodic_cache_cleanup(600))
@@ -601,10 +632,22 @@ class ImageServerService(BaseService):
             # Initialize audio generator manager on first use
             from image_server.generators.audio.audio_factory import AudioGeneratorManager
             
+            # Get audio configuration from TOML config
+            audio_configs = {}
+            if hasattr(self.config, 'prompt2audio') and self.config.prompt2audio:
+                # Convert Pydantic model to dict
+                if hasattr(self.config.prompt2audio, 'model_dump'):
+                    audio_configs['prompt2audio'] = self.config.prompt2audio.model_dump()
+                else:
+                    audio_configs['prompt2audio'] = dict(self.config.prompt2audio)
+                
+                logger.info(f"Loaded prompt2audio config: {audio_configs['prompt2audio']}")
+            
             self.audio_generator_manager = AudioGeneratorManager(
                 default_strategy=strategy,
                 output_dir=str(self.config.cache_dir / "audio"),
-                timeout=getattr(self.config, 'audio_timeout', 120)
+                timeout=getattr(self.config, 'audio_timeout', 120),
+                default_configs=audio_configs  # Pass the audio config from TOML
             )
         
         # Prepare generation parameters

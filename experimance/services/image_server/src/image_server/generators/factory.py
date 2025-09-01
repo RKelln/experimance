@@ -1,10 +1,15 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, Type, List, Set
+from typing import Dict, Any, Optional, Union, Type, List, Set, cast
 
 from image_server.generators.generator import ImageGenerator, GeneratorCapabilities
 from image_server.generators.config import BaseGeneratorConfig
+from image_server.generators.subprocess_wrapper import (
+    SubprocessImageGenerator, 
+    SubprocessGeneratorConfig,
+    create_subprocess_wrapper
+)
 from image_server.generators.mock.mock_generator import MockImageGenerator
 from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 from image_server.generators.fal.fal_comfy_generator import FalComfyGenerator
@@ -45,6 +50,10 @@ GENERATORS = {
         "config_class": LocalSDXLConfig,
         "generator_class": LocalSDXLGenerator
     },
+    "subprocess": {
+        "config_class": SubprocessGeneratorConfig,
+        "generator_class": SubprocessImageGenerator
+    },
 }
 
 def create_generator_from_config(
@@ -71,6 +80,25 @@ def create_generator_from_config(
         available_strategies = list(GENERATORS.keys())
         raise ValueError(f"Unsupported generator strategy: {strategy}. "
                          f"Available strategies: {available_strategies}")
+    
+    # Special handling for subprocess wrapper
+    if strategy == "subprocess":
+        # Extract subprocess-specific config
+        wrapped_class = config_data.get("wrapped_generator_class")
+        wrapped_config = config_data.get("wrapped_generator_config", {})
+        cuda_devices = config_data.get("cuda_visible_devices")
+        
+        if not wrapped_class:
+            raise ValueError("subprocess strategy requires 'wrapped_generator_class'")
+        
+        return cast(ImageGenerator, create_subprocess_wrapper(
+            generator_class=wrapped_class,
+            generator_config=wrapped_config,
+            generator_type="image",
+            cuda_visible_devices=cuda_devices,
+            timeout_seconds=config_data.get("timeout_seconds", timeout),
+            max_retries=config_data.get("max_retries", 3)
+        ))
     
     # Create a base configuration with common settings
     base_config = {

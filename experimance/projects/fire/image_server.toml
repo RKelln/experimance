@@ -30,3 +30,25 @@ warmup_on_start = true       # Generate dummy image on startup to warm caches
 [mock]
 use_existing_images = false
 existing_images_dir = "media/images/generated"
+
+[audio_generator]
+enabled = true
+strategy = "prompt2audio"
+
+[prompt2audio]
+duration_s = 10              # Reduced from 20 to use less memory
+steps = 20                   # Reduced from 30 to use less memory  
+guidance_scale = 4.5
+candidates = 1               # Reduced from 2 to use less memory
+normalize_loudness = true
+target_lufs = -23.0
+true_peak_dbfs = -2.0
+enable_seamless_loop = true
+
+# Just add these two lines for GPU isolation:
+use_subprocess = true        # Enable subprocess execution
+cuda_visible_devices = "0"   # Audio will use GPU 0 (which has ~15GB free)
+
+# Optional: customize subprocess behavior
+subprocess_timeout_seconds = 300
+subprocess_max_retries = 3

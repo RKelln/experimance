@@ -17,6 +17,13 @@ class BaseAudioGeneratorConfig(BaseGeneratorConfig):
     # Model storage location
     models_dir: Path = Field(default=MODELS_DIR, description="Directory for storing audio generation models")
     
+    # GPU configuration
+    audio_gpu_id: Optional[int] = Field(default=0, description="GPU ID for audio generation (None for CPU)")
+    cuda_visible_devices: Optional[str] = Field(default=None, description="CUDA_VISIBLE_DEVICES for subprocess (e.g., '0' or '1,2')")
+    use_subprocess: bool = Field(default=False, description="Run audio generation in separate subprocess with isolated GPU")
+    subprocess_timeout_seconds: int = Field(default=300, description="Timeout for subprocess operations")
+    subprocess_max_retries: int = Field(default=3, description="Maximum retry attempts for subprocess operations")
+    
     # Common audio generation parameters
     duration_s: int = Field(default=24, description="Duration of generated audio in seconds")
     sample_rate: int = Field(default=44100, description="Sample rate for generated audio")

@@ -31,6 +31,8 @@ def create_audio_generator_from_config(
 ) -> AudioGenerator:
     """Create an audio generator from configuration data.
     
+    This factory automatically handles subprocess wrapping when configured.
+    
     Args:
         strategy: The audio generator strategy to use
         config_data: Configuration data for the generator
@@ -38,7 +40,7 @@ def create_audio_generator_from_config(
         timeout: Default timeout for generation in seconds
         
     Returns:
-        Configured AudioGenerator instance
+        Configured AudioGenerator instance (possibly wrapped in subprocess)
         
     Raises:
         ValueError: If strategy is not supported
@@ -63,12 +65,16 @@ def create_audio_generator_from_config(
     
     logger.debug(f"Creating {strategy} audio generator with config: {config_dict}")
     
-    # Create and return the generator with output_dir as constructor parameter
+    # Create config object
     config = config_class(**config_dict)
-    if output_dir:
-        return generator_class(config=config, output_dir=str(output_dir))
-    else:
-        return generator_class(config=config)
+    
+    # Use the subprocess-aware factory instead of direct instantiation
+    from image_server.generators.audio.factory import create_audio_generator
+    return create_audio_generator(
+        generator_class=generator_class,
+        config=config,
+        output_dir=str(output_dir) if output_dir else "/tmp"
+    )
 
 
 def create_audio_generator(
