@@ -408,7 +408,7 @@ class ImageServerService(BaseService):
 
             # Generate the audio
             logger.debug(f"Calling _generate_audio for {request_id}")
-            audio_path = await self._generate_audio(
+            audio_path, generation_metadata = await self._generate_audio(
                 request_id=request_id,
                 prompt=prompt,
                 duration_s=duration_s,
@@ -424,7 +424,8 @@ class ImageServerService(BaseService):
             await self._publish_audio_ready(
                 request_id=request_id,
                 audio_path=audio_path,
-                prompt=prompt
+                prompt=prompt,
+                generation_metadata=generation_metadata
             )
 
             logger.info(f"Successfully processed AudioRenderRequest {request_id}")
@@ -605,7 +606,7 @@ class ImageServerService(BaseService):
         duration_s: Optional[int] = None,
         strategy: Optional[str] = None,
         **kwargs
-    ) -> str:
+    ) -> tuple[str, dict]:
         """Generate audio using the specified or default audio strategy.
         
         Args:
@@ -616,7 +617,7 @@ class ImageServerService(BaseService):
             **kwargs: Additional parameters for the generator
             
         Returns:
-            Path to the generated audio file
+            Tuple of (path to the generated audio file, generation metadata dict)
             
         Raises:
             RuntimeError: If audio generation fails or is not supported
@@ -661,7 +662,21 @@ class ImageServerService(BaseService):
                 self.audio_generator_manager.generate_audio(prompt, strategy, **generation_kwargs),
                 timeout=getattr(self.config, 'audio_timeout', 120)
             )
-            return audio_path
+            
+            # Try to get metadata from the generator
+            metadata = {}
+            if hasattr(self.audio_generator_manager, '_generators') and strategy in self.audio_generator_manager._generators:
+                generator = self.audio_generator_manager._generators[strategy]
+                try:
+                    metadata_method = getattr(generator, 'get_last_generation_metadata', None)
+                    if metadata_method:
+                        metadata = metadata_method()
+                        logger.debug(f"Retrieved generation metadata: {metadata}")
+                except Exception as e:
+                    logger.debug(f"Could not get generation metadata: {e}")
+            
+            logger.debug(f"Final audio generation metadata: {metadata}")
+            return audio_path, metadata
         except asyncio.TimeoutError:
             error_msg = f"Audio generation timed out after {getattr(self.config, 'audio_timeout', 120)} seconds"
             logger.error(error_msg)
@@ -676,6 +691,7 @@ class ImageServerService(BaseService):
         request_id: str, 
         audio_path: str,
         prompt: Optional[str] = None,
+        generation_metadata: Optional[dict] = None,
         **kwargs
     ):
         """Publish an AudioReady message.
@@ -713,9 +729,25 @@ class ImageServerService(BaseService):
                 "is_loop": True,  # Our audio is designed to be seamlessly loopable
             }
             
-            # Add any additional metadata
+            # Combine all metadata into a single metadata field
+            combined_metadata = {}
+            
+            # Add generation metadata if available
+            if generation_metadata:
+                logger.debug(f"Adding generation metadata to AudioReady: {generation_metadata}")
+                combined_metadata.update(generation_metadata)
+            
+            # Add any additional metadata from kwargs
             if kwargs:
-                message_data["metadata"] = kwargs
+                logger.debug(f"Adding kwargs metadata to AudioReady: {kwargs}")
+                combined_metadata.update(kwargs)
+            
+            # Only add metadata field if we have any metadata
+            if combined_metadata:
+                message_data["metadata"] = combined_metadata
+                logger.debug(f"Final AudioReady metadata: {combined_metadata}")
+            else:
+                logger.debug("No metadata to include in AudioReady message")
             
             message = AudioReady(**message_data)
             

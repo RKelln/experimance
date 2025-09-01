@@ -130,6 +130,5 @@ class AudioReady(MessageBase):
     prompt: Optional[str] = None  # The prompt used for generation
     duration_s: Optional[float] = None  # Actual duration of the generated audio
     is_loop: bool = True  # Whether the audio is seamlessly loopable
-    clap_similarity: Optional[float] = None  # CLAP similarity score if available
-    metadata: Optional[Dict[str, Any]] = None  # Additional metadata
+    metadata: Optional[Dict[str, Any]] = None  # Additional metadata (includes clap_similarity, cache info, etc.)
 

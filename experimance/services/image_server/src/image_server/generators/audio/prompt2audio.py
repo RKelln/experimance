@@ -468,6 +468,264 @@ class AudioSemanticCache:
         logger.warning(f"Cache pruning not fully implemented - would remove {len(remove_indices)} items")
         # TODO: Implement full cache pruning with array reconstruction
 
+    # Cache Management Methods
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get comprehensive cache statistics."""
+        if not self.items:
+            return {
+                "total_items": 0,
+                "total_size_mb": 0.0,
+                "oldest_item": None,
+                "newest_item": None,
+                "average_duration": 0.0,
+                "unique_prompts": 0,
+                "average_clap_similarity": 0.0,
+                "missing_files": 0
+            }
+        
+        # Calculate total file size
+        total_size = 0
+        valid_items = []
+        for item in self.items:
+            if Path(item.path).exists():
+                try:
+                    total_size += Path(item.path).stat().st_size
+                    valid_items.append(item)
+                except OSError:
+                    continue
+        
+        # Calculate statistics
+        timestamps = [item.timestamp for item in valid_items]
+        durations = [item.duration_s for item in valid_items]
+        clap_scores = [item.clap_similarity for item in valid_items if item.clap_similarity is not None]
+        unique_prompts = len(set(item.prompt_norm for item in valid_items))
+        
+        return {
+            "total_items": len(valid_items),
+            "total_size_mb": total_size / (1024 * 1024),
+            "oldest_item": min(timestamps) if timestamps else None,
+            "newest_item": max(timestamps) if timestamps else None,
+            "average_duration": sum(durations) / len(durations) if durations else 0.0,
+            "unique_prompts": unique_prompts,
+            "average_clap_similarity": sum(clap_scores) / len(clap_scores) if clap_scores else 0.0,
+            "missing_files": len(self.items) - len(valid_items)
+        }
+    
+    def list_cache_items(self, limit: int = 20, sort_by: str = "timestamp", reverse: bool = True) -> List[Dict[str, Any]]:
+        """List cache items with metadata."""
+        if not self.items:
+            return []
+        
+        # Sort items
+        if sort_by == "timestamp":
+            sorted_items = sorted(self.items, key=lambda x: x.timestamp, reverse=reverse)
+        elif sort_by == "clap_similarity":
+            sorted_items = sorted(self.items, key=lambda x: x.clap_similarity or 0.0, reverse=reverse)
+        elif sort_by == "duration":
+            sorted_items = sorted(self.items, key=lambda x: x.duration_s, reverse=reverse)
+        elif sort_by == "prompt":
+            sorted_items = sorted(self.items, key=lambda x: x.prompt, reverse=reverse)
+        else:
+            sorted_items = self.items
+        
+        # Convert to dict format
+        result = []
+        for item in sorted_items[:limit]:
+            file_exists = Path(item.path).exists()
+            file_size = 0
+            if file_exists:
+                try:
+                    file_size = Path(item.path).stat().st_size
+                except OSError:
+                    file_exists = False
+            
+            result.append({
+                "path": item.path,
+                "prompt": item.prompt,
+                "duration_s": item.duration_s,
+                "clap_similarity": item.clap_similarity,
+                "timestamp": item.timestamp,
+                "age_days": (time.time() - item.timestamp) / 86400,
+                "file_exists": file_exists,
+                "file_size_kb": file_size / 1024
+            })
+        
+        return result
+    
+    def clear_cache(self, confirm: bool = False) -> Dict[str, Any]:
+        """Clear entire cache."""
+        if not confirm:
+            return {"error": "Must set confirm=True to clear cache"}
+        
+        with self.lock:
+            # Count items to be removed
+            total_items = len(self.items)
+            total_size = 0
+            removed_files = 0
+            
+            # Remove audio files
+            for item in self.items:
+                if Path(item.path).exists():
+                    try:
+                        file_size = Path(item.path).stat().st_size
+                        total_size += file_size
+                        Path(item.path).unlink()
+                        removed_files += 1
+                    except OSError as e:
+                        logger.warning(f"Could not remove {item.path}: {e}")
+            
+            # Remove cache files
+            cache_files = [self.meta_path, self.clap_text_path, self.clap_audio_path, self.bge_text_path]
+            for cache_file in cache_files:
+                if cache_file.exists():
+                    try:
+                        cache_file.unlink()
+                    except OSError as e:
+                        logger.warning(f"Could not remove {cache_file}: {e}")
+            
+            # Clear in-memory data
+            self.items.clear()
+            self.clap_text_embeddings = None
+            self.clap_audio_embeddings = None
+            self.bge_text_embeddings = None
+            
+            return {
+                "removed_items": total_items,
+                "removed_files": removed_files,
+                "freed_space_mb": total_size / (1024 * 1024)
+            }
+    
+    def remove_old_items(self, days_old: float) -> Dict[str, Any]:
+        """Remove cache items older than specified days."""
+        cutoff_time = time.time() - (days_old * 86400)
+        
+        with self.lock:
+            old_items = [i for i, item in enumerate(self.items) if item.timestamp < cutoff_time]
+            
+            if not old_items:
+                return {"removed_items": 0, "freed_space_mb": 0.0}
+            
+            # Remove files
+            total_size = 0
+            removed_files = 0
+            for idx in old_items:
+                item = self.items[idx]
+                if Path(item.path).exists():
+                    try:
+                        file_size = Path(item.path).stat().st_size
+                        total_size += file_size
+                        Path(item.path).unlink()
+                        removed_files += 1
+                    except OSError as e:
+                        logger.warning(f"Could not remove {item.path}: {e}")
+            
+            # Rebuild cache without old items
+            self._rebuild_cache_without_indices(set(old_items))
+            
+            return {
+                "removed_items": len(old_items),
+                "removed_files": removed_files,
+                "freed_space_mb": total_size / (1024 * 1024)
+            }
+    
+    def remove_by_prompt_pattern(self, pattern: str, confirm: bool = False) -> Dict[str, Any]:
+        """Remove cache items matching a prompt pattern."""
+        if not confirm:
+            return {"error": "Must set confirm=True to remove items"}
+        
+        import re
+        pattern_re = re.compile(pattern, re.IGNORECASE)
+        
+        with self.lock:
+            matching_items = [i for i, item in enumerate(self.items) if pattern_re.search(item.prompt)]
+            
+            if not matching_items:
+                return {"removed_items": 0, "freed_space_mb": 0.0}
+            
+            # Remove files
+            total_size = 0
+            removed_files = 0
+            for idx in matching_items:
+                item = self.items[idx]
+                if Path(item.path).exists():
+                    try:
+                        file_size = Path(item.path).stat().st_size
+                        total_size += file_size
+                        Path(item.path).unlink()
+                        removed_files += 1
+                    except OSError as e:
+                        logger.warning(f"Could not remove {item.path}: {e}")
+            
+            # Rebuild cache without matching items
+            self._rebuild_cache_without_indices(set(matching_items))
+            
+            return {
+                "removed_items": len(matching_items),
+                "removed_files": removed_files,
+                "freed_space_mb": total_size / (1024 * 1024),
+                "pattern": pattern
+            }
+    
+    def _rebuild_cache_without_indices(self, remove_indices: set):
+        """Rebuild cache files without specified indices."""
+        # Keep items not in remove_indices
+        keep_items = [item for i, item in enumerate(self.items) if i not in remove_indices]
+        
+        # Rebuild metadata file
+        with open(self.meta_path, 'w') as f:
+            for item in keep_items:
+                f.write(json.dumps(item.__dict__) + '\n')
+        
+        # Rebuild embedding arrays
+        if self.clap_text_embeddings is not None:
+            keep_clap_text = np.array([self.clap_text_embeddings[i] for i in range(len(self.items)) if i not in remove_indices])
+            np.save(self.clap_text_path, keep_clap_text)
+        
+        if self.clap_audio_embeddings is not None:
+            keep_clap_audio = np.array([self.clap_audio_embeddings[i] for i in range(len(self.items)) if i not in remove_indices])
+            np.save(self.clap_audio_path, keep_clap_audio)
+        
+        if self.bge_text_embeddings is not None:
+            keep_bge_text = np.array([self.bge_text_embeddings[i] for i in range(len(self.items)) if i not in remove_indices])
+            np.save(self.bge_text_path, keep_bge_text)
+        
+        # Update in-memory data
+        self.items = keep_items
+        self._load_cache()  # Reload to refresh embeddings
+    
+    def find_duplicates(self) -> List[List[Dict[str, Any]]]:
+        """Find potential duplicate audio files based on prompts and similarity."""
+        if not self.items:
+            return []
+        
+        # Group by normalized prompt
+        prompt_groups = {}
+        for i, item in enumerate(self.items):
+            norm_prompt = item.prompt_norm
+            if norm_prompt not in prompt_groups:
+                prompt_groups[norm_prompt] = []
+            prompt_groups[norm_prompt].append({
+                "index": i,
+                "item": item,
+                "path": item.path,
+                "prompt": item.prompt,
+                "clap_similarity": item.clap_similarity,
+                "timestamp": item.timestamp,
+                "file_exists": Path(item.path).exists()
+            })
+        
+        # Return groups with multiple items
+        duplicates = [group for group in prompt_groups.values() if len(group) > 1]
+        
+        # Sort each group by timestamp (newest first)
+        for group in duplicates:
+            group.sort(key=lambda x: x["timestamp"], reverse=True)
+        
+        # Sort groups by group size (largest first)
+        duplicates.sort(key=len, reverse=True)
+        
+        return duplicates
+
 
 class Prompt2AudioGenerator(AudioGenerator):
     """TangoFlux-based audio generator with semantic caching and CLAP scoring."""
@@ -511,30 +769,58 @@ class Prompt2AudioGenerator(AudioGenerator):
         
         # Override config with kwargs
         duration_s = kwargs.get('duration_s', self.config.duration_s)
+        force_generation = kwargs.get('force_generation', False)
         
-        logger.info(f"Generating audio for prompt: '{prompt[:50]}{'...' if len(prompt) > 50 else ''}'")
+        logger.info(f"Generating audio for prompt: '{prompt[:50]}{'...' if len(prompt) > 50 else ''}' (force: {force_generation})")
         
-        # Try cache lookup first
-        result = await self._try_cache_lookup(prompt, duration_s)
-        if result:
-            # Optionally prefetch more variants
-            if self.config.prefetch_in_background:
-                threading.Thread(
-                    target=self._prefetch_variants,
-                    args=(prompt,),
-                    daemon=True
-                ).start()
-            elif self.config.prefetch_new:
-                self._prefetch_variants(prompt)
-            
-            return result["item"].path
+        # Try cache lookup first (unless forced)
+        if not force_generation:
+            result = await self._try_cache_lookup(prompt, duration_s)
+            if result:
+                # Store comprehensive metadata from cache hit
+                cache_item = result["item"]
+                self._last_generation_metadata = {
+                    # From cache item
+                    'clap_similarity': cache_item.clap_similarity,
+                    'duration_s': cache_item.duration_s,
+                    'cached_timestamp': cache_item.timestamp,
+                    
+                    # Cache-specific info
+                    'cached': True,
+                    'cache_type': result.get('match_type', 'unknown'),
+                    'cache_similarity': result.get('similarity'),  # Search similarity, different from clap_similarity
+                    
+                    # Current generation config (what would be used if generating new)
+                    'is_loop': self.config.enable_seamless_loop,
+                    'model': self.config.model_name,
+                    'steps': self.config.steps,
+                    'guidance_scale': self.config.guidance_scale,
+                    'requested_duration_s': duration_s,
+                    
+                    # Additional cache metadata
+                    'cache_age_seconds': time.time() - cache_item.timestamp
+                }
+                
+                # Optionally prefetch more variants
+                if self.config.prefetch_in_background:
+                    threading.Thread(
+                        target=self._prefetch_variants,
+                        args=(prompt,),
+                        daemon=True
+                    ).start()
+                elif self.config.prefetch_new:
+                    self._prefetch_variants(prompt)
+                
+                return result["item"].path
         
         # Generate new audio
-        return await self._generate_new_audio(prompt, duration_s)
+        result = await self._generate_new_audio(prompt, duration_s)
+        
+        return result
 
     async def _try_cache_lookup(self, prompt: str, duration_s: int) -> Optional[Dict[str, Any]]:
         """Try to find suitable audio in cache."""
-        duration_range = (duration_s - 10, duration_s + 10)
+        duration_range = (duration_s * 0.8, duration_s * 1.2)
         
         # 1. Try exact prompt matches
         exact_matches = self.cache.find_exact_matches(prompt)
@@ -546,6 +832,7 @@ class Prompt2AudioGenerator(AudioGenerator):
         )
         if result:
             logger.info(f"Cache hit (exact): {result['item'].path} (similarity: {result['similarity']:.3f})")
+            result['match_type'] = 'exact'
             return result
         
         # 2. Try semantic matches
@@ -562,6 +849,7 @@ class Prompt2AudioGenerator(AudioGenerator):
         )
         if result:
             logger.info(f"Cache hit (semantic): {result['item'].path} (similarity: {result['similarity']:.3f})")
+            result['match_type'] = 'semantic'
             return result
         
         # 3. Try global fallback
@@ -574,6 +862,7 @@ class Prompt2AudioGenerator(AudioGenerator):
         )
         if result:
             logger.info(f"Cache hit (global): {result['item'].path} (similarity: {result['similarity']:.3f})")
+            result['match_type'] = 'global'
             return result
         
         return None
@@ -701,6 +990,32 @@ class Prompt2AudioGenerator(AudioGenerator):
         )
         
         logger.info(f"Generated and cached new audio: {audio_path} (similarity: {similarity:.3f})")
+        
+        # Store metadata for potential retrieval
+        metadata_to_store = {
+            # Generation results
+            'clap_similarity': similarity,
+            'duration_s': duration_s,
+            
+            # Generation info
+            'cached': False,
+            'cache_type': 'new_generation',
+            'generation_timestamp': time.time(),
+            
+            # Generation config used
+            'is_loop': self.config.enable_seamless_loop,
+            'model': self.config.model_name,
+            'steps': self.config.steps,
+            'guidance_scale': self.config.guidance_scale,
+            'requested_duration_s': duration_s,
+            
+            # Model parameters
+            'candidates': self.config.candidates,
+            'tau_accept_new': self.config.tau_accept_new
+        }
+        
+        self._last_generation_metadata = metadata_to_store
+        
         return str(audio_path)
 
     def _prefetch_variants(self, prompt: str):
@@ -715,9 +1030,8 @@ class Prompt2AudioGenerator(AudioGenerator):
             
             logger.info(f"Prefetching {needed} variants for prompt: '{prompt[:50]}'")
             
-            # This would ideally be async, but for simplicity we'll make it sync
-            # In a production system, you'd want to handle this more carefully
-            asyncio.create_task(self._generate_prefetch_variants(prompt, needed))
+            # Run the async prefetch in a new event loop since we're in a thread
+            asyncio.run(self._generate_prefetch_variants(prompt, needed))
             
         except Exception as e:
             logger.error(f"Error during prefetch: {e}")
@@ -734,6 +1048,9 @@ class Prompt2AudioGenerator(AudioGenerator):
         """Start the generator and pre-warm models if configured."""
         await super().start()
         
+        # Initialize metadata storage
+        self._last_generation_metadata = {}
+        
         if self.config.pre_warm:
             logger.info("Pre-warming Prompt2AudioGenerator models...")
             try:
@@ -745,3 +1062,7 @@ class Prompt2AudioGenerator(AudioGenerator):
                 logger.info("Model pre-warming completed")
             except Exception as e:
                 logger.error(f"Model pre-warming failed: {e}")
+    
+    def get_last_generation_metadata(self) -> dict:
+        """Get metadata from the last generation."""
+        return getattr(self, '_last_generation_metadata', {})

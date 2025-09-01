@@ -39,7 +39,7 @@ def create_audio_generator(
     """
     # Check if subprocess execution is requested
     if getattr(config, 'use_subprocess', False) and getattr(config, 'cuda_visible_devices', None):
-        logger.info(f"Creating subprocess wrapper for {generator_class.__name__} with CUDA_VISIBLE_DEVICES={config.cuda_visible_devices}")
+        logger.info(f"Creating persistent subprocess wrapper for {generator_class.__name__} with CUDA_VISIBLE_DEVICES={config.cuda_visible_devices}")
         
         # Convert config to dict for subprocess
         if hasattr(config, 'model_dump'):
@@ -62,14 +62,16 @@ def create_audio_generator(
         
         logger.debug(f"Wrapped config: {wrapped_config}")
         
-        # Create subprocess wrapper - keep strategy for the subprocess config
-        return cast(AudioGenerator, create_subprocess_wrapper(
+        # Create persistent subprocess wrapper
+        from image_server.generators.persistent_subprocess_wrapper import create_persistent_subprocess_wrapper
+        return cast(AudioGenerator, create_persistent_subprocess_wrapper(
             generator_class=f"{generator_class.__module__}.{generator_class.__name__}",
             generator_config=wrapped_config,
             generator_type="audio",
             cuda_visible_devices=config.cuda_visible_devices,
             timeout_seconds=getattr(config, 'subprocess_timeout_seconds', 300),
             max_retries=getattr(config, 'subprocess_max_retries', 3),
+            startup_timeout_seconds=120,  # Allow 2 minutes for model loading
             output_dir=output_dir,
             **kwargs
         ))

@@ -119,30 +119,65 @@ All generators inherit from the base `ImageGenerator` class, which provides:
 
 ### Audio Generation System
 
-The audio generation system provides text-to-audio capabilities with the following components:
+The audio generation system provides text-to-audio capabilities with comprehensive metadata tracking and caching support:
 
 #### TangoFlux Generator (`audio/`)
 **Purpose**: High-quality text-to-audio synthesis using TangoFlux model  
 **Features**:
 - Text-to-audio generation using TangoFlux (declare-lab/TangoFlux)
-- CLAP-based audio similarity scoring for quality assessment
-- BGE embeddings for enhanced text understanding
+- **Comprehensive metadata system** with CLAP similarity scoring, generation parameters, cache information, and timestamps
+- **Semantic caching** with BGE embeddings for intelligent audio reuse
+- **Force generation capability** for testing and validation (bypass cache)
+- **Persistent subprocess workers** for 3.4x performance improvement with GPU isolation
+- **Quality assessment** with CLAP model scoring and candidate selection
+- **Audio processing** including seamless looping, loudness normalization, and format standardization
 - Configurable model storage with centralized MODELS_DIR support
-- Audio format normalization and processing
 - PyTorch 2.4.0 with CUDA 12.1.x support
+
+**Metadata Output**:
+The system provides rich metadata for every generation:
+
+```json
+{
+  "clap_similarity": 0.427,              // CLAP model quality score
+  "duration_s": 8,                       // Audio duration
+  "cached": false,                       // Cache hit/miss status
+  "cache_type": "new_generation",        // Generation type
+  "generation_timestamp": 1756748477.34, // When generated
+  "is_loop": true,                       // Seamless loop enabled
+  "model": "declare-lab/TangoFlux",      // AI model used
+  "steps": 20,                           // Generation steps
+  "guidance_scale": 4.5,                 // Guidance parameter
+  "requested_duration_s": 8,             // Requested duration
+  "candidates": 1,                       // Number of candidates
+  "tau_accept_new": 0.4                  // Acceptance threshold
+}
+```
+
+**Cache Management Features**:
+- Semantic and exact prompt matching
+- Cache aging and cleanup utilities
+- Quality-based cache pruning strategies
+- Cache statistics and inspection tools
 
 **Configuration Options**:
 - `model_name`: TangoFlux model variant (default: "declare-lab/TangoFlux")
 - `clap_model`: CLAP model for audio similarity (default: "laion/clap-htsat-unfused")
 - `bge_model`: BGE embedding model (default: "BAAI/bge-large-en-v1.5")
 - `models_dir`: Directory for model storage (default: uses MODELS_DIR environment variable)
-- `sample_rate`: Output audio sample rate (default: 16000)
-- `duration`: Audio duration in seconds (default: 10.0)
+- `duration_s`: Audio duration in seconds (default: 8)
+- `sample_rate`: Output audio sample rate (default: 44100)
+- `normalize_loudness`: Enable loudness normalization (default: true)
+- `target_lufs`: Target loudness level (default: -23.0)
+- `enable_seamless_loop`: Create seamless audio loops (default: true)
+- `use_subprocess`: Enable persistent subprocess workers (default: true)
+- `cuda_visible_devices`: GPU assignment for subprocess workers (default: "0")
 
 **Use Cases**: 
 - Environmental soundscapes for installations
 - Dynamic audio generation based on text descriptions
 - AI-generated background audio for interactive experiences
+- High-performance audio generation with intelligent caching
 
 #### Audio Dependencies
 

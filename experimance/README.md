@@ -392,6 +392,9 @@ See [`utils/tests/README.md`](utils/tests/README.md) and [`utils/tests/README_ZM
 
 For detailed documentation on advanced system features:
 
+- **[Multi-GPU Configuration Guide](docs/multi_gpu_subprocess_guide.md)** - GPU isolation for concurrent image/audio generation with persistent subprocess workers and comprehensive metadata system
+- **[Generator System Guide](services/image_server/src/image_server/generators/README_GENERATORS.md)** - Complete guide to image and audio generation systems, including TangoFlux audio generation with semantic caching
+- **[Audio Cache Management](scripts/README_AUDIO_CACHE.md)** - Cache management tools for audio generation including statistics, cleanup, and maintenance
 - **[Multi-Channel Audio System](docs/multi_channel_audio.md)** - Complete guide to the multi-channel audio transport with delay compensation for echo cancellation
 - **[Multi-Channel Quick Reference](docs/multi_channel_quick_reference.md)** - Quick setup and configuration guide for multi-channel audio
 - **[Health System](docs/health_system.md)** - Service monitoring and health management

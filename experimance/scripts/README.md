@@ -4,6 +4,41 @@ This directory contains utility scripts for managing the Experimance project.
 
 ## Available Scripts
 
+### `audio_cache_manager.py`
+
+Comprehensive audio generation cache management tool for inspection, cleanup, and maintenance.
+
+**Usage:**
+```bash
+# Show cache statistics
+uv run python scripts/audio_cache_manager.py stats
+
+# List cache items (newest first)
+uv run python scripts/audio_cache_manager.py list --limit 10
+
+# Find and remove duplicates
+uv run python scripts/audio_cache_manager.py duplicates --remove-duplicates --confirm
+
+# Clean old items (30+ days old)
+uv run python scripts/audio_cache_manager.py clean --days 30
+
+# Remove items matching pattern
+uv run python scripts/audio_cache_manager.py remove-pattern "test.*" --confirm
+
+# Clear entire cache
+uv run python scripts/audio_cache_manager.py clear --confirm
+```
+
+**Features:**
+- **Cache Statistics**: Total items, size, age range, CLAP similarity scores
+- **Item Listing**: Sort by timestamp, quality, duration, or prompt
+- **Duplicate Detection**: Find and remove redundant cache entries
+- **Pattern Matching**: Remove items by regex patterns
+- **Safety Features**: Dry-run mode, confirmation prompts, detailed reporting
+- **Space Management**: Track and optimize storage usage
+
+See [README_AUDIO_CACHE.md](README_AUDIO_CACHE.md) for detailed documentation.
+
 ### `list_cameras.py`
 
 Comprehensive Reolink camera discovery tool using intelligent progressive detection.
