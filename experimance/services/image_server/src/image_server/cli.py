@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -37,18 +38,23 @@ from experimance_common.zmq.components import PushComponent, PullComponent
 from experimance_common.zmq.config import ControllerPushConfig, ControllerPullConfig
 from experimance_common.zmq.zmq_utils import prepare_image_source, IMAGE_TRANSPORT_MODES
 
-# Try to import audio generation capabilities
+# Check if audio support is available in schemas
 try:
-    from image_server.generators.audio.prompt2audio import Prompt2AudioGenerator
-    from image_server.generators.audio.audio_config import Prompt2AudioConfig
-    AUDIO_GENERATION_AVAILABLE = True
+    from experimance_common.schemas import AudioRenderRequest, AudioReady
+    AUDIO_SUPPORT = True
 except ImportError:
-    AUDIO_GENERATION_AVAILABLE = False
+    AUDIO_SUPPORT = False
 
 PROJECT_ENV = os.getenv("PROJECT_ENV", "experimance").lower()
 # Import project-specific schemas (Era, Biome, RenderRequest)
 if PROJECT_ENV == "experimance":
-    from experimance_common.schemas import Era, Biome
+    try:
+        from experimance_common.schemas import Era, Biome
+        EXPERIMANCE_SUPPORT = True
+    except ImportError:
+        EXPERIMANCE_SUPPORT = False
+else:
+    EXPERIMANCE_SUPPORT = False
 from experimance_common.schemas import RenderRequest
 
 # Try to import prompt generator for enhanced prompt generation
@@ -186,25 +192,37 @@ class ImageServerClient:
             )
         
         # Handle source image for image-to-image generation
-        image_source = None
+        reference_image_source = None
         if image_path and image_path.exists():
             logger.info(f"Including source image for image-to-image from {image_path}")
-            image_source = prepare_image_source(
+            reference_image_source = prepare_image_source(
                 image_data=image_path,  # Can pass Path directly
                 transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
                 request_id=request_id,
             )
 
-        # Create proper RenderRequest object like core service does
-        request = RenderRequest(
-            request_id=request_id,
-            prompt=prompt,
-            depth_map=depth_map_source,
-            image=image_source
-        )
-        if PROJECT_ENV == "experimance":
-            request.era = Era(era) if era else None
-            request.biome = Biome(biome) if biome else None
+        # Create base RenderRequest data
+        request_data = {
+            "request_id": request_id,
+            "prompt": prompt,
+            "depth_map": depth_map_source,
+            "reference_image": reference_image_source
+        }
+        
+        # Add era and biome if available and supported
+        if PROJECT_ENV == "experimance" and EXPERIMANCE_SUPPORT:
+            if era:
+                try:
+                    request_data["era"] = Era(era)
+                except:
+                    pass  # Skip if Era doesn't exist or value is invalid
+            if biome:
+                try:
+                    request_data["biome"] = Biome(biome)
+                except:
+                    pass  # Skip if Biome doesn't exist or value is invalid
+
+        request = RenderRequest(**request_data)
 
         logger.debug(f"Sending RenderRequest: {request.request_id}")
         assert self.push_component is not None, "PushComponent not initialized"
@@ -260,21 +278,21 @@ async def interactive_mode(debug: bool = False):
     while True:
         print("\n=== Main Menu ===")
         print("  1. Image Generation (ZMQ to Image Server)")
-        if AUDIO_GENERATION_AVAILABLE:
-            print("  2. Audio Generation (Direct Testing)")
+        if AUDIO_SUPPORT:
+            print("  2. Audio Generation (ZMQ to Image Server)")
         print("  3. Exit")
         
-        max_choice = 3 if AUDIO_GENERATION_AVAILABLE else 2
-        if AUDIO_GENERATION_AVAILABLE:
+        max_choice = 3 if AUDIO_SUPPORT else 2
+        if AUDIO_SUPPORT:
             main_choice = input(f"Choose mode (1-{max_choice}, default=1): ") or "1"
         else:
             main_choice = input("Choose mode (1-2, default=1): ") or "1"
         
         if main_choice == "1":
             await image_generation_mode(push_address, pull_address, debug)
-        elif main_choice == "2" and AUDIO_GENERATION_AVAILABLE:
-            await audio_generation_mode(debug)
-        elif main_choice == "3" or (main_choice == "2" and not AUDIO_GENERATION_AVAILABLE):
+        elif main_choice == "2" and AUDIO_SUPPORT:
+            await audio_generation_mode(push_address, pull_address, debug)
+        elif main_choice == "3" or (main_choice == "2" and not AUDIO_SUPPORT):
             break
         else:
             print("Invalid choice, please try again.")
@@ -593,21 +611,13 @@ async def command_line_mode(args):
     await client.start()
 
     try:
-        # Send the render request
-        depth_map_path = Path(args.depth_map) if args.depth_map else None
-        source_image_path = Path(args.source_image) if args.source_image else None
-
-        # Send request and wait for response
-        request = {
-            "prompt": selected_prompt,
-            "depth_map_path": depth_map_path,
-            "image_path": source_image_path,
-        }
-        if PROJECT_ENV == "experimance":
-            request["era"] = selected_era
-            request["biome"] = selected_biome
-
-        request_id = await client.send_render_request(**request)
+        # Determine if this is audio or image generation
+        if args.audio_prompt:
+            # Send audio render request
+            request_id = await send_audio_render_request(client, args)
+        else:
+            # Send image render request
+            request_id = await send_image_render_request(client, args)
 
         if args.no_wait:
             print(f"Request {request_id} sent. Not waiting for response.")
@@ -630,6 +640,18 @@ async def command_line_mode(args):
                     if file_path.exists():
                         print(f"\nImage saved to: {file_path}")
                         print(f"File size: {file_path.stat().st_size} bytes")
+
+            # If it's an audio response, show file info
+            elif response.get("type") == "AudioReady":
+                uri = response.get("uri", "")
+                if uri.startswith("file://"):
+                    audio_path = Path(uri.replace("file://", ""))
+                    if audio_path.exists():
+                        file_size = audio_path.stat().st_size
+                        print(f"\nAudio saved to: {audio_path}")
+                        print(f"File size: {file_size // 1024}KB")
+                    else:
+                        print(f"Generated audio path: {audio_path} (file not found)")
         else:
             print("No response received within the timeout period")
 
@@ -637,35 +659,65 @@ async def command_line_mode(args):
         await client.stop()
 
 
-async def audio_generation_mode(debug: bool = False):
-    """Run audio generation testing mode using direct generator access."""
-    if not AUDIO_GENERATION_AVAILABLE:
-        print("❌ Audio generation is not available. Missing dependencies or modules.")
-        return
+async def send_image_render_request(client: ImageServerClient, args) -> str:
+    """Send an image render request."""
+    # Determine prompt
+    selected_prompt = args.prompt
+    selected_era = getattr(args, 'era', 'wilderness') if PROJECT_ENV == "experimance" else None
+    selected_biome = getattr(args, 'biome', 'temperate_forest') if PROJECT_ENV == "experimance" else None
+    
+    # Send image render request
+    depth_map_path = Path(args.depth_map) if args.depth_map else None
+    source_image_path = Path(args.source_image) if args.source_image else None
 
-    print("\n=== Audio Generation Test Mode ===")
-    print("Testing TangoFlux audio generator directly...")
+    request_kwargs = {
+        "prompt": selected_prompt,
+        "depth_map_path": depth_map_path,
+        "image_path": source_image_path,
+    }
+    if PROJECT_ENV == "experimance" and EXPERIMANCE_SUPPORT:
+        request_kwargs["era"] = selected_era
+        request_kwargs["biome"] = selected_biome
+
+    return await client.send_render_request(**request_kwargs)
+
+
+async def send_audio_render_request(client: ImageServerClient, args) -> str:
+    """Send an audio render request via ZMQ."""
+    if not AUDIO_SUPPORT:
+        raise RuntimeError("Audio generation not supported - missing audio schemas")
     
-    # Configuration
-    print("\nAudio Configuration:")
-    duration_s = int(input("Audio duration in seconds (default=10): ") or "10")
-    normalize_audio = input("Apply loudness normalization? (Y/n): ").lower() != 'n'
+    request_id = str(uuid.uuid4())
     
-    config = Prompt2AudioConfig(
-        duration_s=duration_s,
-        normalize_loudness=normalize_audio,
-        candidates=2,  # Generate 2 candidates for better quality
-        prefetch_in_background=False,  # Disable for testing
+    # Create AudioRenderRequest
+    request = AudioRenderRequest(
+        request_id=request_id,
+        prompt=args.audio_prompt,
+        duration_s=getattr(args, 'audio_duration', 10)
     )
     
-    # Create generator
-    output_dir = Path("/tmp/experimance_audio_cli")
-    generator = Prompt2AudioGenerator(config, output_dir=str(output_dir))
+    logger.debug(f"Sending AudioRenderRequest: {request.request_id}")
+    assert client.push_component is not None, "PushComponent not initialized"
+    await client.push_component.push(request)
+    logger.info(f"Sent AudioRenderRequest with ID: {request_id}")
+    return request_id
+
+
+async def audio_generation_mode(push_address: str, pull_address: str, debug: bool = False):
+    """Run audio generation testing mode using ZMQ to Image Server Service."""
+    if not AUDIO_SUPPORT:
+        print("❌ Audio generation is not available. Missing audio schemas.")
+        print("Audio support needs AudioRenderRequest and AudioReady in schemas.")
+        return
+
+    print("\n=== Audio Generation Mode (ZMQ) ===")
+    print("Testing audio generation via Image Server Service...")
     
+    # Create and start client
+    client = ImageServerClient(push_address, pull_address)
+    await client.start()
+
     try:
-        await generator.start()
-        print(f"✅ Audio generator started. Output directory: {output_dir}")
-        
         while True:
             print("\n=== Audio Generation Menu ===")
             
@@ -683,82 +735,98 @@ async def audio_generation_mode(debug: bool = False):
             selected_prompt = ""
             
             if prompt_choice == "1":
-                # Predefined audio prompts
-                print("\nSelect a predefined audio prompt:")
-                print("  0. Enter custom prompt")
+                print("\nAvailable audio prompts:")
                 audio_prompt_options = list(SAMPLE_AUDIO_PROMPTS.keys())
                 for i, name in enumerate(audio_prompt_options):
                     print(f"  {i+1}. {name}: {SAMPLE_AUDIO_PROMPTS[name]}")
                 
-                predefined_choice = int(input(f"Choose prompt (0-{len(audio_prompt_options)}, default=0): ") or "0")
-                if predefined_choice == 0:
-                    selected_prompt = input("Enter your custom audio prompt: ")
-                else:
+                try:
+                    predefined_choice = int(input(f"Select prompt (1-{len(audio_prompt_options)}): "))
                     if 1 <= predefined_choice <= len(audio_prompt_options):
                         selected_prompt = SAMPLE_AUDIO_PROMPTS[audio_prompt_options[predefined_choice - 1]]
+                        print(f"Selected: {selected_prompt}")
                     else:
-                        selected_prompt = "gentle forest ambience with birds"
+                        print("Invalid selection, using default")
+                        selected_prompt = SAMPLE_AUDIO_PROMPTS["forest_ambience"]
+                except ValueError:
+                    print("Invalid input, using default")
+                    selected_prompt = SAMPLE_AUDIO_PROMPTS["forest_ambience"]
             
-            else:  # prompt_choice == "2" or fallback
-                selected_prompt = input("Enter your custom audio prompt: ")
+            else:
+                selected_prompt = input("Enter audio prompt: ").strip()
             
             if not selected_prompt.strip():
-                print("Error: Audio prompt cannot be empty")
+                print("Empty prompt, skipping...")
                 continue
+            
+            # Duration selection
+            duration_s = int(input("Audio duration in seconds (default=10): ") or "10")
             
             # Show summary and confirm
             print("\n=== Audio Generation Summary ===")
             print(f"Prompt: {selected_prompt}")
             print(f"Duration: {duration_s} seconds")
-            print(f"Normalize: {'Yes' if normalize_audio else 'No'}")
-            print(f"Output: {output_dir}")
+            print(f"Method: ZMQ to Image Server Service")
             
             confirm = input("\nGenerate this audio? (Y/n): ").lower() != 'n'
             if not confirm:
-                print("Generation canceled")
                 continue
             
-            # Generate audio
-            print(f"\n🎵 Generating audio...")
-            start_time = time.monotonic()
+            # Send audio render request
+            request_id = str(uuid.uuid4())
             
             try:
-                audio_path = await generator.generate_audio(
-                    selected_prompt,
+                # Create AudioRenderRequest
+                request = AudioRenderRequest(
+                    request_id=request_id,
+                    prompt=selected_prompt,
                     duration_s=duration_s
                 )
                 
-                duration = time.monotonic() - start_time
-                print(f"✅ Audio generated in {duration:.1f} seconds")
-                print(f"📁 Audio file: {audio_path}")
+                logger.debug(f"Sending AudioRenderRequest: {request.request_id}")
+                assert client.push_component is not None, "PushComponent not initialized"
+                await client.push_component.push(request)
+                logger.info(f"Sent AudioRenderRequest with ID: {request_id}")
                 
-                # Check file info
-                audio_file = Path(audio_path)
-                if audio_file.exists():
-                    size_kb = audio_file.stat().st_size // 1024
-                    print(f"📊 File size: {size_kb}KB")
+                print(f"\nRequest {request_id} sent. Waiting for response...")
+                start_time = time.monotonic()   
+                response = await client.wait_for_response(request_id)
+                duration = time.monotonic() - start_time
+                print(f"Response received in {duration:.1f} seconds")
+
+                if response:
+                    print("\nAudio generation completed!")
+                    print(json.dumps(response, indent=2))
                     
-                    # Try to get audio duration if soundfile is available
-                    try:
-                        import soundfile as sf
-                        with sf.SoundFile(audio_path) as f:
-                            actual_duration = len(f) / f.samplerate
-                            print(f"⏱️  Actual duration: {actual_duration:.1f}s")
-                            print(f"🔊 Sample rate: {f.samplerate}Hz")
-                            print(f"🎼 Channels: {f.channels}")
-                    except Exception:
-                        pass
-                        
+                    # Show file info if available
+                    uri = response.get("uri", "")
+                    if uri.startswith("file://"):
+                        audio_path = Path(uri.replace("file://", ""))
+                        if audio_path.exists():
+                            file_size = audio_path.stat().st_size
+                            print(f"\n📁 Audio file: {audio_path}")
+                            print(f"📊 File size: {file_size // 1024}KB")
+                            
+                            # Try to get audio info
+                            try:
+                                import soundfile as sf
+                                with sf.SoundFile(str(audio_path)) as f:
+                                    actual_duration = len(f) / f.samplerate
+                                    print(f"⏱️  Actual duration: {actual_duration:.1f}s")
+                                    print(f"🔊 Sample rate: {f.samplerate}Hz")
+                                    print(f"🎼 Channels: {f.channels}")
+                            except ImportError:
+                                print("📊 Install soundfile for detailed audio info: uv add soundfile")
+                            except Exception as e:
+                                print(f"📊 Could not read audio info: {e}")
+                        else:
+                            print(f"Audio path: {audio_path} (file not found)")
                 else:
-                    print("⚠️  Warning: Generated file does not exist")
-                
+                    print("❌ No response received within the timeout period")
+
             except Exception as e:
-                duration = time.monotonic() - start_time
-                print(f"❌ Audio generation failed after {duration:.1f}s")
-                print(f"Error: {e}")
-                
+                print(f"❌ Error sending audio request: {e}")
                 if debug:
-                    import traceback
                     print(f"Traceback:\n{traceback.format_exc()}")
             
             # Ask to continue
@@ -766,98 +834,13 @@ async def audio_generation_mode(debug: bool = False):
                 break
                 
     except Exception as e:
-        print(f"❌ Failed to start audio generator: {e}")
+        print(f"❌ Failed in audio generation mode: {e}")
         if debug:
-            import traceback
             print(f"Traceback:\n{traceback.format_exc()}")
     finally:
-        try:
-            await generator.stop()
-            print("🛑 Audio generator stopped")
-        except Exception as e:
-            print(f"Warning: Error stopping generator: {e}")
-
-
-async def audio_command_line_mode(args):
-    """Run audio generation in command line mode with arguments."""
-    if not AUDIO_GENERATION_AVAILABLE:
+        await client.stop()
         print("❌ Audio generation is not available. Missing dependencies or modules.")
         return
-
-    # Determine the audio prompt
-    audio_prompt = args.audio_prompt
-    if not audio_prompt:
-        print("Error: --audio-prompt is required for audio generation mode.")
-        return 1
-
-    print(f"\n=== Audio Generation Command Line Mode ===")
-    print(f"Prompt: {audio_prompt}")
-    print(f"Duration: {args.audio_duration} seconds")
-    
-    # Configuration
-    config = Prompt2AudioConfig(
-        duration_s=args.audio_duration,
-        normalize_loudness=True,  # Always normalize for CLI
-        candidates=2,  # Generate 2 candidates for better quality
-        prefetch_in_background=False,  # Disable for CLI
-    )
-    
-    # Create generator
-    output_dir = Path("/tmp/experimance_audio_cli")
-    generator = Prompt2AudioGenerator(config, output_dir=str(output_dir))
-    
-    try:
-        await generator.start()
-        print(f"✅ Audio generator started. Output directory: {output_dir}")
-        
-        print(f"\n🎵 Generating audio...")
-        start_time = time.monotonic()
-        
-        audio_path = await generator.generate_audio(
-            audio_prompt,
-            duration_s=args.audio_duration
-        )
-        
-        duration = time.monotonic() - start_time
-        print(f"✅ Audio generated in {duration:.1f} seconds")
-        print(f"📁 Audio file: {audio_path}")
-        
-        # Check file info
-        audio_file = Path(audio_path)
-        if audio_file.exists():
-            size_kb = audio_file.stat().st_size // 1024
-            print(f"📊 File size: {size_kb}KB")
-            
-            # Try to get audio duration if soundfile is available
-            try:
-                import soundfile as sf
-                with sf.SoundFile(audio_path) as f:
-                    actual_duration = len(f) / f.samplerate
-                    print(f"⏱️  Actual duration: {actual_duration:.1f}s")
-                    print(f"🔊 Sample rate: {f.samplerate}Hz")
-                    print(f"🎼 Channels: {f.channels}")
-            except Exception:
-                pass
-        else:
-            print("⚠️  Warning: Generated file does not exist")
-            
-    except Exception as e:
-        duration = time.monotonic() - start_time if 'start_time' in locals() else 0
-        print(f"❌ Audio generation failed after {duration:.1f}s")
-        print(f"Error: {e}")
-        
-        if args.debug:
-            import traceback
-            print(f"Traceback:\n{traceback.format_exc()}")
-        return 1
-    finally:
-        try:
-            await generator.stop()
-            print("🛑 Audio generator stopped")
-        except Exception as e:
-            print(f"Warning: Error stopping generator: {e}")
-    
-    return 0
 
 
 def main():
@@ -871,14 +854,14 @@ def main():
     parser.add_argument(
         "--audio", "-a",
         action="store_true",
-        help="Run in audio generation mode (direct testing of audio generator)"
+        help="Run in audio generation mode (ZMQ to Image Server Service)"
     )
     parser.add_argument(
         "--prompt", "-p",
         type=str,
         help="Text prompt for image generation"
     )
-    if PROJECT_ENV == "experimance":
+    if PROJECT_ENV == "experimance" and EXPERIMANCE_SUPPORT:
         parser.add_argument(
             "--era", "-e",
             type=str,
@@ -1007,17 +990,18 @@ def main():
     # Check for interactive mode or required parameters
     if args.interactive:
         asyncio.run(interactive_mode(args.debug))
-    elif args.audio:
-        if AUDIO_GENERATION_AVAILABLE:
-            result = asyncio.run(audio_command_line_mode(args))
-            return result if result is not None else 0
+    elif args.audio and args.audio_prompt:
+        # Audio generation via ZMQ
+        if AUDIO_SUPPORT:
+            asyncio.run(command_line_mode(args))
         else:
-            print("❌ Audio generation is not available. Missing dependencies or modules.")
+            print("❌ Audio generation is not available. Missing audio schemas.")
+            print("Direct audio testing available at: uv run python services/image_server/tests/test_audio_direct.py")
             return 1
     elif args.prompt or args.sample_prompt:
         asyncio.run(command_line_mode(args))
     else:
-        print("Error: Must specify one of: --interactive, --audio, or --prompt")
+        print("Error: Must specify one of: --interactive, --prompt, or --audio with --audio-prompt")
         parser.print_help()
         return 1
     
