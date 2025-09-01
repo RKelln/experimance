@@ -56,7 +56,7 @@ class LazyImports:
         """Configure HuggingFace cache location."""
         if self._cache_dir:
             hf_cache = self._cache_dir / "huggingface_cache"
-            hf_cache.mkdir(exist_ok=True)
+            hf_cache.mkdir(parents=True, exist_ok=True)
             
             # Set HuggingFace environment variables
             os.environ['TRANSFORMERS_CACHE'] = str(hf_cache)
@@ -118,6 +118,21 @@ def get_lazy_imports(models_dir: Optional[Path] = None) -> LazyImports:
 def normalize_prompt(prompt: str) -> str:
     """Normalize prompt for grouping and comparison."""
     return " ".join(prompt.lower().split())
+
+
+def normalize_filename(text: str, max_length: int = 40) -> str:
+    """Normalize text for use in filenames."""
+    import re
+    # Convert to lowercase and replace spaces with underscores
+    normalized = text.lower().replace(" ", "_")
+    # Remove non-alphanumeric characters except underscores and hyphens
+    normalized = re.sub(r'[^a-z0-9_\-]', '', normalized)
+    # Remove multiple consecutive underscores
+    normalized = re.sub(r'_+', '_', normalized)
+    # Remove leading/trailing underscores
+    normalized = normalized.strip('_')
+    # Truncate if too long
+    return normalized[:max_length] if len(normalized) > max_length else normalized
 
 
 @dataclass
@@ -251,15 +266,17 @@ class AudioSemanticCache:
             if audio_data.ndim > 1:
                 audio_data = audio_data.mean(axis=1)  # Convert to mono
             
-            # Resample if needed
-            if sr != SR:
+            # Resample to CLAP's expected 48kHz if needed
+            CLAP_SR = 48000
+            if sr != CLAP_SR:
                 import torchaudio.transforms as T
-                resampler = T.Resample(sr, SR)
+                resampler = T.Resample(sr, CLAP_SR)
                 audio_tensor = torch.tensor(audio_data, dtype=torch.float32)
                 audio_data = resampler(audio_tensor).numpy()
             
             # Multi-window embedding for long audio
-            window_samples = min(len(audio_data), 10 * SR)  # 10 second windows
+            CLAP_SR = 48000
+            window_samples = min(len(audio_data), 10 * CLAP_SR)  # 10 second windows at CLAP sample rate
             if len(audio_data) > window_samples:
                 # Start, middle, end windows
                 starts = [0, max(0, (len(audio_data) - window_samples) // 2), max(0, len(audio_data) - window_samples)]
@@ -270,7 +287,7 @@ class AudioSemanticCache:
                         # Pad if necessary
                         segment = np.pad(segment, (0, window_samples - len(segment)))
                     
-                    inputs = processor(audios=segment, sampling_rate=SR, return_tensors="pt").to(DEVICE)
+                    inputs = processor(audios=segment, sampling_rate=CLAP_SR, return_tensors="pt").to(DEVICE)
                     embedding = model.get_audio_features(**inputs)
                     embedding = torch.nn.functional.normalize(embedding, p=2, dim=-1)
                     embeddings.append(embedding)
@@ -279,7 +296,7 @@ class AudioSemanticCache:
                 final_embedding = torch.mean(torch.stack(embeddings), dim=0)
             else:
                 # Single window
-                inputs = processor(audios=audio_data, sampling_rate=SR, return_tensors="pt").to(DEVICE)
+                inputs = processor(audios=audio_data, sampling_rate=CLAP_SR, return_tensors="pt").to(DEVICE)
                 final_embedding = model.get_audio_features(**inputs)
                 final_embedding = torch.nn.functional.normalize(final_embedding, p=2, dim=-1)
             
@@ -572,13 +589,11 @@ class Prompt2AudioGenerator(AudioGenerator):
         # Generate candidates
         candidates = []
         for i in range(self.config.candidates):
-            seed = random.randint(1, 2**31 - 1)
             audio = tangoflux.generate(
                 prompt,
                 steps=self.config.steps,
                 duration=duration_s,
-                guidance_scale=self.config.guidance_scale,
-                seed=seed
+                guidance_scale=self.config.guidance_scale
             )
             
             # Convert to tensor if needed
@@ -594,8 +609,11 @@ class Prompt2AudioGenerator(AudioGenerator):
         for i, audio_tensor in enumerate(candidates):
             # Make seamless loop
             if self.config.enable_seamless_loop:
+                # Adaptive crossfade duration: use configured duration but cap at 25% of audio length
+                max_crossfade = duration_s * 0.25  # Max 25% of audio length
+                adaptive_crossfade = min(self.config.tail_duration_s, max_crossfade)
                 looped_audio = AudioNormalizer.make_seamless_loop(
-                    audio_tensor, SR, self.config.tail_duration_s
+                    audio_tensor, SR, adaptive_crossfade
                 )
             else:
                 looped_audio = audio_tensor
@@ -631,7 +649,7 @@ class Prompt2AudioGenerator(AudioGenerator):
             if candidates[best_idx].ndim > 1:
                 audio_np = audio_np.mean(axis=0)
             
-            temp_path = self.render_dir / f"temp_{normalize_prompt(prompt)[:40]}_{int(time.time() * 1000)}.wav"
+            temp_path = self.render_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
             sf.write(str(temp_path), audio_np, SR, subtype='PCM_16')
             logger.warning(f"No candidates accepted, returning temp file: {temp_path}")
             return str(temp_path)
@@ -653,7 +671,7 @@ class Prompt2AudioGenerator(AudioGenerator):
         similarity, looped_audio, audio_np = accepted_candidates[best_idx]
         
         # Save final audio
-        filename = f"{normalize_prompt(prompt)[:40]}_{int(time.time() * 1000)}.wav"
+        filename = f"{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
         audio_path = self.render_dir / filename
         sf.write(str(audio_path), audio_np, SR, subtype='PCM_16')
         

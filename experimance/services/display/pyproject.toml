@@ -30,7 +30,6 @@ dependencies = [
     "ffmpegcv",
     "screeninfo",
     "pygame",
-    "lunar-tools @ git+https://github.com/lunarring/lunar_tools",
     "python-dotenv",
     "torch",
 ]

@@ -29,7 +29,6 @@ dependencies = [
     "opencv-python",
     "pyrealsense2; platform_system != 'Darwin'",
     "screeninfo",
-    "lunar-tools @ git+https://github.com/lunarring/lunar_tools",
     "blessed",
 ]
 
