@@ -133,6 +133,7 @@ class LLMPromptBuilder:
                 elif status == "ready":
                     # Content is ready for generation
                     logger.info("LLM determined content is ready for image generation")
+                    return data
 
         except InsufficientContentException:
             # Re-raise this exception to be caught by the caller
@@ -221,12 +222,6 @@ class LLMPromptBuilder:
         Raises:
             InsufficientContentException: When there's not enough content to generate prompts
         """
-        # fallback prompts
-        data = {
-            "visual_prompt": "A cinematic landscape scene",
-            "visual_negative_prompt": "",
-            "audio_prompt": "gentle ambient environmental sounds"
-        }
         
         try:
             # Prepare the content for the LLM with consistent prefix for better caching
@@ -247,25 +242,35 @@ class LLMPromptBuilder:
             raise
         
         if result is None:
+            logger.debug("No result from LLM, using fallback prompt.")
             if previous_prompt is not None:
                 return previous_prompt
-            return MediaPrompt("A cinematic landscape scene")
+            return MediaPrompt("A cinematic dream-like landscape scene")
+        
+        visual_prompt = result.get("visual_prompt", result.get("prompt", ""))
+        negative_prompt = result.get("visual_negative_prompt", result.get("negative_prompt", result.get("negative", "")))
         
         # Build the visual prompt using existing method
         visual_prompt = self._elements_to_prompt(
-            prompt_elements=result.get("visual_prompt", "").strip().split(","),
-            negative_elements=result.get("visual_negative_prompt", "").strip().split(","),
+            prompt_elements=visual_prompt.strip().split(","),
+            negative_elements=negative_prompt.strip().split(","),
             prefix=prefix,
             suffix=suffix,
             negative=negative
         )
         
         # Create MediaPrompt
-        return MediaPrompt(
+        audio_prompt_value = result.get("audio_prompt")
+        logger.debug(f"🎵 Creating MediaPrompt with audio_prompt: {audio_prompt_value}")
+        
+        media_prompt = MediaPrompt(
             visual_prompt=visual_prompt.prompt,
             visual_negative_prompt=visual_prompt.negative_prompt,
-            audio_prompt=data.get("audio_prompt")
+            audio_prompt=audio_prompt_value
         )
+        
+        logger.debug(f"🎵 Created MediaPrompt.audio_prompt: {media_prompt.audio_prompt}")
+        return media_prompt
 
     async def build_panorama_prompt(
         self,
