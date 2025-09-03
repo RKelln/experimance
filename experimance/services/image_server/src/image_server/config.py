@@ -30,6 +30,7 @@ from image_server.generators.local.sdxl_generator import LocalSDXLConfig
 
 # Import audio generator configs
 from image_server.generators.audio.audio_config import Prompt2AudioConfig
+from image_server.generators.mock.mock_audio_generator_config import MockAudioGeneratorConfig
 
 
 DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVICE_DIR)
@@ -49,8 +50,8 @@ class GeneratorConfig(BaseModel):
 
 class AudioGeneratorConfig(BaseModel):
     """Configuration for audio generator selection and common settings."""
-    strategy: Literal["prompt2audio"] = Field(
-        default="prompt2audio",
+    strategy: Literal["mock_audio", "prompt2audio"] = Field(
+        default="mock_audio",
         description="Audio generation strategy to use."
     )
     timeout: int = Field(
@@ -150,6 +151,11 @@ class ImageServerConfig(BaseServiceConfig):
     )
     
     # Audio generator configurations
+    mock_audio: MockAudioGeneratorConfig = Field(
+        default_factory=MockAudioGeneratorConfig,
+        description="Configuration for mock audio generator"
+    )
+    
     prompt2audio: Prompt2AudioConfig = Field(
         default_factory=Prompt2AudioConfig,
         description="Configuration for prompt-to-audio generator"

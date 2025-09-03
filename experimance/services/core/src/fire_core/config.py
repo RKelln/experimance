@@ -32,6 +32,14 @@ class ImagePrompt:
     prompt: str
     negative_prompt: Optional[str] = ""
 
+@dataclass  
+class MediaPrompt:
+    """Data class for combined media generation prompts."""
+    
+    visual_prompt: str
+    visual_negative_prompt: Optional[str] = ""
+    audio_prompt: Optional[str] = None
+
 # config classess
 
 class PanoramaConfig(BaseModel):
@@ -191,6 +199,29 @@ class RenderingConfig(BaseModel):
     )
 
 
+class AudioConfig(BaseModel):
+    """Configuration for audio playback."""
+    
+    default_volume: float = Field(
+        default=0.5,
+        description="Default audio playback volume (0.0-1.0)",
+        ge=0.0,
+        le=1.0
+    )
+    
+    crossfade_duration: float = Field(
+        default=2.0,
+        description="Crossfade duration between audio tracks in seconds",
+        ge=0.0,
+        le=10.0
+    )
+    
+    enabled: bool = Field(
+        default=True,
+        description="Enable audio playback functionality"
+    )
+
+
 class FireCoreConfig(BaseServiceConfig):
     """Feed the Fires core service configuration."""
     
@@ -217,6 +248,11 @@ class FireCoreConfig(BaseServiceConfig):
     rendering: RenderingConfig = Field(
         default_factory=RenderingConfig,
         description="Image rendering configuration"
+    )
+    
+    audio: AudioConfig = Field(
+        default_factory=AudioConfig,
+        description="Audio playback configuration"
     )
     
     zmq: ControllerServiceConfig = Field(

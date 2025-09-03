@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .config import ImagePrompt
+from .config import ImagePrompt, MediaPrompt
 from .llm import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -75,49 +75,10 @@ class LLMPromptBuilder:
         ]
         
         logger.info("LLM prompt builder initialized")
-    
-    
-    async def build_prompt(
-        self,
-        story_content: str,
-        prefix: Optional[List[str]] = None,
-        suffix: Optional[List[str]] = None,
-        negative: Optional[List[str]] = None,
-        previous_prompt: Optional[ImagePrompt] = None,
-    ) -> ImagePrompt:
-        """
-        Build an image generation prompt using LLM analysis.
-        
-        Args:
-            story_content: Original story text from audience
-            prefix: Optional list of keywords to prepend to the prompt
-            suffix: Optional list of keywords to append to the prompt
-            negative: Optional list of keywords to include in negative prompt
-            previous_prompt: Optional previous ImagePrompt for deduplication
-            
-        Returns:
-            ImagePrompt with LLM-generated prompt and metadata
-            
-        Raises:
-            InsufficientContentException: When there's not enough content to generate a prompt
-            UnchangedContentException: When content hasn't changed enough to warrant a new prompt
-        """
-        # fallback prompt
-        data = {
-            "prompt": "A cinematic landscape scene",
-        }
+
+    async def _query_prompt_llm(self, llm_content:str) -> Optional[Dict]:
         try:
-            # Prepare the content for the LLM with consistent prefix for better caching
-            llm_content = f"STORY TRANSCRIPT:\n{story_content}"
-            
-            # Append previous prompt info if available
-            if previous_prompt:
-                llm_content += f"\n\nPREVIOUS PROMPT:\n{previous_prompt.prompt}"
-                if previous_prompt.negative_prompt:
-                    llm_content += f"\nPREVIOUS NEGATIVE PROMPT:\n{previous_prompt.negative_prompt}"
-            
             # Query the LLM
-            logger.info(f"Querying LLM for prompt generation: {story_content[:100]}...")
             result = await self.llm.query(
                 content=llm_content,
             )
@@ -164,17 +125,11 @@ class LLMPromptBuilder:
                     logger.info(f"LLM determined insufficient content: {reason}")
                     raise InsufficientContentException(reason)
                     
-                elif status == "unchanged":
-                    reason = data.get("reason", "LLM determined content unchanged")
-                    logger.info(f"LLM determined content unchanged: {reason}")
-                    raise UnchangedContentException(reason)
-                    
                 elif status == "invalid":
                     reason = data.get("reason", "LLM determined invalid content")
                     logger.warning(f"LLM determined invalid content: {reason}")
-                    # Use fallback for invalid content
-                    data = {"prompt": "A cinematic landscape scene"}
-                    
+                    return None
+
                 elif status == "ready":
                     # Content is ready for generation
                     logger.info("LLM determined content is ready for image generation")
@@ -182,22 +137,134 @@ class LLMPromptBuilder:
         except InsufficientContentException:
             # Re-raise this exception to be caught by the caller
             raise
-        except UnchangedContentException:
-            # Re-raise this exception to be caught by the caller
-            raise
         except Exception as e:
             logger.error(f"LLM prompt generation failed: {e}")
-            data = {
-                "prompt": "A cinematic landscape scene",
-            }
+            return None
+
+
+    async def build_prompt(
+        self,
+        story_content: str,
+        prefix: Optional[List[str]] = None,
+        suffix: Optional[List[str]] = None,
+        negative: Optional[List[str]] = None,
+        previous_prompt: Optional[ImagePrompt] = None,
+    ) -> ImagePrompt:
+        """
+        Build an image generation prompt using LLM analysis.
         
+        Args:
+            story_content: Original story text from audience
+            prefix: Optional list of keywords to prepend to the prompt
+            suffix: Optional list of keywords to append to the prompt
+            negative: Optional list of keywords to include in negative prompt
+            previous_prompt: Optional previous ImagePrompt for deduplication
+            
+        Returns:
+            ImagePrompt with LLM-generated prompt and metadata
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate a prompt
+            UnchangedContentException: When content hasn't changed enough to warrant a new prompt
+        """
+        try:
+            # Prepare the content for the LLM with consistent prefix for better caching
+            llm_content = f"STORY TRANSCRIPT:\n{story_content}"
+            
+            # Append previous prompt info if available
+            if previous_prompt:
+                llm_content += f"\n\nPREVIOUS PROMPT:\n{previous_prompt.prompt}"
+                if previous_prompt.negative_prompt:
+                    llm_content += f"\nPREVIOUS NEGATIVE PROMPT:\n{previous_prompt.negative_prompt}"
+
+            result = await self._query_prompt_llm(llm_content)
+        except InsufficientContentException:
+            # Re-raise this exception to be caught by the caller
+            raise
+        
+        if result is None:
+            if previous_prompt is not None:
+                return previous_prompt
+            return ImagePrompt("A cinematic landscape scene")
+
         # Only return if we didn't raise an exception
         return self._elements_to_prompt(
-            prompt_elements=data.get("prompt", "").strip().split(","),
-            negative_elements=data.get("negative_prompt", "").strip().split(","),
+            prompt_elements=result.get("prompt", "").strip().split(","),
+            negative_elements=result.get("negative_prompt", "").strip().split(","),
             prefix=prefix,
             suffix=suffix,
             negative=negative
+        )
+
+    async def build_media_prompt(
+        self,
+        story_content: str,
+        prefix: Optional[List[str]] = None,
+        suffix: Optional[List[str]] = None,
+        negative: Optional[List[str]] = None,
+        previous_prompt: Optional[MediaPrompt] = None,
+    ) -> MediaPrompt:
+        """
+        Build a combined media prompt (visual + audio) using LLM analysis.
+        
+        Args:
+            story_content: Original story text from audience
+            prefix: Optional list of keywords to prepend to the visual prompt
+            suffix: Optional list of keywords to append to the visual prompt
+            negative: Optional list of keywords to include in visual negative prompt
+            previous_prompt: Optional previous MediaPrompt for deduplication
+            
+        Returns:
+            MediaPrompt with LLM-generated visual and audio prompts. If content is unchanged
+            from the previous prompt, returns the previous_prompt directly.
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate prompts
+        """
+        # fallback prompts
+        data = {
+            "visual_prompt": "A cinematic landscape scene",
+            "visual_negative_prompt": "",
+            "audio_prompt": "gentle ambient environmental sounds"
+        }
+        
+        try:
+            # Prepare the content for the LLM with consistent prefix for better caching
+            llm_content = f"STORY TRANSCRIPT:\n{story_content}"
+            
+            # Append previous prompt info if available
+            if previous_prompt:
+                llm_content += f"\n\nPREVIOUS VISUAL PROMPT:\n{previous_prompt.visual_prompt}"
+                if previous_prompt.visual_negative_prompt:
+                    llm_content += f"\nPREVIOUS VISUAL NEGATIVE PROMPT:\n{previous_prompt.visual_negative_prompt}"
+                if previous_prompt.audio_prompt:
+                    llm_content += f"\nPREVIOUS AUDIO PROMPT:\n{previous_prompt.audio_prompt}"
+            
+            result = await self._query_prompt_llm(llm_content)
+
+        except InsufficientContentException:
+            # Re-raise this exception to be caught by the caller
+            raise
+        
+        if result is None:
+            if previous_prompt is not None:
+                return previous_prompt
+            return MediaPrompt("A cinematic landscape scene")
+        
+        # Build the visual prompt using existing method
+        visual_prompt = self._elements_to_prompt(
+            prompt_elements=result.get("visual_prompt", "").strip().split(","),
+            negative_elements=result.get("visual_negative_prompt", "").strip().split(","),
+            prefix=prefix,
+            suffix=suffix,
+            negative=negative
+        )
+        
+        # Create MediaPrompt
+        return MediaPrompt(
+            visual_prompt=visual_prompt.prompt,
+            visual_negative_prompt=visual_prompt.negative_prompt,
+            audio_prompt=data.get("audio_prompt")
         )
 
     async def build_panorama_prompt(
@@ -333,6 +400,60 @@ class LLMPromptBuilder:
         """
 
         return await self.build_prompt(
+            story_content=story_content,
+            prefix=self.tile_style,
+            suffix=self.quality_style,
+            previous_prompt=previous_prompt
+        )
+
+    async def build_media_panorama_prompt(
+        self,
+        story_content: str,
+        previous_prompt: Optional[MediaPrompt] = None,
+    ) -> MediaPrompt:
+        """
+        Build a media prompt for a panorama using LLM.
+        
+        Args:
+            story_content: Original story text
+            previous_prompt: Optional previous MediaPrompt for deduplication
+
+        Returns:
+            MediaPrompt optimized for panorama generation. If content is unchanged
+            from the previous prompt, returns the previous_prompt directly.
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate prompts
+        """
+
+        return await self.build_media_prompt(
+            story_content=story_content,
+            prefix=self.panorama_style,
+            suffix=self.quality_style,
+            previous_prompt=previous_prompt
+        )
+
+    async def build_media_tile_prompt(
+        self,
+        story_content: str,
+        previous_prompt: Optional[MediaPrompt] = None,
+    ) -> MediaPrompt:
+        """
+        Build a media prompt for a tile using LLM.
+        
+        Args:
+            story_content: Original story text
+            previous_prompt: Optional previous MediaPrompt for deduplication
+
+        Returns:
+            MediaPrompt optimized for tile generation. If content is unchanged
+            from the previous prompt, returns the previous_prompt directly.
+            
+        Raises:
+            InsufficientContentException: When there's not enough content to generate prompts
+        """
+
+        return await self.build_media_prompt(
             story_content=story_content,
             prefix=self.tile_style,
             suffix=self.quality_style,

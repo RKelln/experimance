@@ -9,7 +9,7 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # Generator configuration
 [generator]
-strategy = "local_sdxl" 
+strategy = "mock" 
 timeout = 120
 
 # Local SDXL generator (local_sdxl strategy)
@@ -35,11 +35,19 @@ existing_images_dir = "media/images/generated"
 enabled = true
 strategy = "prompt2audio"
 
+[mock_audio]
+use_existing_audio = false
+placeholder_type = "tone"
+tone_frequency = 440.0
+generation_delay_s = 2.0
+duration_s = 10
+include_prompt_metadata = true
+
 [prompt2audio]
-duration_s = 10              # Reduced from 20 to use less memory
-steps = 20                   # Reduced from 30 to use less memory  
+duration_s = 25              
+steps = 30                    
 guidance_scale = 4.5
-candidates = 1               # Reduced from 2 to use less memory
+candidates = 1               
 normalize_loudness = true
 target_lufs = -23.0
 true_peak_dbfs = -2.0

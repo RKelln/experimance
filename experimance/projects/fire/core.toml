@@ -32,3 +32,10 @@ base_image_timeout = 60.0
 tile_timeout = 90.0
 # Strength for img2img tile generation (0.0 = no change from reference, 1.0 = ignore reference)
 tile_strength = 0.25
+
+[audio]
+# Audio playback configuration
+enabled = true
+default_volume = 1.0  # Moderate volume for installation environment
+crossfade_duration = 3.0  # Smooth 3-second crossfades between tracks
+

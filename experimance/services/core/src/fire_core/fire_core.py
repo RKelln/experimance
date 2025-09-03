@@ -30,14 +30,16 @@ from experimance_common.zmq.config import MessageDataType, SubscriberConfig
 from experimance_common.zmq.services import ControllerService, SubscriberComponent
 from experimance_common.schemas import (
     StoryHeard, UpdateLocation, TranscriptUpdate,  # type: ignore
-    ImageReady, RenderRequest, DisplayMedia, ContentType, MessageType 
+    ImageReady, RenderRequest, DisplayMedia, ContentType, MessageType,
+    AudioRenderRequest, AudioReady  # type: ignore
 )
 from experimance_common.zmq.zmq_utils import prepare_image_source
 
-from .config import FireCoreConfig, ImagePrompt
+from .config import FireCoreConfig, ImagePrompt, MediaPrompt
 from .llm import LLMProvider, get_llm_provider
 from .llm_prompt_builder import InsufficientContentException, UnchangedContentException, LLMPromptBuilder
 from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
+from .audio_manager import AudioManager
 
 from experimance_common.logger import setup_logging
 
@@ -54,6 +56,7 @@ class RequestState(Enum):
     WAITING_BASE = "waiting_base"
     BASE_READY = "base_ready"
     WAITING_TILES = "waiting_tiles"
+    WAITING_AUDIO = "waiting_audio"
     COMPLETED = "completed"
     CANCELLED = "cancelled"  # Request was cancelled or should be discarded
 
@@ -69,18 +72,21 @@ class ActiveRequest:
     3. WAITING_BASE - Base panorama image is being generated (cannot interrupt)
     4. BASE_READY - Base image completed and sent to display
     5. WAITING_TILES - Tile images are being generated (can cancel tiles only)
-    6. COMPLETED - All tiles finished, request fully complete
-    7. CANCELLED - Request was cancelled/interrupted or should be discarded
+    6. WAITING_AUDIO - All images complete, waiting for audio generation
+    7. COMPLETED - All images and audio finished, request fully complete
+    8. CANCELLED - Request was cancelled/interrupted or should be discarded
     
     Interruption Rules:
     - Base images ALWAYS complete once started (state WAITING_BASE)
     - Tile generation can be cancelled if a new request arrives
+    - Audio generation can be cancelled/faded out if a new request arrives
     - Requests in QUEUED or PROCESSING_LLM states can be fully cancelled
     - LLM processing can be allowed to finish but marked as CANCELLED
     
     Priority Behavior:
     - New requests always take priority over queued requests
     - Running base images complete but tiles are cancelled for new requests
+    - Audio fades out when new requests start
     - LLM processing can complete but result is discarded if cancelled
     - This ensures responsive visual feedback while minimizing wasted work
     """
@@ -96,6 +102,13 @@ class ActiveRequest:
     base_image_path: Optional[str] = None
     completed_tiles: Dict[int, str] = field(default_factory=dict)
     total_tiles: int = 0
+    
+    # Audio generation data
+    audio_prompt: Optional[str] = None
+    audio_request_id: Optional[str] = None
+    audio_request_sent_time: Optional[float] = None
+    audio_file_path: Optional[str] = None
+    is_audio_playing: bool = False
     
     # Background task management
     processing_task: Optional[asyncio.Task] = None
@@ -145,6 +158,15 @@ class ActiveRequest:
             True if tile generation is in progress (tiles can be cancelled)
         """
         return self.state == RequestState.WAITING_TILES
+    
+    def is_waiting_for_audio(self) -> bool:
+        """
+        Check if this request is waiting for audio generation.
+        
+        Returns:
+            True if audio generation is in progress
+        """
+        return self.state == RequestState.WAITING_AUDIO
     
     def is_completed(self) -> bool:
         """
@@ -253,19 +275,126 @@ class ActiveRequest:
         """
         return len(self.completed_tiles) >= self.total_tiles
     
-    async def cancel(self):
+    # Audio management methods
+    
+    def has_audio(self) -> bool:
+        """
+        Check if this request includes audio generation.
+        
+        Returns:
+            True if audio prompt is provided
+        """
+        return self.audio_prompt is not None and self.audio_prompt.strip() != ""
+    
+    def is_audio_requested(self) -> bool:
+        """
+        Check if audio request has been sent to image server.
+        
+        Returns:
+            True if audio request has been sent
+        """
+        return self.audio_request_id is not None
+    
+    def is_audio_ready(self) -> bool:
+        """
+        Check if audio file has been generated and is ready for playback.
+        
+        Returns:
+            True if audio file is available
+        """
+        return self.audio_file_path is not None
+    
+    def is_audio_timed_out(self, current_time: float) -> bool:
+        """
+        Check if audio request has timed out.
+        
+        Args:
+            current_time: The current timestamp
+            
+        Returns:
+            True if audio request has timed out
+        """
+        if not self.audio_request_sent_time:
+            return False
+        return (current_time - self.audio_request_sent_time) > self.IMAGE_TIMEOUT  # Use same timeout as images
+    
+    def mark_audio_request_sent(self, audio_request_id: str):
+        """
+        Mark that an audio request has been sent.
+        
+        Args:
+            audio_request_id: The ID of the audio request
+        """
+        self.audio_request_id = audio_request_id
+        self.audio_request_sent_time = time.time()
+    
+    def mark_audio_ready(self, audio_file_path: str):
+        """
+        Mark that audio file is ready for playback.
+        
+        Args:
+            audio_file_path: Path to the generated audio file
+        """
+        self.audio_file_path = audio_file_path
+        self.audio_request_sent_time = None  # Clear timeout tracking
+    
+    def mark_audio_playing(self, is_playing: bool = True):
+        """
+        Mark audio playback status.
+        
+        Args:
+            is_playing: True if audio is currently playing
+        """
+        self.is_audio_playing = is_playing
+    
+    def should_wait_for_audio(self, current_time: Optional[float] = None) -> bool:
+        """
+        Check if request should transition to WAITING_AUDIO instead of COMPLETED.
+        
+        Args:
+            current_time: Current timestamp for timeout checking
+            
+        Returns:
+            True if audio was requested and is still being generated
+        """
+        if current_time is None:
+            current_time = time.time()
+            
+        return (
+            self.has_audio() and 
+            self.is_audio_requested() and 
+            not self.is_audio_ready() and 
+            not self.is_audio_timed_out(current_time)
+        )
+    
+    async def cancel(self, audio_manager=None):
         """
         Cancel this request and clean up any background tasks.
         
         This cancels LLM processing tasks but does not stop image generation
-        that may already be in progress on the image server.
+        that may already be in progress on the image server. If audio is currently
+        playing, it will be faded out gracefully.
+        
+        Args:
+            audio_manager: Optional AudioManager instance for audio fade-out
         """
+        # Cancel LLM processing tasks
         if self.processing_task and not self.processing_task.done():
             self.processing_task.cancel()
             try:
                 await self.processing_task
             except asyncio.CancelledError:
                 pass
+        
+        # Handle audio fade-out if currently playing
+        if self.is_audio_playing and audio_manager:
+            try:
+                logger.info(f"🎵 Fading out audio for cancelled request {self.request_id}")
+                await audio_manager.fade_out_all()
+                self.mark_audio_playing(False)
+            except Exception as e:
+                logger.warning(f"Failed to fade out audio during cancellation: {e}")
+        
         self.state = RequestState.CANCELLED
 
 
@@ -310,7 +439,7 @@ class FireCoreService(BaseService):
         self.current_display_session_id: Optional[str] = None
         
         # Track last generated prompt for deduplication
-        self.last_generated_prompt: Optional[ImagePrompt] = None
+        self.last_generated_prompt: Optional[MediaPrompt] = None
         
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
@@ -334,6 +463,22 @@ class FireCoreService(BaseService):
         )
         
         self.tiler = create_tiler_from_config(config.tiles)
+        
+        # Initialize AudioManager for audio playbook
+        if config.audio.enabled:
+            try:
+                from .audio_manager import AudioManager
+                self.audio_manager = AudioManager(
+                    default_volume=config.audio.default_volume,
+                    crossfade_duration=config.audio.crossfade_duration
+                )
+                logger.info(f"AudioManager initialized (volume: {config.audio.default_volume}, crossfade: {config.audio.crossfade_duration}s)")
+            except ImportError as e:
+                logger.warning(f"AudioManager not available: {e}")
+                self.audio_manager = None
+        else:
+            logger.info("Audio playback disabled in configuration")
+            self.audio_manager = None
         
         # ZMQ communication will be initialized in start()
         self.zmq_service: ControllerService = None  # type: ignore # Will be initialized in start()
@@ -381,6 +526,10 @@ class FireCoreService(BaseService):
         """Stop the service gracefully."""
         logger.info("Stopping Fire core service")
         
+        # Clean up AudioManager
+        if hasattr(self, 'audio_manager') and self.audio_manager is not None:
+            await self.audio_manager.cleanup()
+        
         if hasattr(self, 'updates_subscriber'):
             await self.updates_subscriber.stop()
             
@@ -398,10 +547,11 @@ class FireCoreService(BaseService):
         - Cancels background LLM processing tasks
         - Clears pending image server requests 
         - Does NOT stop images already being generated on image server
+        - Fades out any currently playing audio
         """
         if self.current_request:
             logger.debug(f"🚫 Canceling current request {self.current_request.request_id}")
-            await self.current_request.cancel()
+            await self.current_request.cancel(self.audio_manager)
             self.current_request = None
             self.pending_image_requests.clear()
             logger.debug("🚫 Current request cancelled and pending image requests cleared")
@@ -435,8 +585,23 @@ class FireCoreService(BaseService):
         if tile_requests_to_remove:
             logger.info(f"Canceled {len(tile_requests_to_remove)} tile generation requests")
 
-    def create_request(self, base_prompt: ImagePrompt) -> ActiveRequest:
-        """Create a new request with proper initialization."""
+    def create_request(self, prompt) -> ActiveRequest:
+        """Create a new request with proper initialization.
+        
+        Args:
+            prompt: Either ImagePrompt or MediaPrompt with visual and audio components
+        """
+        # Extract visual and audio prompts
+        if isinstance(prompt, MediaPrompt):
+            base_prompt = ImagePrompt(
+                prompt=prompt.visual_prompt,
+                negative_prompt=prompt.visual_negative_prompt
+            )
+            audio_prompt = prompt.audio_prompt
+        else:
+            base_prompt = prompt  # Already ImagePrompt
+            audio_prompt = None
+        
         # Calculate tiling strategy
         tiles = self.tiler.calculate_tiles(
             self.config.panorama.display_width,
@@ -448,15 +613,21 @@ class FireCoreService(BaseService):
             request_id=str(uuid.uuid4()),
             base_prompt=base_prompt,
             tiles=tiles,
-            total_tiles=len(tiles)
+            total_tiles=len(tiles),
+            audio_prompt=audio_prompt
         )
         
-        logger.info(f"Created new request {request.request_id} with {len(tiles)} tiles")
+        audio_info = f" with audio" if audio_prompt else ""
+        logger.info(f"Created new request {request.request_id} with {len(tiles)} tiles{audio_info}")
         return request
 
-    def queue_new_request(self, base_prompt: ImagePrompt) -> str:
-        """Queue a new image generation request."""
-        request = self.create_request(base_prompt)
+    def queue_new_request(self, prompt) -> str:
+        """Queue a new image generation request.
+        
+        Args:
+            prompt: Either ImagePrompt or MediaPrompt
+        """
+        request = self.create_request(prompt)
         self.request_queue.append(request)
         logger.info(f"Queued new request {request.request_id} (queue size: {len(self.request_queue)})")
         return request.request_id
@@ -496,18 +667,30 @@ class FireCoreService(BaseService):
             # Analyze story to infer location
             logger.info("Analyzing story with LLM")
             
-            # Create base image prompt
+            # Create base media prompt
             try:
-                base_prompt = await self.prompt_builder.build_prompt(
+                # For backwards compatibility, convert last_generated_prompt to MediaPrompt if needed
+                previous_media_prompt = self.last_generated_prompt
+                if previous_media_prompt is None and hasattr(self, '_legacy_last_prompt'):
+                    # Convert legacy ImagePrompt to MediaPrompt if we had one
+                    legacy_prompt = getattr(self, '_legacy_last_prompt', None)
+                    if legacy_prompt:
+                        previous_media_prompt = MediaPrompt(
+                            visual_prompt=legacy_prompt.prompt,
+                            visual_negative_prompt=legacy_prompt.negative_prompt,
+                            audio_prompt=None
+                        )
+                
+                media_prompt = await self.prompt_builder.build_media_prompt(
                     story.content,
-                    previous_prompt=self.last_generated_prompt
+                    previous_prompt=previous_media_prompt
                 )
                 
                 # Store the successfully generated prompt
-                self.last_generated_prompt = base_prompt
+                self.last_generated_prompt = media_prompt
                 
                 # Queue the new request
-                request_id = self.queue_new_request(base_prompt)
+                request_id = self.queue_new_request(media_prompt)
                 logger.info(f"Queued story-based request {request_id}")
                 
             except UnchangedContentException as e:
@@ -540,6 +723,10 @@ class FireCoreService(BaseService):
             elif topic == "prompt":
                 # Handle direct prompt - bypass LLM analysis  
                 await self._handle_debug_prompt(topic, message_data)
+                
+            elif topic == "audio_ready":
+                # Handle AudioReady messages for audio playback testing
+                await self._handle_audio_ready_update(topic, message_data)
                 
             else:
                 logger.debug(f"Ignoring update message on unhandled topic '{topic}'")
@@ -672,7 +859,7 @@ class FireCoreService(BaseService):
             # Ask LLM to decide if we should generate a prompt using the existing prompt builder
             try:
                 logger.debug("🤖 BACKGROUND: Starting LLM call")
-                image_prompt = await self.prompt_builder.build_prompt(
+                media_prompt = await self.prompt_builder.build_media_prompt(
                     full_context,
                     previous_prompt=self.last_generated_prompt
                 )
@@ -683,13 +870,41 @@ class FireCoreService(BaseService):
                     logger.info("🚫 LLM processing request was cancelled while running - discarding result")
                     return
                 
+                # Compare with previous prompt to detect changes
+                visual_changed = (
+                    not self.last_generated_prompt or 
+                    media_prompt.visual_prompt != self.last_generated_prompt.visual_prompt or
+                    media_prompt.visual_negative_prompt != self.last_generated_prompt.visual_negative_prompt
+                )
+                audio_changed = (
+                    media_prompt.audio_prompt is not None and
+                    (not self.last_generated_prompt or 
+                    media_prompt.audio_prompt != self.last_generated_prompt.audio_prompt)
+                )
+                
+                # Debug logging for prompt comparison
+                logger.info(f"🔍 PROMPT COMPARISON:")
+                logger.info(f"  Previous visual: {self.last_generated_prompt.visual_prompt[:100] if self.last_generated_prompt else 'None'}...")
+                logger.info(f"  New visual:      {media_prompt.visual_prompt[:100]}...")
+                logger.info(f"  Previous audio:  {self.last_generated_prompt.audio_prompt[:100] if self.last_generated_prompt and self.last_generated_prompt.audio_prompt else 'None'}...")
+                logger.info(f"  New audio:       {media_prompt.audio_prompt[:100] if media_prompt.audio_prompt else 'None'}...")
+                logger.info(f"  Visual changed: {visual_changed}, Audio changed: {audio_changed}")
+                
+                if not visual_changed and not audio_changed:
+                    logger.info("🔄 No significant changes in prompts - skipping generation")
+                    raise UnchangedContentException("LLM returned unchanged prompts")
+                
                 logger.info("✅ LLM decided to generate prompt based on accumulated transcripts")
+                if visual_changed:
+                    logger.info("🖼️ Visual prompt changed - will generate new images")
+                if audio_changed:
+                    logger.info("🎵 Audio prompt changed - will generate new audio")
                 
                 # Store the successfully generated prompt
-                self.last_generated_prompt = image_prompt
+                self.last_generated_prompt = media_prompt
                 
                 # Queue the new request
-                request_id = self.queue_new_request(image_prompt)
+                request_id = self.queue_new_request(media_prompt)
                 logger.info(f"🖼️ Queued transcript-based request {request_id} (total queue: {len(self.request_queue)})")
                 
                 # Mark these messages as processed
@@ -753,23 +968,29 @@ class FireCoreService(BaseService):
         try:
             prompt = message_data.get('prompt', '')
             negative_prompt = message_data.get('negative_prompt', 'blurry, low quality, distorted')
+            audio_prompt = message_data.get('audio_prompt', None)  # Optional audio prompt
                 
             logger.info(f"Processing debug prompt: {prompt[:100]}...")
             logger.debug(f"Debug negative prompt: {negative_prompt}")
+            if audio_prompt:
+                logger.debug(f"Debug audio prompt: {audio_prompt[:100]}...")
             
             await self.cancel_current_request()
             
-            # Create direct image prompt (no LLM processing)
-            base_prompt = ImagePrompt(
-                prompt=prompt,
-                negative_prompt=negative_prompt
+            # Create direct media prompt (no LLM processing)
+            media_prompt = MediaPrompt(
+                visual_prompt=prompt,
+                visual_negative_prompt=negative_prompt,
+                audio_prompt=audio_prompt
             )
             
-            logger.info(f"Created debug base prompt: {base_prompt.prompt}")
-            logger.debug(f"Debug base negative: {base_prompt.negative_prompt}")
+            logger.info(f"Created debug media prompt: {media_prompt.visual_prompt}")
+            logger.debug(f"Debug negative: {media_prompt.visual_negative_prompt}")
+            if media_prompt.audio_prompt:
+                logger.debug(f"Debug audio: {media_prompt.audio_prompt}")
             
             # Queue the new request
-            request_id = self.queue_new_request(base_prompt)
+            request_id = self.queue_new_request(media_prompt)
             logger.info(f"Queued debug request {request_id}")
             
             # Request processing will be handled by _state_monitor_task
@@ -778,10 +999,66 @@ class FireCoreService(BaseService):
             
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message="Failed to process debug prompt")
+
+    async def _handle_audio_ready_update(self, topic: str, message_data: MessageDataType):
+        """
+        Handle AudioReady message from CLI testing - play the audio.
+        
+        This method handles AudioReady messages sent via the updates channel for
+        audio playback testing. It uses the AudioManager to play the provided audio file.
+        
+        Args:
+            topic: The message topic ("audio_ready")  
+            message_data: AudioReady message data
+        """
+        logger.debug(f"Received AudioReady on topic '{topic}': {message_data}")
+        try:
+            # Handle AudioReady message - extract fields safely
+            if isinstance(message_data, dict):
+                request_id = message_data.get('request_id', 'unknown')
+                uri = message_data.get('uri', 'unknown')
+                prompt = message_data.get('prompt', 'none')
+                is_loop = message_data.get('is_loop', True)
+            else:
+                # Handle pydantic model
+                request_id = getattr(message_data, 'request_id', 'unknown')
+                uri = getattr(message_data, 'uri', 'unknown')
+                prompt = getattr(message_data, 'prompt', 'none')
+                is_loop = getattr(message_data, 'is_loop', True)
+                
+            logger.info(f"🎵 AudioReady received: {request_id}")
+            logger.info(f"   URI: {uri}")
+            logger.info(f"   Prompt: {prompt}")
+            logger.info(f"   Loop: {is_loop}")
+            
+            # Play the audio using AudioManager if available
+            if self.audio_manager is not None:
+                logger.info("🔊 Starting audio playback via AudioManager...")
+                success = await self.audio_manager.play_audio(
+                    uri, 
+                    loop=is_loop,
+                    crossfade=True  # Enable crossfading for smooth transitions
+                )
+                
+                if success:
+                    logger.info(f"✅ Audio playback started successfully: {uri}")
+                    logger.info(f"   Playing with loop={is_loop}, crossfade enabled")
+                    
+                    # Log current audio status
+                    playing_count = self.audio_manager.get_playing_count()
+                    logger.info(f"   AudioManager now has {playing_count} active audio tracks")
+                else:
+                    logger.error(f"❌ Failed to start audio playback: {uri}")
+            else:
+                logger.warning("⚠️ AudioManager not available - cannot play audio")
+                logger.info(f"   Would have played: {uri} (loop={is_loop})")
+                
+        except Exception as e:
+            self.record_error(e, is_fatal=False, custom_message="Failed to handle AudioReady message")
     
     async def _handle_worker_response(self, worker_name: str, response_data):
         """
-        Handle worker response (ImageReady) from image_server.
+        Handle worker response (ImageReady or AudioReady) from image_server.
         
         Args:
             worker_name: Name of the worker ("image_server")
@@ -790,14 +1067,25 @@ class FireCoreService(BaseService):
         if worker_name != "image_server":
             logger.debug(f"Ignoring response from unknown worker: {worker_name}")
             return
-            
-        # Convert to ImageReady object if needed
+        
+        # Determine message type and convert appropriately
         if isinstance(response_data, dict):
-            message = ImageReady(**response_data)
-        else:
-            message = response_data
+            # Check request_id pattern or uri extension to distinguish between image and audio
+            request_id = response_data.get('request_id', '')
+            uri = response_data.get('uri', '')
             
-        await self._handle_image_ready(message)
+            if request_id.endswith('_audio') or any(uri.endswith(ext) for ext in ['.wav', '.mp3', '.ogg', '.flac']):
+                message = AudioReady(**response_data)
+                await self._handle_audio_ready(message)
+            else:
+                message = ImageReady(**response_data)
+                await self._handle_image_ready(message)
+        else:
+            # Already converted message object
+            if isinstance(response_data, AudioReady):
+                await self._handle_audio_ready(response_data)
+            else:
+                await self._handle_image_ready(response_data)
     
     async def _handle_image_ready(self, message):
         """
@@ -826,6 +1114,56 @@ class FireCoreService(BaseService):
                 
         except Exception as e:
             self.record_error(e, is_fatal=False, custom_message=f"Failed to handle {request_type} image")
+    
+    async def _handle_audio_ready(self, message: AudioReady):
+        """
+        Handle AudioReady message - process completed audio generation.
+        
+        Args:
+            message: AudioReady message from image_server
+        """
+        if not hasattr(message, 'request_id') or message.request_id not in self.pending_image_requests:
+            logger.debug(f"Ignoring AudioReady for unknown request: {getattr(message, 'request_id', 'None')}")
+            return
+        
+        request_type, _timestamp = self.pending_image_requests.pop(message.request_id)
+        logger.info(f"🎵 Audio ready: {request_type} for request {message.request_id}")
+        
+        if not self.current_request:
+            logger.warning("Received AudioReady but no active request")
+            return
+        
+        if request_type != "audio":
+            logger.warning(f"Expected audio request type but got: {request_type}")
+            return
+        
+        try:
+            # Store audio file path and mark as ready
+            audio_file_path = message.uri.replace("file://", "") if message.uri.startswith("file://") else message.uri
+            self.current_request.mark_audio_ready(audio_file_path)
+            
+            logger.info(f"🎵 Audio file ready: {audio_file_path}")
+            logger.debug(f"🎵 Audio duration: {message.duration_s}s, loop: {message.is_loop}")
+            
+            # Start playing audio if AudioManager is available
+            if self.audio_manager and self.config.audio.enabled:
+                try:
+                    logger.info("🔊 Starting audio playback via AudioManager...")
+                    await self.audio_manager.play_audio(
+                        audio_file_path,
+                        volume=self.config.audio.default_volume,
+                        loop=message.is_loop
+                    )
+                    self.current_request.mark_audio_playing(True)
+                    logger.info(f"🎵 Audio playbook started successfully")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to start audio playback: {e}")
+            else:
+                logger.warning("⚠️ AudioManager not available - cannot play audio")
+                
+        except Exception as e:
+            self.record_error(e, is_fatal=False, custom_message="Failed to handle audio ready")
     
     async def _request_base_image(self):
         """Request generation of the base panorama image."""
@@ -859,6 +1197,10 @@ class FireCoreService(BaseService):
             logger.debug(f"🔬 SENDING WORK TO image_server: {request_id}")
             await self.zmq_service.send_work_to_worker("image_server", render_request)
             logger.info(f"✅ Sent base image request: {self.config.panorama.generated_width}x{self.config.panorama.generated_height}")
+            
+            # Request audio in parallel if available
+            await self._request_audio_if_available()
+            
         except Exception as e:
             logger.error(f"🔥 FAILED to send image request to image_server: {e}")
             # Remove the pending request since it failed
@@ -869,6 +1211,45 @@ class FireCoreService(BaseService):
             logger.warning("🔄 Image server unavailable - returning to listening state and processing queue")
             # Request processing will be handled by _state_monitor_task
             return
+    
+    async def _request_audio_if_available(self):
+        """Request generation of audio if available in current request."""
+        if not self.current_request or not self.current_request.has_audio():
+            return
+        
+        if not self.current_request.audio_prompt:
+            return
+            
+        # Truncate for logging safely
+        prompt_preview = self.current_request.audio_prompt[:100] if len(self.current_request.audio_prompt) > 100 else self.current_request.audio_prompt
+        logger.info(f"🎵 Requesting audio for prompt: {prompt_preview}...")
+        
+        # Create audio request ID and track it
+        audio_request_id = f"{self.current_request.request_id}_audio"
+        
+        # Create AudioRenderRequest for audio generation
+        audio_render_request = AudioRenderRequest(
+            request_id=audio_request_id,
+            prompt=self.current_request.audio_prompt,
+            # Optional parameters can be added here
+            # duration_s=30,  # Default duration
+            # style="environmental"  # Style hint
+        )
+        
+        # Track the audio request
+        self.current_request.mark_audio_request_sent(audio_request_id)
+        self.pending_image_requests[audio_request_id] = ("audio", time.time())
+        
+        try:
+            logger.debug(f"🔬 SENDING AUDIO WORK TO image_server: {audio_request_id}")
+            await self.zmq_service.send_work_to_worker("image_server", audio_render_request)
+            logger.info(f"✅ Sent audio request for generation")
+        except Exception as e:
+            logger.error(f"🔥 FAILED to send audio request to image_server: {e}")
+            # Remove the pending request since it failed
+            self.pending_image_requests.pop(audio_request_id, None)
+            self.current_request.audio_request_id = None
+            self.current_request.audio_request_sent_time = None
     
     async def _handle_base_image_ready(self, response: ImageReady):
         """Handle completion of base image generation."""
@@ -1126,10 +1507,14 @@ class FireCoreService(BaseService):
                     self.current_request.mark_tile_completed(tile_request_id)
                     self.pending_image_requests.pop(tile_request_id, None)
                 
-                # If no more tiles pending or too many timeouts, complete the request
+                # If no more tiles pending or too many timeouts, check if we should wait for audio
                 if self.current_request.get_pending_tile_count() == 0:
-                    logger.info("🔄 All tiles completed or timed out - marking request complete")
-                    self.current_request.transition_to_state(RequestState.COMPLETED)
+                    if self.current_request.should_wait_for_audio(current_time):
+                        logger.info("🔄 All tiles completed or timed out - transitioning to wait for audio")
+                        self.current_request.transition_to_state(RequestState.WAITING_AUDIO)
+                    else:
+                        logger.info("🔄 All tiles completed or timed out - marking request complete")
+                        self.current_request.transition_to_state(RequestState.COMPLETED)
             
             # Mark as cancelled for other timeout cases if not already completed
             if not self.current_request.is_completed():
@@ -1165,22 +1550,39 @@ class FireCoreService(BaseService):
         if not self.current_request:
             return
             
-        # Handle BASE_READY -> TILES transition
+        # Handle BASE_READY -> TILES, WAITING_AUDIO, or COMPLETED transition
         if self.current_request.state == RequestState.BASE_READY:
             if self.request_queue:
                 # Higher priority requests waiting - skip tiles and complete
                 logger.info(f"📸 Base ready but {len(self.request_queue)} requests queued - completing without tiles")
                 self.current_request.transition_to_state(RequestState.COMPLETED)
             else:
-                # Normal flow - start tile generation
-                logger.info("📸 Base ready - starting tile generation")
-                self.current_request.transition_to_state(RequestState.WAITING_TILES)
-                await self._request_all_tiles()
+                # Normal flow - check if we need tiles or just wait for audio
+                if self.current_request.total_tiles > 0:
+                    logger.info("📸 Base ready - starting tile generation")
+                    self.current_request.transition_to_state(RequestState.WAITING_TILES)
+                    await self._request_all_tiles()
+                elif self.current_request.should_wait_for_audio():
+                    logger.info("📸 Base ready - waiting for audio (no tiles needed)")
+                    self.current_request.transition_to_state(RequestState.WAITING_AUDIO)
+                else:
+                    logger.info("📸 Base ready - no tiles or audio needed, completing")
+                    self.current_request.transition_to_state(RequestState.COMPLETED)
         
-        # Handle WAITING_TILES -> COMPLETED transition
+        # Handle WAITING_TILES -> COMPLETED or WAITING_AUDIO transition
         elif self.current_request.state == RequestState.WAITING_TILES:
             if self.current_request.all_tiles_completed():
-                logger.info("🧩 All tiles completed, marking request as complete")
+                if self.current_request.should_wait_for_audio():
+                    logger.info("🧩 All tiles completed, transitioning to wait for audio")
+                    self.current_request.transition_to_state(RequestState.WAITING_AUDIO)
+                else:
+                    logger.info("🧩 All tiles completed, marking request as complete")
+                    self.current_request.transition_to_state(RequestState.COMPLETED)
+        
+        # Handle WAITING_AUDIO -> COMPLETED transition
+        elif self.current_request.state == RequestState.WAITING_AUDIO:
+            if self.current_request.is_audio_ready() or not self.current_request.should_wait_for_audio():
+                logger.info("🎵 Audio ready or no longer needed, marking request as complete")
                 self.current_request.transition_to_state(RequestState.COMPLETED)
 
     async def _process_request_queue(self):

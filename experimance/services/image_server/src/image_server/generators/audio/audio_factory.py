@@ -11,11 +11,17 @@ from image_server.generators.audio.audio_generator import AudioGenerator
 from image_server.generators.audio.audio_config import BaseAudioGeneratorConfig
 from image_server.generators.audio.prompt2audio import Prompt2AudioGenerator
 from image_server.generators.audio.audio_config import Prompt2AudioConfig
+from image_server.generators.mock.mock_audio_generator import MockAudioGenerator
+from image_server.generators.mock.mock_audio_generator_config import MockAudioGeneratorConfig
 
 logger = logging.getLogger(__name__)
 
 # Map audio generator strategies to their config and generator classes
 AUDIO_GENERATORS = {
+    "mock_audio": {
+        "config_class": MockAudioGeneratorConfig,
+        "generator_class": MockAudioGenerator
+    },
     "prompt2audio": {
         "config_class": Prompt2AudioConfig,
         "generator_class": Prompt2AudioGenerator
