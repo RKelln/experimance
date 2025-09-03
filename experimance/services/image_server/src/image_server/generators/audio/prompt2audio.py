@@ -364,17 +364,31 @@ class AudioSemanticCache:
         
         for idx in candidate_indices:
             if idx >= len(self.items):
+                logger.debug(f"Candidate index {idx} exceeds items length {len(self.items)}, skipping")
+                continue
+                
+            # Check bounds for embeddings array
+            if self.clap_audio_embeddings is not None and idx >= len(self.clap_audio_embeddings):
+                logger.warning(f"Candidate index {idx} exceeds audio embeddings length {len(self.clap_audio_embeddings)}, skipping")
                 continue
                 
             item = self.items[idx]
             if not (duration_range[0] <= item.duration_s <= duration_range[1]):
                 continue
             
-            # Calculate similarity with query
-            similarity = float(np.dot(self.clap_audio_embeddings[idx], query_emb))
-            if similarity >= threshold:
-                valid_candidates.append(idx)
-                similarities.append(similarity)
+            # Calculate similarity with query - with additional safety check
+            try:
+                if self.clap_audio_embeddings is None:
+                    logger.warning("CLAP audio embeddings not available")
+                    continue
+                    
+                similarity = float(np.dot(self.clap_audio_embeddings[idx], query_emb))
+                if similarity >= threshold:
+                    valid_candidates.append(idx)
+                    similarities.append(similarity)
+            except Exception as e:
+                logger.error(f"Error calculating similarity for index {idx}: {e}")
+                continue
         
         if not valid_candidates:
             return None
@@ -420,38 +434,50 @@ class AudioSemanticCache:
                 if self.clap_audio_embeddings is None:
                     keep_indices = exact_matches[:max_variants]  # Fallback
                 else:
-                    embeddings = self.clap_audio_embeddings[exact_matches]
+                    # Validate that all exact_matches indices are within bounds
+                    valid_matches = [i for i in exact_matches if i < len(self.clap_audio_embeddings)]
+                    if len(valid_matches) != len(exact_matches):
+                        logger.warning(f"Some exact matches out of bounds: {len(exact_matches)} -> {len(valid_matches)}")
                     
-                    # Start with best quality item
-                    scored_items = [(i, self.items[i].clap_similarity or 0.0) for i in exact_matches]
-                    best_idx = max(range(len(scored_items)), key=lambda x: scored_items[x][1])
-                    selected = [best_idx]
-                    
-                    # Greedily select most diverse remaining items
-                    while len(selected) < max_variants:
-                        best_distance = -1
-                        best_candidate = -1
-                        
-                        for i in range(len(exact_matches)):
-                            if i in selected:
-                                continue
+                    if not valid_matches:
+                        keep_indices = exact_matches[:max_variants]  # Fallback
+                    else:
+                        try:
+                            embeddings = self.clap_audio_embeddings[valid_matches]
                             
-                            # Calculate minimum distance to already selected items
-                            min_distance = min([
-                                1.0 - float(np.dot(embeddings[i], embeddings[j]))
-                                for j in selected
-                            ])
+                            # Start with best quality item
+                            scored_items = [(i, self.items[i].clap_similarity or 0.0) for i in valid_matches]
+                            best_idx = max(range(len(scored_items)), key=lambda x: scored_items[x][1])
+                            selected = [best_idx]
                             
-                            if min_distance > best_distance:
-                                best_distance = min_distance
-                                best_candidate = i
-                        
-                        if best_candidate >= 0:
-                            selected.append(best_candidate)
-                        else:
-                            break
-                    
-                    keep_indices = [exact_matches[i] for i in selected]
+                            # Greedily select most diverse remaining items
+                            while len(selected) < max_variants:
+                                best_distance = -1
+                                best_candidate = -1
+                                
+                                for i in range(len(valid_matches)):
+                                    if i in selected:
+                                        continue
+                                    
+                                    # Calculate minimum distance to already selected items
+                                    min_distance = min([
+                                        1.0 - float(np.dot(embeddings[i], embeddings[j]))
+                                        for j in selected
+                                    ])
+                                    
+                                    if min_distance > best_distance:
+                                        best_distance = min_distance
+                                        best_candidate = i
+                                
+                                if best_candidate >= 0:
+                                    selected.append(best_candidate)
+                                else:
+                                    break
+                            
+                            keep_indices = [valid_matches[i] for i in selected]
+                        except Exception as e:
+                            logger.error(f"Error in diversity selection: {e}")
+                            keep_indices = exact_matches[:max_variants]  # Fallback
             else:
                 # Default: keep newest
                 keep_indices = sorted(exact_matches, key=lambda i: self.items[i].timestamp, reverse=True)[:max_variants]
@@ -870,6 +896,8 @@ class Prompt2AudioGenerator(AudioGenerator):
     async def _generate_new_audio(self, prompt: str, duration_s: int) -> str:
         """Generate new audio using TangoFlux."""
         logger.info(f"Generating new audio: {self.config.candidates} candidates, {duration_s}s duration")
+        logger.debug(f"TangoFlux config - steps: {self.config.steps}, guidance_scale: {self.config.guidance_scale}")
+        logger.debug(f"Prompt length: {len(prompt)}, duration: {duration_s}s")
         
         # Load models
         tangoflux = self._lazy.load_tangoflux(self.config.model_name)
@@ -878,70 +906,124 @@ class Prompt2AudioGenerator(AudioGenerator):
         # Generate candidates
         candidates = []
         for i in range(self.config.candidates):
-            audio = tangoflux.generate(
-                prompt,
-                steps=self.config.steps,
-                duration=duration_s,
-                guidance_scale=self.config.guidance_scale
-            )
+            logger.debug(f"Generating candidate {i+1}/{self.config.candidates}")
+            try:
+                audio = tangoflux.generate(
+                    prompt,
+                    steps=self.config.steps,
+                    duration=duration_s,
+                    guidance_scale=self.config.guidance_scale
+                )
+                logger.debug(f"Candidate {i+1} generated successfully, type: {type(audio)}")
+                if hasattr(audio, 'shape'):
+                    logger.debug(f"Candidate {i+1} shape: {audio.shape}")
+            except Exception as e:
+                logger.error(f"Error generating candidate {i+1}: {e}")
+                raise
             
             # Convert to tensor if needed
             if not isinstance(audio, torch.Tensor):
-                audio = torch.from_numpy(audio)
+                logger.debug(f"Converting candidate {i+1} from {type(audio)} to tensor")
+                try:
+                    audio = torch.from_numpy(audio)
+                    logger.debug(f"Conversion successful, tensor shape: {audio.shape}")
+                except Exception as e:
+                    logger.error(f"Error converting candidate {i+1} to tensor: {e}")
+                    raise
             
             candidates.append(audio.float().contiguous())
+            logger.debug(f"Candidate {i+1} added to candidates list")
+        
+        logger.info(f"Successfully generated {len(candidates)} candidates")
+        
+        # Validate candidates before processing
+        if not candidates:
+            raise RuntimeError("No candidates were generated successfully")
+        
+        logger.debug(f"Processing {len(candidates)} candidates for CLAP scoring")
         
         # Process candidates and select best
         accepted_candidates = []
         query_emb = self.cache._generate_clap_text_embedding(prompt, clap_model, clap_processor)
         
         for i, audio_tensor in enumerate(candidates):
-            # Make seamless loop
-            if self.config.enable_seamless_loop:
-                # Adaptive crossfade duration: use configured duration but cap at 25% of audio length
-                max_crossfade = duration_s * 0.25  # Max 25% of audio length
-                adaptive_crossfade = min(self.config.tail_duration_s, max_crossfade)
-                looped_audio = AudioNormalizer.make_seamless_loop(
-                    audio_tensor, SR, adaptive_crossfade
-                )
-            else:
-                looped_audio = audio_tensor
+            logger.debug(f"Processing candidate {i+1}/{len(candidates)}")
             
-            # Calculate CLAP similarity
-            audio_np = looped_audio.cpu().numpy()
-            if looped_audio.ndim > 1:
-                audio_np = audio_np.mean(axis=0)  # Convert to mono for CLAP
-            
-            # Generate temp file for CLAP scoring
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-                temp_path = f.name
-            sf.write(temp_path, audio_np, SR, subtype='PCM_16')
+            # Validate candidate tensor
+            if audio_tensor is None:
+                logger.warning(f"Candidate {i+1} is None, skipping")
+                continue
+                
+            if not isinstance(audio_tensor, torch.Tensor):
+                logger.warning(f"Candidate {i+1} is not a tensor ({type(audio_tensor)}), skipping")
+                continue
+                
+            if audio_tensor.numel() == 0:
+                logger.warning(f"Candidate {i+1} is empty tensor, skipping")
+                continue
             
             try:
-                audio_emb = self.cache._generate_clap_audio_embedding(temp_path, clap_model, clap_processor)
-                similarity = float(np.dot(query_emb, audio_emb))
-                
-                if similarity >= self.config.tau_accept_new:
-                    accepted_candidates.append((similarity, looped_audio, audio_np))
-                    logger.debug(f"Candidate {i+1} accepted (similarity: {similarity:.3f})")
+                # Make seamless loop
+                if self.config.enable_seamless_loop:
+                    # Adaptive crossfade duration: use configured duration but cap at 25% of audio length
+                    max_crossfade = duration_s * 0.25  # Max 25% of audio length
+                    adaptive_crossfade = min(self.config.tail_duration_s, max_crossfade)
+                    looped_audio = AudioNormalizer.make_seamless_loop(
+                        audio_tensor, SR, adaptive_crossfade
+                    )
                 else:
-                    logger.debug(f"Candidate {i+1} rejected (similarity: {similarity:.3f})")
-            finally:
-                os.unlink(temp_path)
+                    looped_audio = audio_tensor
+                
+                # Calculate CLAP similarity
+                audio_np = looped_audio.cpu().numpy()
+                if looped_audio.ndim > 1:
+                    audio_np = audio_np.mean(axis=0)  # Convert to mono for CLAP
+                
+                # Generate temp file for CLAP scoring
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+                    temp_path = f.name
+                sf.write(temp_path, audio_np, SR, subtype='PCM_16')
+                
+                try:
+                    audio_emb = self.cache._generate_clap_audio_embedding(temp_path, clap_model, clap_processor)
+                    similarity = float(np.dot(query_emb, audio_emb))
+                    
+                    if similarity >= self.config.tau_accept_new:
+                        accepted_candidates.append((similarity, looped_audio, audio_np))
+                        logger.debug(f"Candidate {i+1} accepted (similarity: {similarity:.3f})")
+                    else:
+                        logger.debug(f"Candidate {i+1} rejected (similarity: {similarity:.3f})")
+                finally:
+                    os.unlink(temp_path)
+                    
+            except Exception as e:
+                logger.error(f"Error processing candidate {i+1}: {e}")
+                continue
         
         # Handle results
         if not accepted_candidates:
             # Fallback: return best candidate as temp file
+            if not candidates:
+                raise RuntimeError("No candidates were generated and no fallback available")
+                
             best_idx = 0  # Could implement better selection here
-            audio_np = candidates[best_idx].cpu().numpy()
-            if candidates[best_idx].ndim > 1:
-                audio_np = audio_np.mean(axis=0)
-            
-            temp_path = self.render_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
-            sf.write(str(temp_path), audio_np, SR, subtype='PCM_16')
-            logger.warning(f"No candidates accepted, returning temp file: {temp_path}")
-            return str(temp_path)
+            if best_idx >= len(candidates):
+                raise RuntimeError(f"Fallback index {best_idx} out of bounds for {len(candidates)} candidates")
+                
+            try:
+                fallback_candidate = candidates[best_idx]
+                audio_np = fallback_candidate.cpu().numpy()
+                if fallback_candidate.ndim > 1:
+                    audio_np = audio_np.mean(axis=0)
+                
+                temp_path = self.render_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
+                sf.write(str(temp_path), audio_np, SR, subtype='PCM_16')
+                logger.warning(f"No candidates accepted, returning temp file: {temp_path}")
+                return str(temp_path)
+            except Exception as e:
+                logger.error(f"Error creating fallback audio file: {e}")
+                raise RuntimeError(f"Failed to create fallback audio: {e}")
         
         # Select from accepted candidates (weighted random or best)
         similarities = [c[0] for c in accepted_candidates]
@@ -956,6 +1038,11 @@ class Prompt2AudioGenerator(AudioGenerator):
             probs = np.exp(logits)
             probs = probs / probs.sum()
             best_idx = np.random.choice(len(accepted_candidates), p=probs)
+        
+        # Bounds check for selected index
+        if best_idx >= len(accepted_candidates):
+            logger.error(f"Selected index {best_idx} out of bounds for {len(accepted_candidates)} accepted candidates")
+            best_idx = 0  # Fallback to first candidate
         
         similarity, looped_audio, audio_np = accepted_candidates[best_idx]
         

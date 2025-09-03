@@ -861,7 +861,9 @@ class FireCoreService(BaseService):
                 logger.debug("🤖 BACKGROUND: Starting LLM call")
                 media_prompt = await self.prompt_builder.build_media_prompt(
                     full_context,
-                    previous_prompt=self.last_generated_prompt
+                    previous_prompt=self.last_generated_prompt,
+                    audio_prefix=["high quality professional recording"],
+                    audio_suffix=["no wind noise"]
                 )
                 logger.debug("✅ BACKGROUND: LLM call completed")
                 

@@ -203,6 +203,8 @@ class LLMPromptBuilder:
         prefix: Optional[List[str]] = None,
         suffix: Optional[List[str]] = None,
         negative: Optional[List[str]] = None,
+        audio_prefix: Optional[List[str]] = None,
+        audio_suffix: Optional[List[str]] = None,
         previous_prompt: Optional[MediaPrompt] = None,
     ) -> MediaPrompt:
         """
@@ -213,6 +215,8 @@ class LLMPromptBuilder:
             prefix: Optional list of keywords to prepend to the visual prompt
             suffix: Optional list of keywords to append to the visual prompt
             negative: Optional list of keywords to include in visual negative prompt
+            audio_prefix: Optional list of keywords to prepend to the audio prompt
+            audio_suffix: Optional list of keywords to append to the audio prompt
             previous_prompt: Optional previous MediaPrompt for deduplication
             
         Returns:
@@ -261,6 +265,11 @@ class LLMPromptBuilder:
         
         # Create MediaPrompt
         audio_prompt_value = result.get("audio_prompt")
+        if audio_prompt_value:
+            if audio_prefix:
+                audio_prompt_value = f"{', '.join(audio_prefix)}, {audio_prompt_value}"
+            if audio_suffix:
+                audio_prompt_value = f"{audio_prompt_value}, {', '.join(audio_suffix)}"
         logger.debug(f"🎵 Creating MediaPrompt with audio_prompt: {audio_prompt_value}")
         
         media_prompt = MediaPrompt(

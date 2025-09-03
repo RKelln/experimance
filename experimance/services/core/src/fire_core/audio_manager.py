@@ -38,6 +38,7 @@ class AudioTrack:
                 '--no-terminal',       # No interactive terminal
                 '--really-quiet',      # Suppress output
                 '--volume={}'.format(int(self.volume * 100)),
+                '--audio-channels=stereo',  # Force stereo output for mono compatibility
             ]
             
             if self.loop:
