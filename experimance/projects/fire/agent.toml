@@ -16,6 +16,12 @@ conversation_cooldown_duration = 12.0  # seconds
 # This prevents the same person from immediately restarting, but allows new people to start immediately
 cancel_cooldown_on_absence = true
 
+# TTS (Text-to-Speech) settings (ensemble mode only)
+elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
+cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
+# fire spirit cartesia: 15e68ffc-55ad-48e3-9e50-cc8c56281b9d
+# sophia: bf0a246a-8642-498a-9950-80c35e9276b5
+
 [backend_config]
 prompt_path="projects/fire/fire_spirit_prompt.md"
 
@@ -31,11 +37,6 @@ openai_realtime_model = "gpt-4o-realtime-preview-2025-06-03"
 openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
 turn_detection_threshold = 0.5
 turn_detection_silence_ms = 800
-
-# TTS (Text-to-Speech) settings (ensemble mode only)
-elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
-cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
-# fire spirit cartesia: 15e68ffc-55ad-48e3-9e50-cc8c56281b9d
 
 # Audio settings
 audio_in_enabled = true
