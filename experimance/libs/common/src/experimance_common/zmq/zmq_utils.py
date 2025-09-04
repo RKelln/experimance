@@ -344,7 +344,7 @@ def cleanup_temp_image_file(message: Dict[str, Any]) -> None:
 
 
 def cleanup_old_temp_files(max_age_seconds: int = TEMP_FILE_CLEANUP_AGE, 
-                         temp_dir: str = DEFAULT_TEMP_DIR, 
+                         temp_dir: str = str(DEFAULT_TEMP_DIR), 
                          pattern: str = f"{TEMP_FILE_PREFIX}*") -> int:
     """Clean up old temporary image files.
     

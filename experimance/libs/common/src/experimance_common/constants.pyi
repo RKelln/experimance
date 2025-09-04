@@ -66,6 +66,7 @@ from experimance_common.constants_base import (
     MOCK_IMAGES_DIR,
     AUDIO_DIR,
     VIDEOS_DIR,
+    GENERATED_AUDIO_DIR,
 
     # Media directories (absolute paths)
     MEDIA_DIR_ABS,
@@ -74,6 +75,7 @@ from experimance_common.constants_base import (
     MOCK_IMAGES_DIR_ABS,
     AUDIO_DIR_ABS,
     VIDEOS_DIR_ABS,
+    GENERATED_AUDIO_DIR_ABS,
 
     # Services directories
     SERVICES_DIR,
@@ -164,6 +166,7 @@ __all__: list[str] = [
     "MOCK_IMAGES_DIR",
     "AUDIO_DIR",
     "VIDEOS_DIR",
+    "GENERATED_AUDIO_DIR",
 
     # Media directories (absolute paths)
     "MEDIA_DIR_ABS",
@@ -172,6 +175,7 @@ __all__: list[str] = [
     "MOCK_IMAGES_DIR_ABS",
     "AUDIO_DIR_ABS",
     "VIDEOS_DIR_ABS",
+    "GENERATED_AUDIO_DIR_ABS",
 
     # Services directories
     "SERVICES_DIR",

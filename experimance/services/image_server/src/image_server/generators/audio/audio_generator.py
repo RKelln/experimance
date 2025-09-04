@@ -186,7 +186,7 @@ class AudioGenerator(ABC):
     # Generator capabilities - subclasses should override this
     supported_capabilities: Set[str] = set()
     
-    def __init__(self, config: BaseAudioGeneratorConfig, output_dir: str = "/tmp", max_concurrent: int = 1, **kwargs):
+    def __init__(self, config: BaseAudioGeneratorConfig, max_concurrent: int = 1, **kwargs):
         """Initialize the audio generator.
         
         Args:
@@ -195,9 +195,10 @@ class AudioGenerator(ABC):
             max_concurrent: Maximum number of concurrent generations (default 1 for thread-safety)
             **kwargs: Additional configuration options
         """
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
+        
+        self.output_dir = config.output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize queuing mechanism for thread-safe generation
         self._generation_queue = asyncio.Queue()

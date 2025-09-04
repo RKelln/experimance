@@ -779,14 +779,9 @@ class Prompt2AudioGenerator(AudioGenerator):
         self._lazy = get_lazy_imports(self.config.models_dir)
         
         # Initialize cache
-        cache_dir = self.output_dir / self.config.cache_dir
-        self.cache = AudioSemanticCache(str(cache_dir))
-        
-        # Create render directory
-        self.render_dir = self.output_dir / self.config.render_dir
-        self.render_dir.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Prompt2AudioGenerator configured with cache: {cache_dir}")
+        self.cache = AudioSemanticCache(str(self.config.cache_dir))
+
+        logger.info(f"Prompt2AudioGenerator configured with cache: {self.config.cache_dir}")
         logger.info(f"Models will be stored in: {self.config.models_dir / 'audio'}")
 
     async def _generate_audio_impl(self, prompt: str, **kwargs) -> str:
@@ -1017,7 +1012,7 @@ class Prompt2AudioGenerator(AudioGenerator):
                 if fallback_candidate.ndim > 1:
                     audio_np = audio_np.mean(axis=0)
                 
-                temp_path = self.render_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
+                temp_path = self.output_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
                 sf.write(str(temp_path), audio_np, SR, subtype='PCM_16')
                 logger.warning(f"No candidates accepted, returning temp file: {temp_path}")
                 return str(temp_path)
@@ -1048,7 +1043,7 @@ class Prompt2AudioGenerator(AudioGenerator):
         
         # Save final audio
         filename = f"{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
-        audio_path = self.render_dir / filename
+        audio_path = self.output_dir / filename
         sf.write(str(audio_path), audio_np, SR, subtype='PCM_16')
         
         # Apply loudness normalization if enabled

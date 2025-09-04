@@ -63,9 +63,9 @@ TEMP_FILE_CLEANUP_INTERVAL = 60  # seconds (1 minute)
 # Default directory for temporary files - use cache dir in production
 import os
 if os.path.exists("/var/cache/experimance") and os.access("/var/cache/experimance", os.W_OK):
-    DEFAULT_TEMP_DIR = "/var/cache/experimance"
+    DEFAULT_TEMP_DIR = Path("/var/cache/experimance")
 else:
-    DEFAULT_TEMP_DIR = "/tmp"  # Fallback to /tmp
+    DEFAULT_TEMP_DIR = Path("/tmp")  # Fallback to /tmp
 
 # URI and URL constants
 FILE_URI_PREFIX = "file://"
@@ -103,6 +103,7 @@ IMAGES_DIR = MEDIA_DIR / "images"
 GENERATED_IMAGES_DIR = IMAGES_DIR / "generated"
 MOCK_IMAGES_DIR = IMAGES_DIR / "mocks"
 AUDIO_DIR = MEDIA_DIR / "audio"
+GENERATED_AUDIO_DIR = AUDIO_DIR / "generated"
 VIDEOS_DIR = MEDIA_DIR / "video"
 
 # media directories (absolute paths)
@@ -111,6 +112,7 @@ IMAGES_DIR_ABS = IMAGES_DIR.absolute()
 GENERATED_IMAGES_DIR_ABS = GENERATED_IMAGES_DIR.absolute()
 MOCK_IMAGES_DIR_ABS = MOCK_IMAGES_DIR.absolute()
 AUDIO_DIR_ABS = AUDIO_DIR.absolute()
+GENERATED_AUDIO_DIR_ABS = GENERATED_AUDIO_DIR.absolute()
 VIDEOS_DIR_ABS = VIDEOS_DIR.absolute()
 
 # other directories
@@ -195,6 +197,7 @@ __all__ = [
     "MOCK_IMAGES_DIR",
     "AUDIO_DIR",
     "VIDEOS_DIR",
+    "GENERATED_AUDIO_DIR",
     # Media directories (absolute)
     "MEDIA_DIR_ABS",
     "IMAGES_DIR_ABS",
@@ -202,6 +205,7 @@ __all__ = [
     "MOCK_IMAGES_DIR_ABS",
     "AUDIO_DIR_ABS",
     "VIDEOS_DIR_ABS",
+    "GENERATED_AUDIO_DIR_ABS",
     # Service types
     "SERVICE_TYPES",
     # Services directories

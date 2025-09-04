@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import Field
 
 from image_server.generators.config import BaseGeneratorConfig
-from experimance_common.constants import MODELS_DIR
+from experimance_common.constants import MODELS_DIR, GENERATED_AUDIO_DIR, DEFAULT_TEMP_DIR
 
 
 class BaseAudioGeneratorConfig(BaseGeneratorConfig):
@@ -17,6 +17,9 @@ class BaseAudioGeneratorConfig(BaseGeneratorConfig):
     # Model storage location
     models_dir: Path = Field(default=MODELS_DIR, description="Directory for storing audio generation models")
     
+    # Files dir
+    output_dir: Path = Field(default=GENERATED_AUDIO_DIR, description="Directory for generated audio files")
+
     # GPU configuration
     audio_gpu_id: Optional[int] = Field(default=0, description="GPU ID for audio generation (None for CPU)")
     cuda_visible_devices: Optional[str] = Field(default=None, description="CUDA_VISIBLE_DEVICES for subprocess (e.g., '0' or '1,2')")
@@ -70,5 +73,5 @@ class Prompt2AudioConfig(BaseAudioGeneratorConfig):
     bge_model: str = Field(default="BAAI/bge-small-en-v1.5", description="BGE model for text embeddings")
     
     # File management
-    cache_dir: str = Field(default="audio_cache", description="Directory for audio cache")
-    render_dir: str = Field(default="renders/audio", description="Directory for rendered audio files")
+    cache_dir: Path = Field(default=DEFAULT_TEMP_DIR / "audio_cache", description="Directory for audio cache")
+    
