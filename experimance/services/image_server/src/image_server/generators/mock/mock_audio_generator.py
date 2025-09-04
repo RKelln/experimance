@@ -80,13 +80,14 @@ class MockAudioGenerator(AudioGenerator):
             await asyncio.sleep(self.config.generation_delay_s)
         
         if self.config.use_existing_audio and self._existing_audio:
-            return await self._copy_existing_audio(prompt, **kwargs)
+            return await self._reference_existing_audio(prompt, **kwargs)
         else:
             return await self._generate_placeholder_audio(prompt, **kwargs)
     
     async def _copy_existing_audio(self, prompt: str, **kwargs) -> str:
         """Copy an existing audio file for testing."""
         # Select audio file based on hash of prompt for consistency
+        assert self.config.existing_audio_dir
         file_index = hash(prompt) % len(self._existing_audio)
         source_file = self.config.existing_audio_dir / self._existing_audio[file_index]
         
@@ -101,7 +102,14 @@ class MockAudioGenerator(AudioGenerator):
         
         logger.info(f"Copied existing audio: {source_file.name} -> {output_path.name}")
         return str(output_path)
-    
+
+    async def _reference_existing_audio(self, prompt: str, **kwargs) -> str:
+        """Reference an existing audio file for testing."""
+        # Select audio file based on hash of prompt for consistency
+        assert self.config.existing_audio_dir
+        file_index = hash(prompt) % len(self._existing_audio)
+        return str(self.config.existing_audio_dir / self._existing_audio[file_index])
+
     async def _generate_placeholder_audio(self, prompt: str, **kwargs) -> str:
         """Generate placeholder audio based on configuration."""
         # Get duration from kwargs or config
@@ -143,7 +151,6 @@ class MockAudioGenerator(AudioGenerator):
         # Add metadata if requested
         if self.config.include_prompt_metadata:
             try:
-                import soundfile as sf
                 # Note: WAV files support limited metadata, but we can try
                 with sf.SoundFile(str(output_path), 'r+') as f:
                     # This might not work for all formats, but it's a mock generator

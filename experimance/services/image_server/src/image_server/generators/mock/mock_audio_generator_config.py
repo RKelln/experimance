@@ -7,6 +7,7 @@ from typing import Literal, Optional
 from pydantic import Field
 
 from image_server.generators.audio.audio_config import BaseAudioGeneratorConfig
+from experimance_common.constants import GENERATED_AUDIO_DIR
 
 
 class MockAudioGeneratorConfig(BaseAudioGeneratorConfig):
@@ -25,7 +26,7 @@ class MockAudioGeneratorConfig(BaseAudioGeneratorConfig):
     )
     
     existing_audio_dir: Optional[Path] = Field(
-        default=None,
+        default=GENERATED_AUDIO_DIR,
         description="Directory containing existing audio files to use for testing"
     )
     
