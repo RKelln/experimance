@@ -41,12 +41,10 @@ from .llm_prompt_builder import InsufficientContentException, UnchangedContentEx
 from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
 from .audio_manager import AudioManager
 
-from experimance_common.logger import setup_logging
-
 SERVICE_TYPE = "core"
 AGENTS = ['llm', 'agent', 'assistant', 'fire_agent', 'experimance_agent']
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 
 class RequestState(Enum):

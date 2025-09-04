@@ -20,11 +20,10 @@ import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 
-from experimance_common.logger import setup_logging
 
 SERVICE_TYPE = "display"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 from experimance_common.schemas import ContentType, MessageType, DisplayText, RemoveText
 from pydantic import ValidationError

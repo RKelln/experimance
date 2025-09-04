@@ -22,7 +22,6 @@ from experimance_common.schemas import ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS, PROJECT_ROOT, GENERATED_IMAGES_DIR, GENERATED_IMAGES_DIR_ABS
-from experimance_common.logger import configure_external_loggers
 from image_server.generators.config import GENERATOR_NAMES
 from pydantic import ValidationError
 from typing import get_args
@@ -41,7 +40,7 @@ from experimance_common.logger import setup_logging
 
 SERVICE_TYPE = "image_server"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 # Log audio support status after logger is set up
 if AUDIO_SUPPORT:
