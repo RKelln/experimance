@@ -35,6 +35,7 @@ turn_detection_silence_ms = 800
 # TTS (Text-to-Speech) settings (ensemble mode only)
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
+# fire spirit cartesia: 15e68ffc-55ad-48e3-9e50-cc8c56281b9d
 
 # Audio settings
 audio_in_enabled = true
