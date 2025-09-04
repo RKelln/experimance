@@ -7,7 +7,9 @@ Handles looping, crossfading, and cleanup of audio tracks.
 """
 
 import asyncio
+import json
 import logging
+import socket
 import subprocess
 import tempfile
 import uuid
@@ -27,18 +29,62 @@ class AudioTrack:
         self.volume = volume
         self.process: Optional[subprocess.Popen] = None
         self.track_id = str(uuid.uuid4())[:8]
+        self.ipc_socket_path: Optional[str] = None
+        self.ipc_reader: Optional[asyncio.StreamReader] = None
+        self.ipc_writer: Optional[asyncio.StreamWriter] = None
         
-    async def start(self) -> bool:
-        """Start playing the audio track."""
+    async def _send_mpv_command(self, command: list) -> Optional[dict]:
+        """Send a command to mpv via IPC."""
+        if not self.ipc_writer:
+            return None
+            
         try:
-            # Build mpv command
+            cmd_data = {"command": command}
+            cmd_json = json.dumps(cmd_data) + "\n"
+            
+            self.ipc_writer.write(cmd_json.encode())
+            await self.ipc_writer.drain()
+            
+            # Read response
+            if self.ipc_reader:
+                response_line = await asyncio.wait_for(
+                    self.ipc_reader.readline(), 
+                    timeout=1.0
+                )
+                if response_line:
+                    return json.loads(response_line.decode())
+                    
+        except Exception as e:
+            logger.debug(f"Error sending mpv command {command}: {e}")
+            
+        return None
+        
+    async def start(self, start_volume: Optional[float] = None) -> bool:
+        """Start playing the audio track.
+        
+        Args:
+            start_volume: Initial volume to start at (0.0-1.0). If None, uses track volume.
+        """
+        try:
+            # Create temporary socket for IPC
+            temp_dir = Path(tempfile.gettempdir())
+            self.ipc_socket_path = str(temp_dir / f"mpv_ipc_{self.track_id}.sock")
+            
+            # Determine starting volume
+            if start_volume is not None:
+                initial_volume = max(0.0, min(1.0, start_volume))
+            else:
+                initial_volume = self.volume
+            
+            # Build mpv command with IPC support
             cmd = [
                 'mpv',
                 '--no-video',          # Audio only
                 '--no-terminal',       # No interactive terminal
                 '--really-quiet',      # Suppress output
-                '--volume={}'.format(int(self.volume * 100)),
+                '--volume={}'.format(int(initial_volume * 100)),
                 '--audio-channels=stereo',  # Force stereo output for mono compatibility
+                f'--input-ipc-server={self.ipc_socket_path}',  # Enable IPC
             ]
             
             if self.loop:
@@ -46,7 +92,7 @@ class AudioTrack:
             
             cmd.append(self.uri)
             
-            logger.info(f"Starting audio track {self.track_id}: {self.uri}")
+            logger.info(f"Starting audio track {self.track_id}: {self.uri} (initial volume: {initial_volume})")
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
@@ -54,19 +100,33 @@ class AudioTrack:
                 preexec_fn=None  # Allow signal handling
             )
             
-            # Give it a moment to start
-            await asyncio.sleep(0.1)
+            # Give mpv time to start and create the socket
+            await asyncio.sleep(0.2)
             
             # Check if it started successfully
             if self.process.poll() is not None:
                 logger.error(f"Audio track {self.track_id} failed to start (exit code: {self.process.returncode})")
                 return False
+            
+            # Connect to IPC socket
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_unix_connection(self.ipc_socket_path),
+                    timeout=2.0
+                )
+                self.ipc_reader = reader
+                self.ipc_writer = writer
+                logger.debug(f"Connected to mpv IPC for track {self.track_id}")
+            except Exception as e:
+                logger.warning(f"Failed to connect to mpv IPC for track {self.track_id}: {e}")
+                # Continue without IPC - basic functionality will still work
                 
             logger.info(f"Audio track {self.track_id} started successfully")
             return True
             
         except Exception as e:
             logger.error(f"Failed to start audio track {self.track_id}: {e}")
+            await self.stop()  # Clean up on failure
             return False
     
     async def fade_out(self, duration: float = 2.0) -> None:
@@ -77,24 +137,13 @@ class AudioTrack:
         try:
             logger.info(f"Fading out audio track {self.track_id} over {duration}s")
             
-            # mpv doesn't have built-in fade out via command line,
-            # so we'll do a simple volume ramp down
-            steps = 20
-            step_duration = duration / steps
-            
-            for i in range(steps, 0, -1):
-                if self.process.poll() is not None:
-                    break
-                    
-                volume = int((i / steps) * self.volume * 100)
-                try:
-                    # Send volume change via echo to mpv's stdin (if it was opened with stdin)
-                    # For now, we'll just do an abrupt stop after the fade duration
-                    pass
-                except:
-                    pass
-                    
-                await asyncio.sleep(step_duration)
+            # If we have IPC connection, do smooth volume fade
+            if self.ipc_writer and self.ipc_reader:
+                await self._smooth_volume_fade(duration)
+            else:
+                # Fallback: just wait then stop
+                logger.debug(f"No IPC connection for track {self.track_id}, using simple fade")
+                await asyncio.sleep(duration)
                 
             # Final stop
             await self.stop()
@@ -103,31 +152,117 @@ class AudioTrack:
             logger.error(f"Error during fade out of track {self.track_id}: {e}")
             await self.stop()
     
+    async def _smooth_volume_fade(self, duration: float) -> None:
+        """Perform smooth volume fade using mpv IPC."""
+        try:
+            steps = max(20, int(duration * 10))  # At least 20 steps, more for longer fades
+            step_duration = duration / steps
+            
+            start_volume = int(self.volume * 100)
+            
+            for i in range(steps, 0, -1):
+                if not self.process or self.process.poll() is not None:
+                    break
+                    
+                # Calculate volume for this step
+                volume_ratio = i / steps
+                current_volume = int(start_volume * volume_ratio)
+                
+                # Send volume command to mpv
+                result = await self._send_mpv_command(["set_property", "volume", current_volume])
+                if result and result.get("error") != "success":
+                    logger.debug(f"mpv volume command failed: {result}")
+                    
+                await asyncio.sleep(step_duration)
+                
+        except Exception as e:
+            logger.debug(f"Error during smooth fade: {e}")
+            # Continue with stop anyway
+    
     async def stop(self) -> None:
         """Stop the audio track immediately."""
-        if not self.process:
-            return
-            
         try:
             logger.info(f"Stopping audio track {self.track_id}")
             
-            if self.process.poll() is None:
-                self.process.terminate()
-                
-                # Give it a chance to terminate gracefully
+            # Close IPC connection first
+            if self.ipc_writer:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(self.process.wait), 
-                        timeout=2.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"Audio track {self.track_id} didn't terminate gracefully, killing")
-                    self.process.kill()
+                    self.ipc_writer.close()
+                    await self.ipc_writer.wait_closed()
+                except:
+                    pass
+                self.ipc_writer = None
+                self.ipc_reader = None
+            
+            # Clean up IPC socket file
+            if self.ipc_socket_path and Path(self.ipc_socket_path).exists():
+                try:
+                    Path(self.ipc_socket_path).unlink()
+                except:
+                    pass
+                self.ipc_socket_path = None
+            
+            # Stop the process
+            if self.process:
+                if self.process.poll() is None:
+                    self.process.terminate()
+                    
+                    # Give it a chance to terminate gracefully
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(self.process.wait), 
+                            timeout=2.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Audio track {self.track_id} didn't terminate gracefully, killing")
+                        self.process.kill()
+                        
+                self.process = None
                     
         except Exception as e:
             logger.error(f"Error stopping audio track {self.track_id}: {e}")
         finally:
             self.process = None
+            self.ipc_writer = None
+            self.ipc_reader = None
+            self.ipc_socket_path = None
+    
+    async def fade_in(self, duration: float = 2.0) -> None:
+        """Fade in the audio track from 0 to target volume."""
+        if not self.process or self.process.poll() is not None:
+            return
+            
+        if not self.ipc_writer or not self.ipc_reader:
+            logger.debug(f"No IPC connection for track {self.track_id}, skipping fade in")
+            return
+            
+        try:
+            logger.info(f"Fading in audio track {self.track_id} over {duration}s")
+            
+            # Start at 0 volume
+            await self._send_mpv_command(["set_property", "volume", 0])
+            
+            steps = max(20, int(duration * 10))  # At least 20 steps
+            step_duration = duration / steps
+            target_volume = int(self.volume * 100)
+            
+            for i in range(1, steps + 1):
+                if not self.process or self.process.poll() is not None:
+                    break
+                    
+                # Calculate volume for this step
+                volume_ratio = i / steps
+                current_volume = int(target_volume * volume_ratio)
+                
+                # Send volume command to mpv
+                result = await self._send_mpv_command(["set_property", "volume", current_volume])
+                if result and result.get("error") != "success":
+                    logger.debug(f"mpv volume command failed: {result}")
+                    
+                await asyncio.sleep(step_duration)
+                
+        except Exception as e:
+            logger.debug(f"Error during fade in: {e}")
     
     @property
     def is_playing(self) -> bool:
@@ -156,7 +291,9 @@ class AudioManager:
         uri: str, 
         loop: bool = True, 
         volume: Optional[float] = None, 
-        crossfade: bool = True
+        crossfade: bool = True,
+        fade_in: bool = True,
+        fade_in_duration: Optional[float] = None
     ) -> bool:
         """
         Play an audio track, optionally crossfading from current tracks.
@@ -166,36 +303,58 @@ class AudioManager:
             loop: Whether to loop the audio indefinitely
             volume: Volume level (0.0-1.0), defaults to manager default
             crossfade: Whether to crossfade from existing tracks
+            fade_in: Whether to fade in the new track
+            fade_in_duration: Duration for fade in (defaults to crossfade_duration)
             
         Returns:
             True if audio started successfully, False otherwise
         """
         if volume is None:
-            volume = self.default_volume
+            volume = max(0.0, min(1.0, self.default_volume))
+        else:
+            volume = max(0.0, min(1.0, volume))
         
-        volume = max(0.0, min(1.0, volume))
+        if fade_in_duration is None:
+            fade_in_duration = self.crossfade_duration
         
         # Create new track
         track = AudioTrack(uri, loop, volume)
         
+        # Determine starting volume:
+        # - If crossfading or fading in, start at 0
+        # - Otherwise start at target volume
+        start_volume = 0.0 if (crossfade or fade_in) else volume
+        
         # Start the new track
-        success = await track.start()
+        success = await track.start(start_volume=start_volume)
         if not success:
             logger.error(f"Failed to start audio track: {uri}")
             return False
         
-        # Handle existing tracks
+        # Handle crossfading and existing tracks
         if crossfade and self.current_tracks:
-            # Fade out existing tracks
-            await self._fade_out_all_tracks()
+            # Start fade out of existing tracks while new track fades in
+            fade_out_task = asyncio.create_task(self._fade_out_all_tracks())
+            
+            # Start fade in of new track
+            if fade_in:
+                fade_in_task = asyncio.create_task(track.fade_in(fade_in_duration))
+                # Don't wait for fade in to complete - let it run
+            
+            # Don't wait for crossfade to complete - let it happen asynchronously
+            
         else:
             # Stop existing tracks immediately
             await self.stop_all()
+            
+            # Optionally fade in the new track (even if not crossfading)
+            if fade_in:
+                asyncio.create_task(track.fade_in(fade_in_duration))
         
         # Add new track to current tracks
         self.current_tracks[track.track_id] = track
         
-        logger.info(f"Now playing: {uri} (volume={volume}, loop={loop})")
+        logger.info(f"Now playing: {uri} (volume={volume}, loop={loop}, fade_in={fade_in})")
         return True
     
     async def _fade_out_all_tracks(self) -> None:
@@ -293,7 +452,7 @@ class AudioManager:
 # Test function for development
 async def test_audio_manager():
     """Test function for development and debugging."""
-    manager = AudioManager(volume=0.5)
+    manager = AudioManager(default_volume=0.5)
     
     # Test with a local file (if it exists)
     test_file = Path("media/audio/test.wav")
