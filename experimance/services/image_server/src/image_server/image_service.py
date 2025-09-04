@@ -125,8 +125,23 @@ class ImageServerService(BaseService):
                 try:
                     from image_server.generators.audio.audio_factory import AudioGeneratorManager
                     
+                    # Get audio strategy from config
+                    audio_strategy = getattr(self.config.audio_generator, 'strategy', 'mock_audio')
+                    
                     # Get audio configuration from TOML config
                     audio_configs = {}
+                    
+                    # Load mock_audio config if strategy is mock_audio
+                    if hasattr(self.config, 'mock_audio') and self.config.mock_audio:
+                        # Convert Pydantic model to dict
+                        if hasattr(self.config.mock_audio, 'model_dump'):
+                            audio_configs['mock_audio'] = self.config.mock_audio.model_dump()
+                        else:
+                            audio_configs['mock_audio'] = dict(self.config.mock_audio)
+                        
+                        logger.info(f"Loaded mock_audio config: {audio_configs['mock_audio']}")
+                    
+                    # Load prompt2audio config if strategy is prompt2audio
                     if hasattr(self.config, 'prompt2audio') and self.config.prompt2audio:
                         # Convert Pydantic model to dict
                         if hasattr(self.config.prompt2audio, 'model_dump'):
@@ -137,10 +152,10 @@ class ImageServerService(BaseService):
                         logger.info(f"Loaded prompt2audio config with subprocess: {audio_configs['prompt2audio'].get('use_subprocess', False)}")
                     
                     self.audio_generator_manager = AudioGeneratorManager(
-                        default_strategy="prompt2audio",
+                        default_strategy=audio_strategy,
                         output_dir=str(self.config.cache_dir / "audio"),
-                        timeout=getattr(self.config, 'audio_timeout', 120),
-                        default_configs=audio_configs  # Pass the audio config from TOML
+                        timeout=getattr(self.config.audio_generator, 'timeout', 120),
+                        default_configs=audio_configs  # Pass the audio config from TOML FIXME: use self.config
                     )
                     logger.info("Audio generator manager initialized")
                     
@@ -625,7 +640,12 @@ class ImageServerService(BaseService):
             raise RuntimeError("Audio generation not supported - missing audio schemas")
         
         if strategy is None:
-            strategy = "prompt2audio"  # Default audio strategy
+            # Use strategy from config instead of hardcoded default
+            strategy = getattr(self.config.audio_generator, 'strategy', 'mock_audio')
+            
+        # Ensure strategy is not None (should never happen but for type safety)
+        if strategy is None:
+            strategy = 'mock_audio'
         
         # Check if we have an audio generator manager
         if not hasattr(self, 'audio_generator_manager'):
@@ -634,6 +654,18 @@ class ImageServerService(BaseService):
             
             # Get audio configuration from TOML config
             audio_configs = {}
+            
+            # Load mock_audio config if strategy is mock_audio
+            if hasattr(self.config, 'mock_audio') and self.config.mock_audio:
+                # Convert Pydantic model to dict
+                if hasattr(self.config.mock_audio, 'model_dump'):
+                    audio_configs['mock_audio'] = self.config.mock_audio.model_dump()
+                else:
+                    audio_configs['mock_audio'] = dict(self.config.mock_audio)
+                
+                logger.info(f"Loaded mock_audio config: {audio_configs['mock_audio']}")
+            
+            # Load prompt2audio config if strategy is prompt2audio
             if hasattr(self.config, 'prompt2audio') and self.config.prompt2audio:
                 # Convert Pydantic model to dict
                 if hasattr(self.config.prompt2audio, 'model_dump'):
@@ -646,7 +678,7 @@ class ImageServerService(BaseService):
             self.audio_generator_manager = AudioGeneratorManager(
                 default_strategy=strategy,
                 output_dir=str(self.config.cache_dir / "audio"),
-                timeout=getattr(self.config, 'audio_timeout', 120),
+                timeout=getattr(self.config.audio_generator, 'timeout', 120),
                 default_configs=audio_configs  # Pass the audio config from TOML
             )
         
