@@ -32,6 +32,7 @@ class AudioTrack:
         self.ipc_socket_path: Optional[str] = None
         self.ipc_reader: Optional[asyncio.StreamReader] = None
         self.ipc_writer: Optional[asyncio.StreamWriter] = None
+        self._ipc_lock: Optional[asyncio.Lock] = None
         
     async def _send_mpv_command(self, command: list) -> Optional[dict]:
         """Send a command to mpv via IPC."""
@@ -42,17 +43,41 @@ class AudioTrack:
             cmd_data = {"command": command}
             cmd_json = json.dumps(cmd_data) + "\n"
             
-            self.ipc_writer.write(cmd_json.encode())
-            await self.ipc_writer.drain()
+            # Initialize lock if needed
+            if self._ipc_lock is None:
+                self._ipc_lock = asyncio.Lock()
             
-            # Read response
-            if self.ipc_reader:
-                response_line = await asyncio.wait_for(
-                    self.ipc_reader.readline(), 
-                    timeout=1.0
-                )
-                if response_line:
-                    return json.loads(response_line.decode())
+            async with self._ipc_lock:
+                self.ipc_writer.write(cmd_json.encode())
+                await self.ipc_writer.drain()
+                
+                # Read response, skipping events
+                if self.ipc_reader:
+                    # Try to read response within timeout, but skip events
+                    max_attempts = 5
+                    for _ in range(max_attempts):
+                        try:
+                            # Check reader is still available before each read
+                            if not self.ipc_reader:
+                                break
+                                
+                            response_line = await asyncio.wait_for(
+                                self.ipc_reader.readline(), 
+                                timeout=0.2
+                            )
+                            if response_line:
+                                response = json.loads(response_line.decode())
+                                
+                                # Skip events, return command responses only
+                                if "event" in response:
+                                    #logger.debug(f"Skipping mpv event: {response}")
+                                    continue
+                                    
+                                # This should be a command response
+                                return response
+                        except asyncio.TimeoutError:
+                            # No more responses, return None
+                            break
                     
         except Exception as e:
             logger.debug(f"Error sending mpv command {command}: {e}")
@@ -170,7 +195,7 @@ class AudioTrack:
                 
                 # Send volume command to mpv
                 result = await self._send_mpv_command(["set_property", "volume", current_volume])
-                if result and result.get("error") != "success":
+                if result and result.get("error") and result.get("error") != "success":
                     logger.debug(f"mpv volume command failed: {result}")
                     
                 await asyncio.sleep(step_duration)
@@ -256,7 +281,7 @@ class AudioTrack:
                 
                 # Send volume command to mpv
                 result = await self._send_mpv_command(["set_property", "volume", current_volume])
-                if result and result.get("error") != "success":
+                if result and result.get("error") and result.get("error") != "success":
                     logger.debug(f"mpv volume command failed: {result}")
                     
                 await asyncio.sleep(step_duration)
@@ -333,40 +358,44 @@ class AudioManager:
         
         # Handle crossfading and existing tracks
         if crossfade and self.current_tracks:
-            # Start fade out of existing tracks while new track fades in
-            fade_out_task = asyncio.create_task(self._fade_out_all_tracks())
+            # Get list of tracks to fade out BEFORE adding new track
+            tracks_to_fade_out = list(self.current_tracks.values())
+            
+            # Add new track to current tracks immediately
+            self.current_tracks[track.track_id] = track
+            
+            # Start fade out of OLD tracks only
+            fade_out_task = asyncio.create_task(self._fade_out_tracks(tracks_to_fade_out))
             
             # Start fade in of new track
             if fade_in:
                 fade_in_task = asyncio.create_task(track.fade_in(fade_in_duration))
-                # Don't wait for fade in to complete - let it run
-            
-            # Don't wait for crossfade to complete - let it happen asynchronously
+                # Let both run concurrently
             
         else:
             # Stop existing tracks immediately
             await self.stop_all()
             
+            # Add new track to current tracks
+            self.current_tracks[track.track_id] = track
+            
             # Optionally fade in the new track (even if not crossfading)
             if fade_in:
                 asyncio.create_task(track.fade_in(fade_in_duration))
         
-        # Add new track to current tracks
-        self.current_tracks[track.track_id] = track
-        
         logger.info(f"Now playing: {uri} (volume={volume}, loop={loop}, fade_in={fade_in})")
         return True
     
-    async def _fade_out_all_tracks(self) -> None:
-        """Fade out all current tracks."""
-        if not self.current_tracks:
+    async def _fade_out_tracks(self, tracks: list) -> None:
+        """Fade out a specific list of tracks."""
+        if not tracks:
             return
             
-        logger.info(f"Fading out {len(self.current_tracks)} current tracks")
+        logger.info(f"Fading out {len(tracks)} current tracks")
         
-        # Start fade out tasks for all tracks
+        # Start fade out tasks for specified tracks
         fade_tasks = []
-        for track in self.current_tracks.values():
+        for track in tracks:
             task = asyncio.create_task(track.fade_out(self.crossfade_duration))
             fade_tasks.append(task)
             self.fade_tasks.add(task)
@@ -382,8 +411,17 @@ class AudioManager:
         for task in fade_tasks:
             self.fade_tasks.discard(task)
         
-        # Clear current tracks
-        self.current_tracks.clear()
+        # Remove the faded tracks from current_tracks
+        for track in tracks:
+            self.current_tracks.pop(track.track_id, None)
+    
+    async def _fade_out_all_tracks(self) -> None:
+        """Fade out all current tracks."""
+        if not self.current_tracks:
+            return
+        
+        tracks_to_fade = list(self.current_tracks.values())
+        await self._fade_out_tracks(tracks_to_fade)
     
     async def fade_out_all(self, duration: Optional[float] = None) -> None:
         """
