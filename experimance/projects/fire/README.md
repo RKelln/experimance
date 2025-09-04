@@ -35,13 +35,19 @@ graph TD
 
 **Package path:** `services/core/src/fire_core/`
 
-## Quick start
+## Quick start
 
 ```bash
-uv pip install -e services/core
-export PROJECT_ENV=fire
+# Set project to fire
+scripts/project fire
+
+# in separate terminals
 uv run -m fire_core
+uv run -m image_server
+uv run -m experimance_display
+uv run -m fire_agent
 ```
+
 
 ## Responsibilities
 

@@ -20,6 +20,17 @@ CLI_ONLY_ARGS = {
     "config",     # Path to the configuration file
 }
 
+def get_current_project() -> str:
+    """Get the current project name from environment.
+    
+    This function assumes PROJECT_ENV has already been set during experimance_common
+    import. If not set, falls back to "experimance" default.
+    
+    Returns:
+        Project name string
+    """
+    return os.environ.get("PROJECT_ENV", "experimance")
+
 def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = "") -> Dict[str, Dict[str, Any]]:
     """Extract CLI arguments from a Pydantic config class.
     
@@ -254,6 +265,10 @@ async def run_service_cli(
     
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Experimance {service_name} Service with log level: {args.log_level}")
+    
+    # Log which project is being used (PROJECT_ENV is guaranteed to be set by experimance_common import)
+    project_name = get_current_project()
+    logger.info(f"Using project: {project_name}")
     
     # Extract config path before filtering
     config_path = getattr(args, 'config', default_config_path)

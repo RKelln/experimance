@@ -26,25 +26,23 @@ Simple script for manual testing and debugging:
 ### Environment Setup
 ```bash
 # Set the project environment
-export PROJECT_ENV=fire
+scripts/project fire
 ```
 
 ### Required Services
 Before running tests, start these services in separate terminals:
 
 ```bash
-# Terminal 1: Core service
-export PROJECT_ENV=fire
+# Terminal 1: Core service  
+scripts/project fire  # Set once, persists across terminals
 cd /path/to/experimance
 uv run -m fire_core
 
 # Terminal 2: Image server
-export PROJECT_ENV=fire  
 cd /path/to/experimance
 uv run -m image_server
 
 # Terminal 3: Display service
-export PROJECT_ENV=fire
 cd /path/to/experimance  
 uv run -m experimance_display
 ```
@@ -54,7 +52,8 @@ uv run -m experimance_display
 ### Full Integration Test
 
 ```bash
-export PROJECT_ENV=fire
+# Ensure fire project is set
+scripts/project fire
 uv run python utils/tests/test_fire_integration.py
 ```
 
@@ -68,8 +67,7 @@ This test will:
 ### Quick Test Options
 
 ```bash
-export PROJECT_ENV=fire
-
+# Ensure fire project is set (check with: scripts/project)
 # Interactive menu
 uv run python utils/tests/test_fire_quick.py
 
@@ -140,13 +138,13 @@ Monitor individual service logs in their terminals to see:
 If tests fail to connect:
 1. Verify all services are running
 2. Check port conflicts: `netstat -tlnp | grep :555`
-3. Verify PROJECT_ENV is set in all terminals
+3. Verify fire project is set: `scripts/project` should show "Current project: fire"
 4. Check firewall settings if running across machines
 
 ## Troubleshooting
 
 ### "Could not import schemas" Error
-- Ensure `PROJECT_ENV=fire` is set
+- Ensure fire project is set: `scripts/project fire`
 - Verify you're in the experimance project root
 - Check that fire project files exist in `projects/fire/`
 

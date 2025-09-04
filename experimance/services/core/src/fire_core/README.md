@@ -5,8 +5,8 @@ The core orchestration service for the Feed the Fires interactive art installati
 ## Quick Start
 
 ```bash
-# Set project environment
-export PROJECT_ENV=fire
+# Set project to fire
+scripts/project fire
 
 # Install the service (from experimance root)
 uv pip install -e services/core
@@ -38,6 +38,7 @@ The service uses a **request-centric state management** approach where all state
 - **WAITING_BASE**: Base image being generated (protected from interruption)
 - **BASE_READY**: Base image completed and displayed
 - **WAITING_TILES**: Tile images being generated (tiles can be cancelled)
+- **WAITING_AUDIO**: Base and tiles complete, but audio is not.
 - **COMPLETED**: All processing finished
 - **CANCELLED**: Request was interrupted or discarded
 
@@ -112,7 +113,7 @@ State Transitions → Completion → Queue Next Request
 
 ## Environment Variables
 
-- `PROJECT_ENV=fire`: Enable Feed the Fires mode
+- **Project Selection**: Use `scripts/project fire` or set `PROJECT_ENV=fire` for temporary override
 - `OPENAI_API_KEY`: API key for OpenAI LLM
 
 ## Development

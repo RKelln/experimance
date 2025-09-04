@@ -230,11 +230,40 @@ This codebase supports multiple art installation projects through a **dynamic lo
 ### How It Works
 - **Base schemas/constants** in `libs/common/src/experimance_common/*_base.py` define shared functionality
 - **Project-specific extensions** in `projects/{project_name}/` override or extend base definitions
-- **Dynamic loading** at runtime merges base + project-specific definitions based on `PROJECT_ENV`
+- **Automatic project detection** loads the correct project based on `projects/.project` file or environment variables
 
 ### Project Selection
-- Set `PROJECT_ENV=experimance` or `PROJECT_ENV=projectname` to switch projects
-- Each project can have different enums and message extensions
+
+**Simple Method (Recommended):**
+```bash
+# Set current project
+scripts/project fire
+
+# Check current project  
+scripts/project
+
+# Switch back to experimance
+scripts/project experimance
+
+# Alternative: use uv command
+uv run set-project fire
+```
+
+**Environment Override (when needed):**
+```bash
+# Override for current session
+export PROJECT_ENV=fire
+
+# Override for single command
+PROJECT_ENV=experimance uv run -m experimance_core
+```
+
+**How Detection Works:**
+1. **Environment Variable**: `PROJECT_ENV` (highest priority)
+2. **Project File**: `projects/.project` file content
+3. **Default**: "experimance" (fallback)
+
+Once set, all services automatically use the selected project configuration.
 
 
 ## Creating a New Project
@@ -258,7 +287,8 @@ You can create a new project either manually or using the interactive setup scri
 4. **Update static analysis paths:**
    - Add your project directory to `mypy_path` in `pyproject.toml` for type checking
 5. **Test your project:**
-   - Set `PROJECT_ENV={new_project}` and run services to verify correct loading
+   - Run `scripts/project {new_project}` to set the active project
+   - Run services to verify correct loading: `uv run -m experimance_core`
 
 ### Option 2: Using the Interactive Script
 
@@ -298,19 +328,28 @@ class RenderRequest(_BaseRenderRequest):
 - **Shared Infrastructure**: All projects use the same ZMQ communication, base services, and utilities
 - **Type Safety**: Each project gets proper type checking for its specific Era/Biome values
 - **Clean Separation**: Project-specific logic is isolated in `projects/` directory
-- **Easy Switching**: Change `PROJECT_ENV` to work on different projects
+- **Easy Switching**: Use `scripts/project {name}` to switch between projects
 - **Extensible**: New projects can add custom message types or extend existing ones
 
 ### Usage Examples
 ```bash
-# Work on Experimance project
-PROJECT_ENV=experimance uv run -m experimance_core
+# Set active project (persists across sessions)
+scripts/project fire
 
-# Work on Feed the Fires project  
-PROJECT_ENV=fire uv run -m fire_core
+# All services now use fire project automatically
+uv run -m experimance_core
 
-# Import project-specific schemas
-from experimance_common.schemas import Era, Biome  # Loaded based on PROJECT_ENV
+# Check current project
+scripts/project
+
+# Switch back to experimance
+scripts/project experimance
+
+# Override with environment variable (temporary)
+PROJECT_ENV=fire uv run -m experimance_core
+
+# Import project-specific schemas (loaded automatically)
+from experimance_common.schemas import Era, Biome
 ```
 
 

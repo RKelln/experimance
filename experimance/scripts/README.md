@@ -434,6 +434,7 @@ These scripts work with the multi-project architecture:
 - **Project configs** go in `projects/{project_name}/{service}.toml`
 - **Project schemas** extend base schemas in `projects/{project_name}/schemas.py`
 - **Project constants** override base constants in `projects/{project_name}/constants.py`
-- **Environment files** set PROJECT_ENV in `projects/{project_name}/.env`
+- **Environment files** can contain project-specific environment variables in `projects/{project_name}/.env`
+- **Project selection** is managed automatically via `scripts/project {name}` command
 
 The scripts help maintain this structure automatically.

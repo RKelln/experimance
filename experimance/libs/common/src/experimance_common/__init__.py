@@ -9,8 +9,9 @@ import os
 # 1. load whichever .env was pointed to by UV_ENV_FILE or docker 'ENV' line
 load_dotenv(find_dotenv(), override=False)
 
-# 2. if EXP_ENV is STILL unset, default to experimance
-os.environ.setdefault("PROJECT_ENV", "experimance")
+# 2. Detect and set project from .project file if PROJECT_ENV is not already set
+from experimance_common.project_utils import ensure_project_env_set
+ensure_project_env_set()
 
 # 3. finally, if a second .env exists inside projects/<project>/, cascade it
 # Use PROJECT_ROOT for robust path resolution

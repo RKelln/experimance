@@ -1,0 +1,24 @@
+#!/bin/bash
+# Quick project switcher script
+# Usage: scripts/project fire
+# Usage: scripts/project experimance
+
+if [ $# -eq 0 ]; then
+    # Show current project
+    if [ -f "projects/.project" ]; then
+        current=$(cat projects/.project | tr -d '\n')
+        echo "Current project: $current"
+    else
+        echo "No project set (will default to 'experimance')"
+    fi
+    
+    echo "Available projects:"
+    for dir in projects/*/; do
+        if [ -d "$dir" ]; then
+            basename "$dir"
+        fi
+    done
+else
+    # Set project
+    uv run python scripts/set_project.py "$1"
+fi
