@@ -83,8 +83,8 @@ class AudioNormalizer:
             input_path = Path(audio_path)
             
             if output_path is None:
-                # Create output path with _normalized suffix
-                output_path = input_path.with_stem(f"{input_path.stem}_normalized")
+                # Create output path with _normalized suffix and .mp3 extension
+                output_path = input_path.with_stem(f"{input_path.stem}_normalized").with_suffix('.mp3')
             else:
                 output_path = Path(output_path)
                 

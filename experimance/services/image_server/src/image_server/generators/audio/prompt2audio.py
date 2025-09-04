@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import random
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -1012,8 +1013,28 @@ class Prompt2AudioGenerator(AudioGenerator):
                 if fallback_candidate.ndim > 1:
                     audio_np = audio_np.mean(axis=0)
                 
-                temp_path = self.output_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
-                sf.write(str(temp_path), audio_np, SR, subtype='PCM_16')
+                temp_path = self.output_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.mp3"
+                
+                # Save as temporary WAV first, then convert to MP3
+                temp_wav = temp_path.with_suffix('.wav')
+                sf.write(str(temp_wav), audio_np, SR, subtype='PCM_16')
+                
+                # Convert WAV to MP3 using ffmpeg
+                try:
+                    subprocess.run([
+                        'ffmpeg', '-i', str(temp_wav), 
+                        '-codec:a', 'libmp3lame', 
+                        '-b:a', '192k', 
+                        '-y',  # overwrite output file
+                        str(temp_path)
+                    ], check=True, capture_output=True)
+                    # Remove temporary WAV file
+                    temp_wav.unlink()
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Failed to convert temp WAV to MP3: {e}")
+                    # Fallback: keep the WAV file
+                    temp_wav.rename(temp_path.with_suffix('.wav'))
+                    temp_path = temp_path.with_suffix('.wav')
                 logger.warning(f"No candidates accepted, returning temp file: {temp_path}")
                 return str(temp_path)
             except Exception as e:
@@ -1041,10 +1062,30 @@ class Prompt2AudioGenerator(AudioGenerator):
         
         similarity, looped_audio, audio_np = accepted_candidates[best_idx]
         
-        # Save final audio
-        filename = f"{normalize_filename(prompt)}_{int(time.time() * 1000)}.wav"
+        # Save final audio as MP3
+        filename = f"{normalize_filename(prompt)}_{int(time.time() * 1000)}.mp3"
         audio_path = self.output_dir / filename
-        sf.write(str(audio_path), audio_np, SR, subtype='PCM_16')
+        
+        # Save as temporary WAV first, then convert to MP3
+        temp_wav = audio_path.with_suffix('.wav')
+        sf.write(str(temp_wav), audio_np, SR, subtype='PCM_16')
+        
+        # Convert WAV to MP3 using ffmpeg
+        try:
+            subprocess.run([
+                'ffmpeg', '-i', str(temp_wav), 
+                '-codec:a', 'libmp3lame', 
+                '-b:a', '192k', 
+                '-y',  # overwrite output file
+                str(audio_path)
+            ], check=True, capture_output=True)
+            # Remove temporary WAV file
+            temp_wav.unlink()
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to convert WAV to MP3: {e}")
+            # Fallback: keep the WAV file but rename it
+            temp_wav.rename(audio_path.with_suffix('.wav'))
+            audio_path = audio_path.with_suffix('.wav')
         
         # Apply loudness normalization if enabled
         if self.config.normalize_loudness:
