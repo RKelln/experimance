@@ -9,7 +9,7 @@ max_cache_size_gb = 2.0      # Maximum size of image cache in GB
 
 # Generator configuration
 [generator]
-strategy = "mock" 
+strategy = "local_sdxl" 
 timeout = 120
 
 # Local SDXL generator (local_sdxl strategy)
@@ -19,7 +19,7 @@ model = "https://storage.googleapis.com/experimance_models/juggernautXL_juggXILi
 # Generation parameters
 steps = 6
 guidance_scale = 1.5
-strength = 0.2  # Image-to-image strength (0.0 = keep original, 1.0 = completely new)
+strength = 0.25  # Image-to-image strength (0.0 = keep original, 1.0 = completely new)
 width = 1024
 height = 1024
 # Performance settings

@@ -39,3 +39,21 @@ enabled = true
 default_volume = 1.0  # Moderate volume for installation environment
 crossfade_duration = 3.0  # Smooth 3-second crossfades between tracks
 
+#[zmq.publisher]
+#address = "tcp://*"
+#port = 5555
+#default_topic = "DisplayMedia"
+#
+#[zmq.subscriber]
+#address = "tcp://FireProjects-Mac-mini.local"
+#port = 5557
+#topics = ["StoryHeard", "UpdateLocation", "TranscriptUpdate"]
+#
+#[zmq.workers.image_server]
+#name = "image_server"
+#
+#[zmq.workers.image_server.push_config]
+#port = 5564  # DEFAULT_PORTS["image_requests"]
+#
+#[zmq.workers.image_server.pull_config]
+#port = 5565  # DEFAULT_PORTS["image_results"]
