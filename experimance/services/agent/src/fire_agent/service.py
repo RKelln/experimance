@@ -197,7 +197,7 @@ class FireAgentService(AgentServiceBase):
 
             # Send initial OSC signal (no audience present at startup)
             if self.osc_client:
-                self._send_osc_presence(False)
+                self._send_osc_presence(0)
         else: # no audiencve detection
             logger.warning("Audience detection is disabled, no audience monitoring will occur")
             # start voice chat backend, since it won't be started by audience detection
@@ -213,7 +213,7 @@ class FireAgentService(AgentServiceBase):
         # Send final absence signal before stopping OSC
         if self.osc_client:
             try:
-                self._send_osc_presence(False)
+                self._send_osc_presence(0)
                 logger.debug("Final absence signal sent")
             except Exception as e:
                 logger.error(f"Error sending final OSC signal: {e}")
@@ -260,7 +260,9 @@ class FireAgentService(AgentServiceBase):
                                 
                                 # Update tracking
                                 last_person_count = current_count
-                        
+
+                                self._send_osc_presence(current_count)
+
                         # Debug logging with detection info
                         logger.debug(f"Hybrid detection - Presence: {presence}, "
                                 f"Mode: {stats.get('detection_mode', 'simple')}, "
@@ -291,19 +293,15 @@ class FireAgentService(AgentServiceBase):
 
             if not await self._sleep_if_running(self.config.vision.audience_detection_interval): break
 
-    def _send_osc_presence(self, present: bool) -> None:
+    def _send_osc_presence(self, person_count: int) -> None:
         """Send OSC presence signal using simple UDP client (fire-and-forget)."""
         if not self.osc_client:
             return
         
         try:
-            # Send 1 for present, 0 for absent
-            value = 1 if present else 0
-            
-            # Simple fire-and-forget UDP send
-            self.osc_client.send_message(self.osc_presence_address, value)
-            
-            logger.info(f"OSC presence signal sent: {self.osc_presence_address} = {value} ({'present' if present else 'absent'})")
+            self.osc_client.send_message(self.osc_presence_address, person_count)
+
+            logger.info(f"OSC presence signal sent: {self.osc_presence_address} = {person_count}")
         except Exception as e:
             logger.error(f"Failed to send OSC presence signal: {e}")
 
@@ -328,7 +326,7 @@ class FireAgentService(AgentServiceBase):
         """Handle audience detection event."""
         logger.info("Audience detected")
         # Send OSC signal as simple fire-and-forget
-        self._send_osc_presence(True)
+        self._send_osc_presence(1)
         await self._start_backend_for_conversation()
         
         # Send proactive greeting if enabled (run in background)
@@ -339,7 +337,7 @@ class FireAgentService(AgentServiceBase):
         """Handle audience left event."""
         logger.info("Audience left")
         # Send OSC signal as simple fire-and-forget  
-        self._send_osc_presence(False)
+        self._send_osc_presence(0)
         if self.current_backend:
             await self.current_backend.graceful_shutdown()
 
@@ -398,9 +396,9 @@ class FireAgentService(AgentServiceBase):
             # Send 1 for speaking, 0 for not speaking
             value = 1 if is_speaking else 0
 
-            if speaker == "agent":
+            if speaker == "agent" or speaker == "bot":
                 osc_speaking_address = self.config.osc.bot_speak_address
-            elif speaker == "user":
+            elif speaker == "user" or speaker == "person" or speaker == "human":
                 osc_speaking_address = self.config.osc.person_speak_address
             else:
                 logger.warning(f"Unknown speaker: {speaker}")
@@ -413,22 +411,10 @@ class FireAgentService(AgentServiceBase):
         except Exception as e:
             logger.error(f"Failed to send OSC speaking signal: {e}")
 
-    async def _on_speech_detected(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Handle speech detection event from pipecat backend."""
-        await super()._on_speech_detected(event, data)
-
-        if self.agent_speaking: 
-            self._send_osc_speaking(speaker="agent", is_speaking=True)
-
-        if self.user_speaking:
-            self._send_osc_speaking(speaker="user", is_speaking=True)
-
-    async def _on_speech_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
-        """Handle speech ended event from pipecat backend."""
-        await super()._on_speech_ended(event, data)
-
-        if self.agent_speaking:
-            self._send_osc_speaking(speaker="agent", is_speaking=False)
-
-        if self.user_speaking:
-            self._send_osc_speaking(speaker="user", is_speaking=False)
+    async def _publish_speech_detected(self, is_speaking: bool, speaker_type: str = "agent"):
+        """Publish speech detection for conversation tracking."""
+        if not self.running:
+            return
+        # don't call super to avoid sending on ZMQ (no one is listening)
+        # at this point we just want to send OSC signals
+        self._send_osc_speaking(speaker=speaker_type, is_speaking=is_speaking)

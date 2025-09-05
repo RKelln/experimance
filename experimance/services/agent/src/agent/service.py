@@ -553,7 +553,7 @@ class AgentServiceBase(BaseService):
         
         # Track when speech ends for deep thoughts timing
         self._last_speech_end_time = time.time()
-        logger.debug(f"Speech ended for {speaker}, tracking quiet period for deep thoughts")
+        logger.debug(f"Speech ended for {speaker}")
         
         # Publish to presence system for conversation tracking
         if self.config.speech_detection_enabled:
