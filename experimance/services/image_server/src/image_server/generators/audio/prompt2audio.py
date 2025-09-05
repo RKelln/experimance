@@ -793,6 +793,14 @@ class Prompt2AudioGenerator(AudioGenerator):
         duration_s = kwargs.get('duration_s', self.config.duration_s)
         force_generation = kwargs.get('force_generation', False)
         
+        # Check for no_cache flag in metadata
+        metadata = kwargs.get('metadata', {})
+        if metadata and isinstance(metadata, dict):
+            no_cache = metadata.get('no_cache', False)
+            if no_cache:
+                force_generation = True
+                logger.info(f"no_cache flag set in metadata, forcing generation without cache lookup")
+        
         logger.info(f"Generating audio for prompt: '{prompt[:50]}{'...' if len(prompt) > 50 else ''}' (force: {force_generation})")
         
         # Try cache lookup first (unless forced)
