@@ -40,12 +40,6 @@ SERVICE_TYPE = "image_server"
 
 logger = logging.getLogger(__name__)
 
-# Log audio support status after logger is set up
-if AUDIO_SUPPORT:
-    logger.info("Audio generation support enabled")
-else:
-    logger.warning("Audio generation schemas not available - audio support disabled")
-
 class ImageServerService(BaseService):
     """Main image server service that handles render requests and publishes generated images.
     

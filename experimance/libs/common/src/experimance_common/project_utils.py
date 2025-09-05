@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+PROJECT_FILE_NAME = ".project"
 
 def detect_project_name(projects_dir: Optional[Path] = None) -> str:
     """Detect the current project name using the standard precedence rules.
@@ -20,7 +21,7 @@ def detect_project_name(projects_dir: Optional[Path] = None) -> str:
     3. Default to "experimance"
     
     Args:
-        projects_dir: Path to projects directory (defaults to projects/ relative to cwd)
+        projects_dir: Path to projects directory (defaults to PROJECT_SPECIFIC_DIR)
         
     Returns:
         Project name string
@@ -31,11 +32,12 @@ def detect_project_name(projects_dir: Optional[Path] = None) -> str:
     
     # Try to read from .project file
     if projects_dir is None:
-        # Assume we're in the root of the experimance project
-        projects_dir = Path.cwd() / "projects"
-    
-    project_file = projects_dir / ".project"
-    
+        # Use PROJECT_SPECIFIC_DIR to find the correct projects directory regardless of cwd
+        from experimance_common.constants_base import PROJECT_SPECIFIC_DIR
+        projects_dir = PROJECT_SPECIFIC_DIR
+
+    project_file = projects_dir / PROJECT_FILE_NAME
+
     if project_file.exists():
         try:
             project_name = project_file.read_text().strip()
@@ -56,8 +58,8 @@ def ensure_project_env_set(projects_dir: Optional[Path] = None) -> str:
     PROJECT_ENV is available for all subsequent code that needs it.
     
     Args:
-        projects_dir: Path to projects directory (defaults to projects/ relative to cwd)
-        
+        projects_dir: Path to projects directory (defaults to PROJECT_SPECIFIC_DIR/projects)
+
     Returns:
         The project name that was set
     """
@@ -87,12 +89,16 @@ def cli_main() -> None:
     parser.add_argument(
         "--projects-dir",
         type=Path,
-        default=Path.cwd() / "projects",
-        help="Path to projects directory (default: ./projects)"
+        help="Path to projects directory (default: PROJECT_SPECIFIC_DIR)"
     )
     
     args = parser.parse_args()
     
+    # Default to PROJECT_SPECIFIC_DIR if not specified
+    if args.projects_dir is None:
+        from experimance_common.constants_base import PROJECT_SPECIFIC_DIR
+        args.projects_dir = PROJECT_SPECIFIC_DIR
+
     # Validate project exists
     project_dir = args.projects_dir / args.project_name
     if not project_dir.exists():
@@ -104,7 +110,7 @@ def cli_main() -> None:
         sys.exit(1)
     
     # Write .project file
-    project_file = args.projects_dir / ".project"
+    project_file = args.projects_dir / PROJECT_FILE_NAME
     try:
         project_file.write_text(args.project_name + "\n")
         print(f"Set current project to: {args.project_name}")
@@ -119,14 +125,15 @@ def set_project(project_name: str, projects_dir: Optional[Path] = None) -> None:
     
     Args:
         project_name: Name of the project to set
-        projects_dir: Path to projects directory (defaults to projects/ relative to cwd)
-        
+        projects_dir: Path to projects directory (defaults to PROJECT_SPECIFIC_DIR)
+
     Raises:
         SystemExit: If project directory doesn't exist or file cannot be written
     """
     if projects_dir is None:
-        projects_dir = Path.cwd() / "projects"
-    
+        from experimance_common.constants_base import PROJECT_SPECIFIC_DIR
+        projects_dir = PROJECT_SPECIFIC_DIR
+
     # Validate project exists
     project_dir = projects_dir / project_name
     if not project_dir.exists():
@@ -138,7 +145,7 @@ def set_project(project_name: str, projects_dir: Optional[Path] = None) -> None:
         sys.exit(1)
     
     # Write .project file
-    project_file = projects_dir / ".project"
+    project_file = projects_dir / PROJECT_FILE_NAME
     try:
         project_file.write_text(project_name + "\n")
         print(f"Set current project to: {project_name}")

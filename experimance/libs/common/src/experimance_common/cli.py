@@ -153,26 +153,6 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
     return cli_args
 
 
-# def setup_logging(log_level: str, service_name: str) -> None:
-#     """Configure logging with the specified level for a service.
-    
-#     Args:
-#         log_level: The logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-#         service_name: Name of the service for log formatting
-#     """
-#     numeric_level = getattr(logging, log_level.upper(), None)
-#     if not isinstance(numeric_level, int):
-#         raise ValueError(f'Invalid log level: {log_level}')
-    
-#     logging.basicConfig(
-#         level=numeric_level,
-#         format=f'%(asctime)s - {service_name} - %(name)s - %(levelname)s - %(message)s',
-#         handlers=[
-#             logging.StreamHandler(sys.stdout)
-#         ]
-#     )
-
-
 def create_service_parser(
     service_name: str,
     service_type: str,
