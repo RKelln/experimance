@@ -228,64 +228,64 @@ class FireAgentService(AgentServiceBase):
         
         while self.running:
             # only check presence when no one is speaking so not to interrupt (audio) processing
-            if self.audience_detector and not self.any_speaking:
-                try:
-                    # Use hybrid detection (camera AI + YOLO)
-                    presence = await self.audience_detector.check_audience_present()
-                    
-                    # Get detection stats for logging
-                    stats = self.audience_detector.get_stats()
-                    
-                    # Send vision context messages when person count changes (only in YOLO mode)
-                    if (stats.get('detection_mode') == 'active' and 
-                        self.current_backend and 
-                        'current_person_count' in stats):
+            if self.audience_detector:
+                if not self.any_speaking:
+                    try:
+                        # Use hybrid detection (camera AI + YOLO)
+                        presence = await self.audience_detector.check_audience_present()
                         
-                        current_count = stats['current_person_count']
+                        # Get detection stats for logging
+                        stats = self.audience_detector.get_stats()
                         
-                        # Only send vision message if person count has changed
-                        if current_count != last_person_count:
-                            # Format vision context message
-                            if current_count == 0:
-                                vision_context = "<vision: No people detected>"
-                            elif current_count == 1:
-                                vision_context = "<vision: One person detected>"
+                        # Send vision context messages when person count changes (only in YOLO mode)
+                        if (stats.get('detection_mode') == 'active' and 
+                            self.current_backend and 
+                            'current_person_count' in stats):
+                            
+                            current_count = stats['current_person_count']
+                            
+                            # Only send vision message if person count has changed
+                            if current_count != last_person_count:
+                                # Format vision context message
+                                if current_count == 0:
+                                    vision_context = "<vision: No people detected>"
+                                elif current_count == 1:
+                                    vision_context = "<vision: One person detected>"
+                                else:
+                                    vision_context = f"<vision: {current_count} people detected>"
+                                
+                                # Send vision context to LLM
+                                await self.current_backend.send_message(vision_context, speaker="system")
+                                logger.debug(f"Vision update: {vision_context}")
+                                
+                                # Update tracking
+                                last_person_count = current_count
+                        
+                        # Debug logging with detection info
+                        logger.debug(f"Hybrid detection - Presence: {presence}, "
+                                f"Mode: {stats.get('detection_mode', 'simple')}, "
+                                f"Checks: {stats['total_checks']}, "
+                                f"Switches: {stats.get('mode_switches', 0)}")
+                        
+                        # Check for state changes
+                        if presence != self.current_presence:
+                            if presence:
+                                logger.info("Hybrid detector: Audience detected")
+                                await self.audience_detected()
                             else:
-                                vision_context = f"<vision: {current_count} people detected>"
+                                logger.info("Hybrid detector: Audience left")
+                                await self._audience_left()
+                                # Reset person count tracking when audience leaves
+                                last_person_count = None
                             
-                            # Send vision context to LLM
-                            await self.current_backend.send_message(vision_context, speaker="system")
-                            logger.debug(f"Vision update: {vision_context}")
+                            # Update current presence after processing
+                            self.current_presence = presence
                             
-                            # Update tracking
-                            last_person_count = current_count
-                    
-                    # Debug logging with detection info
-                    logger.debug(f"Hybrid detection - Presence: {presence}, "
-                               f"Mode: {stats.get('detection_mode', 'simple')}, "
-                               f"Checks: {stats['total_checks']}, "
-                               f"Switches: {stats.get('mode_switches', 0)}")
-                    
-                    # Check for state changes
-                    if presence != self.current_presence:
-                        if presence:
-                            logger.info("Hybrid detector: Audience detected")
-                            await self.audience_detected()
-                        else:
-                            logger.info("Hybrid detector: Audience left")
-                            await self._audience_left()
-                            # Reset person count tracking when audience leaves
-                            last_person_count = None
-                        
-                        # Update current presence after processing
-                        self.current_presence = presence
-                        
-                except Exception as e:
-                    logger.error(f"Error in hybrid detection: {e}")
-                    await asyncio.sleep(1.0)  # Brief pause on error
-                    continue
-                    
-            else:
+                    except Exception as e:
+                        logger.error(f"Error in hybrid detection: {e}")
+                        await asyncio.sleep(1.0)  # Brief pause on error
+                        continue 
+            else: # no detector
                 logger.warning("Audience detector not initialized, skipping detection loop")
                 await asyncio.sleep(5)
 
