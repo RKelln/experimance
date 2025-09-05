@@ -25,16 +25,13 @@ from experimance_common.schemas import ( # type: ignore
     AudiencePresent, SpeechDetected,
     DisplayText, RemoveText, MessageType
 )
-from experimance_common.zmq.config import MessageDataType
 
 from .config import AgentServiceConfig
 from .backends.base import AgentBackend, AgentBackendEvent, ConversationTurn
 
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import PubSubService
-from experimance_common.logger import setup_logging
 
-from experimance_common.zmq.config import MessageDataType
 from experimance_common.service_state import ServiceState
 
 import logging

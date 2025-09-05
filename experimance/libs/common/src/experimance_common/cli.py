@@ -15,6 +15,8 @@ from typing import Optional, Callable, Awaitable, Any, Dict, Type, get_origin, g
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
+from experimance_common.logger import setup_logging
+
 CLI_ONLY_ARGS = {
     "log_level",  # Log level for the service
     "config",     # Path to the configuration file
@@ -151,29 +153,29 @@ def extract_cli_args_from_config(config_class: Type[BaseModel], prefix: str = ""
     return cli_args
 
 
-def setup_logging(log_level: str, service_name: str) -> None:
-    """Configure logging with the specified level for a service.
+# def setup_logging(log_level: str, service_name: str) -> None:
+#     """Configure logging with the specified level for a service.
     
-    Args:
-        log_level: The logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        service_name: Name of the service for log formatting
-    """
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f'Invalid log level: {log_level}')
+#     Args:
+#         log_level: The logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+#         service_name: Name of the service for log formatting
+#     """
+#     numeric_level = getattr(logging, log_level.upper(), None)
+#     if not isinstance(numeric_level, int):
+#         raise ValueError(f'Invalid log level: {log_level}')
     
-    logging.basicConfig(
-        level=numeric_level,
-        format=f'%(asctime)s - {service_name} - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+#     logging.basicConfig(
+#         level=numeric_level,
+#         format=f'%(asctime)s - {service_name} - %(name)s - %(levelname)s - %(message)s',
+#         handlers=[
+#             logging.StreamHandler(sys.stdout)
+#         ]
+#     )
 
 
 def create_service_parser(
     service_name: str,
-    description: str,
+    service_type: str,
     default_config_path: Optional[str|Path] = None,
     extra_args: Optional[Dict[str, Dict[str, Any]]] = None,
     config_class: Optional[Type[BaseModel]] = None
@@ -181,8 +183,8 @@ def create_service_parser(
     """Create a standard argument parser for Experimance services.
     
     Args:
-        service_name: Name of the service (e.g., "Core", "Display")
-        description: Description of the service
+        service_name: Name of the service, unique within type
+        service_type: Type of the service (e.g., "core", "agent")
         default_config_path: Default path to config file (optional)
         extra_args: Additional arguments to add to parser
         config_class: Pydantic config class to auto-generate arguments from
@@ -191,7 +193,7 @@ def create_service_parser(
         Configured ArgumentParser instance
     """
     parser = argparse.ArgumentParser(
-        description=f'Experimance {service_name} Service - {description}'
+        description=f'Experimance {service_name} Service - {service_type}'
     )
     
     # Standard arguments for all services - use tracked actions to track when explicitly set
@@ -234,7 +236,7 @@ def create_service_parser(
 
 async def run_service_cli(
     service_name: str,
-    description: str,
+    service_type: str,
     service_runner: Callable[..., Awaitable[None]],
     default_config_path: Optional[str|Path] = None,
     extra_args: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -243,8 +245,8 @@ async def run_service_cli(
     """Run a service with standard CLI argument parsing and error handling.
     
     Args:
-        service_name: Name of the service (e.g., "Core", "Display")
-        description: Description of the service
+        service_name: Name of the service (e.g., "Fire Core", "Experimance Display")
+        service_type: Type of the service (e.g., "core", "agent")
         service_runner: Async function that runs the service
         default_config_path: Default path to config file (optional)
         extra_args: Additional arguments to add to parser
@@ -252,7 +254,7 @@ async def run_service_cli(
     """
     parser = create_service_parser(
         service_name=service_name,
-        description=description,
+        service_type=service_type,
         default_config_path=default_config_path,
         extra_args=extra_args,
         config_class=config_class
@@ -260,11 +262,9 @@ async def run_service_cli(
     
     args = parser.parse_args()
     
-    # Setup logging with the specified level
-    setup_logging(args.log_level, service_name.upper())
-    
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting Experimance {service_name} Service with log level: {args.log_level}")
+    # Configure root logger first, then get a named logger for CLI messages
+    logger = setup_logging(level=args.log_level, name="", log_filename=f"{service_type}.log")  # Configure root logger
+    logger.info(f"Starting Experimance '{service_name}' service with log level: {args.log_level.upper()}")
     
     # Log which project is being used (PROJECT_ENV is guaranteed to be set by experimance_common import)
     project_name = get_current_project()
@@ -305,7 +305,7 @@ async def run_service_cli(
 
 def create_simple_main(
     service_name: str,
-    description: str,
+    service_type: str,
     service_runner: Callable[..., Awaitable[None]],
     default_config_path: Optional[str|Path] = None,
     extra_args: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -327,7 +327,7 @@ def create_simple_main(
     def main() -> None:
         asyncio.run(run_service_cli(
             service_name=service_name,
-            description=description,
+            service_type=service_type,
             service_runner=service_runner,
             default_config_path=default_config_path,
             extra_args=extra_args,

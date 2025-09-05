@@ -10,6 +10,7 @@ from typing import Optional
 from experimance_common.cli import create_simple_main
 from .service import ExperimanceAgentService
 from .config import ExperimanceAgentServiceConfig, DEFAULT_CONFIG_PATH
+from agent import SERVICE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ async def run_agent_service(
 
 main = create_simple_main(
     service_name="Experimance Agent",
-    description="Experimance Agent Service - AI conversation and audience interaction",
+    service_type=SERVICE_TYPE,
     service_runner=run_agent_service,
     default_config_path=DEFAULT_CONFIG_PATH,
     config_class=ExperimanceAgentServiceConfig

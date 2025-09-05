@@ -36,8 +36,6 @@ try:
 except ImportError:
     AUDIO_SUPPORT = False
 
-from experimance_common.logger import setup_logging
-
 SERVICE_TYPE = "image_server"
 
 logger = logging.getLogger(__name__)

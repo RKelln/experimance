@@ -28,7 +28,7 @@ from experimance_common.logger import setup_logging
 
 SERVICE_TYPE = "health"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 
 class HealthService(BaseService):

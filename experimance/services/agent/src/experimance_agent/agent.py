@@ -8,6 +8,7 @@ controlling other services.
 
 import asyncio
 import gc
+import logging
 import os
 import random
 import threading
@@ -34,12 +35,10 @@ from .config import ExperimanceAgentServiceConfig
 from agent.backends.base import AgentBackend, AgentBackendEvent, ConversationTurn
 from .deep_thoughts import DEEP_THOUGHTS
 
-from experimance_common.logger import setup_logging
 
 SERVICE_TYPE = "agent"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
-
+logger = logging.getLogger(__name__)
 
 class AgentService(BaseService):
     """

@@ -76,7 +76,7 @@ def get_log_file_path(log_filename: str = "application.log") -> str:
 
 def setup_logging(
     name: str = __name__,
-    level: int = logging.INFO,
+    level: int|str = logging.INFO,
     log_filename: Optional[str] = None,
     include_console: Optional[bool] = None,  # Changed to Optional[bool] for auto-detection
     external_level: int = logging.WARNING
@@ -107,46 +107,64 @@ def setup_logging(
         # In production, let systemd handle console output (file-only logging)
         # In development, show console output for debugging
         include_console = not is_production
-    # Generate log filename if not provided
-    if log_filename is None:
-        # Extract service name from module name
-        service_name = name.split('.')[-1] if '.' in name else name
-        log_filename = f"{service_name}.log"
+
+    # Convert str log level if needed
+    if isinstance(level, str):
+        level = getattr(logging, level.upper(), logging.INFO)
+        if not isinstance(level, int):
+            raise ValueError(f'Invalid log level: {level}')
+
+    # Configure the root logger first to ensure all child loggers inherit the level
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
     
-    # Get adaptive log file path
-    log_file = get_log_file_path(log_filename)
-    
-    # Configure the main logger
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    
-    # Clear existing handlers to avoid duplicates
-    logger.handlers.clear()
-    
-    # File handler
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(level)
-    
-    # Console handler (optional)
-    handlers = []
-    handlers.append(file_handler)
-    
+    # Configure external loggers
+    configure_external_loggers(external_level)
+
+    handlers: list = []
+
+    if log_filename is not None:   
+        # Get adaptive log file path
+        log_file = get_log_file_path(log_filename)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(level)
+        handlers.append(file_handler)
+
     if include_console:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
         handlers.append(console_handler)
-    
+
     # Format
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        f'%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
     for handler in handlers:
         handler.setFormatter(formatter)
-        logger.addHandler(handler)
+
+    # If we're configuring the root logger specifically (name is empty)
+    if not name or name == "" or name == "root":
+        # Clear existing handlers to avoid duplicates
+        root_logger.handlers.clear()
+        
+        for handler in handlers:
+            root_logger.addHandler(handler)
+        
+        return root_logger
+
+    # Configure a named logger (will inherit from root logger)
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
     
-    # Configure external loggers
-    configure_external_loggers(external_level)
+    # For named loggers, we can choose to add handlers or let them propagate to root
+    # If the root logger is already configured, we can just rely on propagation
+    if root_logger.hasHandlers():
+        # Root logger is configured, just use propagation
+        return logger
+    
+    for handler in handlers:
+        logger.addHandler(handler)
     
     return logger
 
@@ -159,6 +177,7 @@ def configure_external_loggers(level=logging.WARNING):
     Args:
         level: The logging level to set for external libraries
     """
+    print(f"Setting external loggers to level: {logging.getLevelName(level)}")
     for logger_name in [
         "httpx",           # HTTP client library often used by FAL
         "httpcore.http11", # HTTP/1.1 implementation used by httpx

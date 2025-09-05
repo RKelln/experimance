@@ -48,11 +48,10 @@ from experimance_core.config import (
 from experimance_core.depth_factory import create_depth_processor
 from experimance_core.prompt_generator import PromptGenerator, PromptManager, RandomStrategy
 from experimance_common.sector_sound_lookup import SECTOR_SOUND_LOOKUP
-from experimance_common.logger import setup_logging
 
 SERVICE_TYPE = "core"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 # Era progression mappings
 ERA_PROGRESSION = {
