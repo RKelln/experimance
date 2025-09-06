@@ -109,6 +109,10 @@ experimance/
 - **Development**: Use `scripts/dev <service>` or `scripts/dev all` for coordinated development (auto-cleanup, logging). For isolated testing use `uv run -m` directly.
 - **Environment Variables**: Override any config setting with `EXPERIMANCE_<SECTION>_<KEY>=value` (e.g., `EXPERIMANCE_ZMQ_BASE_PORT=6000`)
 
+## Other tools (MCP, etc)
+
+- use context7 to look up API and other library docs
+
 ## ZeroMQ Communication
 
 - Services communicate via ZMQ PUB/SUB and PUSH/PULL patterns
