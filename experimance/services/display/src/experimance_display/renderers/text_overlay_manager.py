@@ -232,18 +232,6 @@ class TextOverlayManager(LayerRenderer):
         for text_id in items_to_remove:
             del self.text_items[text_id]
             logger.debug(f"Removed expired text: {text_id}")
-
-    def render(self):
-        """Render all visible text items."""
-        if not self.is_visible:
-            return
-        
-        try:
-            for item in self.text_items.values():
-                if item.opacity > 0:
-                    item.label.draw()
-        except Exception as e:
-            logger.error(f"Error rendering text overlays: {e}", exc_info=True)
     
     async def handle_text_overlay(self, message: DisplayText):
         """Handle TextOverlay message.

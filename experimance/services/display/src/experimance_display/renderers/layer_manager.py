@@ -57,15 +57,6 @@ class LayerRenderer(pyglet.graphics.Group, ABC):
         """Update the layer state."""
         pass
 
-    def render(self):
-        """Render the layer.
-        
-        Default implementation does nothing - layers that need direct OpenGL
-        rendering (like shaders) should override this method.
-        Batch-based layers (sprites, shapes) don't need to override this.
-        """
-        pass
-
     @abstractmethod
     async def cleanup(self):
         """Clean up layer resources."""
