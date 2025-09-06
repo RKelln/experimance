@@ -220,6 +220,11 @@ class AudioConfig(BaseModel):
         default=True,
         description="Enable audio playback functionality"
     )
+    
+    no_cache: bool = Field(
+        default=False,
+        description="Force audio generation without using cache"
+    )
 
 
 class FireCoreConfig(BaseServiceConfig):

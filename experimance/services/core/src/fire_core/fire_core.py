@@ -860,8 +860,8 @@ class FireCoreService(BaseService):
                 media_prompt = await self.prompt_builder.build_media_prompt(
                     full_context,
                     previous_prompt=self.last_generated_prompt,
-                    audio_prefix=["high quality professional recording"],
-                    audio_suffix=["no wind noise"]
+                    audio_prefix=["high quality professional recording", "pristine", "high SNR"],
+                    audio_suffix=["air utterly still", "stable ambience"]
                 )
                 logger.debug("✅ BACKGROUND: LLM call completed")
                 
@@ -1234,6 +1234,7 @@ class FireCoreService(BaseService):
             # Optional parameters can be added here
             # duration_s=30,  # Default duration
             # style="environmental"  # Style hint
+            metadata={'no_cache': self.config.audio.no_cache}  # Use config setting for cache behavior
         )
         
         # Track the audio request

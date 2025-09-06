@@ -9,7 +9,6 @@ Handles looping, crossfading, and cleanup of audio tracks.
 import asyncio
 import json
 import logging
-import socket
 import subprocess
 import tempfile
 import uuid
@@ -103,7 +102,7 @@ class AudioTrack:
             
             # Build mpv command with IPC support
             cmd = [
-                'mpv',
+                '/usr/bin/mpv',        # Use full path to regular package mpv
                 '--no-video',          # Audio only
                 '--no-terminal',       # No interactive terminal
                 '--really-quiet',      # Suppress output
@@ -111,13 +110,15 @@ class AudioTrack:
                 '--audio-channels=stereo',  # Force stereo output for mono compatibility
                 f'--input-ipc-server={self.ipc_socket_path}',  # Enable IPC
             ]
-            
+        
             if self.loop:
                 cmd.append('--loop=inf')
             
             cmd.append(self.uri)
+            #cmd.append("media/audio/audio-test-5a-43676.mp3")
             
             logger.info(f"Starting audio track {self.track_id}: {self.uri} (initial volume: {initial_volume})")
+
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,

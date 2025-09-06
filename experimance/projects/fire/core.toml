@@ -38,6 +38,7 @@ tile_strength = 0.25
 enabled = true
 default_volume = 1.0  # Moderate volume for installation environment
 crossfade_duration = 3.0  # Smooth 3-second crossfades between tracks
+no_cache = true  # Set to true to force audio generation without using cache
 
 #[zmq.publisher]
 #address = "tcp://*"

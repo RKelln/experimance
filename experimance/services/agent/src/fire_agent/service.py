@@ -34,9 +34,16 @@ class FireAgentService(AgentServiceBase):
 
         # OSC client
         self.osc_client: Optional[SimpleUDPClient] = None
-        self.osc_presence_address = f"{self.config.osc.address_prefix}/{self.config.osc.presence_address}/"
-        # Clean up double slashes
-        self.osc_presence_address = self.osc_presence_address.replace("//", "/")
+        self.osc_presence_address = self._full_osc_address(self.config.osc.presence_address)
+        self.osc_bot_address = self._full_osc_address(self.config.osc.bot_speak_address)
+        self.osc_person_address = self._full_osc_address(self.config.osc.person_speak_address)
+
+    def _full_osc_address(self, suffix:str) -> str:
+        if self.config.osc.address_prefix is None and self.config.osc.address_prefix == "":
+            addr = f"/{suffix}/"
+        else:
+            addr =  f"/{self.config.osc.address_prefix}/{suffix}/"
+        return addr.replace("//", "/")
 
     def register_project_handlers(self) -> None:
         """Register Fire-specific message handlers."""
@@ -397,9 +404,12 @@ class FireAgentService(AgentServiceBase):
             value = 1 if is_speaking else 0
 
             if speaker == "agent" or speaker == "bot":
-                osc_speaking_address = self.config.osc.bot_speak_address
+                osc_speaking_address = self.osc_bot_address
             elif speaker == "user" or speaker == "person" or speaker == "human":
-                osc_speaking_address = self.config.osc.person_speak_address
+                osc_speaking_address = self.osc_person_address
+
+                # FIXME: when human interrupts bot it doesnt send bot stopped speaking
+                self.osc_client.send_message(self.osc_bot_address, 0)
             else:
                 logger.warning(f"Unknown speaker: {speaker}")
                 return
