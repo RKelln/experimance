@@ -19,6 +19,7 @@ import os
 import time
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
+from pathlib import Path
 
 
 SERVICE_TYPE = "display"
@@ -80,6 +81,7 @@ from .renderers.video_overlay_renderer import VideoOverlayRenderer
 from .renderers.mask_renderer import MaskRenderer
 from .renderers.text_overlay_manager import TextOverlayManager
 from .renderers.debug_overlay_renderer import DebugOverlayRenderer
+from .renderers.shader_renderer import ShaderRenderer
 
 
 class DisplayService(BaseService):
@@ -238,12 +240,22 @@ class DisplayService(BaseService):
     
     def _create_headless_window(self):
         """Create a mock window object for headless mode."""
-        class HeadlessWindow(pyglet.window.BaseWindow):
+        class HeadlessWindow:
             def __init__(self, width: int, height: int):
-                self.width = width
-                self.height = height
-                #self.fullscreen = False
+                self._width = width
+                self._height = height
                 self.has_exit = False
+                
+            @property
+            def width(self):
+                return self._width
+                
+            @property
+            def height(self):
+                return self._height
+                
+            def get_size(self):
+                return (self._width, self._height)
                 
             def clear(self):
                 """Mock clear operation."""
@@ -272,6 +284,19 @@ class DisplayService(BaseService):
             def set_fullscreen(self, fullscreen: bool):
                 """Mock set_fullscreen operation."""
                 self._fullscreen = fullscreen
+                
+            def set_mouse_visible(self, visible: bool):
+                """Mock set_mouse_visible operation."""
+                pass
+                
+            @property  
+            def context(self):
+                """Mock context for shader compatibility."""
+                class MockContext:
+                    def check_gl_extension(self, extension_name):
+                        # In headless mode, report that shaders are not supported
+                        return False
+                return MockContext()
         
         width, height = self.config.display.resolution
         return HeadlessWindow(width, height)
@@ -360,12 +385,60 @@ class DisplayService(BaseService):
             )
             self.layer_manager.register_renderer("debug_overlay", self.debug_overlay_renderer)
             
+            # Initialize shader effects if enabled
+            if self.config.shader_effects.enabled:
+                self._initialize_shader_effects(batch, layer_count)
+            
             logger.info("Rendering components initialized")
             
         except Exception as e:
             logger.error(f"Failed to initialize renderers: {e}", exc_info=True)
             self.record_error(e, is_fatal=True)
             raise
+    
+    def _initialize_shader_effects(self, batch, layer_count):
+        """Initialize shader effects based on configuration."""
+        try:
+            logger.info("Initializing shader effects...")
+            
+            for effect_name, effect_config in self.config.shader_effects.effects.items():
+                if not effect_config.enabled:
+                    logger.debug(f"Skipping disabled shader effect: {effect_name}")
+                    continue
+                
+                # Resolve shader file path (absolute or relative to project root)
+                resolved_shader_path = shader_path = Path(effect_config.shader_file)
+                logger.debug(f"Loading shader effect '{effect_name}' from file: {shader_path}")
+                if not resolved_shader_path.is_absolute():
+                    # Make relative to display service root
+                    resolved_shader_path = DISPLAY_SERVICE_DIR / shader_path
+                    if not resolved_shader_path.exists():
+                        # try relative to shader dir
+                        resolved_shader_path = DISPLAY_SERVICE_DIR / "shaders" / shader_path
+
+                if not resolved_shader_path.exists():
+                    logger.error(f"Shader file not found: {resolved_shader_path}")
+                    continue
+                
+                # Create shader renderer with configured order and uniforms
+                shader_renderer = ShaderRenderer(
+                    config=self.config,
+                    window=self.window,
+                    batch=batch,
+                    shader_path=str(resolved_shader_path),
+                    order=effect_config.order,
+                    uniforms=effect_config.uniforms.copy()
+                )
+                
+                # Register with layer manager
+                self.layer_manager.register_renderer(f"shader_{effect_name}", shader_renderer)
+                logger.info(f"Registered shader effect: {effect_name} (order: {effect_config.order})")
+            
+            logger.info(f"Shader effects initialization complete - {len([e for e in self.config.shader_effects.effects.values() if e.enabled])} effects loaded")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize shader effects: {e}", exc_info=True)
+            # Don't make this fatal - shader effects are optional
     
     def _register_zmq_handlers(self):
         """Register ZMQ message handlers using the composition pattern."""

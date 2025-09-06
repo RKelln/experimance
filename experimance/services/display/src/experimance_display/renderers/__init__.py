@@ -16,6 +16,7 @@ from .text_overlay_manager import TextOverlayManager
 from .panorama_renderer import PanoramaRenderer
 from .debug_overlay_renderer import DebugOverlayRenderer
 from .mask_renderer import MaskRenderer
+from .shader_renderer import ShaderRenderer, MultiShaderRenderer
 
 __all__ = [
     'LayerManager',
@@ -25,5 +26,8 @@ __all__ = [
     'TextOverlayManager',
     'PanoramaRenderer',
     'DebugOverlayRenderer',
-    'MaskRenderer'
+    'MaskRenderer',
+    'ShaderRenderer',
+    'ShaderRenderer',
+    'MultiShaderRenderer'
 ]

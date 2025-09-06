@@ -10,11 +10,6 @@ Features:
 - Positioned tiles that fade in as they complete
 - Horizontal mirroring support
 - Configurable rescaling modes
-- Support             self.blur_shader_program = ShaderProgram(vert_shader, frag_shader)
-            
-            positions = (-1.0, -1.0, 0.0, 1.0,   # bl
-             1.0, -1.0, 0.0, 1.0,   # br
-            -1.0,  1.0, 0.0, 1.0,   # tlrojector outputs (e.g., 1920x1080 stretched to 6 outputs)
 """
 
 import logging
