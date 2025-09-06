@@ -41,8 +41,8 @@ turn_detection_silence_ms = 800
 # Audio settings
 audio_in_enabled = true
 audio_out_enabled = true
-audio_in_sample_rate = 48000
-audio_out_sample_rate = 48000       # Standard sample rate compatible with Cartesia
+audio_in_sample_rate = 16000
+audio_out_sample_rate = 24000       # Standard sample rate compatible with Cartesia
 
 # Audio device selection (comment out to use default devices)
 # Use `uv run python scripts/audio_recovery.py list` to list available devices
@@ -97,7 +97,7 @@ llm = "openai"      # Language model provider
 tts = "cartesia"    # Text-to-speech provider
 
 [vision]
-audience_detection_enabled = false
+audience_detection_enabled = true
 
 # Audience Detection Settings  
 audience_detection_interval = 1.5       # Check camera every 1.5 seconds (slightly slower for stability)
@@ -107,7 +107,7 @@ cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves the
 [reolink]
 # Fire project specific Reolink Camera Settings with asymmetric hysteresis and YOLO11 detection
 enabled = true
-host = "192.168.2.229"                  # Your camera IP
+host = "172.166.0.148"                  # Your camera IP
 user = "admin"                          # Camera username (can override with REOLINK_USER env var)
 # reolink_password - NEVER set here! Use REOLINK_PASSWORD environment variable in .env file
 https = true                            # Use HTTPS (recommended)
@@ -122,17 +122,18 @@ hysteresis_absent = 8                   # Slower to lose presence (12 seconds at
 # Person detection method configuration
 detection_method = "yolo11"             # Detection method: "hog", "yolo11", or "hybrid"
 
-# YOLO11 detection settings
-yolo_confidence_threshold = 0.6         # Minimum confidence for person detection (0.0-1.0)
-yolo_edge_filter_percent = 0.15         # Filter detections near edges (0.0-0.5)
-yolo_min_person_width = 40              # Minimum person width in pixels
-yolo_min_person_height = 80             # Minimum person height in pixels
-yolo_max_detections = 10                # Maximum detections to process per frame
-yolo_input_size = 640                   # YOLO input size (320=fast, 640=balanced, 1280=accurate)
-yolo_device = "cpu"                     # Device: "cpu", "cuda", "mps"
-yolo_model_name = "yolo11n.pt"          # Model: yolo11n.pt (nano), yolo11s.pt (small), etc.
-yolo_save_debug_frames = false          # Save annotated frames for debugging
-yolo_debug_frame_interval = 10          # Save every Nth frame when debugging
+# YOLO11 detection settings nested properly
+[reolink.yolo]
+confidence_threshold = 0.35        # Minimum confidence for person detection (0.0-1.0) - optimized from testing
+edge_filter_percent = 0.15         # Filter detections near edges (0.0-0.5)
+min_person_width = 80              # Minimum person width in pixels - filters false positives
+min_person_height = 180            # Minimum person height in pixels - filters false positives
+max_detections = 6                 # Maximum detections to process per frame
+input_size = 640                   # YOLO input size (320=fast, 640=balanced, 1280=accurate)
+device = "cpu"                     # Device: "cpu", "cuda", "mps"
+model_name = "yolo11n.pt"          # Model: yolo11n.pt (nano), yolo11s.pt (small), etc.
+save_debug_frames = false          # Save annotated frames for debugging
+debug_frame_interval = 10          # Save every Nth frame when debugging
 
 [transcript]
 # Transcript management
@@ -150,9 +151,9 @@ save_transcripts = true
 
 [osc]
 enabled = true
-host = "localhost"
+host = "127.0.0.1"
 port = 5580
-address_prefix = "fire/"
+address_prefix = "/fire/"
 presence_address = "presence/"
 person_speak_address = "speak/person/"
 bot_speak_address = "speak/bot"
