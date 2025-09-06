@@ -1,12 +1,14 @@
-#version 150 core
+#version 330 core
 
-in vec2 v_tex;
-out vec4 frag;
+in vec2 tex_coords;
+out vec4 FragColor;
 
-uniform sampler2D scene_texture;
 uniform float time;
-uniform float vignette_strength;
-uniform float turbulence_amount;
+uniform vec2 resolution;
+uniform float vignette_strength = 0.7;
+uniform float turbulence_amount = 0.25;
+uniform float full_mask_zone = 0.08;    // Configurable full mask area at edges
+uniform float gradient_zone = 0.25;     // Configurable gradient transition zone
 
 // Improved noise function
 float noise(vec2 p) {
@@ -49,8 +51,8 @@ float detailed_noise(vec2 p) {
     float freq = 1.0;
     for (int i = 0; i < 8; i++) {  // Even more octaves for ultra-fine detail
         n += smooth_noise(p * freq) * amp;
-        freq *= 2.05;  // Slightly different frequency multiplier for more variation
-        amp *= 0.42;
+        freq *= 2.0;
+        amp *= 0.5;
     }
     return n;
 }
@@ -62,8 +64,8 @@ float micro_noise(vec2 p) {
     float freq = 1.0;
     for (int i = 0; i < 6; i++) {
         n += smooth_noise(p * freq) * amp;
-        freq *= 2.3;  // Higher frequency jumps for finer details
-        amp *= 0.35;
+        freq *= 2.0;
+        amp *= 0.5;
     }
     return n;
 }
@@ -91,21 +93,24 @@ float ridged_noise(vec2 p) {
 // Domain warping for organic distortion
 vec2 domain_warp(vec2 p, float time) {
     vec2 q = vec2(fractal_noise(p + vec2(0.0, 0.0)),
-                  fractal_noise(p + vec2(5.2, 1.3)));
+                  fractal_noise(p + vec2(5.2, 1.3) + time * 0.05));
     
     vec2 r = vec2(fractal_noise(p + 4.0 * q + vec2(1.7, 9.2) + time * 0.1),
-                  fractal_noise(p + 4.0 * q + vec2(8.3, 2.8) + time * 0.15));
+                  fractal_noise(p + 4.0 * q + vec2(8.3, 2.8) + time * 0.08));
     
     return p + r * 0.5;
 }
 
 void main() {
-    vec2 uv = v_tex;
-    vec4 color = texture(scene_texture, uv);
+    vec2 uv = tex_coords;
     
-    // Create single smooth transition with smaller full mask and larger gradient
-    float full_mask_zone = 0.08;      // Small fully masked area at very edge
-    float gradient_zone = 0.25;       // Large gradient zone for smooth transition
+    // This is a masking shader - start with full transparency
+    // The alpha channel will define the mask
+    vec4 color = vec4(0.0, 0.0, 0.0, 0.0);  // Completely transparent base
+    
+    // Create single smooth transition with configurable zones
+    // float full_mask_zone = 0.08;      // Small fully masked area at very edge (now configurable)
+    // float gradient_zone = 0.25;       // Large gradient zone for smooth transition (now configurable)
     
     // Calculate distances from edges (0 = at edge, 1 = at center)
     float dist_from_top = uv.y;
@@ -231,17 +236,21 @@ void main() {
     // Combine the masks
     float combined_mask = max(top_mask, bottom_mask);
     
-    // Apply the mask - center should remain completely unaffected
+    // The mask defines transparency: 0 = fully transparent (masked), 1 = fully opaque (visible)
     float visibility = 1.0 - combined_mask * vignette_strength;
     visibility = clamp(visibility, 0.0, 1.0);
     
-    // Create the final effect: only edges fade to black
-    color.rgb = color.rgb * visibility;
+    // For a vignette effect, we want the EDGES to mask the background, not the center
+    // So we need to INVERT the visibility for the alpha channel
+    // High visibility (center) → Low alpha (transparent, let background through)
+    // Low visibility (edges) → High alpha (opaque, show our mask effect)
+    color.a = 1.0 - visibility;
     
-    // Add subtle steam/cloud coloring only in the masked areas
-    vec3 steam_color = vec3(0.95, 0.95, 1.0) * 0.05; // Very faint bluish steam
-    float steam_visibility = combined_mask * 0.3;
-    color.rgb += steam_color * steam_visibility;
+    // Optional: Add subtle steam/cloud coloring in the masked areas
+    // This creates a slight tint effect rather than pure transparency
+    // vec3 steam_color = vec3(0.95, 0.95, 1.0) * 0.02; // Very faint bluish steam
+    // float steam_visibility = combined_mask * 0.1; // Much more subtle
+    // color.rgb = steam_color * steam_visibility;
     
-    frag = color;
+    FragColor = color;
 }

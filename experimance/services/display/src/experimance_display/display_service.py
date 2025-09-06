@@ -427,7 +427,8 @@ class DisplayService(BaseService):
                     batch=batch,
                     shader_path=str(resolved_shader_path),
                     order=effect_config.order,
-                    uniforms=effect_config.uniforms.copy()
+                    uniforms=effect_config.uniforms.copy(),
+                    blend_mode=effect_config.blend_mode
                 )
                 
                 # Register with layer manager

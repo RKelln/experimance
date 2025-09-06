@@ -408,6 +408,11 @@ class ShaderEffectConfig(BaseModel):
         description="Render order (higher numbers render on top)"
     )
     
+    blend_mode: str = Field(
+        default="alpha",
+        description="Blending mode: 'alpha' for standard transparency, 'additive' for glow effects"
+    )
+    
     uniforms: Dict[str, float] = Field(
         default_factory=dict,
         description="Uniform values to pass to the shader"

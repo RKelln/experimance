@@ -1,11 +1,12 @@
-#version 150 core
+#version 330 core
 
-in vec2 v_tex;
-out vec4 frag;
+in vec2 tex_coords;
+out vec4 FragColor;
 
-uniform sampler2D scene_texture;
 uniform float time;
-uniform float spark_intensity;
+uniform vec2 resolution;
+uniform float spark_intensity = 0.5;
+uniform float horizontal_compression = 1.0;  // Compression factor for horizontal coordinates (6.0 for 6x projector stretch)
 
 // Hash function for pseudo-random numbers
 float hash(vec2 p) {
@@ -23,26 +24,46 @@ float luminance(vec3 color) {
     return dot(color, vec3(0.299, 0.587, 0.114));
 }
 
-// Find the brightest color in a small region around a point
-vec3 sample_brightest_nearby(vec2 center) {
+// Generate procedural bright spots to replace scene_texture sampling
+vec3 generate_procedural_bright_spots(vec2 pos) {
     vec3 brightest_color = vec3(0.0);
     float max_brightness = 0.0;
     
-    // Sample in a small 5x5 region
+    // Create a grid of potential bright spots
     for (float x = -2.0; x <= 2.0; x += 1.0) {
         for (float y = -2.0; y <= 2.0; y += 1.0) {
-            vec2 sample_pos = center + vec2(x, y) * 0.005; // Small offset
+            vec2 sample_pos = pos + vec2(x, y) * 0.005;
             
             // Check bounds
             if (sample_pos.x >= 0.0 && sample_pos.x <= 1.0 && 
                 sample_pos.y >= 0.0 && sample_pos.y <= 1.0) {
                 
-                vec3 sample_color = texture(scene_texture, sample_pos).rgb;
-                float brightness = luminance(sample_color);
+                // Generate procedural bright spots using noise
+                float spot_seed = hash(floor(sample_pos * 50.0));
                 
-                if (brightness > max_brightness) {
-                    max_brightness = brightness;
-                    brightest_color = sample_color;
+                // Only create bright spots occasionally
+                if (spot_seed > 0.85) {
+                    // Create a bright spot with some color variation
+                    float brightness = 0.3 + spot_seed * 0.7;
+                    
+                    // Color variation for more interesting sparks
+                    vec3 spot_color;
+                    if (spot_seed > 0.95) {
+                        // Rare white hot spots
+                        spot_color = vec3(1.0, 0.95, 0.8) * brightness;
+                    } else if (spot_seed > 0.9) {
+                        // Orange/yellow spots
+                        spot_color = vec3(1.0, 0.6, 0.2) * brightness;
+                    } else {
+                        // Reddish spots
+                        spot_color = vec3(0.8, 0.3, 0.1) * brightness;
+                    }
+                    
+                    float spot_brightness = luminance(spot_color);
+                    if (spot_brightness > max_brightness) {
+                        max_brightness = spot_brightness;
+                        brightest_color = spot_color;
+                    }
                 }
             }
         }
@@ -54,6 +75,11 @@ vec3 sample_brightest_nearby(vec2 center) {
 // Single pixel spark with cross pattern, glow, and twinkling
 float spark_pattern(vec2 uv, vec2 spark_pos, float intensity, float time, float spark_seed) {
     vec2 diff = uv - spark_pos;
+    
+    // Apply horizontal compression to the difference vector
+    // This compresses the spark's horizontal dimension while keeping it in the same location
+    diff.x *= horizontal_compression;
+    
     float dist = length(diff);
     
     // Twinkling effect - multiple frequencies for organic variation
@@ -85,8 +111,11 @@ float spark_pattern(vec2 uv, vec2 spark_pos, float intensity, float time, float 
 }
 
 void main() {
-    vec2 uv = v_tex;
-    vec4 color = texture(scene_texture, uv);
+    vec2 uv = tex_coords;
+    
+    // This is an additive effect shader - start with full transparency
+    // We'll only add color where sparks appear
+    vec4 color = vec4(0.0, 0.0, 0.0, 0.0);  // Completely transparent base
     
     // Spark accumulation
     vec3 spark_contribution = vec3(0.0);
@@ -108,11 +137,11 @@ void main() {
         vec2 random_pos = hash2(random_seed * 100.0);
         vec2 spawn_pos = vec2(random_pos.x, random_pos.y * 0.5); // Y: 0.0 to 0.5 (lower half in texture coords)
         
-        // Find brightest color near spawn position
-        vec3 source_color = sample_brightest_nearby(spawn_pos);
+        // Generate procedural bright spots instead of sampling texture
+        vec3 source_color = generate_procedural_bright_spots(spawn_pos);
         float source_brightness = luminance(source_color);
         
-        // Only create spark if there's some color/brightness in the area
+        // Only create spark if there's some brightness in the procedural area
         if (source_brightness > 0.15) {  // Lower threshold for more sparks
             // Unique timing and properties for this spark
             float spark_seed = hash(random_seed);
@@ -158,34 +187,33 @@ void main() {
                 
                 // Combine all movements
                 float total_drift_x = 
-                    (hash(random_seed + 0.5) - 0.5) * 0.02 * life_progress + // Basic drift
-                    gust_strength * 0.08 * life_progress + // Wind gusts
-                    sin(swirl_angle) * swirl_radius + // Swirl X
-                    swoop_x; // Swooping X
+                    gust_strength * 0.08 * life_progress +  // Wind gusts
+                    sin(swirl_angle) * swirl_radius +        // Swirl motion
+                    swoop_x;                                 // Swooping
                     
                 float total_drift_y = 
-                    cos(swirl_angle) * swirl_radius * 0.5 + // Swirl Y (reduced)
-                    swoop_y + // Swooping Y
-                    thermal_boost; // Thermal updraft
+                    cos(swirl_angle) * swirl_radius * 0.5 +  // Swirl motion (reduced Y)
+                    swoop_y +                                // Swooping
+                    thermal_boost;                           // Thermal updrafts
                 
                 // Small flutter for organic feel (scaled by velocity)
                 float flutter_scale = 0.5 + spark_velocity * 0.5; // Faster sparks flutter more
                 float flutter_x = sin(time * 4.0 + spark_seed * 8.0) * 0.003 * flutter_scale;
                 float flutter_y = cos(time * 5.0 + spark_seed * 7.0) * 0.002 * flutter_scale;
                 
+                // Final spark position
                 vec2 spark_pos = vec2(
-                    spawn_pos.x + total_drift_x + flutter_x, 
+                    spawn_pos.x + total_drift_x + flutter_x,
                     current_y + total_drift_y + flutter_y
                 );
                 
-                // Only render if spark is on screen
-                if (spark_pos.y >= 0.0 && spark_pos.y <= 1.0 && 
-                    spark_pos.x >= 0.0 && spark_pos.x <= 1.0) {
+                // Only render if spark is still on screen
+                if (spark_pos.x >= 0.0 && spark_pos.x <= 1.0 && 
+                    spark_pos.y >= 0.0 && spark_pos.y <= 1.0) {
                     
-                    // Individual aging curve based on visibility duration
-                    float normalized_age = life_progress / visibility_duration;
-                    float age_fade = 1.0 - smoothstep(0.5, 1.0, normalized_age);
-                    age_fade = age_fade * age_fade; // Quadratic fade
+                    // Age-based fading
+                    float age_fade = 1.0 - smoothstep(0.0, visibility_duration, life_progress);
+                    age_fade = pow(age_fade, 0.8); // Slightly slower fade
                     
                     // Additional fade based on distance traveled (faster sparks fade differently)
                     float travel_fade = 1.0 - (life_progress * spark_velocity) * 0.2;
@@ -219,8 +247,20 @@ void main() {
         }
     }
     
-    // Apply spark effects additively
-    color.rgb += spark_contribution;
+    // Apply spark effects with alpha blending instead of additive
+    // For alpha blending, we want: sparks * alpha + background * (1-alpha)
+    // So we'll use a more subdued approach that layers on top of the background
     
-    frag = color;
+    // Scale down the sparks for alpha blending (they were designed for additive)
+    vec3 final_sparks = spark_contribution * 0.5; // Reduce intensity
+    
+    // For alpha blending, we want to "add light" to what's underneath
+    // So we'll make sparks appear as bright additions
+    color.rgb = final_sparks;
+    
+    // Use spark brightness as alpha - where there are sparks, they'll blend with background
+    float spark_brightness = max(max(final_sparks.r, final_sparks.g), final_sparks.b);
+    color.a = spark_brightness; // Direct alpha from brightness
+    
+    FragColor = color;
 }

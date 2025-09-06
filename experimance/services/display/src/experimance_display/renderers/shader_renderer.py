@@ -41,7 +41,8 @@ class ShaderRenderer(LayerRenderer):
                  batch: pyglet.graphics.Batch,
                  shader_path: str,
                  order: int = 10,
-                 uniforms: Optional[Dict[str, Any]] = None):
+                 uniforms: Optional[Dict[str, Any]] = None,
+                 blend_mode: str = "alpha"):
         """Initialize the single shader renderer.
         
         Args:
@@ -51,11 +52,18 @@ class ShaderRenderer(LayerRenderer):
             shader_path: Path to the fragment shader file (.frag)
             order: Render order (higher numbers render on top)
             uniforms: Dictionary of uniform values to pass to shader
+            blend_mode: Blending mode - "alpha" (default) or "additive"
         """
         super().__init__(config, window, batch, order)
         
         self.shader_path = Path(shader_path)
         self.uniforms = uniforms or {}
+        self.blend_mode = blend_mode
+        
+        # Validate blend mode
+        if self.blend_mode not in ["alpha", "additive"]:
+            logger.warning(f"Unknown blend mode '{self.blend_mode}', defaulting to 'alpha'")
+            self.blend_mode = "alpha"
         
         # Shader state
         self._visible = True
@@ -130,14 +138,14 @@ class ShaderRenderer(LayerRenderer):
                 fragment_source = f.read()
             
             # Standard vertex shader for full-screen quad
-            vertex_source = """#version 150 core
+            vertex_source = """#version 330 core
 in vec2 position;
-in vec2 tex_coords;
-out vec2 v_tex;
+in vec2 tex_coords_in;
+out vec2 tex_coords;
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
-    v_tex = tex_coords;
+    tex_coords = tex_coords_in;
 }
 """
             
@@ -184,7 +192,7 @@ void main() {
                 batch=self.batch,
                 group=self,
                 position=('f', position_data),
-                tex_coords=('f', texcoord_data)
+                tex_coords_in=('f', texcoord_data)
             )
             logger.debug(f"Created vertex list for shader: {self.shader_path.name}")
         except Exception as e:
@@ -238,10 +246,15 @@ void main() {
         """Set OpenGL state for rendering (called by batch system)."""
         if not self._visible or not self.shader_program:
             return
-            
-        # Enable blending for transparency
+        
+        # Set blending mode based on configuration
         glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        if self.blend_mode == "additive":
+            # Additive blending for glow effects (perfect for sparks)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        else:
+            # Standard alpha blending (default)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
         # Use shader program
         self.shader_program.use()
@@ -259,8 +272,10 @@ void main() {
                 self.shader_program['time'] = current_time
             
             if 'resolution' in self.shader_program.uniforms:
-                self.shader_program['resolution'] = (float(self.window.width), float(self.window.height))
+                resolution = (float(self.window.width), float(self.window.height))
+                self.shader_program['resolution'] = resolution
             
+            # Set custom uniforms
             for uniform_name, value in self.uniforms.items():
                 if uniform_name in self.shader_program.uniforms:
                     self.shader_program[uniform_name] = value
@@ -423,7 +438,8 @@ class MultiShaderRenderer:
                    name: str,
                    shader_path: str,
                    order: int = 10,
-                   uniforms: Optional[Dict[str, Any]] = None) -> ShaderRenderer:
+                   uniforms: Optional[Dict[str, Any]] = None,
+                   blend_mode: str = "alpha") -> ShaderRenderer:
         """Add a shader renderer.
         
         Args:
@@ -431,6 +447,7 @@ class MultiShaderRenderer:
             shader_path: Path to the fragment shader file
             order: Render order (higher numbers render on top)
             uniforms: Initial uniform values
+            blend_mode: Blending mode - "alpha" or "additive"
             
         Returns:
             The created ShaderRenderer instance
@@ -448,7 +465,8 @@ class MultiShaderRenderer:
             batch=self.batch,
             shader_path=shader_path,
             order=order,
-            uniforms=uniforms
+            uniforms=uniforms,
+            blend_mode=blend_mode
         )
         
         self.shader_renderers[name] = shader_renderer
