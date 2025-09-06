@@ -108,6 +108,7 @@ class YOLO11PersonDetector:
         """Create detector from configuration dictionary."""
         # Create Pydantic config from dictionary
         config = YOLO11DetectionConfig(**config_dict)
+        logger.debug(f"YOLO11PersonDetector created with config: confidence_threshold={config.confidence_threshold}, min_person_width={config.min_person_width}, min_person_height={config.min_person_height}")
         return cls(config)
     
     @classmethod 
@@ -201,6 +202,7 @@ class YOLO11PersonDetector:
             edge_margin_y = int(frame_height * self.config.edge_filter_percent)
             
             # Process detection results
+            raw_detection_count = 0
             for result in results:
                 if result.boxes is not None:
                     for box in result.boxes:
@@ -213,6 +215,7 @@ class YOLO11PersonDetector:
                         
                         # Store raw detection for statistics
                         detections.append((confidence, (x, y, w, h)))
+                        raw_detection_count += 1
                         
                         # Apply filtering criteria
                         center_x = x + w // 2
@@ -224,14 +227,34 @@ class YOLO11PersonDetector:
                                  center_y < edge_margin_y or center_y > frame_height - edge_margin_y)
                         
                         if too_small or at_edge:
-                            logger.debug(f"Filtered detection: conf={confidence:.3f}, size=({w},{h}), "
-                                       f"center=({center_x},{center_y}), too_small={too_small}, at_edge={at_edge}")
+                            # Log filtered detections for tuning
+                            size_reason = f"too_small({w}<{self.config.min_person_width} or {h}<{self.config.min_person_height})" if too_small else ""
+                            edge_reason = f"at_edge(center({center_x},{center_y}) near margins({edge_margin_x},{edge_margin_y}))" if at_edge else ""
+                            reason = f"{size_reason}{' and ' if size_reason and edge_reason else ''}{edge_reason}"
+                            
+                            logger.debug(f"🚫 Filtered detection: conf={confidence:.3f}, size=({w}x{h}), "
+                                       f"center=({center_x},{center_y}), reason={reason}")
                             continue
                             
                         filtered_detections.append((confidence, (x, y, w, h)))
                         
                         if len(filtered_detections) >= self.config.max_detections:
                             break
+            
+            # Log detection summary for tuning
+            if raw_detection_count > 0:
+                filtered_count = len(filtered_detections)
+                logger.debug(f"Detection summary: {raw_detection_count} raw -> {filtered_count} filtered "
+                           f"(confidence≥{self.config.confidence_threshold}, size≥{self.config.min_person_width}x{self.config.min_person_height}, "
+                           f"edge_filter={self.config.edge_filter_percent*100:.1f}%)")
+                
+                # Show all raw detections for debugging (only in debug mode)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Raw detections before filtering:")
+                    for i, (conf, (x, y, w, h)) in enumerate(detections):
+                        logger.debug(f"   Raw {i+1}: conf={conf:.3f}, bbox=({x}, {y}, {w}, {h})")
+            else:
+                logger.debug(f"No raw detections found (confidence threshold: {self.config.confidence_threshold})")
             
             # Sort by confidence (highest first)
             filtered_detections.sort(key=lambda x: x[0], reverse=True)
@@ -305,7 +328,7 @@ class YOLO11PersonDetector:
             debug_filename = f"/tmp/yolo11_debug_{self._frame_count:05d}_{timestamp}_{filtered_count}people.jpg"
             cv2.imwrite(debug_filename, debug_frame)
             
-            logger.info(f"💾 Saved YOLO11n debug frame: {debug_filename}")
+            logger.debug(f"Saved YOLO11n debug frame: {debug_filename}")
             
         except Exception as e:
             logger.error(f"Failed to save YOLO11n debug frame: {e}")
@@ -331,36 +354,155 @@ class YOLO11PersonDetector:
         }
 
 
+async def _test_with_synthetic_data(detector: 'YOLO11PersonDetector'):
+    """Test YOLO detector with synthetic test images."""
+    logger.info("🧪 Running synthetic data test...")
+    
+    # Create test images of different sizes
+    test_cases = [
+        (640, 480, "VGA"),
+        (1920, 1080, "1080p"),
+        (3840, 2160, "4K")
+    ]
+    
+    for width, height, name in test_cases:
+        logger.info(f"\n--- Testing {name} frame ({width}x{height}) ---")
+        
+        # Create synthetic image (random noise)
+        frame = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+        
+        # Run YOLO detection
+        start_time = time.time()
+        people_count, max_confidence, detections = detector.detect_people(frame, save_debug=False)
+        detection_time = time.time() - start_time
+        
+        # Report results
+        logger.info(f"🔍 Detection results:")
+        logger.info(f"   👥 People detected: {people_count}")
+        logger.info(f"   🎯 Max confidence: {max_confidence:.3f}")
+        logger.info(f"   ⏱️  Detection time: {detection_time:.3f}s")
+        logger.info(f"   📏 Frame size: {width}x{height}")
+        
+        if detections:
+            logger.info(f"   📦 Bounding boxes:")
+            for i, (conf, (x, y, w, h)) in enumerate(detections):
+                logger.info(f"      Detection {i+1}: conf={conf:.3f}, bbox=({x}, {y}, {w}, {h})")
+    
+    logger.info("✅ Synthetic data test completed")
+
+
 async def test_yolo11_detector():
-    """Test function for YOLO11n person detection."""
+    """Test YOLO11n person detector with camera frames using fire agent configuration."""
     import aiohttp
     import os
     from pathlib import Path
     
     logger.info("🧪 Testing YOLO11n person detector...")
     
-    # Initialize detector with Pydantic configuration
-    config = YOLO11DetectionConfig(
-        confidence_threshold=0.5,
-        edge_filter_percent=0.15,
-        min_person_width=50,
-        min_person_height=100,
-        save_debug_frames=True
-    )
+    # Load fire agent configuration to match production settings
+    try:
+        import toml
+        fire_config_path = Path("projects/fire/agent.toml")
+        if fire_config_path.exists():
+            fire_config = toml.load(fire_config_path)
+            reolink_config = fire_config.get("reolink", {})
+            
+            # Extract YOLO settings from fire config
+            yolo_settings = {
+                "confidence_threshold": reolink_config.get("yolo_confidence_threshold", 0.35),  # Use actual config value
+                "edge_filter_percent": reolink_config.get("yolo_edge_filter_percent", 0.15),
+                "min_person_width": reolink_config.get("yolo_min_person_width", 80),
+                "min_person_height": reolink_config.get("yolo_min_person_height", 180),
+                "input_size": reolink_config.get("yolo_input_size", 640),
+                "device": reolink_config.get("yolo_device", "cpu"),
+                "save_debug_frames": True  # Enable for debugging
+            }
+            
+            logger.info("✅ Using fire agent YOLO configuration:")
+            for key, value in yolo_settings.items():
+                logger.info(f"   {key}: {value}")
+                
+        else:
+            logger.warning("⚠️  Fire config not found, using fallback settings")
+            yolo_settings = {
+                "confidence_threshold": 0.6,
+                "edge_filter_percent": 0.15,
+                "min_person_width": 20,
+                "min_person_height": 40,
+                "input_size": 640,
+                "device": "cpu",
+                "save_debug_frames": True
+            }
+    except ImportError:
+        logger.warning("⚠️  toml not available, using fallback settings")
+        yolo_settings = {
+            "confidence_threshold": 0.6,
+            "edge_filter_percent": 0.15,
+            "min_person_width": 20,
+            "min_person_height": 40,
+            "input_size": 640,
+            "device": "cpu",
+            "save_debug_frames": True
+        }
+    
+    # Initialize detector with fire agent configuration
+    config = YOLO11DetectionConfig(**yolo_settings)
     detector = YOLO11PersonDetector(config)
     
     if not detector.is_available():
         logger.error("❌ YOLO11n detector not available")
         return
     
+    # Check if camera environment variables are available
+    reolink_ip = os.getenv('REOLINK_IP') or os.getenv('REOLINK_HOST')
+    reolink_user = os.getenv('REOLINK_USER', 'admin')
+    reolink_password = os.getenv('REOLINK_PASSWORD', 'admin')
+    
+    if not reolink_ip:
+        logger.warning("⚠️  No REOLINK_IP or REOLINK_HOST environment variable found")
+        logger.info("💡 To test with real camera frames, set REOLINK_IP (or REOLINK_HOST), REOLINK_USER, REOLINK_PASSWORD")
+        
+        # Try camera discovery as fallback
+        try:
+            from .reolink_discovery import discover_reolink_cameras_comprehensive
+            logger.info("🔍 Attempting camera discovery...")
+            cameras = await discover_reolink_cameras_comprehensive()
+            
+            if cameras:
+                camera = cameras[0]  # Use first found camera
+                reolink_ip = camera.host
+                logger.info(f"✅ Found camera via discovery: {camera}")
+            else:
+                logger.info("❌ No cameras found via discovery")
+                logger.info("❌ Camera discovery failed - cannot test with real frames")
+                # Synthetic data testing disabled per user request
+                # await _test_with_synthetic_data(detector)
+                return
+                
+        except ImportError:
+            logger.info("❌ Camera discovery not available")
+            logger.info("❌ Cannot test without camera - synthetic data testing disabled")
+            # await _test_with_synthetic_data(detector)
+            return
+        except Exception as e:
+            logger.info(f"❌ Camera discovery failed: {e}")
+            logger.info("❌ Cannot test without camera - synthetic data testing disabled")
+            # await _test_with_synthetic_data(detector)
+            return
+    
     # Test with Reolink camera frames
-    snapshot_url = f"https://{os.getenv('REOLINK_IP')}/cgi-bin/api.cgi"
+    snapshot_url = f"https://{reolink_ip}/cgi-bin/api.cgi"
     params = {
         'cmd': 'Snap',
         'channel': 0,
-        'user': os.getenv("REOLINK_USER"),
-        'password': os.getenv("REOLINK_PASSWORD")
+        'user': reolink_user,
+        'password': reolink_password
     }
+    
+    logger.info(f"📷 Testing with Reolink camera at {reolink_ip}")
+    logger.info("⏰ Waiting 5 seconds for positioning...")
+    await asyncio.sleep(5.0)
+    logger.info("🚀 Starting capture sequence...")
     
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(ssl=False),
@@ -368,7 +510,7 @@ async def test_yolo11_detector():
     ) as session:
         
         try:
-            for frame_num in range(10):
+            for frame_num in range(3):  # Reduced from 10 to 3 for faster testing
                 logger.info(f"\n--- Testing frame {frame_num + 1} ---")
                 
                 # Capture frame from camera
@@ -397,19 +539,64 @@ async def test_yolo11_detector():
                 logger.info(f"   👥 People detected: {people_count}")
                 logger.info(f"   🎯 Max confidence: {max_confidence:.3f}")
                 logger.info(f"   ⏱️  Detection time: {detection_time:.3f}s")
+                logger.info(f"   📏 Frame size: {frame.shape[1]}x{frame.shape[0]} (WxH)")
                 
                 if detections:
-                    logger.info(f"   📦 Bounding boxes:")
+                    logger.info(f"   📦 Bounding boxes (after filtering):")
                     for i, (conf, (x, y, w, h)) in enumerate(detections):
-                        logger.info(f"      Person {i+1}: conf={conf:.3f}, bbox=({x}, {y}, {w}, {h})")
+                        # Calculate box size and position info for tuning
+                        frame_width, frame_height = frame.shape[1], frame.shape[0]
+                        size_percent_w = (w / frame_width) * 100
+                        size_percent_h = (h / frame_height) * 100
+                        center_x, center_y = x + w//2, y + h//2
+                        
+                        logger.info(f"      Person {i+1}: conf={conf:.3f}")
+                        logger.info(f"         📍 Position: ({x}, {y}) to ({x+w}, {y+h})")
+                        logger.info(f"         📐 Size: {w}x{h} pixels ({size_percent_w:.1f}% x {size_percent_h:.1f}% of frame)")
+                        logger.info(f"         🎯 Center: ({center_x}, {center_y})")
+                        
+                        # Show current filter thresholds for comparison
+                        min_w = detector.config.min_person_width
+                        min_h = detector.config.min_person_height
+                        edge_filter = detector.config.edge_filter_percent
+                        logger.info(f"         ⚙️  Filters: min_size=({min_w}x{min_h}), edge_filter={edge_filter*100:.1f}%")
+                else:
+                    # Show filter info even when no detections to help with tuning
+                    min_w = detector.config.min_person_width
+                    min_h = detector.config.min_person_height
+                    edge_filter = detector.config.edge_filter_percent
+                    logger.info(f"   ⚙️  Current filters: min_size=({min_w}x{min_h}), edge_filter={edge_filter*100:.1f}%")
+                    logger.info(f"   💡 If people are present but not detected, try lowering these thresholds")
                 
                 # Small delay between frames
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(1.0)  # Reduced delay for faster testing
                 
         except Exception as e:
-            logger.error(f"Test error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Camera test error: {e}")
+            
+            # If we have environment variables but camera fails, try discovery
+            if reolink_ip and not reolink_ip.startswith("discovered_"):
+                logger.info("🔍 Camera failed, trying discovery as backup...")
+                try:
+                    from .reolink_discovery import discover_reolink_cameras_comprehensive
+                    cameras = await discover_reolink_cameras_comprehensive()
+                    
+                    if cameras:
+                        for camera in cameras:
+                            if camera.host != reolink_ip:  # Try a different camera
+                                logger.info(f"🔄 Trying discovered camera: {camera}")
+                                # Recursive attempt with discovered IP
+                                new_ip = f"discovered_{camera.host}"
+                                os.environ['REOLINK_HOST'] = new_ip
+                                # Would need to restructure to retry, for now just log
+                                logger.info(f"💡 Alternative camera found: {camera.host}")
+                                break
+                except Exception as discovery_error:
+                    logger.debug(f"Discovery backup failed: {discovery_error}")
+            
+            logger.info("❌ Camera test failed - skipping synthetic data test")
+            # Synthetic data testing disabled per user request
+            # await _test_with_synthetic_data(detector)
     
     # Print final statistics
     stats = detector.get_statistics()

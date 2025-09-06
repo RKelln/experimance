@@ -178,6 +178,9 @@ class FireAgentService(AgentServiceBase):
             if hasattr(self.config.reolink, 'yolo') and self.config.reolink.yolo:
                 # Convert Pydantic model to dict for YOLO detector
                 yolo_config = self.config.reolink.yolo.dict()
+                logger.debug(f"YOLO config loaded from reolink.yolo: confidence_threshold={self.config.reolink.yolo.confidence_threshold}")
+            else:
+                logger.warning(f"No YOLO config found in reolink config, using defaults")
             
             self.audience_detector = await ReolinkDetector.create_with_discovery(
                 known_ip=known_ip,

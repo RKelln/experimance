@@ -194,12 +194,12 @@ class ReolinkDetector:
             try:
                 from .yolo_person_detector import YOLO11PersonDetector
                 self._yolo_detector = YOLO11PersonDetector.from_dict(self.yolo_config)
-                logger.info(f"✅ Hybrid mode enabled: Camera AI + YOLO detection")
+                logger.info(f"Hybrid mode enabled: Camera AI + YOLO detection")
             except ImportError as e:
-                logger.error(f"❌ Hybrid mode failed: YOLO detector not available: {e}")
+                logger.error(f"Hybrid mode failed: YOLO detector not available: {e}")
                 self.hybrid_mode = False
             except Exception as e:
-                logger.error(f"❌ Hybrid mode failed: Could not initialize YOLO: {e}")
+                logger.error(f"Hybrid mode failed: Could not initialize YOLO: {e}")
                 self.hybrid_mode = False
     
     async def stop(self):
@@ -425,7 +425,7 @@ class ReolinkDetector:
                 self._yolo_absent_count = 0
                 self._mode_switches += 1
                 
-                logger.info(f"🎯 Camera AI triggered - switching to ACTIVE mode (switch #{self._mode_switches})")
+                logger.debug(f"Camera AI triggered - switching to ACTIVE mode (switch #{self._mode_switches})")
                 
                 # Immediately run YOLO check
                 return await self._yolo_detection()
@@ -477,7 +477,7 @@ class ReolinkDetector:
                     self._detection_mode = DetectionMode.MONITORING
                     self._mode_switches += 1
                     
-                    logger.info(f"🔄 YOLO confirmed no people - switching to MONITORING mode (switch #{self._mode_switches})")
+                    logger.debug(f"YOLO confirmed no people - switching to MONITORING mode (switch #{self._mode_switches})")
                 
                 # Apply hysteresis for absence detection
                 stable_state = self._apply_hysteresis(False)
