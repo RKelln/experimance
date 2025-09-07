@@ -30,7 +30,7 @@ from pyglet.gl import GL_FRAMEBUFFER, glGenFramebuffers, glBindFramebuffer, glFr
 from pyglet.image.codecs import ImageDecodeException
 from pyglet import gl
 from pyglet.graphics.shader import Shader, ShaderProgram
-from pyglet.image import Framebuffer
+from pyglet.image.buffer import Framebuffer
 from pyglet.math import Mat4
 
 from .layer_manager import LayerRenderer
@@ -391,7 +391,6 @@ class PanoramaRenderer(LayerRenderer):
         self.base_image = None  # Keep reference to current/latest image
         self.base_sprites = {}  # Dict of image_id -> {'sprite': sprite, 'fade_timer': float, 'fade_duration': float, 'is_fading': bool}
         self.base_image_id = None  # ID of the current/target base image
-        self.base_cleanup_delay = 0.5  # Seconds to wait after new image is fully faded before cleaning up old ones
         
         # Panorama dimensions - set these first before creating framebuffer
         self.panorama_width = self.panorama_config.output_width
@@ -523,15 +522,6 @@ class PanoramaRenderer(LayerRenderer):
             
             self.blur_shader_program = ShaderProgram(vert_shader, frag_shader)
 
-            # Create quad based on squeeze setting
-            # if self.panorama_config.squeeze:
-            #     # “squeezed”: quad spans the whole window in NDC
-            #     positions = (-1,-1,  1,-1, -1,1,  1,1)
-            # else:
-            #     # frame-buffer-sized quad (no squeeze)
-            #     w, h = self.panorama_width / self.window.width, self.panorama_height / self.window.height
-            #     positions = (-w, -h,  w, -h, -w,  h,  w,  h)
-            #positions = (-1,-1,  1,-1, -1,1,  1,1)
             positions = (-1.0, -1.0, 0.0, 1.0,   # bl
              1.0, -1.0, 0.0, 1.0,   # br
             -1.0,  1.0, 0.0, 1.0,   # tl
@@ -681,9 +671,6 @@ class PanoramaRenderer(LayerRenderer):
         # Extract fade_in duration from message
         fade_in_duration = message.get('fade_in')
         
-        # Don't delete existing base sprites - we'll fade in the new one on top
-        # and clean up old ones after the transition completes
-        
         # Set image anchor point to bottom-left (pyglet default) for consistent positioning
         image.anchor_x = 0
         image.anchor_y = 0
@@ -736,8 +723,7 @@ class PanoramaRenderer(LayerRenderer):
             'sprite': sprite,
             'fade_timer': 0.0,
             'fade_duration': fade_duration,
-            'is_fading': fade_duration > 0,
-            'cleanup_delay': 0.0  # Timer for cleaning up old sprites after this one is fully faded
+            'is_fading': fade_duration > 0
         }
         
         logger.info(f"Base image setup complete at ({sprite.x}, {sprite.y}) with scale {sprite.scale}")
@@ -770,8 +756,7 @@ class PanoramaRenderer(LayerRenderer):
             'sprite': sprite,
             'fade_timer': 0.0,
             'fade_duration': fade_duration,
-            'is_fading': True,
-            'cleanup_delay': 0.0
+            'is_fading': True
         }
         
         # Update current references
@@ -963,12 +948,15 @@ class PanoramaRenderer(LayerRenderer):
         self.blur_velocity = 2.0
 
     def update(self, dt: float) -> None:
-        """Update panorama animations with smooth crossfade support."""
-        # Update individual base image fade-ins and cleanup
-        sprites_to_remove = []
-        current_sprite_fully_faded = False
+        """Update panorama animations with simple crossfade support.
         
-        for image_id, base_data in self.base_sprites.items():
+        Strategy: Let sprites accumulate during rapid crossfades, then clean up ALL old sprites
+        the moment the newest one finishes fading. Simple and bulletproof.
+        """
+        sprites_to_remove = []
+        
+        # Update fade animations and clean up immediately when new sprite finishes
+        for image_id, base_data in list(self.base_sprites.items()):
             sprite = base_data['sprite']
             if not sprite:
                 continue
@@ -983,20 +971,15 @@ class PanoramaRenderer(LayerRenderer):
                 
                 if progress >= 1.0:
                     base_data['is_fading'] = False
-                    base_data['cleanup_delay'] = 0.0  # Start cleanup delay timer
                     logger.debug(f"Base image {image_id} fade complete")
                     
-                    # Check if this is the current/newest base image
+                    # If this is the current sprite, clean up all old sprites immediately
                     if image_id == self.base_image_id:
-                        current_sprite_fully_faded = True
-            
-            # Handle cleanup delay for old sprites after current one is fully faded
-            elif image_id != self.base_image_id:  # This is an old sprite
-                if current_sprite_fully_faded or not any(data['is_fading'] for data in self.base_sprites.values()):
-                    # Current sprite is done OR no sprites are fading - start cleanup delay
-                    base_data['cleanup_delay'] += dt
-                    if base_data['cleanup_delay'] >= self.base_cleanup_delay:
-                        sprites_to_remove.append(image_id)
+                        logger.debug(f"Current sprite {image_id} fully faded - cleaning up old sprites")
+                        # Mark all other sprites for removal
+                        for other_id in self.base_sprites.keys():
+                            if other_id != image_id:
+                                sprites_to_remove.append(other_id)
         
         # Clean up old sprites
         for image_id in sprites_to_remove:
