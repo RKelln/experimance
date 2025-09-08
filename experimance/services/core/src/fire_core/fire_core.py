@@ -398,12 +398,10 @@ class ActiveRequest:
 
 @dataclass
 class TranscriptAccumulator:
-    """Accumulates transcript messages for processing."""
+    """Accumulates simplified transcript messages for processing."""
     session_id: Optional[str] = None
-    messages: List[TranscriptUpdate] = field(default_factory=list)
+    conversation_lines: List[str] = field(default_factory=list)  # Simple "Speaker: content" strings
     last_update_time: float = field(default_factory=lambda: 0.0)
-    processed_count: int = 0  # Number of messages processed by LLM
-
 
 class FireCoreService(BaseService):
     """
@@ -681,7 +679,8 @@ class FireCoreService(BaseService):
                 
                 media_prompt = await self.prompt_builder.build_media_prompt(
                     story.content,
-                    previous_prompt=previous_media_prompt
+                    previous_prompt=previous_media_prompt,
+                    transcript_callback=self._handle_curated_transcript
                 )
                 
                 # Store the successfully generated prompt
@@ -774,37 +773,22 @@ class FireCoreService(BaseService):
                 
                 self.transcript_accumulator = TranscriptAccumulator(
                     session_id=transcript.session_id,
-                    messages=[],
+                    conversation_lines=[],
                     last_update_time=current_time,
-                    processed_count=0
                 )
             
-            # Add transcript to accumulator
-            self.transcript_accumulator.messages.append(transcript)
+            # Add transcript to accumulator as simple string
+            speaker = transcript.speaker_display_name or transcript.speaker_id
+            conversation_line = f"{speaker}: {transcript.content}"
+            self.transcript_accumulator.conversation_lines.append(conversation_line)
             self.transcript_accumulator.last_update_time = current_time
             
-            logger.info(f"📊 Accumulator: {len(self.transcript_accumulator.messages)} total, "
-                       f"{self.transcript_accumulator.processed_count} processed, "
-                       f"{len(self.transcript_accumulator.messages) - self.transcript_accumulator.processed_count} unprocessed")
+            logger.info(f"📊 Accumulator: {len(self.transcript_accumulator.conversation_lines)} total ")
             
             # Only trigger LLM processing on user messages (not agent responses)
             if transcript.speaker_id.lower() in AGENTS:
                 logger.debug(f"⏭️  Skipping LLM processing for agent message from {transcript.speaker_id}")
                 return
-            
-            # Check if this is genuinely new content (not just re-processing old messages)
-            unprocessed_messages = self.transcript_accumulator.messages[self.transcript_accumulator.processed_count:]
-            user_messages_count = len([msg for msg in unprocessed_messages 
-                                     if msg.speaker_id.lower() not in AGENTS])
-            
-            logger.debug(f"🔍 Analysis: {len(unprocessed_messages)} unprocessed messages, {user_messages_count} from users")
-            
-            if user_messages_count < 1:  # Wait for at least 1 new user message
-                logger.debug("⏸️  Not enough new user content, waiting for more transcripts")
-                return
-            
-            # *** CRITICAL FIX: Start background processing but return immediately ***
-            logger.debug("🚀 SCHEDULING background transcript processing - handler will return immediately")
             
             # Cancel any existing LLM processing request
             if self.llm_processing_request and not self.llm_processing_request.is_completed():
@@ -848,22 +832,19 @@ class FireCoreService(BaseService):
         This ensures responsive behavior while minimizing wasted work.
         """
         try:
-            logger.debug("🔬 BACKGROUND PROCESSING: Starting transcript processing")
-            
             # Format full conversation context for LLM
             full_context = self._format_transcript_context()
             logger.debug(f"🤖 Querying LLM with {len(full_context)} chars of conversation context")
             
             # Ask LLM to decide if we should generate a prompt using the existing prompt builder
             try:
-                logger.debug("🤖 BACKGROUND: Starting LLM call")
                 media_prompt = await self.prompt_builder.build_media_prompt(
                     full_context,
                     previous_prompt=self.last_generated_prompt,
                     audio_prefix=["high quality professional recording", "pristine", "high SNR"],
-                    audio_suffix=["air utterly still", "stable ambience"]
+                    audio_suffix=["air utterly still", "stable ambience"],
+                    transcript_callback=self._handle_curated_transcript
                 )
-                logger.debug("✅ BACKGROUND: LLM call completed")
                 
                 # Check if this LLM processing request was cancelled while running
                 if self.llm_processing_request and self.llm_processing_request.state == RequestState.CANCELLED:
@@ -883,18 +864,17 @@ class FireCoreService(BaseService):
                 )
                 
                 # Debug logging for prompt comparison
-                logger.info(f"🔍 PROMPT COMPARISON:")
-                logger.info(f"  Previous visual: {self.last_generated_prompt.visual_prompt[:100] if self.last_generated_prompt else 'None'}...")
-                logger.info(f"  New visual:      {media_prompt.visual_prompt[:100]}...")
-                logger.info(f"  Previous audio:  {self.last_generated_prompt.audio_prompt[:100] if self.last_generated_prompt and self.last_generated_prompt.audio_prompt else 'None'}...")
-                logger.info(f"  New audio:       {media_prompt.audio_prompt[:100] if media_prompt.audio_prompt else 'None'}...")
-                logger.info(f"  Visual changed: {visual_changed}, Audio changed: {audio_changed}")
+                logger.debug(f"🔍 PROMPT COMPARISON:")
+                logger.debug(f"  Previous visual: {self.last_generated_prompt.visual_prompt if self.last_generated_prompt else 'None'}...")
+                logger.debug(f"  New visual:      {media_prompt.visual_prompt}...")
+                logger.debug(f"  Previous audio:  {self.last_generated_prompt.audio_prompt if self.last_generated_prompt and self.last_generated_prompt.audio_prompt else 'None'}...")
+                logger.debug(f"  New audio:       {media_prompt.audio_prompt if media_prompt.audio_prompt else 'None'}...")
+                logger.debug(f"  Visual changed:  {visual_changed}, Audio changed: {audio_changed}")
                 
                 if not visual_changed and not audio_changed:
                     logger.info("🔄 No significant changes in prompts - skipping generation")
                     raise UnchangedContentException("LLM returned unchanged prompts")
                 
-                logger.info("✅ LLM decided to generate prompt based on accumulated transcripts")
                 if visual_changed:
                     logger.info("🖼️ Visual prompt changed - will generate new images")
                 if audio_changed:
@@ -907,24 +887,12 @@ class FireCoreService(BaseService):
                 request_id = self.queue_new_request(media_prompt)
                 logger.info(f"🖼️ Queued transcript-based request {request_id} (total queue: {len(self.request_queue)})")
                 
-                # Mark these messages as processed
-                old_processed_count = self.transcript_accumulator.processed_count
-                self.transcript_accumulator.processed_count = len(self.transcript_accumulator.messages)
-                logger.info(f"� Marked {self.transcript_accumulator.processed_count - old_processed_count} messages as processed")
-                
-                # Request processing will be handled by _state_monitor_task
-                logger.debug("✅ BACKGROUND PROCESSING: Transcript processing completed successfully")
-                
                 # Mark LLM processing as completed
                 if self.llm_processing_request:
                     self.llm_processing_request.state = RequestState.COMPLETED
                 
             except UnchangedContentException as e:
                 logger.info(f"Transcript content unchanged, skipping image generation: {e}")
-                # Mark these messages as processed even though we didn't generate a new prompt
-                old_processed_count = self.transcript_accumulator.processed_count
-                self.transcript_accumulator.processed_count = len(self.transcript_accumulator.messages)
-                logger.debug(f"Marked {self.transcript_accumulator.processed_count - old_processed_count} messages as processed (unchanged)")
                 # Mark LLM processing as completed
                 if self.llm_processing_request:
                     self.llm_processing_request.state = RequestState.COMPLETED
@@ -947,14 +915,54 @@ class FireCoreService(BaseService):
             self.llm_processing_request = None
 
     def _format_transcript_context(self) -> str:
-        """Format all accumulated transcripts into conversation context."""
-        conversation = []
-        
-        for msg in self.transcript_accumulator.messages:
-            speaker = msg.speaker_display_name or msg.speaker_id
-            conversation.append(f"{speaker}: {msg.content}")
-        
-        return "\n".join(conversation)
+        """Format all accumulated transcript lines into conversation context."""
+        return "\n".join(self.transcript_accumulator.conversation_lines)
+
+    def _parse_and_update_curated_transcript(self, transcript: str) -> None:
+        """
+        Replace transcript accumulator with LLM-curated transcript text.
+
+        Args:
+            transcript: LLM-curated transcript in format "Speaker: content" on separate lines
+        """
+        try:
+            logger.info(f"📖 Replacing transcript accumulator with LLM-curated transcript ({len(transcript)} chars)")
+
+            # Parse the transcript text into simple conversation lines
+            new_lines = []
+            current_time = time.time()
+            
+            for line in transcript.strip().split('\n'):
+                line = line.strip()
+                if not line or ':' not in line:
+                    continue
+                    
+                # Validate the line has both speaker and content
+                parts = line.split(':', 1)
+                if len(parts) == 2 and parts[1].strip():
+                    new_lines.append(line)
+
+            # Replace the accumulator content with curated transcript
+            original_count = len(self.transcript_accumulator.conversation_lines)
+            self.transcript_accumulator.conversation_lines = new_lines
+            self.transcript_accumulator.last_update_time = current_time
+            
+            logger.info(f"✅ Updated transcript accumulator: {original_count} → {len(new_lines)} lines (all marked as processed)")
+            logger.debug(f"📝 Curated transcript preview: {transcript}...")
+
+        except Exception as e:
+            logger.error(f"Failed to parse curated transcript text: {e}")
+            logger.debug(f"Problematic transcript text: {transcript}")
+
+    def _handle_curated_transcript(self, transcript: str) -> None:
+        """
+        Callback function for receiving LLM-curated transcript text.
+
+        Args:
+            transcript: The cleaned transcript text returned by the LLM
+        """
+        logger.debug(f"📖 Received curated transcript callback: {len(transcript)} chars")
+        self._parse_and_update_curated_transcript(transcript)
 
     async def _handle_debug_prompt(self, topic: str, message_data: MessageDataType):
         """
@@ -1489,11 +1497,6 @@ class FireCoreService(BaseService):
             
             if self.current_request.state == RequestState.WAITING_BASE:
                 logger.info("Base image timeout - clearing request to allow queue processing")
-                # Reset processed count so new transcripts can trigger LLM
-                if hasattr(self, 'transcript_accumulator') and self.transcript_accumulator.processed_count > 0:
-                    old_count = self.transcript_accumulator.processed_count
-                    self.transcript_accumulator.processed_count = 0
-                    logger.warning(f"🔄 RESET processed_count from {old_count} to 0 - new transcripts can now trigger LLM")
                 
                 # Clear display and mark request as cancelled
                 #display_message = DisplayMedia(content_type=ContentType.CLEAR, fade_in=10.0)

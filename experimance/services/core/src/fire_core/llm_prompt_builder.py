@@ -10,7 +10,7 @@ predefined biome/emotion classifications.
 import logging
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 from .config import ImagePrompt, MediaPrompt
 from .llm import LLMProvider
@@ -57,8 +57,6 @@ class LLMPromptBuilder:
         ]
 
         self.tile_style = [
-            "ultra detailed",
-            "sharp focus"
         ]
 
         self.quality_style = [
@@ -206,6 +204,7 @@ class LLMPromptBuilder:
         audio_prefix: Optional[List[str]] = None,
         audio_suffix: Optional[List[str]] = None,
         previous_prompt: Optional[MediaPrompt] = None,
+        transcript_callback: Optional[Callable[[str], None]] = None,
     ) -> MediaPrompt:
         """
         Build a combined media prompt (visual + audio) using LLM analysis.
@@ -218,7 +217,8 @@ class LLMPromptBuilder:
             audio_prefix: Optional list of keywords to prepend to the audio prompt
             audio_suffix: Optional list of keywords to append to the audio prompt
             previous_prompt: Optional previous MediaPrompt for deduplication
-            
+            transcript_callback: Optional callback function to receive the LLM-curated transcript text
+
         Returns:
             MediaPrompt with LLM-generated visual and audio prompts. If content is unchanged
             from the previous prompt, returns the previous_prompt directly.
@@ -250,6 +250,15 @@ class LLMPromptBuilder:
             if previous_prompt is not None:
                 return previous_prompt
             return MediaPrompt("A cinematic dream-like landscape scene")
+
+        # Extract transcript if provided and call the callback
+        transcript = result.get("transcript")
+        if transcript and transcript_callback:
+            try:
+                logger.debug(f"📖 Calling story callback with curated transcript text ({len(transcript)} chars)")
+                transcript_callback(transcript)
+            except Exception as e:
+                logger.error(f"Error calling story callback: {e}")
         
         visual_prompt = result.get("visual_prompt", result.get("prompt", ""))
         negative_prompt = result.get("visual_negative_prompt", result.get("negative_prompt", result.get("negative", "")))

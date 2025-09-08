@@ -165,6 +165,44 @@ SAMPLE_TRANSCRIPT_CONVERSATIONS = {
         {"speaker_id": "user", "speaker_name": "New Visitor", "content": "Actually, I have a different story about deserts.", "session_id": "session_2"},
         {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Tell me about the desert.", "session_id": "session_2"},
         {"speaker_id": "user", "speaker_name": "New Visitor", "content": "The vast Sonoran desert was incredible...", "session_id": "session_2"},
+    ],
+    
+    "two_stories_same_session": [
+        # First story - childhood forest memory
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "I want to share two special places from my past."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "I'd love to hear about these special places. Tell me about the first one."},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "The first was this magical forest near my grandmother's house when I was little."},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "Towering pine trees created this cathedral of green, with golden sunlight streaming through."},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "There was a crystal clear stream winding through the rocks, and wildflowers everywhere."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "That sounds like a place of wonder. Can you see it in your mind's eye now?"},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "Yes, I can hear the water babbling and the distant call of birds."},
+        
+        # Transition to second story
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Beautiful. You mentioned two places - what was the second special place?"},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "The second place was completely different - a vast desert I visited as an adult."},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "The Sonoran Desert in Arizona, with ancient saguaro cacti standing like sentinels."},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "At sunset, the whole landscape turned crimson and gold, absolutely breathtaking."},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "The silence was profound, broken only by the distant howl of coyotes at night."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Two very different landscapes, but both touched your soul. Which one feels more present to you right now?"},
+        {"speaker_id": "user", "speaker_name": "Storyteller", "content": "Actually, the desert. That vast, eternal feeling under the star-filled sky."},
+    ],
+    
+    "mountain_lake_to_beach": [
+        # First story - mountain lake
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "I'm thinking about two incredible places I've visited in my travels."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Tell me about these places. What's the first one that comes to mind?"},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "A pristine alpine lake high in the Rocky Mountains, surrounded by granite peaks."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "The water was so clear you could see trout swimming in the depths below."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "Snow-capped summits reflected perfectly in the still surface like a mirror."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "That sounds incredibly peaceful. What was the other place?"},
+        
+        # Transition to second story  
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "Completely opposite - the wild Pacific coast during a winter storm."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "Massive waves were crashing against these jagged black cliffs in Oregon."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "The spray would shoot up 50 feet, creating these incredible rainbows in the mist."},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "Ancient redwoods growing right to the cliff's edge, their roots somehow holding fast."},
+        {"speaker_id": "agent", "speaker_name": "Fire Spirit", "content": "Such power and beauty. Which of these places calls to you more strongly right now?"},
+        {"speaker_id": "user", "speaker_name": "Traveler", "content": "The wild coast. There's something about that raw power that feels alive in my bones."},
     ]
 }
 
