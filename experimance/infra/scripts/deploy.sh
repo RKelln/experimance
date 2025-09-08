@@ -377,8 +377,14 @@ else
 fi
 
 check_root() {
-    if [[ "$USE_SYSTEMD" == true ]] && [[ $EUID -ne 0 ]]; then
+    # Only require root for Linux systemd operations
+    if [[ "$USE_SYSTEMD" == true ]] && [[ "$PLATFORM" != "macos" ]] && [[ $EUID -ne 0 ]]; then
         error "This script must be run as root for systemd operations in production mode"
+    fi
+    
+    # On macOS, LaunchAgents should NOT be run as root
+    if [[ "$PLATFORM" == "macos" ]] && [[ $EUID -eq 0 ]]; then
+        error "Do not run this script as root on macOS. LaunchAgents run as the current user."
     fi
 }
 
@@ -654,16 +660,13 @@ install_systemd_files_linux() {
 install_launchd_files_macos() {
     log "Installing launchd service files for macOS..."
     
-    # Create launchd directory
-    local launchd_dir
-    if [[ "$MODE" == "prod" ]]; then
-        launchd_dir="/Library/LaunchDaemons"
-    else
-        # Development mode uses LaunchAgents
-        launchd_dir="$HOME/Library/LaunchAgents"
-    fi
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
     
     mkdir -p "$launchd_dir"
+    
+    # Create log directory for LaunchAgent logs
+    mkdir -p "$HOME/Library/Logs/experimance"
     
     # Convert systemd templates to launchd plist files
     local files_created=0
@@ -687,12 +690,8 @@ create_launchd_plist() {
     local service="$1"
     local launchd_dir="$2"
     
-    # Check if we should create LaunchAgent vs LaunchDaemon
-    if [[ "$MODE" == "prod" ]]; then
-        create_launchd_daemon "$service" "$launchd_dir"
-    else
-        create_launchd_agent "$service" "$launchd_dir"
-    fi
+    # On macOS, always use LaunchAgents, never LaunchDaemons
+    create_launchd_agent "$service" "$launchd_dir"
 }
 
 # Create LaunchDaemon plist (for production mode)
@@ -785,29 +784,18 @@ create_launchd_agent() {
     local module_name
     module_name=$(get_service_module_name "$project" "$service")
     
-    # Create wrapper script to avoid macOS TCC permission issues
-    local wrapper_script="$REPO_DIR/infra/launchd/launch_${project}_${service_type}.sh"
-    
-    # Create the wrapper script
-    cat > "$wrapper_script" << EOF
-#!/bin/bash
-
-# $project $service_type Launch Script for LaunchAgent
-# This wrapper script resolves macOS TCC permission issues with Python execution
-
-# Set environment variables
-export PROJECT_ENV=$project
-# Note: Not setting EXPERIMANCE_ENV=production to keep development logging mode
-
-# Change to project directory
-cd $REPO_DIR
-
-# Launch the $service_type using uv
-exec $HOME/.local/bin/uv run -m $module_name
-EOF
-    
-    # Make wrapper script executable
-    chmod +x "$wrapper_script"
+    # Determine uv path - prefer Homebrew location if available
+    local uv_path
+    if [[ -x "/opt/homebrew/bin/uv" ]]; then
+        uv_path="/opt/homebrew/bin/uv"
+    elif [[ -x "$HOME/.local/bin/uv" ]]; then
+        uv_path="$HOME/.local/bin/uv"
+    elif command -v uv &> /dev/null; then
+        uv_path=$(command -v uv)
+    else
+        error "uv not found. Please install uv first."
+        return 1
+    fi
     
     cat > "$plist_file" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -819,11 +807,20 @@ EOF
     
     <key>ProgramArguments</key>
     <array>
-        <string>$wrapper_script</string>
+        <string>$uv_path</string>
+        <string>run</string>
+        <string>-m</string>
+        <string>$module_name</string>
     </array>
     
     <key>WorkingDirectory</key>
     <string>$REPO_DIR</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PROJECT_ENV</key>
+        <string>$project</string>
+    </dict>
     
     <key>KeepAlive</key>
     <dict>
@@ -835,10 +832,10 @@ EOF
     <true/>
     
     <key>StandardErrorPath</key>
-    <string>$REPO_DIR/logs/${project}_${service_type}_launchd_error.log</string>
+    <string>$HOME/Library/Logs/experimance/${project}_${service_type}_launchd_error.log</string>
     
     <key>StandardOutPath</key>
-    <string>$REPO_DIR/logs/${project}_${service_type}_launchd.log</string>
+    <string>$HOME/Library/Logs/experimance/${project}_${service_type}_launchd.log</string>
     
     <!-- LaunchAgent version - no UserName needed, runs as logged-in user -->
     
@@ -857,7 +854,7 @@ EOF
     chmod 644 "$plist_file"
     
     log "✓ Created LaunchAgent service: $plist_file"
-    log "✓ Created wrapper script: $wrapper_script"
+    log "✓ Using uv path: $uv_path"
     return 0
 }
 
@@ -868,25 +865,34 @@ show_macos_full_disk_access_instructions() {
     echo -e "${YELLOW}║                        macOS FULL DISK ACCESS REQUIRED                        ║${NC}"
     echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${YELLOW}LaunchAgents require Full Disk Access to execute wrapper scripts.${NC}"
+    echo -e "${YELLOW}LaunchAgents require Full Disk Access for uv to execute Python modules.${NC}"
     echo ""
     echo -e "${BLUE}Manual steps required:${NC}"
     echo -e "${GREEN}1.${NC} Open System Settings → Privacy & Security → Full Disk Access"
     echo -e "${GREEN}2.${NC} Click the + button to add applications"
-    echo -e "${GREEN}3.${NC} Navigate to and add these wrapper scripts:"
+    echo -e "${GREEN}3.${NC} Navigate to and add the uv binary:"
     
-    # List all wrapper scripts created
-    for wrapper_script in "$REPO_DIR"/infra/launchd/launch_*.sh; do
-        if [[ -f "$wrapper_script" ]]; then
-            echo "   - $wrapper_script"
-        fi
-    done
+    # Determine uv path
+    local uv_path
+    if [[ -x "/opt/homebrew/bin/uv" ]]; then
+        uv_path="/opt/homebrew/bin/uv"
+    elif [[ -x "$HOME/.local/bin/uv" ]]; then
+        uv_path="$HOME/.local/bin/uv"
+    elif command -v uv &> /dev/null; then
+        uv_path=$(command -v uv)
+    else
+        uv_path="<uv_path_not_found>"
+    fi
     
-    echo -e "${GREEN}4.${NC} Toggle the switches to grant Full Disk Access"
+    echo "   - $uv_path"
+    echo ""
+    echo -e "${GREEN}4.${NC} Toggle the switch to grant Full Disk Access to uv"
     echo -e "${GREEN}5.${NC} After granting access, run: ${BLUE}./deploy.sh $PROJECT start${NC}"
     echo ""
-    echo -e "${YELLOW}Note: This is only required once per wrapper script.${NC}"
+    echo -e "${YELLOW}Note: This is only required once for the uv binary.${NC}"
     echo -e "${YELLOW}Without Full Disk Access, LaunchAgents will fail with 'Operation not permitted'.${NC}"
+    echo ""
+    echo -e "${BLUE}To find uv location manually, run: ${GREEN}which uv${NC}"
     echo ""
 }
 
@@ -1845,25 +1851,16 @@ start_services_linux() {
 start_services_macos() {
     log "Starting services for project $PROJECT using launchd..."
     
-    # Determine launchd directory
-    local launchd_dir
-    if [[ "$MODE" == "prod" ]]; then
-        launchd_dir="/Library/LaunchDaemons"
-    else
-        launchd_dir="$HOME/Library/LaunchAgents"
-    fi
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
     
     # Start individual services
     for service in "${SERVICES[@]}"; do
-        local service_label plist_file
-        
-        if [[ "$MODE" == "prod" ]]; then
-            plist_file="$launchd_dir/com.experimance.$service.plist"
-            service_label="com.experimance.$service"
-        else
-            plist_file="$launchd_dir/com.experimance.$service.agent.plist"
-            service_label="com.experimance.$service.agent"
-        fi
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
         
         if [[ -f "$plist_file" ]]; then
             log "Processing service: $service_label"
@@ -1877,7 +1874,7 @@ start_services_macos() {
                 fi
             else
                 log "Loading and starting $service_label..."
-                if launchctl load "$plist_file"; then
+                if launchctl bootstrap gui/$(id -u) "$plist_file"; then
                     log "✓ Loaded $service_label"
                     sleep 1
                     # Verify it's running
@@ -1993,25 +1990,16 @@ stop_services_linux() {
 stop_services_macos() {
     log "Stopping services for project $PROJECT using launchd..."
     
-    # Determine launchd directory
-    local launchd_dir
-    if [[ "$MODE" == "prod" ]]; then
-        launchd_dir="/Library/LaunchDaemons"
-    else
-        launchd_dir="$HOME/Library/LaunchAgents"
-    fi
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
     
     # Stop individual services
     for service in "${SERVICES[@]}"; do
-        local service_label plist_file
-        
-        if [[ "$MODE" == "prod" ]]; then
-            plist_file="$launchd_dir/com.experimance.$service.plist"
-            service_label="com.experimance.$service"
-        else
-            plist_file="$launchd_dir/com.experimance.$service.agent.plist"
-            service_label="com.experimance.$service.agent"
-        fi
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
         
         if [[ -f "$plist_file" ]]; then
             log "Processing service: $service_label"
@@ -2019,7 +2007,7 @@ stop_services_macos() {
             # Check if loaded
             if launchctl list | grep -q "$service_label"; then
                 log "Unloading $service_label..."
-                if launchctl unload "$plist_file"; then
+                if launchctl bootout gui/$(id -u) "$plist_file"; then
                     log "✓ Unloaded $service_label"
                     
                     # Wait and verify it's gone
@@ -2168,27 +2156,30 @@ status_services_linux() {
 status_services_macos() {
     echo -e "\n${BLUE}=== Launchd Service Files Status ===${NC}"
     
-    # Determine launchd directory
-    local launchd_dir
-    if [[ "$MODE" == "prod" ]]; then
-        launchd_dir="/Library/LaunchDaemons"
-    else
-        launchd_dir="$HOME/Library/LaunchAgents"
-    fi
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
     
     # Check if plist files exist
     for service in "${SERVICES[@]}"; do
-        local plist_file="$launchd_dir/com.experimance.$service.plist"
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
+        
         if [[ -f "$plist_file" ]]; then
-            echo -e "${GREEN}✓${NC} Service plist exists: com.experimance.$service.plist"
+            echo -e "${GREEN}✓${NC} Service plist exists: com.experimance.${project}.${service_type}.plist"
         else
-            echo -e "${RED}✗${NC} Service plist missing: com.experimance.$service.plist"
+            echo -e "${RED}✗${NC} Service plist missing: com.experimance.${project}.${service_type}.plist"
         fi
     done
     
     echo -e "\n${BLUE}=== Service Status ===${NC}"
     for service in "${SERVICES[@]}"; do
-        local service_label="com.experimance.$service"
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local service_label="com.experimance.${service_type}.$project"
         
         if launchctl list | grep -q "$service_label"; then
             # Service is loaded, check its status
@@ -2208,9 +2199,9 @@ status_services_macos() {
     done
     
     echo -e "\n${BLUE}=== Recent Logs ===${NC}"
-    echo "Check system logs with:"
-    echo "  log show --predicate 'process == \"experimance_core\"' --last 10m"
-    echo "  log stream --predicate 'process CONTAINS \"experimance\"'"
+    echo "Check LaunchAgent logs:"
+    echo "  tail -f ~/Library/Logs/experimance/${PROJECT}_*_launchd_error.log"
+    echo "  ls -la ~/Library/Logs/experimance/*launchd*.log"
 }
 
 # Scheduling functions
