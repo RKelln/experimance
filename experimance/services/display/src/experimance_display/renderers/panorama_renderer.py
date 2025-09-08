@@ -58,6 +58,7 @@ out vec4 frag;
 uniform sampler2D scene_texture;
 uniform float     blur_sigma;     // in **framebuffer** pixels
 uniform int       enable_mirror;  // use int (!) for pyglet
+uniform float     panorama_opacity;  // Global panorama fade (0.0 = transparent, 1.0 = opaque)
 
 vec4 fast_blur(vec2 tc) {
     if (blur_sigma < 0.5)               // ~no-blur fast-path
@@ -93,7 +94,9 @@ void main() {
     }
 
     vec4 blurred = fast_blur(tc);
-    frag = blurred;
+    
+    // Apply global panorama opacity fade
+    frag = vec4(blurred.rgb, blurred.a * panorama_opacity);
 }
 """
 
@@ -105,6 +108,7 @@ out vec4 frag;
 uniform sampler2D scene_texture;
 uniform float blur_sigma;
 uniform int enable_mirror;
+uniform float panorama_opacity;  // Global panorama fade (0.0 = transparent, 1.0 = opaque)
 
 void main()
 {
@@ -115,10 +119,11 @@ void main()
         tc.x = 1.0 - tc.x;
     }
     
+    vec4 color;
     // Handle blur if enabled - use much more efficient implementation
     if (blur_sigma < 0.5) {
         // No blur - direct sampling
-        frag = texture(scene_texture, tc);
+        color = texture(scene_texture, tc);
     } else {
         // Enhanced box blur for extreme "clouds of color" effect - up to 49x49 kernel
         vec2 texel = 1.0 / textureSize(scene_texture, 0);
@@ -135,8 +140,11 @@ void main()
             }
         }
         
-        frag = vec4(result / float(samples), 1.0);
+        color = vec4(result / float(samples), 1.0);
     }
+    
+    // Apply global panorama opacity fade
+    frag = vec4(color.rgb, color.a * panorama_opacity);
 }
 """
 
@@ -235,6 +243,9 @@ class _DisplayGroup(pyglet.graphics.Group):
                 # Set mirroring uniforms
                 renderer.blur_shader_program['enable_mirror'] = int(renderer.panorama_config.mirror)
                 
+                # Set panorama-wide opacity for fade effect
+                renderer.blur_shader_program['panorama_opacity'] = float(renderer.panorama_opacity)
+                
                 # Draw fullscreen quad - shader handles mirroring + scaling
                 renderer.blur_quad.draw(gl.GL_TRIANGLE_STRIP)
                 
@@ -271,7 +282,7 @@ class PanoramaTile:
         self.fade_duration = fade_duration
         self.debug_rect = debug_rect  # Optional debug rectangle (injected)
         
-        # Fade state
+        # Fade in state
         self.fade_timer = 0.0
         self.is_fading = True
         self.sprite.opacity = 0  # Start transparent
@@ -362,8 +373,9 @@ class PanoramaTile:
             return None
         
     def update(self, dt: float) -> None:
-        """Update tile fade animation."""
+        """Update tile fade in animation."""
         if self.is_fading:
+            # Handle fade-in animation
             self.fade_timer += dt
             progress = min(self.fade_timer / self.fade_duration, 1.0)
             
@@ -372,7 +384,7 @@ class PanoramaTile:
             
             if progress >= 1.0:
                 self.is_fading = False
-                logger.debug(f"Tile {self.tile_id} fade complete")
+                logger.debug(f"Tile {self.tile_id} fade-in complete")
 
 
 class PanoramaRenderer(LayerRenderer):
@@ -453,6 +465,12 @@ class PanoramaRenderer(LayerRenderer):
         # Visibility
         self._visible = True
         self._opacity = 1.0
+        
+        # Panorama-wide fade system
+        self.panorama_opacity = 1.0  # Global opacity for entire panorama (0.0 = transparent, 1.0 = opaque)
+        self.panorama_fade_timer = 0.0
+        self.panorama_fade_duration = self.panorama_config.disappear_duration
+        self.panorama_is_fading = False
         
         # Debug settings
         self.debug_tiles = False  # Flag to enable/disable tile debug outlines visibility
@@ -907,6 +925,7 @@ class PanoramaRenderer(LayerRenderer):
         
         # Check if this is the final tile and accelerate blur if needed
         is_final_tile = message.get('final_tile', False)
+        logger.debug(f"Tile {tile_id}: final_tile={is_final_tile}")
         if is_final_tile:
             logger.info(f"Final tile received: {tile_id}")
             if self.blur_active:
@@ -946,6 +965,26 @@ class PanoramaRenderer(LayerRenderer):
             return
 
         self.blur_velocity = 2.0
+    
+    def start_panorama_fade(self) -> None:
+        """Start the panorama-wide fade effect if enabled."""
+        logger.info(f"start_panorama_fade called: duration={self.panorama_fade_duration}")
+        if self.panorama_fade_duration <= 0:
+            logger.info("Panorama fade disabled (duration=0)")
+            return
+            
+        self.panorama_fade_timer = 0.0
+        self.panorama_is_fading = True
+        self.panorama_opacity = 1.0  # Start fully opaque
+        logger.info(f"Starting panorama fade: {self.panorama_fade_duration}s duration")
+    
+    def force_start_panorama_fade(self) -> None:
+        """Force start the panorama fade for testing (ignores duration check)."""
+        logger.info(f"force_start_panorama_fade called: forcing fade with duration={self.panorama_fade_duration}")
+        self.panorama_fade_timer = 0.0
+        self.panorama_is_fading = True
+        self.panorama_opacity = 1.0  # Start fully opaque
+        logger.info(f"Forced panorama fade start: {self.panorama_fade_duration}s duration")
 
     def update(self, dt: float) -> None:
         """Update panorama animations with simple crossfade support.
@@ -1007,10 +1046,31 @@ class PanoramaRenderer(LayerRenderer):
                 self.blur_active = False
                 self.blur_velocity = 1.0
                 logger.debug("Blur transition complete")
+                
+                # Start panorama fade when blur completes
+                logger.info("Blur complete - starting panorama fade")
+                self.start_panorama_fade()
         
         # Update tile fades
         for tile in self.tiles.values():
             tile.update(dt)
+        
+        # Update panorama-wide fade (if enabled and active)
+        if self.panorama_is_fading and self.panorama_fade_duration > 0:
+            self.panorama_fade_timer += dt
+            progress = min(self.panorama_fade_timer / self.panorama_fade_duration, 1.0)
+            
+            # Fade from 1.0 (opaque) to 0.0 (transparent)
+            self.panorama_opacity = 1.0 - progress
+            
+            # Debug logging every few seconds
+            # if int(self.panorama_fade_timer) % 5 == 0 and self.panorama_fade_timer > 0:
+            #     logger.info(f"Panorama fading: opacity={self.panorama_opacity:.3f} progress={progress:.3f}")
+
+            if progress >= 1.0:
+                self.panorama_is_fading = False
+                self.panorama_opacity = 0.0
+                logger.info(f"Panorama fade complete - fully transparent")
     
     def set_debug_mode(self, enabled: bool) -> None:
         """Enable or disable debug outlines for tiles."""
@@ -1074,6 +1134,16 @@ class PanoramaRenderer(LayerRenderer):
                 'opacity': base_data['sprite'].opacity if base_data['sprite'] else 0
             }
         
+        # Get info about tile fade states
+        tile_info = {}
+        for tile_id, tile in self.tiles.items():
+            tile_info[tile_id] = {
+                'is_fading_in': tile.is_fading,
+                'fade_in_progress': tile.fade_timer / tile.fade_duration if tile.is_fading else 1.0,
+                'opacity': tile.sprite.opacity,
+                'position': tile.position
+            }
+        
         return {
             "panorama_enabled": self.panorama_config.enabled,
             "base_image_id": self.base_image_id,
@@ -1081,6 +1151,11 @@ class PanoramaRenderer(LayerRenderer):
             "base_sprites": base_sprite_info,
             "tiles_count": len(self.tiles),
             "tile_ids": list(self.tiles.keys()),
+            "tile_info": tile_info,
+            "panorama_opacity": self.panorama_opacity,
+            "panorama_is_fading": self.panorama_is_fading,
+            "panorama_fade_progress": self.panorama_fade_timer / self.panorama_fade_duration if self.panorama_is_fading and self.panorama_fade_duration > 0 else 0.0,
+            "panorama_fade_enabled": self.panorama_fade_duration > 0,
             "blur_active": self.blur_active,
             "current_blur": self.current_blur,
             "blur_progress": (self.blur_timer / getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)) if self.blur_active else 0.0,

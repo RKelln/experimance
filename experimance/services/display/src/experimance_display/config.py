@@ -390,6 +390,11 @@ class PanoramaConfig(BaseModel):
         description="Configuration for panorama tiles"
     )
 
+    disappear_duration: float = Field(
+        default=0,
+        description="Duration for panorama-wide fade to transparency in seconds (0 = disabled, starts after final tile)"
+    )
+
 
 class ShaderEffectConfig(BaseModel):
     """Configuration for a single shader effect."""
