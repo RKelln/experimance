@@ -44,6 +44,15 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Xwayland integration**: Seamless fallback to X11 applications on Wayland
 - **Auto-recovery**: Display service automatically adapts to desktop environment changes
 
+### 6. **Multi-Machine Deployment** ✅
+- **Distributed deployments**: Deploy services across multiple machines (Ubuntu + macOS, etc.)
+- **TOML configuration**: Simple `deployment.toml` files define machine assignments and service distribution
+- **Hostname override testing**: Test deployment configurations from any machine without being on the target
+- **Per-machine user configuration**: Different users on different machines (e.g., "experimance" vs "FireProject")
+- **Service module name mapping**: Custom module names per service (e.g., `fire_core`, `fire_agent`)
+- **Consolidated service detection**: Automatic fallback to single-machine configurations for compatibility
+- **Cross-platform support**: Works with both systemd (Linux) and launchd (macOS) service management
+
 ## Files
 
 ```
@@ -59,7 +68,9 @@ infra/
 │   └── experimance@.target    # Service group target
 ├── scripts/                   # Management automation
 │   ├── deploy.sh              # Main deployment script (install, start, stop, setup schedules)
-│   ├── get_project_services.py # Dynamic service detection
+│   ├── deployment_utils.py    # Multi-machine deployment utilities ✅
+│   ├── get_deployment_services.py # Consolidated service detection with hostname override ✅
+│   ├── get_project_services.py # Dynamic service detection (single-machine fallback)
 │   ├── healthcheck.py         # Health monitoring script
 │   ├── kiosk_mode.sh          # Enable/disable kiosk mode for art installation
 │   ├── preventive_maintenance.sh # Automated maintenance to prevent SSH lockouts
@@ -92,6 +103,83 @@ libs/common/src/experimance_common/
 ├── notifications.py          # Notification handlers (ntfy, email, etc.)
 └── (other common utilities)
 ```
+
+## Multi-Machine Deployment
+
+For complex installations requiring multiple machines (e.g., Ubuntu Linux + macOS Mac mini), you can define deployment configurations that specify which services run on which machines.
+
+### Configuration File
+
+Create `projects/<project>/deployment.toml`:
+
+```toml
+[machines.ubuntu]
+hostname = "fire-ubuntu.local"
+services = ["core", "display", "image_server", "health"]
+user = "experimance"
+
+[machines.macos]
+hostname = "fire-macos.local"
+services = ["agent", "health"]
+user = "FireProject"
+
+[services]
+core.module_name = "fire_core"
+agent.module_name = "fire_agent"
+display.module_name = "fire_display"
+image_server.module_name = "fire_image_server"
+health.module_name = "fire_health"
+```
+
+### Multi-Machine Commands
+
+```bash
+# Test deployment configuration from any machine
+uv run python infra/scripts/get_deployment_services.py fire fire-ubuntu.local
+# Output: core@fire, display@fire, image_server@fire, health@fire
+
+uv run python infra/scripts/get_deployment_services.py fire fire-macos.local  
+# Output: agent@fire, health@fire
+
+# Deploy on each machine (run these commands on the respective machines)
+# On Ubuntu machine:
+sudo ./infra/scripts/deploy.sh fire install prod
+sudo ./infra/scripts/deploy.sh fire start
+
+# On macOS machine:
+sudo ./infra/scripts/deploy.sh fire install prod
+sudo ./infra/scripts/deploy.sh fire start
+```
+
+### How It Works
+
+1. **Service Detection**: The deployment system automatically detects if a project has `deployment.toml`
+2. **Hostname Matching**: Uses `hostname` command to determine which machine configuration to use
+3. **Service Filtering**: Only deploys services assigned to the current machine
+4. **Module Name Mapping**: Uses custom module names (e.g., `fire_core` instead of `core`)
+5. **User Configuration**: Different users can be specified per machine
+6. **Fallback Compatibility**: Projects without `deployment.toml` still work with existing single-machine logic
+
+### Testing Deployment Configurations
+
+The hostname override feature allows testing configurations from any machine:
+
+```bash
+# Test what services would run on Ubuntu machine (from any machine)
+uv run python infra/scripts/get_deployment_services.py fire fire-ubuntu.local
+
+# Test what services would run on macOS machine (from any machine)  
+uv run python infra/scripts/get_deployment_services.py fire fire-macos.local
+
+# See what services would run on current machine (auto-detect hostname)
+uv run python infra/scripts/get_deployment_services.py fire
+```
+
+This is especially useful for:
+- **Development**: Test multi-machine configurations on your dev machine
+- **Configuration Validation**: Verify deployment settings before deploying
+- **Debugging**: Troubleshoot service assignment issues
+- **CI/CD**: Automated testing of deployment configurations
 
 ## Quick Start Commands
 
@@ -541,6 +629,84 @@ Based on analysis of your system, here are common issues that can prevent SSH ac
 5. **Disk Space**: Full disks preventing log writes and service operation
 
 The monitoring tools will detect and automatically recover from many of these issues.
+
+## Multi-Machine Deployment Example: Fire Project
+
+Here's a real-world example of deploying the "fire" project across two machines:
+
+### Project Structure
+```
+projects/fire/
+├── deployment.toml     # Multi-machine configuration
+├── config.toml         # Fire project settings
+├── core.toml           # Core service configuration
+├── agent.toml          # Agent service configuration
+└── (other service configs)
+```
+
+### Fire Project deployment.toml
+```toml
+[machines.ubuntu]
+hostname = "fire-ubuntu.local"
+services = ["core", "display", "image_server", "health"]
+user = "experimance"
+
+[machines.macos] 
+hostname = "fire-macos.local"
+services = ["agent", "health"]
+user = "FireProject"
+
+[services]
+core.module_name = "fire_core"
+agent.module_name = "fire_agent"
+display.module_name = "fire_display"
+image_server.module_name = "fire_image_server"
+health.module_name = "fire_health"
+```
+
+### Deployment Workflow
+
+1. **Test configuration** (from any machine):
+```bash
+# Verify Ubuntu machine services
+uv run python infra/scripts/get_deployment_services.py fire fire-ubuntu.local
+# → core@fire, display@fire, image_server@fire, health@fire
+
+# Verify macOS machine services  
+uv run python infra/scripts/get_deployment_services.py fire fire-macos.local
+# → agent@fire, health@fire
+```
+
+2. **Deploy on Ubuntu machine** (fire-ubuntu.local):
+```bash
+# Create user and deploy services
+sudo useradd -m -s /bin/bash experimance
+sudo ./infra/scripts/deploy.sh fire install prod
+sudo ./infra/scripts/deploy.sh fire start
+
+# Verify services
+sudo systemctl status "*@fire"
+```
+
+3. **Deploy on macOS machine** (fire-macos.local):
+```bash
+# Create user and deploy services (uses launchd instead of systemd)
+sudo ./infra/scripts/deploy.sh fire install prod  
+sudo ./infra/scripts/deploy.sh fire start
+
+# Verify services (macOS uses launchctl)
+sudo launchctl list | grep fire
+```
+
+### Network Communication
+
+Services communicate across machines using ZeroMQ:
+- **Ubuntu machine** (fire-ubuntu.local): Runs core service that coordinates state
+- **macOS machine** (fire-macos.local): Runs agent service that connects to core
+- **Both machines**: Run health services for monitoring
+- **ZeroMQ networking**: Handles cross-machine communication automatically
+
+The deployment system ensures each machine only runs its assigned services while maintaining network connectivity for the distributed installation.
 
 ---
 

@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # Experimance Deployment Script
-# Usage: ./deploy.sh [project_name] [action] [mode]
+# Usage: ./deploy.sh [project_name] [action] [mode] [--hostname=<hostname>]
 # Actions: install, start, stop, restart, status, services, diagnose
 # USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test
 # Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show
 # Modes: dev, prod (only for install action)
+# Options: --hostname=<hostname> - Override hostname for multi-machine deployment
 #
 # SYSTEMD TEMPLATE SYSTEM:
 # This script uses systemd template services for multi-project support:
@@ -13,6 +14,10 @@
 # - Instance services: core@experimance.service, display@fire.service (created when started)
 # - The @ symbol makes it a template, %i gets replaced with project name
 # - Multiple projects can share the same templates with different instances
+#
+# MULTI-MACHINE DEPLOYMENT:
+# For distributed deployments, create projects/<project>/deployment.toml to specify which
+# services run on which machines. Use --hostname to override auto-detection.
 
 set -euo pipefail
 
@@ -91,21 +96,143 @@ get_chown_group() {
     fi
 }
 
+# Helper function to get deployment user from config
+get_deployment_user() {
+    local project="$1"
+    local deployment_utils_script="$SCRIPT_DIR/deployment_utils.py"
+    
+    if [[ ! -f "$deployment_utils_script" ]]; then
+        return 1
+    fi
+    
+    # Try to get user from deployment config
+    local deployment_user=""
+    
+    # Change to repo directory for uv to work properly
+    cd "$REPO_DIR" || return 1
+    
+    # Try uv first (preferred), then fallback to python3
+    if command -v uv >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            deployment_user=$(uv run python "$deployment_utils_script" "$project" user "$HOSTNAME_OVERRIDE" 2>/dev/null || echo "")
+        else
+            deployment_user=$(uv run python "$deployment_utils_script" "$project" user 2>/dev/null || echo "")
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            deployment_user=$(python3 "$deployment_utils_script" "$project" user "$HOSTNAME_OVERRIDE" 2>/dev/null || echo "")
+        else
+            deployment_user=$(python3 "$deployment_utils_script" "$project" user 2>/dev/null || echo "")
+        fi
+    fi
+    
+    if [[ -n "$deployment_user" ]]; then
+        echo "$deployment_user"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Helper function to get service module name from deployment config
+get_service_module_name() {
+    local project="$1"
+    local service="$2"
+    local deployment_utils_script="$SCRIPT_DIR/deployment_utils.py"
+    
+    # Extract service name without @project suffix
+    local service_name="${service%@*}"
+    
+    if [[ ! -f "$deployment_utils_script" ]]; then
+        # Fall back to default naming
+        if [[ "$service_name" == "core" || "$service_name" == "agent" ]]; then
+            echo "${project}_${service_name}"
+        else
+            echo "experimance_${service_name}"
+        fi
+        return 0
+    fi
+    
+    # Try to get module name from deployment config
+    local module_name=""
+    
+    # Change to repo directory for uv to work properly
+    cd "$REPO_DIR" || return 1
+    
+    # Try uv first (preferred), then fallback to python3
+    if command -v uv >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            module_name=$(uv run python "$deployment_utils_script" "$project" services-with-modules "$HOSTNAME_OVERRIDE" 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        else
+            module_name=$(uv run python "$deployment_utils_script" "$project" services-with-modules 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            module_name=$(python3 "$deployment_utils_script" "$project" services-with-modules "$HOSTNAME_OVERRIDE" 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        else
+            module_name=$(python3 "$deployment_utils_script" "$project" services-with-modules 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        fi
+    fi
+    
+    if [[ -n "$module_name" ]]; then
+        echo "$module_name"
+        return 0
+    else
+        # Fall back to default naming
+        if [[ "$service_name" == "core" || "$service_name" == "agent" ]]; then
+            echo "${project}_${service_name}"
+        else
+            echo "experimance_${service_name}"
+        fi
+        return 0
+    fi
+}
+
 # Default values
 PROJECT="${1:-experimance}"
 ACTION="${2:-install}"
 MODE="${3:-}"
 
+# Parse hostname override from remaining arguments
+HOSTNAME_OVERRIDE=""
+for arg in "${@:4}"; do
+    case $arg in
+        --hostname=*)
+            HOSTNAME_OVERRIDE="${arg#*=}"
+            shift
+            ;;
+        *)
+            # Unknown option
+            ;;
+    esac
+done
+
 # Auto-detect mode if not specified for install action
 if [[ "$ACTION" == "install" && -z "$MODE" ]]; then
-    if [[ "${EXPERIMANCE_ENV:-}" == "development" ]]; then
-        MODE="dev"
-    elif id experimance &>/dev/null; then
-        MODE="prod" 
-        warn "Auto-detected production mode. Use 'dev' mode explicitly for development: $0 $PROJECT install dev"
-    else
-        MODE="dev"
-        warn "No experimance user found, defaulting to development mode"
+    # Try deployment config first
+    deployment_script="$SCRIPT_DIR/deployment_utils.py"
+    if [[ -f "$deployment_script" ]]; then
+        # Try to get mode from deployment config
+        if command -v python3 >/dev/null 2>&1; then
+            config_mode=$(python3 "$deployment_script" "$PROJECT" mode "$HOSTNAME_OVERRIDE" 2>/dev/null || echo "")
+            if [[ -n "$config_mode" ]]; then
+                MODE="$config_mode"
+                log "Auto-detected mode from deployment config: $MODE"
+            fi
+        fi
+    fi
+    
+    # Fall back to original logic if no mode from config
+    if [[ -z "$MODE" ]]; then
+        if [[ "${EXPERIMANCE_ENV:-}" == "development" ]]; then
+            MODE="dev"
+        elif id experimance &>/dev/null; then
+            MODE="prod" 
+            warn "Auto-detected production mode. Use 'dev' mode explicitly for development: $0 $PROJECT install dev"
+        else
+            MODE="dev"
+            warn "No experimance user found, defaulting to development mode"
+        fi
     fi
 fi
 
@@ -116,8 +243,15 @@ if [[ "$MODE" == "dev" ]]; then
     USE_SYSTEMD=false
     warn "Running in DEVELOPMENT mode with user: $RUNTIME_USER"
 elif [[ "$MODE" == "prod" ]]; then
-    # Production mode: use experimance user, system directories, systemd
-    RUNTIME_USER="experimance"
+    # Production mode: try deployment config first, fall back to experimance
+    DEPLOYMENT_USER=$(get_deployment_user "$PROJECT" 2>/dev/null || echo "")
+    if [[ -n "$DEPLOYMENT_USER" ]]; then
+        RUNTIME_USER="$DEPLOYMENT_USER"
+        log "Using deployment config user: $RUNTIME_USER"
+    else
+        RUNTIME_USER="experimance"
+        log "No deployment config user found, using default: $RUNTIME_USER"
+    fi
     USE_SYSTEMD=true
     log "Running in PRODUCTION mode with user: $RUNTIME_USER"
 else
@@ -127,20 +261,37 @@ else
         RUNTIME_USER="$(whoami)"
         USE_SYSTEMD=false
         warn "Running in development mode with user: $RUNTIME_USER"
-    elif id experimance &>/dev/null; then
-        MODE="prod"
-        RUNTIME_USER="experimance"
-        USE_SYSTEMD=true
-        log "Auto-detected production mode with experimance user"
     else
-        error "Cannot determine runtime mode. For install, specify 'dev' or 'prod' mode. For other actions, ensure experimance user exists or set EXPERIMANCE_ENV=development"
+        # Try deployment config for production mode detection
+        DEPLOYMENT_USER=$(get_deployment_user "$PROJECT" 2>/dev/null || echo "")
+        if [[ -n "$DEPLOYMENT_USER" ]] && id "$DEPLOYMENT_USER" &>/dev/null; then
+            MODE="prod"
+            RUNTIME_USER="$DEPLOYMENT_USER"
+            USE_SYSTEMD=true
+            log "Auto-detected production mode with deployment config user: $RUNTIME_USER"
+        elif id experimance &>/dev/null; then
+            MODE="prod"
+            RUNTIME_USER="experimance"
+            USE_SYSTEMD=true
+            log "Auto-detected production mode with experimance user"
+        else
+            error "Cannot determine runtime mode. For install, specify 'dev' or 'prod' mode. For other actions, ensure user exists or set EXPERIMANCE_ENV=development"
+        fi
     fi
 fi
 
 # Get services dynamically for the project
 get_project_services() {
     local project="$1"
-    local services_script="$SCRIPT_DIR/get_project_services.py"
+    local deployment_script="$SCRIPT_DIR/get_deployment_services.py"
+    local fallback_script="$SCRIPT_DIR/get_project_services.py"
+    
+    # Try deployment-aware script first (supports multi-machine)
+    local services_script="$deployment_script"
+    if [[ ! -f "$services_script" ]]; then
+        log "Deployment services script not found, using fallback: $fallback_script"
+        services_script="$fallback_script"
+    fi
     
     if [[ ! -f "$services_script" ]]; then
         error "Service detection script not found: $services_script"
@@ -174,7 +325,7 @@ get_project_services() {
             
             # Use uv run to execute the Python script in the proper environment
             cd '$REPO_DIR'
-            if ! \"\$uv_cmd\" run python '$services_script' '$project'; then
+            if ! \"\$uv_cmd\" run python '$services_script' '$project' '$HOSTNAME_OVERRIDE'; then
                 echo 'ERROR: Failed to detect services for project $project' >&2
                 exit 1
             fi
@@ -201,7 +352,7 @@ get_project_services() {
         
         # Use uv run to execute the Python script in the proper environment
         cd "$REPO_DIR"
-        if ! "$uv_cmd" run python "$services_script" "$project"; then
+        if ! "$uv_cmd" run python "$services_script" "$project" "$HOSTNAME_OVERRIDE"; then
             error "Failed to detect services for project '$project'. Check that the project exists and is properly configured."
         fi
     fi
@@ -533,8 +684,14 @@ install_launchd_files_macos() {
 create_launchd_plist() {
     local service="$1"
     local launchd_dir="$2"
-    local service_type="${service%@*}"
+    local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+    local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+    local service_type="$service_with_project"  # e.g., "agent"
     local plist_file="$launchd_dir/com.experimance.$service.plist"
+    
+    # Get the correct module name from deployment config
+    local module_name
+    module_name=$(get_service_module_name "$project" "$service")
     
     # Determine the correct paths based on platform
     local uv_path="/opt/homebrew/bin/uv"
@@ -560,7 +717,7 @@ create_launchd_plist() {
         <string>$uv_path</string>
         <string>run</string>
         <string>-m</string>
-        <string>experimance_$service_type</string>
+        <string>$module_name</string>
     </array>
     
     <key>WorkingDirectory</key>

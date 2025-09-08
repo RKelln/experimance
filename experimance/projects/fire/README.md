@@ -4,18 +4,19 @@
 
 *Feed the Fires* is an immersive 360‑projection artwork in which audience stories are transformed, in real‑time, into dream‑like panoramas that wrap an entire rectangular room.
 
-The codebase extends the *Experimance* architecture.  Four micro‑services cooperate via a ZeroMQ event bus:
+The codebase extends the *Experimance* architecture. Four micro‑services cooperate via a ZeroMQ event bus, distributed across two machines:
 
-| Service            | Role                                                 | Key Messages                    |
-| ------------------ | ---------------------------------------------------- | ------------------------------- |
-| **`fire_core`**    | Builds prompts, orchestrates rendering, routes media | `RenderRequest`, `DisplayMedia` |
-| **`image_server`** | Generates images (fast pass + 6 tiles)               | `ImageReady`                    |
-| **`display`**      | Assembles & renders panorama, shader squashes × 6    | —                               |
-| **`agent`**        | Collect audience stories                             | `StoryHeard` ➜ Core             |
+| Service            | Machine | Role                                                 | Key Messages                    |
+| ------------------ | ------- | ---------------------------------------------------- | ------------------------------- |
+| **`fire_core`**    | Ubuntu  | Builds prompts, orchestrates rendering, routes media | `RenderRequest`, `DisplayMedia` |
+| **`image_server`** | Ubuntu  | Generates images (fast pass + 6 tiles)               | `ImageReady`, `AudioReady`      |
+| **`display`**      | Ubuntu  | Assembles & renders panorama, shader squashes × 6    | Receives `DisplayMedia`         |
+| **`fire_agent`**   | macOS   | Collect audience stories                             | `TranscriptUpdate` ➜ Core       |
+| **`health`**       | Both    | Health monitoring and notifications                  | —                               |
 
 ```mermaid
 graph TD
-    A[StoryHeard] --> B(Core)
+    A[TranscriptUpdate] --> B(Core)
     B -->|fast pass| C(RenderRequest strip)
     C --> D(ImageServer)
     D -->|ImageReady strip| E(Display)
@@ -37,6 +38,7 @@ graph TD
 
 ## Quick start
 
+### Development (Single Machine)
 ```bash
 # Set project to fire
 scripts/project fire
@@ -46,6 +48,35 @@ uv run -m fire_core
 uv run -m image_server
 uv run -m experimance_display
 uv run -m fire_agent
+```
+
+### Production (Multi-Machine Deployment)
+
+**On Ubuntu machine (fire-ubuntu.local):**
+```bash
+# Deploy and start Ubuntu services
+sudo ./infra/scripts/deploy.sh fire install prod
+sudo ./infra/scripts/deploy.sh fire start
+
+# Verify services
+sudo systemctl status "*@fire"
+```
+
+**On macOS machine (fire-macos.local):**
+```bash
+# Deploy and start macOS services  
+sudo ./infra/scripts/deploy.sh fire install prod
+sudo ./infra/scripts/deploy.sh fire start
+
+# Verify services
+sudo launchctl list | grep fire
+```
+
+**Test deployment configuration:**
+```bash
+# See what services run on each machine
+uv run python infra/scripts/get_deployment_services.py fire fire-ubuntu.local
+uv run python infra/scripts/get_deployment_services.py fire fire-macos.local
 ```
 
 
