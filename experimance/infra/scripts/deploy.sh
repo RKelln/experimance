@@ -652,11 +652,6 @@ install_systemd_files_linux() {
 
 # macOS launchd installation
 install_launchd_files_macos() {
-    if [[ "$USE_SYSTEMD" != true ]]; then
-        log "Skipping launchd installation in development mode"
-        return
-    fi
-    
     log "Installing launchd service files for macOS..."
     
     # Create launchd directory
@@ -664,6 +659,7 @@ install_launchd_files_macos() {
     if [[ "$MODE" == "prod" ]]; then
         launchd_dir="/Library/LaunchDaemons"
     else
+        # Development mode uses LaunchAgents
         launchd_dir="$HOME/Library/LaunchAgents"
     fi
     
@@ -678,10 +674,29 @@ install_launchd_files_macos() {
     done
     
     log "launchd service files installed: $files_created services"
+    
+    # Show Full Disk Access instructions for LaunchAgents
+    if [[ "$MODE" != "prod" ]]; then
+        show_macos_full_disk_access_instructions
+    fi
+    
     log "Note: Use './deploy.sh $PROJECT start' to load and start services"
 }
 
 create_launchd_plist() {
+    local service="$1"
+    local launchd_dir="$2"
+    
+    # Check if we should create LaunchAgent vs LaunchDaemon
+    if [[ "$MODE" == "prod" ]]; then
+        create_launchd_daemon "$service" "$launchd_dir"
+    else
+        create_launchd_agent "$service" "$launchd_dir"
+    fi
+}
+
+# Create LaunchDaemon plist (for production mode)
+create_launchd_daemon() {
     local service="$1"
     local launchd_dir="$2"
     local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
@@ -749,17 +764,130 @@ create_launchd_plist() {
 </plist>
 EOF
 
-    # Set proper ownership and permissions
-    if [[ "$MODE" == "prod" ]]; then
-        chown root:wheel "$plist_file"
-        chmod 644 "$plist_file"
-    else
-        chown "$RUNTIME_USER:staff" "$plist_file"
-        chmod 644 "$plist_file"
-    fi
+    # Set proper ownership and permissions for LaunchDaemon
+    chown root:wheel "$plist_file"
+    chmod 644 "$plist_file"
     
-    log "✓ Created launchd service: $plist_file"
+    log "✓ Created LaunchDaemon service: $plist_file"
     return 0
+}
+
+# Create LaunchAgent plist (for development mode)
+create_launchd_agent() {
+    local service="$1"
+    local launchd_dir="$2"
+    local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+    local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+    local service_type="$service_with_project"  # e.g., "agent"
+    local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+    
+    # Get the correct module name from deployment config
+    local module_name
+    module_name=$(get_service_module_name "$project" "$service")
+    
+    # Create wrapper script to avoid macOS TCC permission issues
+    local wrapper_script="$REPO_DIR/infra/launchd/launch_${project}_${service_type}.sh"
+    
+    # Create the wrapper script
+    cat > "$wrapper_script" << EOF
+#!/bin/bash
+
+# $project $service_type Launch Script for LaunchAgent
+# This wrapper script resolves macOS TCC permission issues with Python execution
+
+# Set environment variables
+export PROJECT_ENV=$project
+# Note: Not setting EXPERIMANCE_ENV=production to keep development logging mode
+
+# Change to project directory
+cd $REPO_DIR
+
+# Launch the $service_type using uv
+exec $HOME/.local/bin/uv run -m $module_name
+EOF
+    
+    # Make wrapper script executable
+    chmod +x "$wrapper_script"
+    
+    cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.experimance.${service_type}.$project</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>$wrapper_script</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>$REPO_DIR</string>
+    
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>StandardErrorPath</key>
+    <string>$REPO_DIR/logs/${project}_${service_type}_launchd_error.log</string>
+    
+    <key>StandardOutPath</key>
+    <string>$REPO_DIR/logs/${project}_${service_type}_launchd.log</string>
+    
+    <!-- LaunchAgent version - no UserName needed, runs as logged-in user -->
+    
+    <!-- Restart on failure after 10 seconds -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    
+    <!-- Start after a delay to ensure system is ready -->
+    <key>StartInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>
+EOF
+
+    # Set proper ownership and permissions for LaunchAgent
+    chmod 644 "$plist_file"
+    
+    log "✓ Created LaunchAgent service: $plist_file"
+    log "✓ Created wrapper script: $wrapper_script"
+    return 0
+}
+
+# Show Full Disk Access instructions for macOS LaunchAgents
+show_macos_full_disk_access_instructions() {
+    echo ""
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║                        macOS FULL DISK ACCESS REQUIRED                        ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${YELLOW}LaunchAgents require Full Disk Access to execute wrapper scripts.${NC}"
+    echo ""
+    echo -e "${BLUE}Manual steps required:${NC}"
+    echo -e "${GREEN}1.${NC} Open System Settings → Privacy & Security → Full Disk Access"
+    echo -e "${GREEN}2.${NC} Click the + button to add applications"
+    echo -e "${GREEN}3.${NC} Navigate to and add these wrapper scripts:"
+    
+    # List all wrapper scripts created
+    for wrapper_script in "$REPO_DIR"/infra/launchd/launch_*.sh; do
+        if [[ -f "$wrapper_script" ]]; then
+            echo "   - $wrapper_script"
+        fi
+    done
+    
+    echo -e "${GREEN}4.${NC} Toggle the switches to grant Full Disk Access"
+    echo -e "${GREEN}5.${NC} After granting access, run: ${BLUE}./deploy.sh $PROJECT start${NC}"
+    echo ""
+    echo -e "${YELLOW}Note: This is only required once per wrapper script.${NC}"
+    echo -e "${YELLOW}Without Full Disk Access, LaunchAgents will fail with 'Operation not permitted'.${NC}"
+    echo ""
 }
 
 # Download file from Google Drive using uvx gdown
@@ -1282,9 +1410,9 @@ install_dependencies() {
     fi
     
     if [[ "$MODE" == "prod" ]]; then
-        # Production mode: install uv and dependencies as the experimance user
-        log "Installing uv and Python 3.11 for experimance user..."
-        sudo -u experimance bash -c "
+        # Production mode: install uv and dependencies as the runtime user
+        log "Installing uv and Python 3.11 for $RUNTIME_USER user..."
+        sudo -u "$RUNTIME_USER" bash -c "
             # Install pyenv if not already installed
             if ! command -v pyenv >/dev/null 2>&1; then
                 # Check if pyenv directory exists but not in PATH
@@ -1727,8 +1855,15 @@ start_services_macos() {
     
     # Start individual services
     for service in "${SERVICES[@]}"; do
-        local plist_file="$launchd_dir/com.experimance.$service.plist"
-        local service_label="com.experimance.$service"
+        local service_label plist_file
+        
+        if [[ "$MODE" == "prod" ]]; then
+            plist_file="$launchd_dir/com.experimance.$service.plist"
+            service_label="com.experimance.$service"
+        else
+            plist_file="$launchd_dir/com.experimance.$service.agent.plist"
+            service_label="com.experimance.$service.agent"
+        fi
         
         if [[ -f "$plist_file" ]]; then
             log "Processing service: $service_label"
@@ -1868,8 +2003,15 @@ stop_services_macos() {
     
     # Stop individual services
     for service in "${SERVICES[@]}"; do
-        local plist_file="$launchd_dir/com.experimance.$service.plist"
-        local service_label="com.experimance.$service"
+        local service_label plist_file
+        
+        if [[ "$MODE" == "prod" ]]; then
+            plist_file="$launchd_dir/com.experimance.$service.plist"
+            service_label="com.experimance.$service"
+        else
+            plist_file="$launchd_dir/com.experimance.$service.agent.plist"
+            service_label="com.experimance.$service.agent"
+        fi
         
         if [[ -f "$plist_file" ]]; then
             log "Processing service: $service_label"

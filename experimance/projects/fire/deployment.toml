@@ -16,7 +16,7 @@ primary_host = "fire-linux.local"  # Update with actual hostname/IP
 primary_ip = "192.168.1.100"       # Update with actual IP
 
 # Secondary machine (macOS) - where agent runs  
-secondary_host = "fire-macos.local" # Update with actual hostname/IP
+secondary_host = "FireProjects-Mac-mini.local" # Update with actual hostname/IP
 secondary_ip = "192.168.1.101"      # Update with actual IP
 
 # ZMQ port overrides for distributed deployment
@@ -38,11 +38,11 @@ user = "experimance"  # System user for this machine
 
 # macOS machine  
 [machines.macos]
-hostname = "fire-macos.local"  # Must match actual hostname or be overrideable
+hostname = "FireProjects-Mac-mini.local"  # Must match actual hostname or be overrideable
 services = ["agent", "health"]
 platform = "macos"
 mode = "prod"  # or "dev"
-user = "FireProject"  # System user for this machine
+user = "fireproject"  # System user for this machine
 
 # Optional: Define service-specific overrides
 [services]
