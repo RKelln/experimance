@@ -17,6 +17,7 @@ start_blur = 30.0
 end_blur = 0.0
 blur_duration = 20
 mirror = true
+disappear_duration = 255.0  # Duration until fade from sight (0 = disabled)
 
 [panorama.tiles]
 width = 1920  # Smaller tiles to see more of them
