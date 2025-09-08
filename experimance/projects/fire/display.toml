@@ -48,6 +48,8 @@ vignette_strength = 1.0   # Increase to maximum to make effect more visible
 turbulence_amount = 0.5  # Increase turbulence for more visible effect
 full_mask_zone = 0.05   # Small fully masked area at very edge (configurable)
 gradient_zone = 0.25    # Large gradient zone for smooth transition (configurable)
+speed = 1.3
+horizontal_compression = 6.0  # Compression factor for 6x horizontal stretching (6 projectors)
 
 [shader_effects.effects.sparks]
 enabled = true
@@ -58,3 +60,4 @@ blend_mode = "additive"  # Additive blending for perfect glow effects
 [shader_effects.effects.sparks.uniforms]
 spark_intensity = 0.5  # 0.0-1.0, intensity of spark effects
 horizontal_compression = 6.0  # Compression factor for 6x horizontal stretching (6 projectors)
+spark_density = 4.0

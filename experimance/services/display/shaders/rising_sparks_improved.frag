@@ -7,6 +7,7 @@ uniform float time;
 uniform vec2 resolution;
 uniform float spark_intensity = 0.5;
 uniform float horizontal_compression = 1.0;  // Compression factor for horizontal coordinates (6.0 for 6x projector stretch)
+uniform float spark_density = 1.0;          // Multiplier for spark generation density (0.5 = half sparks, 2.0 = double sparks)
 
 // Hash function for pseudo-random numbers
 float hash(vec2 p) {
@@ -120,13 +121,16 @@ void main() {
     // Spark accumulation
     vec3 spark_contribution = vec3(0.0);
     
-    // Variable number of sparks over time - between 20 and 45
+    // Variable number of sparks over time - controlled by spark_density uniform
     float time_variation = sin(time * 0.3) * sin(time * 0.7) * sin(time * 0.13); // Complex variation
-    int base_sparks = 32;
-    int spark_variation = int(15.0 * time_variation); // +/- 15 sparks
+    int base_sparks = int(32.0 * spark_density); // Scale base sparks by density
+    int spark_variation = int(15.0 * time_variation * spark_density); // Scale variation by density
     int num_sparks = base_sparks + spark_variation;
     
-    for (int i = 0; i < 60; i++) { // Max loop size for GPU compatibility
+    // Clamp to reasonable bounds for GPU performance
+    num_sparks = clamp(num_sparks, 0, 120); // Allow up to 120 sparks max
+    
+    for (int i = 0; i < 120; i++) { // Max loop size for GPU compatibility - increased to match max sparks
         if (i >= num_sparks) break; // Dynamic break based on current spark count
         
         // Random spark seed
@@ -186,19 +190,22 @@ void main() {
                 float thermal_boost = spark_velocity * 0.1 * sin(time * 0.3 + spark_seed * 3.0) * life_progress;
                 
                 // Combine all movements
+                // Scale horizontal movements by compression factor to account for projection stretch
+                float horizontal_scale = 1.0 / horizontal_compression;
+                
                 float total_drift_x = 
-                    gust_strength * 0.08 * life_progress +  // Wind gusts
+                    (gust_strength * 0.08 * life_progress +  // Wind gusts
                     sin(swirl_angle) * swirl_radius +        // Swirl motion
-                    swoop_x;                                 // Swooping
+                    swoop_x) * horizontal_scale;             // Scale for projection stretch
                     
                 float total_drift_y = 
                     cos(swirl_angle) * swirl_radius * 0.5 +  // Swirl motion (reduced Y)
                     swoop_y +                                // Swooping
                     thermal_boost;                           // Thermal updrafts
                 
-                // Small flutter for organic feel (scaled by velocity)
+                // Small flutter for organic feel (scaled by velocity and compression)
                 float flutter_scale = 0.5 + spark_velocity * 0.5; // Faster sparks flutter more
-                float flutter_x = sin(time * 4.0 + spark_seed * 8.0) * 0.003 * flutter_scale;
+                float flutter_x = sin(time * 4.0 + spark_seed * 8.0) * 0.003 * flutter_scale * horizontal_scale;
                 float flutter_y = cos(time * 5.0 + spark_seed * 7.0) * 0.002 * flutter_scale;
                 
                 // Final spark position

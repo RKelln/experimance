@@ -9,6 +9,8 @@ uniform float vignette_strength = 0.7;
 uniform float turbulence_amount = 0.25;
 uniform float full_mask_zone = 0.08;    // Configurable full mask area at edges
 uniform float gradient_zone = 0.25;     // Configurable gradient transition zone
+uniform float speed = 1.0;              // Global speed multiplier for all animations
+uniform float horizontal_compression = 1.0;  // Compression factor for horizontal coordinates (6.0 for 6x projector stretch)
 
 // Improved noise function
 float noise(vec2 p) {
@@ -93,16 +95,21 @@ float ridged_noise(vec2 p) {
 // Domain warping for organic distortion
 vec2 domain_warp(vec2 p, float time) {
     vec2 q = vec2(fractal_noise(p + vec2(0.0, 0.0)),
-                  fractal_noise(p + vec2(5.2, 1.3) + time * 0.05));
+                  fractal_noise(p + vec2(5.2, 1.3) + time * speed * 0.05));
     
-    vec2 r = vec2(fractal_noise(p + 4.0 * q + vec2(1.7, 9.2) + time * 0.1),
-                  fractal_noise(p + 4.0 * q + vec2(8.3, 2.8) + time * 0.08));
+    vec2 r = vec2(fractal_noise(p + 4.0 * q + vec2(1.7, 9.2) + time * speed * 0.1),
+                  fractal_noise(p + 4.0 * q + vec2(8.3, 2.8) + time * speed * 0.08));
     
     return p + r * 0.5;
 }
 
 void main() {
     vec2 uv = tex_coords;
+    
+    // Apply horizontal compression for aspect ratio correction (6x projector stretch)
+    // This compresses the horizontal dimension for distance calculations
+    vec2 compressed_uv = uv;
+    compressed_uv.x = (compressed_uv.x - 0.5) * horizontal_compression + 0.5;
     
     // This is a masking shader - start with full transparency
     // The alpha channel will define the mask
@@ -113,8 +120,9 @@ void main() {
     // float gradient_zone = 0.25;       // Large gradient zone for smooth transition (now configurable)
     
     // Calculate distances from edges (0 = at edge, 1 = at center)
-    float dist_from_top = uv.y;
-    float dist_from_bottom = 1.0 - uv.y;
+    // Use compressed UV for distance calculations to account for horizontal stretch
+    float dist_from_top = compressed_uv.y;
+    float dist_from_bottom = 1.0 - compressed_uv.y;
     
     // Create smooth, continuous edge masks
     float top_base_mask = 0.0;
@@ -148,19 +156,19 @@ void main() {
     
     // Generate flowing, steam-like turbulence with ultra-fine texture and tight swirls
     // Top flow moves UPWARD (negative Y), bottom flow moves downward - much slower, more balanced movement
-    vec2 top_flow_coord = uv * vec2(8.0, 6.0) + vec2(time * 0.05, -time * 0.2);  // Fixed: negative Y for upward flow
-    vec2 bottom_flow_coord = uv * vec2(8.0, 6.0) + vec2(time * -0.03, -time * 0.15);
+    vec2 top_flow_coord = uv * vec2(8.0, 6.0) + vec2(time * speed * 0.015, -time * speed * 0.06);  // Fixed: negative Y for upward flow
+    vec2 bottom_flow_coord = uv * vec2(8.0, 6.0) + vec2(time * speed * -0.01, -time * speed * 0.045);
     
     // Apply domain warping for organic distortion
-    vec2 warped_top = domain_warp(top_flow_coord, time * 0.2);
-    vec2 warped_bottom = domain_warp(bottom_flow_coord, time * 0.2);
+    vec2 warped_top = domain_warp(top_flow_coord, time * speed * 0.06);
+    vec2 warped_bottom = domain_warp(bottom_flow_coord, time * speed * 0.06);
     
     // Apply multiple layers of swirls - regular and tight
-    vec2 swirled_top = swirl(warped_top, 0.15 + sin(time * 0.1) * 0.05);
-    vec2 tight_swirled_top = tight_swirl(swirled_top, 0.4, 3.0 + sin(time * 0.08) * 0.5);
+    vec2 swirled_top = swirl(warped_top, 0.15 + sin(time * speed * 0.03) * 0.05);
+    vec2 tight_swirled_top = tight_swirl(swirled_top, 0.4, 3.0 + sin(time * speed * 0.025) * 0.5);
     
-    vec2 swirled_bottom = swirl(warped_bottom, 0.1 + cos(time * 0.12) * 0.05);
-    vec2 tight_swirled_bottom = tight_swirl(swirled_bottom, 0.35, 2.8 + cos(time * 0.09) * 0.4);
+    vec2 swirled_bottom = swirl(warped_bottom, 0.1 + cos(time * speed * 0.035) * 0.05);
+    vec2 tight_swirled_bottom = tight_swirl(swirled_bottom, 0.35, 2.8 + cos(time * speed * 0.028) * 0.4);
     
     // Generate ultra-detailed noise patterns with multiple techniques
     float top_steam_base = detailed_noise(tight_swirled_top);
@@ -174,24 +182,24 @@ void main() {
     float bottom_steam = mix(mix(bottom_steam_base, bottom_steam_micro, 0.4), bottom_steam_ridged, 0.3);
     
     // Add multiple layers of cross-flow turbulence with enhanced texture
-    vec2 cross_turb_coord1 = domain_warp(uv * vec2(12.0, 8.0) + vec2(time * 0.08, time * 0.04), time * 0.15);
+    vec2 cross_turb_coord1 = domain_warp(uv * vec2(12.0, 8.0) + vec2(time * speed * 0.025, time * speed * 0.012), time * speed * 0.045);
     vec2 tight_cross1 = tight_swirl(cross_turb_coord1, 0.3, 4.0);
     float cross_turbulence1 = mix(detailed_noise(tight_cross1), micro_noise(tight_cross1 * 1.2), 0.5);
     
-    vec2 cross_turb_coord2 = swirl(uv * vec2(16.0, 12.0) + vec2(time * -0.04, time * 0.08), 0.1);
+    vec2 cross_turb_coord2 = swirl(uv * vec2(16.0, 12.0) + vec2(time * speed * -0.012, time * speed * 0.025), 0.1);
     vec2 tight_cross2 = tight_swirl(cross_turb_coord2, 0.25, 3.5);
     float cross_turbulence2 = fractal_noise(tight_cross2);
     
-    vec2 cross_turb_coord3 = domain_warp(uv * vec2(20.0, 16.0) + vec2(time * 0.06, time * -0.02), time * 0.2);
+    vec2 cross_turb_coord3 = domain_warp(uv * vec2(20.0, 16.0) + vec2(time * speed * 0.018, time * speed * -0.006), time * speed * 0.06);
     vec2 tight_cross3 = tight_swirl(cross_turb_coord3, 0.2, 5.0);
     float cross_turbulence3 = ridged_noise(tight_cross3);
     
     // Add ultra-fine detail layers for maximum texture
-    vec2 detail_coord = uv * vec2(24.0, 18.0) + vec2(sin(time * 0.3) * 0.02, cos(time * 0.25) * 0.02);
+    vec2 detail_coord = uv * vec2(24.0, 18.0) + vec2(sin(time * speed * 0.09) * 0.02, cos(time * speed * 0.075) * 0.02);
     vec2 tight_detail = tight_swirl(detail_coord, 0.15, 6.0);
     float fine_detail = micro_noise(tight_detail) * 0.3;
     
-    vec2 ultra_detail_coord = uv * vec2(32.0, 24.0) + vec2(sin(time * 0.4) * 0.01, cos(time * 0.35) * 0.01);
+    vec2 ultra_detail_coord = uv * vec2(32.0, 24.0) + vec2(sin(time * speed * 0.12) * 0.01, cos(time * speed * 0.105) * 0.01);
     vec2 ultra_tight_detail = tight_swirl(ultra_detail_coord, 0.1, 8.0);
     float ultra_fine_detail = micro_noise(ultra_tight_detail) * 0.2;
     
@@ -209,8 +217,8 @@ void main() {
     float smooth_transition_zone = smoothstep(0.1, 0.4, center_distance) * (1.0 - smoothstep(0.4, 0.7, center_distance));
     
     // Generate larger-scale turbulence for transition areas
-    vec2 large_turb_coord = uv * vec2(4.0, 3.0) + vec2(time * 0.02, time * 0.03);
-    vec2 warped_large = domain_warp(large_turb_coord, time * 0.1);
+    vec2 large_turb_coord = uv * vec2(4.0, 3.0) + vec2(time * speed * 0.006, time * speed * 0.009);
+    vec2 warped_large = domain_warp(large_turb_coord, time * speed * 0.03);
     float large_turbulence = fractal_noise(warped_large) * 0.6;  // Reduced intensity
     
     // Apply smoother transition distortion to avoid visible lines
