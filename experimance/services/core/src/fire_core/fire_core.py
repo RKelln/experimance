@@ -1137,23 +1137,25 @@ class FireCoreService(BaseService):
         request_type, _timestamp = self.pending_image_requests.pop(message.request_id)
         logger.info(f"🎵 Audio ready: {request_type} for request {message.request_id}")
         
-        if not self.current_request:
-            logger.warning("Received AudioReady but no active request")
-            return
-        
         if request_type != "audio":
             logger.warning(f"Expected audio request type but got: {request_type}")
             return
         
         try:
-            # Store audio file path and mark as ready
+            # Store audio file path and mark as ready (if current request exists)
             audio_file_path = message.uri.replace("file://", "") if message.uri.startswith("file://") else message.uri
-            self.current_request.mark_audio_ready(audio_file_path)
             
-            logger.info(f"🎵 Audio file ready: {audio_file_path}")
-            logger.debug(f"🎵 Audio duration: {message.duration_s}s, loop: {message.is_loop}")
+            # Update current request if it exists (it might have been completed already)
+            if self.current_request:
+                self.current_request.mark_audio_ready(audio_file_path)
+                logger.info(f"🎵 Audio file ready: {audio_file_path}")
+                logger.debug(f"🎵 Audio duration: {message.duration_s}s, loop: {message.is_loop}")
+            else:
+                # Always play audio even if the request was completed
+                logger.info(f"🎵 Audio file ready (no active request): {audio_file_path}")
+                logger.debug(f"🎵 Audio duration: {message.duration_s}s, loop: {message.is_loop}")
             
-            # Start playing audio if AudioManager is available
+            # Start playing audio if AudioManager is available (always play audio)
             if self.audio_manager and self.config.audio.enabled:
                 try:
                     logger.info("🔊 Starting audio playback via AudioManager...")
@@ -1162,8 +1164,10 @@ class FireCoreService(BaseService):
                         volume=self.config.audio.default_volume,
                         loop=message.is_loop
                     )
-                    self.current_request.mark_audio_playing(True)
-                    logger.info(f"🎵 Audio playbook started successfully")
+                    # Mark as playing in current request if it exists
+                    if self.current_request:
+                        self.current_request.mark_audio_playing(True)
+                    logger.info(f"🎵 Audio playback started successfully")
                     
                 except Exception as e:
                     logger.error(f"Failed to start audio playback: {e}")
