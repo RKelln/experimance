@@ -3,6 +3,7 @@
 # General settings
 cache_dir = "media/images/generated"         # Directory to cache generated images
 max_cache_size_gb = 2.0      # Maximum size of image cache in GB
+audio_timeout = 120          # Audio generation timeout in seconds (longer to allow subprocess restart)
 
 # ZeroMQ configuration
 #[zmq]

@@ -82,6 +82,13 @@ class ImageServerConfig(BaseServiceConfig):
         gt=0
     )
     
+    # Audio generation timeout
+    audio_timeout: int = Field(
+        default=120,
+        description="Timeout for audio generation in seconds",
+        gt=0
+    )
+    
     # ZeroMQ configuration using new WorkerServiceConfig pattern
     zmq: WorkerServiceConfig = Field(
         default_factory=lambda: WorkerServiceConfig(

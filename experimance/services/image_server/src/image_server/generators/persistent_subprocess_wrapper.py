@@ -326,8 +326,18 @@ if __name__ == "__main__":
             import json
             json.dump(request, f)
         
-        # Wait for response
-        response = await self._wait_for_response()
+        # Wait for response with timeout handling and subprocess restart
+        try:
+            response = await self._wait_for_response()
+        except asyncio.TimeoutError as e:
+            logger.error(f"Audio generation timed out: {e}")
+            logger.info("Killing and restarting subprocess due to timeout")
+            
+            # Kill the stuck subprocess
+            await self._restart_worker_after_timeout()
+            
+            # Re-raise the original timeout error since this request failed
+            raise RuntimeError("Audio generation timed out and subprocess was restarted") from e
         
         if response.get('type') == 'error':
             raise RuntimeError(f"Worker error: {response.get('error')}")
@@ -340,6 +350,34 @@ if __name__ == "__main__":
         self._last_generation_metadata = response.get('metadata', {})
         
         return str(result)
+
+    async def _restart_worker_after_timeout(self):
+        """Kill and restart the worker subprocess after a timeout."""
+        try:
+            # Force kill the stuck subprocess
+            if self.worker_process and self.worker_process.returncode is None:
+                logger.info("Force killing stuck subprocess")
+                self.worker_process.kill()
+                try:
+                    await asyncio.wait_for(self.worker_process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    logger.warning("Process didn't die after kill signal")
+            
+            # Clean up existing state
+            if self.temp_dir and self.temp_dir.exists():
+                import shutil
+                try:
+                    shutil.rmtree(self.temp_dir)
+                except Exception as e:
+                    logger.warning(f"Could not cleanup temp directory during restart: {e}")
+            
+            # Restart the worker
+            await self.start()
+            logger.info("Successfully restarted audio generation subprocess")
+            
+        except Exception as restart_error:
+            logger.error(f"Failed to restart subprocess: {restart_error}")
+            raise RuntimeError(f"Failed to restart subprocess after timeout: {restart_error}") from restart_error
     
     def get_last_generation_metadata(self) -> dict:
         """Get metadata from the last generation."""
