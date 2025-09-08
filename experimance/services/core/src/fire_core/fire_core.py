@@ -1127,35 +1127,41 @@ class FireCoreService(BaseService):
         """
         Handle AudioReady message - process completed audio generation.
         
+        Always plays audio when AudioReady is received, even if the original request
+        has expired or been cancelled. This ensures responsive audio feedback.
+        
         Args:
             message: AudioReady message from image_server
         """
-        if not hasattr(message, 'request_id') or message.request_id not in self.pending_image_requests:
-            logger.debug(f"Ignoring AudioReady for unknown request: {getattr(message, 'request_id', 'None')}")
-            return
+        request_id = getattr(message, 'request_id', 'None')
         
-        request_type, _timestamp = self.pending_image_requests.pop(message.request_id)
-        logger.info(f"🎵 Audio ready: {request_type} for request {message.request_id}")
-        
-        if request_type != "audio":
-            logger.warning(f"Expected audio request type but got: {request_type}")
-            return
+        # Check if this was a tracked request and clean it up
+        if request_id in self.pending_image_requests:
+            request_type, _timestamp = self.pending_image_requests.pop(request_id)
+            logger.info(f"🎵 Audio ready: {request_type} for request {request_id}")
+            
+            if request_type != "audio":
+                logger.warning(f"Expected audio request type but got: {request_type}")
+                # Continue anyway - still play the audio
+        else:
+            # Audio request was expired/removed but we still want to play it
+            logger.info(f"🎵 Audio ready for expired/unknown request: {request_id} (playing anyway)")
         
         try:
             # Store audio file path and mark as ready (if current request exists)
             audio_file_path = message.uri.replace("file://", "") if message.uri.startswith("file://") else message.uri
             
-            # Update current request if it exists (it might have been completed already)
-            if self.current_request:
+            # Update current request if it exists and matches this request
+            if self.current_request and request_id.startswith(self.current_request.request_id):
                 self.current_request.mark_audio_ready(audio_file_path)
                 logger.info(f"🎵 Audio file ready: {audio_file_path}")
                 logger.debug(f"🎵 Audio duration: {message.duration_s}s, loop: {message.is_loop}")
             else:
-                # Always play audio even if the request was completed
-                logger.info(f"🎵 Audio file ready (no active request): {audio_file_path}")
+                # Always play audio even if the request was completed or doesn't match current request
+                logger.info(f"🎵 Audio file ready (no matching active request): {audio_file_path}")
                 logger.debug(f"🎵 Audio duration: {message.duration_s}s, loop: {message.is_loop}")
             
-            # Start playing audio if AudioManager is available (always play audio)
+            # Always start playing audio if AudioManager is available
             if self.audio_manager and self.config.audio.enabled:
                 try:
                     logger.info("🔊 Starting audio playback via AudioManager...")
@@ -1164,8 +1170,8 @@ class FireCoreService(BaseService):
                         volume=self.config.audio.default_volume,
                         loop=message.is_loop
                     )
-                    # Mark as playing in current request if it exists
-                    if self.current_request:
+                    # Mark as playing in current request if it exists and matches
+                    if self.current_request and request_id.startswith(self.current_request.request_id):
                         self.current_request.mark_audio_playing(True)
                     logger.info(f"🎵 Audio playback started successfully")
                     
