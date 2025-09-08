@@ -3,7 +3,7 @@ fullscreen = true
 monitor = 1
 fps_limit = 30
 vsync = true
-debug_overlay = true
+debug_overlay = false
 resolution = [3840, 1080]  # Force specific resolution for testing
 #background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
 
