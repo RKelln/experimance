@@ -58,7 +58,7 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 ```
 infra/
 ├── README.md                  # This summary
-├── systemd/                   # Service definitions (updated for standardized naming)
+├── systemd/                   # Linux service definitions (updated for standardized naming)
 │   ├── core@.service          # Core service (service_type@project format)
 │   ├── display@.service       # Display service with Wayland support
 │   ├── health@.service        # Health monitoring service
@@ -66,6 +66,10 @@ infra/
 │   ├── audio@.service         # Audio service
 │   ├── image_server@.service  # Image generation service
 │   └── experimance@.target    # Service group target
+├── launchd/                   # macOS service definitions (launchd .plist files)
+│   ├── com.experimance.agent.fire.plist  # Fire Agent service for macOS
+│   ├── com.experimance.health.fire.plist # Health monitoring service for macOS
+│   └── README.md              # macOS launchd setup and management guide
 ├── scripts/                   # Management automation
 │   ├── deploy.sh              # Main deployment script (install, start, stop, setup schedules)
 │   ├── deployment_utils.py    # Multi-machine deployment utilities ✅
