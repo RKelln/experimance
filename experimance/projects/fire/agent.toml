@@ -60,6 +60,11 @@ suppress_audio_errors = true         # Suppress ALSA/JACK error messages
 audio_device_retry_attempts = 3      # Retry attempts for device initialization
 audio_device_retry_delay = 1.0       # Delay between retries (seconds)
 
+# Timeout
+#idle_timeout_secs = 300
+#idle_timeout_re_engagement_message
+#idle_timeout_goodbye_message
+
 # Voice Activity Detection
 vad_enabled = true
 

@@ -504,8 +504,8 @@ class AgentServiceBase(BaseService):
         if reason in ["pipeline_ended", "idle_timeout"]:
             # This is a natural shutdown from the flow ending (goodbye node) or idle timeout
             # The backend will handle its own shutdown gracefully
-            if reason == "idle_timeout":
-                logger.info("Idle timeout detected, treating as natural conversation end")
+            if reason in ["idle_timeout"]:
+                logger.info(f"Idle timeout detected ({reason}), treating as natural conversation end")
             else:
                 logger.info("Natural conversation end detected, backend will handle shutdown")
                 

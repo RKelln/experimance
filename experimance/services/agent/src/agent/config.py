@@ -105,6 +105,24 @@ class PipecatBackendConfig(BaseModel):
     turn_detection_threshold: float = Field(default=0.5, description="Voice activity detection threshold for realtime mode")
     turn_detection_silence_ms: int = Field(default=800, description="Silence duration in ms before turn ends")
     
+    # Pipeline idle timeout settings
+    idle_timeout_secs: float = Field(
+        default=300.0, 
+        description="Timeout in seconds before considering the pipeline idle (matches Cartesia timeout)"
+    )
+    idle_timeout_presence_check: bool = Field(
+        default=True,
+        description="Check for audience presence before ending conversation on idle timeout"
+    )
+    idle_timeout_re_engagement_message: str = Field(
+        default="I'm still here if you'd like to continue our conversation.",
+        description="Message to send when someone is still present after idle timeout"
+    )
+    idle_timeout_goodbye_message: str = Field(
+        default="Thank you for visiting. Have a wonderful day!",
+        description="Message to send when ending conversation due to idle timeout"
+    )
+    
     # Ensemble mode settings
     ensemble: EnsembleSettings = Field(
         default_factory=lambda: EnsembleSettings(stt="assemblyai", llm="openai", tts="cartesia"),

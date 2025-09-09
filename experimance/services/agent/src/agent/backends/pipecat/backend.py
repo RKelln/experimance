@@ -29,7 +29,7 @@ from pathlib import Path
 from agent.config import AgentServiceConfig
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask
+from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from .multi_channel_transport import MultiChannelAudioTransport, MultiChannelAudioTransportParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -265,6 +265,7 @@ class PipecatEventProcessor(FrameProcessor):
         self.user_speaking = False
         self.bot_speaking = False
         self._conversation_ending = False  # Track if we're in normal conversation end sequence
+        self._idle_timeout_triggered = False  # Track if EndFrame was triggered by idle timeout
         
         # Audio output monitoring
         self._last_tts_start_time = None
@@ -328,8 +329,17 @@ class PipecatEventProcessor(FrameProcessor):
             self._conversation_ending = True
             # Mark this as a natural shutdown in the backend
             self.backend._shutdown_reason = "natural"
+            
+            # Check if this EndFrame was triggered by an idle timeout
+            if self._idle_timeout_triggered:
+                logger.info("EndFrame triggered by idle timeout")
+                reason = "idle_timeout"
+                self._idle_timeout_triggered = False  # Reset flag
+            else:
+                reason = "pipeline_ended"
+                
             await self.backend.emit_event(AgentBackendEvent.CONVERSATION_ENDED, {
-                "reason": "pipeline_ended"
+                "reason": reason
             })
             
         elif isinstance(frame, CancelFrame):
@@ -557,6 +567,86 @@ class PipecatBackend(AgentBackend):
             logger.debug("Audio health monitor cancelled")
         except Exception as e:
             logger.error(f"Audio health monitor failed: {e}")
+
+    async def _check_presence(self) -> bool:
+        """Check if someone is present using the agent service's presence detection.
+        
+        Returns:
+            True if someone is present, False otherwise
+        """
+        if not self.agent_service:
+            logger.debug("No agent service reference, assuming presence")
+            return True
+            
+        try:
+            # Check if agent service has presence detection capabilities
+            if hasattr(self.agent_service, 'current_presence'):
+                presence = self.agent_service.current_presence
+                logger.debug(f"Current presence from agent service: {presence}")
+                return bool(presence) if presence is not None else True
+            elif hasattr(self.agent_service, 'audience_detector') and self.agent_service.audience_detector:
+                # Fallback to direct audience detector check
+                presence = await self.agent_service.audience_detector.check_audience_present()
+                logger.debug(f"Presence from audience detector: {presence}")
+                return bool(presence)
+            else:
+                logger.debug("No presence detection available, assuming presence")
+                return True
+        except Exception as e:
+            logger.warning(f"Error checking presence, assuming present: {e}")
+            return True
+
+    async def _on_idle_timeout(self, task) -> None:
+        """Handle pipeline idle timeout with presence awareness.
+        
+        This handler is called when the pipeline has been idle for the configured timeout.
+        It checks if someone is still present before deciding whether to end the conversation.
+        """
+        logger.info("Pipeline idle timeout detected, checking presence...")
+        
+        try:
+            # Check if presence detection is enabled and someone is still present
+            presence_check_enabled = self.pipecat_config.idle_timeout_presence_check
+            is_present = True  # Default to present if presence checking is disabled
+            
+            if presence_check_enabled:
+                is_present = await self._check_presence()
+                logger.info(f"Presence check enabled: someone present = {is_present}")
+            else:
+                logger.info("Presence check disabled, treating as if someone is present")
+            
+            if is_present:
+                logger.info("Someone is still present, keeping conversation active despite idle timeout")
+                
+                # Send a gentle prompt to re-engage without being intrusive
+                try:
+                    await self.send_message(
+                        self.pipecat_config.idle_timeout_re_engagement_message, 
+                        speaker="system", 
+                        say_tts=True
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send re-engagement message: {e}")
+                
+                # Don't end the conversation - let it continue
+                return
+            else:
+                logger.info("No one present, ending conversation due to idle timeout")
+                
+                # Set flag so EndFrame processing knows this was an idle timeout
+                if self.event_processor:
+                    self.event_processor._idle_timeout_triggered = True
+                
+                # Use say_goodbye_and_shutdown to handle message + natural end
+                await self.say_goodbye_and_shutdown(
+                    self.pipecat_config.idle_timeout_goodbye_message
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in idle timeout handler: {e}")
+            # On error, be conservative and end the conversation naturally
+            self._shutdown_reason = "natural"
+            await self.end_conversation_naturally()
 
     def _load_flow_config(self) -> FlowConfig:
         """Load flow configuration from the specified flow file."""
@@ -1163,8 +1253,17 @@ class PipecatBackend(AgentBackend):
 
         # Create task and runner
         logger.info("Creating pipeline task...")
-        self.task = PipelineTask(self.pipeline)
-        logger.info("Pipeline task created successfully")
+        self.task = PipelineTask(
+            self.pipeline,
+            params=PipelineParams(allow_interruptions=True),
+            idle_timeout_secs=self.pipecat_config.idle_timeout_secs,
+            cancel_on_idle_timeout=False  # Don't auto-cancel, handle manually
+        )
+        
+        # Add presence-aware idle timeout handler
+        @self.task.event_handler("on_idle_timeout") 
+        async def on_idle_timeout(task):
+            await self._on_idle_timeout(task)
         
         # Check if we should use flows or direct tool calling
         if self.pipecat_config.flow_file:
@@ -1291,7 +1390,18 @@ class PipecatBackend(AgentBackend):
         
         self.pipeline = Pipeline(pipeline_components)
 
-        self.task = PipelineTask(self.pipeline)
+        self.task = PipelineTask(
+            self.pipeline,
+            params=PipelineParams(allow_interruptions=True),
+            idle_timeout_secs=self.pipecat_config.idle_timeout_secs,
+            cancel_on_idle_timeout=False  # Don't auto-cancel, handle manually
+        )
+        
+        # Add presence-aware idle timeout handler
+        @self.task.event_handler("on_idle_timeout") 
+        async def on_idle_timeout(task):
+            await self._on_idle_timeout(task)
+    
     
     def _handle_backend_event(self, event: AgentBackendEvent) -> None:
         """Handle events from the event processor."""
