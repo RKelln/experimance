@@ -1202,6 +1202,7 @@ class FireCoreService(BaseService):
             negative_prompt=panorama_prompt.negative_prompt,
             width=self.config.panorama.generated_width,
             height=self.config.panorama.generated_height,
+            clear_queue=True,  # Clear previous requests to prioritize this one
             # Add other parameters as needed
         )
         
@@ -1252,7 +1253,8 @@ class FireCoreService(BaseService):
             # Optional parameters can be added here
             # duration_s=30,  # Default duration
             # style="environmental"  # Style hint
-            metadata={'no_cache': self.config.audio.no_cache}  # Use config setting for cache behavior
+            metadata={'no_cache': self.config.audio.no_cache},  # Use config setting for cache behavior
+            clear_queue=True,  # Clear previous requests to prioritize this one
         )
         
         # Track the audio request

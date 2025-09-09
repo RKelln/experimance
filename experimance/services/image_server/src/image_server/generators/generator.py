@@ -166,9 +166,26 @@ class ImageGenerator(ABC):
         """Generate an image using the queue system for thread safety.
         
         This method queues the request and returns when generation is complete.
+        
+        Args:
+            prompt: Text description of the image to generate
+            clear_queue: If True, cancel all pending requests before adding this one
+            **kwargs: Additional generation parameters
         """
         if not self._is_running:
             await self.start()
+        
+        # Check if we should cancel all pending requests before processing this one
+        clear_queue = kwargs.pop('clear_queue', False)
+        if clear_queue:
+            # Cancel all pending requests by cancelling their futures
+            cancelled_count = 0
+            for request_id, future in list(self._pending_requests.items()):
+                if not future.done():
+                    future.cancel()
+                    cancelled_count += 1
+            if cancelled_count > 0:
+                logger.info(f"{self.__class__.__name__}: Cancelled {cancelled_count} pending requests due to clear_queue")
         
         # Create unique request ID and future for this request
         request_id = str(uuid.uuid4())
@@ -286,19 +303,15 @@ class ImageGenerator(ABC):
         # Clear the pending requests dict
         self._pending_requests.clear()
         
-        # Clear any remaining items in the queue
+        # Drain existing queue without creating a new one to avoid breaking the queue processor
         queue_size = self._generation_queue.qsize()
         cleared_queue_items = 0
         
-        # Create new queue to effectively clear all pending items
-        old_queue = self._generation_queue
-        self._generation_queue = asyncio.Queue()
-        
-        # Drain old queue and count items
+        # Drain all existing items from the queue
         try:
-            while not old_queue.empty():
-                old_queue.get_nowait()
-                old_queue.task_done()
+            while not self._generation_queue.empty():
+                self._generation_queue.get_nowait()
+                self._generation_queue.task_done()
                 cleared_queue_items += 1
         except asyncio.QueueEmpty:
             pass

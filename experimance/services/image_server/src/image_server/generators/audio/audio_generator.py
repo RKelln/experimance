@@ -293,6 +293,7 @@ class AudioGenerator(ABC):
         
         Args:
             prompt: Text description of the audio to generate
+            clear_queue: If True, cancel all pending requests before adding this one
             **kwargs: Additional generation parameters
             
         Returns:
@@ -300,6 +301,18 @@ class AudioGenerator(ABC):
         """
         if not self._is_running:
             await self.start()
+        
+        # Check if we should cancel all pending requests before processing this one
+        clear_queue = kwargs.pop('clear_queue', False)
+        if clear_queue:
+            # Cancel all pending requests by cancelling their futures
+            cancelled_count = 0
+            for request_id, future in list(self._pending_requests.items()):
+                if not future.done():
+                    future.cancel()
+                    cancelled_count += 1
+            if cancelled_count > 0:
+                logger.info(f"{self.__class__.__name__}: Cancelled {cancelled_count} pending requests due to clear_queue")
         
         # Create unique request ID and future for this request
         request_id = str(uuid.uuid4())
@@ -376,6 +389,42 @@ class AudioGenerator(ABC):
                         pass
             
             logger.debug(f"{self.__class__.__name__}: Audio generator stopped")
+
+    async def clear_pending_requests(self, error_message: str = "Request cancelled due to generator recovery"):
+        """Clear all pending requests in the queue with an error.
+        
+        This is useful when the generator needs to recover from a bad state
+        and wants to fail pending requests immediately rather than process them.
+        
+        Args:
+            error_message: Error message to set on cancelled requests
+        """
+        logger.warning(f"{self.__class__.__name__}: Clearing {len(self._pending_requests)} pending requests: {error_message}")
+        
+        # Cancel all pending futures
+        cancelled_count = 0
+        for request_id, future in list(self._pending_requests.items()):
+            if not future.done():
+                future.set_exception(RuntimeError(error_message))
+                cancelled_count += 1
+        
+        # Clear the pending requests dict
+        self._pending_requests.clear()
+        
+        # Drain existing queue without creating a new one to avoid breaking the queue processor
+        queue_size = self._generation_queue.qsize()
+        cleared_queue_items = 0
+        
+        # Drain all existing items from the queue
+        try:
+            while not self._generation_queue.empty():
+                self._generation_queue.get_nowait()
+                self._generation_queue.task_done()
+                cleared_queue_items += 1
+        except asyncio.QueueEmpty:
+            pass
+            
+        logger.info(f"{self.__class__.__name__}: Cleared {cancelled_count} pending futures and {cleared_queue_items} queued items")
 
     def _validate_prompt(self, prompt: str):
         """Validate the prompt for audio generation.

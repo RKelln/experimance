@@ -30,8 +30,9 @@ from .config import ImageServerConfig
 from .generators.factory import GeneratorManager
 
 # Audio generation imports
+# Fallback to trying common schemas (for backward compatibility)
 try:
-    from experimance_common.schemas import AudioRenderRequest, AudioReady
+    from experimance_common.schemas import AudioRenderRequest, AudioReady  # type: ignore
     AUDIO_SUPPORT = True
 except ImportError:
     AUDIO_SUPPORT = False
@@ -340,6 +341,7 @@ class ImageServerService(BaseService):
                 strength=getattr(request, 'strength', None),
                 width=request.get('width', None),
                 height=request.get('height', None),
+                clear_queue=getattr(request, 'clear_queue', False),  # Pass clear_queue to generator
             )
             logger.debug(f"Generated image path: {image_path}")
 
@@ -421,7 +423,8 @@ class ImageServerService(BaseService):
                 strategy=generator_strategy,
                 seed=getattr(request, 'seed', None),
                 style=getattr(request, 'style', None),
-                metadata=getattr(request, 'metadata', None)
+                metadata=getattr(request, 'metadata', None),
+                clear_queue=getattr(request, 'clear_queue', False),  # Pass clear_queue to generator
             )
             logger.debug(f"Generated audio path: {audio_path}")
 

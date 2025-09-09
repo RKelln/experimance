@@ -267,6 +267,7 @@ class RenderRequest(MessageBase):
     seed: Optional[int] = None
     reference_image: Optional[ImageSource] = None  # Optional reference image to guide generation
     depth_map: Optional[ImageSource] = None  # Optional depth map URI for depth-aware generation
+    clear_queue: bool = False  # Whether to clear the render queue before processing this request
 
 
 class PresenceStatus(MessageBase):

@@ -119,6 +119,7 @@ class AudioRenderRequest(MessageBase):
     style: Optional[str] = None  # Optional style hint for generation
     seed: Optional[int] = None  # Optional seed for deterministic generation
     metadata: Optional[Dict[str, Any]] = None  # Additional metadata
+    clear_queue: bool = False  # Whether to clear the render queue before processing this request (TODO)
 
 
 class AudioReady(MessageBase):
