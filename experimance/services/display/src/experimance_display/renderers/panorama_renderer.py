@@ -940,20 +940,19 @@ class PanoramaRenderer(LayerRenderer):
         
         # Create original tile - use message fade_in for custom duration or config default
         # Always create debug rectangle, but control its visibility
-        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
-        debug_rect = PanoramaTile.create_debug_outline_from_dimensions(
-            tile_x_adjusted, tile_y_adjusted, 
-            target_tile_width, target_tile_height,
-            self.batch, self.capture,  # Use same group as tile but higher z-order
-            color=colors[len(self.tile_order) % len(colors)]  # Cycle through colors
-        )
+        # colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
+        # debug_rect = PanoramaTile.create_debug_outline_from_dimensions(
+        #     tile_x_adjusted, tile_y_adjusted, 
+        #     target_tile_width, target_tile_height,
+        #     self.batch, self.capture,  # Use same group as tile but higher z-order
+        #     color=colors[len(self.tile_order) % len(colors)]  # Cycle through colors
+        # )
+        debug_rect = None
         if debug_rect:
             # Set initial opacity based on debug_tiles flag (opacity 0 = invisible, >0 = visible)
             debug_rect.opacity = 128 if self.debug_tiles else 0
             logger.debug(f"Created debug rect for new tile {tile_id}: {debug_rect.width}x{debug_rect.height} at ({debug_rect.x}, {debug_rect.y}), target_size={target_tile_width}x{target_tile_height}, opacity={debug_rect.opacity}")
-        else:
-            logger.warning(f"Failed to create debug rect for new tile {tile_id}")
-            
+
         if fade_in_duration is not None and fade_in_duration > 0:
             # Use custom fade duration from message
             tile = PanoramaTile(sprite, (tile_x, tile_y), tile_id, 
