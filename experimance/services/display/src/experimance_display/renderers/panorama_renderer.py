@@ -58,7 +58,7 @@ out vec4 frag;
 uniform sampler2D scene_texture;
 uniform float     blur_sigma;     // in **framebuffer** pixels
 uniform int       enable_mirror;  // use int (!) for pyglet
-uniform float     panorama_opacity;  // Global panorama fade (0.0 = transparent, 1.0 = opaque)
+uniform float     panorama_visibility;  // Global panorama visibility (1.0 = full color, 0.0 = black)
 
 vec4 fast_blur(vec2 tc) {
     if (blur_sigma < 0.5)               // ~no-blur fast-path
@@ -95,8 +95,9 @@ void main() {
 
     vec4 blurred = fast_blur(tc);
     
-    // Apply global panorama opacity fade
-    frag = vec4(blurred.rgb, blurred.a * panorama_opacity);
+    // Apply global panorama fade by darkening colors (instead of alpha)
+    // panorama_visibility: 1.0 = full color, 0.0 = black
+    frag = vec4(blurred.rgb * panorama_visibility, blurred.a);
 }
 """
 
@@ -108,7 +109,7 @@ out vec4 frag;
 uniform sampler2D scene_texture;
 uniform float blur_sigma;
 uniform int enable_mirror;
-uniform float panorama_opacity;  // Global panorama fade (0.0 = transparent, 1.0 = opaque)
+uniform float panorama_visibility;  // Global panorama visibility (1.0 = full color, 0.0 = black)
 
 void main()
 {
@@ -143,11 +144,14 @@ void main()
         color = vec4(result / float(samples), 1.0);
     }
     
-    // Apply global panorama opacity fade
-    frag = vec4(color.rgb, color.a * panorama_opacity);
+    // Apply global panorama visibility by darkening colors (instead of alpha)
+    // panorama_visibility: 1.0 = full color, 0.0 = black
+    frag = vec4(color.rgb * panorama_visibility, color.a);
 }
 """
 
+# the max blur for a current blur -> HUMP % of start blur -> 0 transition
+HUMP_BLUR_PERCENTAGE = 0.5  # 0.5 = 50% of start_blur, can be adjusted
 
 class _CaptureGroup(pyglet.graphics.Group):
     """Child group that captures sprites to framebuffer."""
@@ -243,8 +247,8 @@ class _DisplayGroup(pyglet.graphics.Group):
                 # Set mirroring uniforms
                 renderer.blur_shader_program['enable_mirror'] = int(renderer.panorama_config.mirror)
                 
-                # Set panorama-wide opacity for fade effect
-                renderer.blur_shader_program['panorama_opacity'] = float(renderer.panorama_opacity)
+                # Set panorama-wide visibility for fade effect
+                renderer.blur_shader_program['panorama_visibility'] = float(renderer.panorama_visibility)
                 
                 # Draw fullscreen quad - shader handles mirroring + scaling
                 renderer.blur_quad.draw(gl.GL_TRIANGLE_STRIP)
@@ -446,7 +450,14 @@ class PanoramaRenderer(LayerRenderer):
 
         # Base image blur transition
         self.blur_timer = 0.0
+        self.blur_delay_timer = 0.0  # Timer for delaying blur start during crossfade
         self.blur_active = False  # Only start when base image is received
+        self.blur_easing_mode = "decrease"  # "decrease" for black->image, "hump" for image->image
+        self.blur_velocity = 1.0  # Current velocity multiplier
+        self.blur_target_velocity = 1.0  # Target velocity for smooth acceleration
+        self.blur_velocity_ramp_speed = 3.0  # How fast velocity changes (per second)
+        self.previous_blur_sigma = 0.0  # For jump detection
+        self.previous_blur_sigma = 0.0  # Track previous frame's blur for jump detection
         self.current_blur = self.panorama_config.start_blur
         self.current_blur_sigma = self.panorama_config.start_blur
         
@@ -467,11 +478,17 @@ class PanoramaRenderer(LayerRenderer):
         self._opacity = 1.0
         
         # Panorama-wide fade system
-        self.panorama_opacity = 1.0  # Global opacity for entire panorama (0.0 = transparent, 1.0 = opaque)
-        self.panorama_fade_timer = 0.0
-        self.panorama_fade_duration = self.panorama_config.disappear_duration
-        self.panorama_is_fading = False
+        self.panorama_visibility = 1.0  # Global visibility for entire panorama (0.0 = all black, 1.0 = full brightness)
+        self.panorama_disappear_timer = 0.0
+        self.panorama_disappear_duration = self.panorama_config.disappear_duration
+        self.panorama_is_disappearing = False
         
+        # Panorama reappear system (for new images after panorama has faded)
+        self.panorama_is_reappearing = False
+        self.panorama_reappear_timer = 0.0
+        self.panorama_reappear_duration = 0.0
+        self.panorama_start_visibility = 1.0  # Starting visibility for reappear fade
+
         # Debug settings
         self.debug_tiles = False  # Flag to enable/disable tile debug outlines visibility
         self.hide_tiles_for_debug = False  # Flag to temporarily hide tiles (shows only base image)
@@ -750,8 +767,14 @@ class PanoramaRenderer(LayerRenderer):
         if self.panorama_config.mirror:
             logger.info("Shader-based mirroring enabled")
         
-        # Start blur transition for the new base image (independent of fade)
-        self._start_blur_transition()
+        # Start blur transition for the new base image (easing will be determined automatically)
+        # Check if this is a clear/black image operation
+        is_clear_operation = bool(request_id and ("clear" in request_id.lower() or request_id.startswith("clear")))
+        self._start_blur_transition(is_clear_operation=is_clear_operation)
+        
+        # If panorama has faded to black and this isn't a clear operation, start reappear fade
+        if not is_clear_operation and self.panorama_visibility < 1.0 and fade_duration > 0:
+            self._start_panorama_reappear(fade_duration)
     
     def _create_black_base_image(self, fade_duration: float, request_id: str) -> None:
         """Create a black base image using the existing crossfade system for clearing."""
@@ -782,6 +805,36 @@ class PanoramaRenderer(LayerRenderer):
         self.base_image_id = request_id
         
         logger.info(f"Black base image created: {black_image.width}x{black_image.height} with {fade_duration}s fade-in (using singleton)")
+    
+    def _clear_panorama(self) -> None:
+        """Clear panorama after fade completes so next image gets 'decrease' blur pattern."""
+        # Log what we're about to clean up
+        logger.info(f"Clear panorama: {len(self.base_sprites)} base sprites, {len(self.tiles)} tiles")
+
+        # Clean up all base sprites
+        for image_id, base_data in list(self.base_sprites.items()):
+            sprite = base_data['sprite']
+            if sprite:
+                sprite.delete()
+            del self.base_sprites[image_id]
+            logger.debug(f"Cleared base sprite: {image_id}")
+        
+        # Clear all tiles
+        for tile_id, tile in list(self.tiles.items()):
+            tile.cleanup()
+            del self.tiles[tile_id]
+            logger.debug(f"Cleared tile: {tile_id}")
+        
+        # Clear tile order tracking
+        if hasattr(self, 'tile_order'):
+            self.tile_order.clear()
+        
+        # Reset references
+        self.base_image = None
+        self.base_image_id = None
+        
+        # Reset panorama state so it's ready for next panorama
+        self.panorama_visibility = 1.0
     
     def _handle_tile(self, image: pyglet.image.AbstractImage, request_id: str, 
                     position: Tuple[int, int] | str, message: Dict[str, Any]) -> None:
@@ -934,8 +987,12 @@ class PanoramaRenderer(LayerRenderer):
             else:
                 logger.info(f"Blur transition not active, no acceleration needed")
     
-    def _start_blur_transition(self) -> None:
-        """Start the blur transition for the base image."""
+    def _start_blur_transition(self, is_clear_operation: bool = False) -> None:
+        """Start the blur transition for the base image.
+        
+        Args:
+            is_clear_operation: True if this is a clear/black image operation that should ramp to max blur
+        """
         if not self.blur_enabled:
             return
         
@@ -944,47 +1001,99 @@ class PanoramaRenderer(LayerRenderer):
         
         if not effective_blur_duration:
             return
-            
+        
+        # CRITICAL FIX: Always start from current visual state to prevent jumps
+        current_visual_blur = getattr(self, 'current_blur_sigma', 0.0)
+        
         self.blur_timer = 0.0
         self.blur_active = True
-        self.current_blur = self.panorama_config.start_blur
-        self.current_blur_sigma = self.panorama_config.start_blur
+        self.blur_velocity = 1.0  # Reset to normal speed
+        self.blur_target_velocity = 1.0  # Reset target speed
         
-        # Store the effective duration for use in update()
+        # Determine blur pattern based on transition context
+        # Special case: Clear operations should always ramp TO maximum blur (fade to black through blur)
+        if is_clear_operation:
+            self.blur_easing_mode = "increase"  # current → max for fade-to-black effect
+            self.current_blur = current_visual_blur
+            self.current_blur_sigma = current_visual_blur
+            pattern_desc = f"increasing ({current_visual_blur:.1f} → {self.panorama_config.start_blur}) for clear"
+        # If we have no existing content (base_sprites empty), this is black->image
+        # If we have existing content, this is image->image crossfade
+        elif len(self.base_sprites) <= 1:  # No existing content or just the new one
+            self.blur_easing_mode = "decrease"  # max → 0 for black->image
+            # Start from max blur and go to end blur (usually 0)
+            # BUT: If we already have some blur active, start from current to avoid jump
+            if current_visual_blur > 0:
+                self.current_blur = current_visual_blur
+                self.current_blur_sigma = current_visual_blur
+                logger.debug(f"Continuing from existing blur {current_visual_blur:.1f} instead of jumping to {self.panorama_config.start_blur}")
+            else:
+                self.current_blur = self.panorama_config.start_blur  # Should be max (e.g., 20)
+                self.current_blur_sigma = self.panorama_config.start_blur
+            pattern_desc = f"decreasing ({self.current_blur:.1f} → {self.panorama_config.end_blur})"
+        else:
+            self.blur_easing_mode = "hump"  # current → max → 0 for image->image crossfade
+            # ALWAYS start from current visual blur value to prevent jumps
+            self.current_blur = current_visual_blur
+            self.current_blur_sigma = current_visual_blur
+            
+            # Store the starting blur for the hump pattern
+            self._hump_start_blur = current_visual_blur
+            
+            # Use 50% of configured start_blur for more subtle crossfade hump (adjustable)
+            max_blur = self.panorama_config.start_blur * HUMP_BLUR_PERCENTAGE
+            pattern_desc = f"hump ({current_visual_blur:.1f} → {max_blur:.1f} → 0)"
+        
+        # Store the effective duration and blur values for hump pattern
         self._effective_blur_duration = effective_blur_duration
+        if self.blur_easing_mode == "hump":
+            self._max_blur_for_hump = self.panorama_config.start_blur * HUMP_BLUR_PERCENTAGE
+        
+        # Now check if we're creating a jump (should be minimal with new approach)
+        blur_change = abs(self.current_blur_sigma - self.previous_blur_sigma)
+        if blur_change > 1.0:  # Reduced threshold since we should have minimal jumps now
+            logger.warning(f"Minor blur discontinuity at transition start: {self.previous_blur_sigma:.2f} → {self.current_blur_sigma:.2f} "
+                         f"(change: {blur_change:.2f}) mode={self.blur_easing_mode}")
+        
+        # Update previous for next frame
+        self.previous_blur_sigma = self.current_blur_sigma
         
         # Update blur effect with initial parameters
         self._update_blur_effect()
         
-        logger.debug(f"Starting blur transition: {self.panorama_config.start_blur} → "
-                    f"{self.panorama_config.end_blur} over {effective_blur_duration}s")
+        logger.debug(f"Starting blur transition over {effective_blur_duration}s using {pattern_desc}")
     
     def _accelerate_blur_transition(self) -> None:
-        """Accelerate the blur transition by halving the remaining time."""
+        """Accelerate the blur transition by smoothly ramping up velocity."""
         if not self.blur_active:
             return
 
-        self.blur_velocity = 2.0
+        self.blur_target_velocity = 3.0  # Set target, will ramp up smoothly
+        logger.debug(f"Blur acceleration triggered: ramping velocity to {self.blur_target_velocity}x")
     
     def start_panorama_fade(self) -> None:
         """Start the panorama-wide fade effect if enabled."""
-        logger.info(f"start_panorama_fade called: duration={self.panorama_fade_duration}")
-        if self.panorama_fade_duration <= 0:
-            logger.info("Panorama fade disabled (duration=0)")
+        if self.panorama_disappear_duration <= 0:
             return
             
-        self.panorama_fade_timer = 0.0
-        self.panorama_is_fading = True
-        self.panorama_opacity = 1.0  # Start fully opaque
-        logger.info(f"Starting panorama fade: {self.panorama_fade_duration}s duration")
-    
-    def force_start_panorama_fade(self) -> None:
-        """Force start the panorama fade for testing (ignores duration check)."""
-        logger.info(f"force_start_panorama_fade called: forcing fade with duration={self.panorama_fade_duration}")
-        self.panorama_fade_timer = 0.0
-        self.panorama_is_fading = True
-        self.panorama_opacity = 1.0  # Start fully opaque
-        logger.info(f"Forced panorama fade start: {self.panorama_fade_duration}s duration")
+        self.panorama_disappear_timer = 0.0
+        self.panorama_is_disappearing = True
+        self.panorama_visibility = 1.0  # Start fully opaque
+        logger.debug(f"✅ PANORAMA FADE STARTED: {self.panorama_disappear_duration}s duration, "
+                   f"opacity={self.panorama_visibility}, is_fading={self.panorama_is_disappearing}")
+
+    def _start_panorama_reappear(self, fade_duration: float) -> None:
+        """Start panorama reappear fade from current opacity to full brightness."""
+        self.panorama_reappear_timer = 0.0
+        self.panorama_is_reappearing = True
+        self.panorama_reappear_duration = fade_duration
+        self.panorama_start_visibility = self.panorama_visibility  # Remember where we started
+        
+        # Stop any existing disappear fade
+        self.panorama_is_disappearing = False
+        
+        logger.debug(f"✅ PANORAMA REAPPEAR STARTED: {fade_duration}s duration, "
+                   f"from opacity={self.panorama_start_visibility:.2f} to 1.0")
 
     def update(self, dt: float) -> None:
         """Update panorama animations with simple crossfade support.
@@ -1014,13 +1123,24 @@ class PanoramaRenderer(LayerRenderer):
                     
                     # If this is the current sprite, clean up all old sprites immediately
                     if image_id == self.base_image_id:
-                        logger.debug(f"Current sprite {image_id} fully faded - cleaning up old sprites")
-                        # Mark all other sprites for removal
+                        logger.debug(f"Current sprite {image_id} fully faded - cleaning up old sprites and tiles")
+                        # Mark all other sprites for removal and clean up their tiles
                         for other_id in self.base_sprites.keys():
                             if other_id != image_id:
                                 sprites_to_remove.append(other_id)
+                                
+                                # Clean up tiles belonging to this old base sprite
+                                old_tiles = self.get_tiles_for_base_sprite(other_id)
+                                if old_tiles:
+                                    logger.debug(f"Clearing {len(old_tiles)} tiles for old base sprite {other_id}")
+                                    for tile_id, tile in old_tiles.items():
+                                        tile.cleanup()
+                                        del self.tiles[tile_id]
+                                        # Remove from tile order tracking
+                                        if hasattr(self, 'tile_order') and tile_id in self.tile_order:
+                                            self.tile_order.remove(tile_id)
+                                        logger.debug(f"Cleared tile {tile_id} for old base sprite {other_id}")        # Clean up old sprites
         
-        # Clean up old sprites
         for image_id in sprites_to_remove:
             if image_id in self.base_sprites:
                 sprite = self.base_sprites[image_id]['sprite']
@@ -1031,46 +1151,115 @@ class PanoramaRenderer(LayerRenderer):
         
         # Update blur transition (only if blur enabled and we have content)
         if (self.blur_enabled and self.blur_active and len(self.base_sprites) > 0):
+            # Smoothly ramp blur velocity towards target
+            if self.blur_velocity != self.blur_target_velocity:
+                velocity_diff = self.blur_target_velocity - self.blur_velocity
+                max_change = self.blur_velocity_ramp_speed * dt
+                if abs(velocity_diff) <= max_change:
+                    self.blur_velocity = self.blur_target_velocity
+                else:
+                    self.blur_velocity += max_change if velocity_diff > 0 else -max_change
+                    
             self.blur_timer += dt * self.blur_velocity
 
-            progress = min(self.blur_timer / self.panorama_config.blur_duration, 1.0)
+            linear_progress = min(self.blur_timer / self.panorama_config.blur_duration, 1.0)
             
-            # Interpolate blur value
-            blur_range = self.panorama_config.end_blur - self.panorama_config.start_blur
-            self.current_blur = self.panorama_config.start_blur + (blur_range * progress)
+            # Apply appropriate blur pattern based on transition context
+            if self.blur_easing_mode == "decrease":
+                # Decreasing pattern: max → 0 (black → image)
+                # Use ease-out for smooth deceleration
+                eased_progress = 1 - (1 - linear_progress) ** 2  # Gentler ease-out
+                self.current_blur = self.panorama_config.start_blur * (1 - eased_progress)
+                pattern_desc = f"decrease({eased_progress:.3f})"
+            elif self.blur_easing_mode == "increase":
+                # Increasing pattern: current → max (fade to black through blur)
+                # Use ease-in for smooth acceleration to maximum blur
+                eased_progress = linear_progress ** 2  # Ease-in
+                start_blur = getattr(self, 'current_blur', 0.0)
+                self.current_blur = start_blur + (self.panorama_config.start_blur - start_blur) * eased_progress
+                pattern_desc = f"increase({eased_progress:.3f})"
+            else:  # hump
+                # Hump pattern: start_blur → max → 0 (image → image crossfade)
+                # Use modified sine wave that starts at current blur, peaks at max, ends at 0
+                start_blur = getattr(self, '_hump_start_blur', 0.0)
+                max_blur_for_hump = getattr(self, '_max_blur_for_hump', 10.0)
+                
+                # Create a curve that goes: start_blur → max_blur → 0
+                # Use sine wave but offset and scaled to hit our target points
+                sine_progress = math.sin(linear_progress * math.pi)  # 0 to 1 to 0
+                
+                # Interpolate between start_blur and 0, with peak at max_blur
+                if linear_progress <= 0.5:
+                    # First half: start_blur → max_blur
+                    self.current_blur = start_blur + (max_blur_for_hump - start_blur) * sine_progress
+                else:
+                    # Second half: max_blur → 0
+                    self.current_blur = max_blur_for_hump * sine_progress
+                
+                pattern_desc = f"hump({sine_progress:.3f}, {start_blur:.1f}→{max_blur_for_hump:.1f}→0)"
+            
+            # Update the current blur sigma for the shader
+            self.current_blur_sigma = self.current_blur
+            
+            # BLUR JUMP DETECTION - Log sudden changes
+            blur_change = abs(self.current_blur_sigma - self.previous_blur_sigma)
+            if blur_change > 2.0 and self.previous_blur_sigma > 0:  # Threshold for "sudden jump"
+                logger.warning(f"🚨 BLUR JUMP DETECTED! Previous: {self.previous_blur_sigma:.2f} → Current: {self.current_blur_sigma:.2f} "
+                             f"(change: {blur_change:.2f}) at t={self.blur_timer:.2f}s vel={self.blur_velocity:.2f}→{self.blur_target_velocity:.2f} "
+                             f"mode={self.blur_easing_mode} progress={linear_progress:.3f}")
+            
+            # Store current blur for next frame's jump detection
+            self.previous_blur_sigma = self.current_blur_sigma
+            
+            # Debug logging every 0.5 seconds to show smooth progression
+            # if int(self.blur_timer * 2) % 1 == 0 and self.blur_timer > 0:
+            #     velocity_info = f"vel={self.blur_velocity:.2f}" + (f"→{self.blur_target_velocity:.1f}" if self.blur_velocity != self.blur_target_velocity else "")
+            #     logger.debug(f"Blur transition: t={self.blur_timer:.1f}s {velocity_info} "
+            #                f"linear={linear_progress:.3f} {pattern_desc} sigma={self.current_blur:.1f}")
             
             # Update the current blur sigma for the shader
             self.current_blur_sigma = self.current_blur
             self._update_blur_effect()
-            if progress >= 1.0:
+            if linear_progress >= 1.0:
                 self.blur_active = False
                 self.blur_velocity = 1.0
-                logger.debug("Blur transition complete")
-                
-                # Start panorama fade when blur completes
-                logger.info("Blur complete - starting panorama fade")
+                self.blur_target_velocity = 1.0  # Reset target velocity too
+                # final image now slowly darkens until being removed
                 self.start_panorama_fade()
         
         # Update tile fades
         for tile in self.tiles.values():
             tile.update(dt)
         
+        # TODO: Add smarter tile cleanup that doesn't interfere with crossfades
+        # For now, only clean up tiles during the full panorama clear
+        
         # Update panorama-wide fade (if enabled and active)
-        if self.panorama_is_fading and self.panorama_fade_duration > 0:
-            self.panorama_fade_timer += dt
-            progress = min(self.panorama_fade_timer / self.panorama_fade_duration, 1.0)
+        if self.panorama_is_disappearing and self.panorama_disappear_duration > 0:
+            self.panorama_disappear_timer += dt
+            progress = min(self.panorama_disappear_timer / self.panorama_disappear_duration, 1.0)
             
             # Fade from 1.0 (opaque) to 0.0 (transparent)
-            self.panorama_opacity = 1.0 - progress
-            
-            # Debug logging every few seconds
-            # if int(self.panorama_fade_timer) % 5 == 0 and self.panorama_fade_timer > 0:
-            #     logger.info(f"Panorama fading: opacity={self.panorama_opacity:.3f} progress={progress:.3f}")
+            self.panorama_visibility = 1.0 - progress
 
             if progress >= 1.0:
-                self.panorama_is_fading = False
-                self.panorama_opacity = 0.0
-                logger.info(f"Panorama fade complete - fully transparent")
+                self.panorama_is_disappearing = False
+                self.panorama_visibility = 0.0
+                # Clear the panorama so next image gets "decrease" pattern instead of "hump"
+                self._clear_panorama()
+        
+        # Update panorama reappear fade (bringing opacity back to 1.0 with new content)
+        if self.panorama_is_reappearing and self.panorama_reappear_duration > 0:
+            self.panorama_reappear_timer += dt
+            progress = min(self.panorama_reappear_timer / self.panorama_reappear_duration, 1.0)
+            
+            # Fade from start_opacity to 1.0 (full brightness)
+            self.panorama_visibility = self.panorama_start_visibility + (1.0 - self.panorama_start_visibility) * progress
+
+            if progress >= 1.0:
+                self.panorama_is_reappearing = False
+                self.panorama_visibility = 1.0
+                logger.debug(f"✅ PANORAMA REAPPEAR COMPLETE: opacity now {self.panorama_visibility}")
     
     def set_debug_mode(self, enabled: bool) -> None:
         """Enable or disable debug outlines for tiles."""
@@ -1103,6 +1292,26 @@ class PanoramaRenderer(LayerRenderer):
     def is_tiles_hidden_for_debug(self) -> bool:
         """Check if tiles are currently hidden for debug purposes."""
         return self.hide_tiles_for_debug
+    
+    def get_tiles_for_base_sprite(self, base_sprite_id: str) -> Dict[str, 'PanoramaTile']:
+        """Get all tiles that belong to a specific base sprite/panorama.
+        
+        Args:
+            base_sprite_id: The base request ID or image ID to find tiles for
+            
+        Returns:
+            Dictionary of tile_id -> PanoramaTile for tiles belonging to this base sprite
+        """
+        matching_tiles = {}
+        
+        # Look for tiles whose IDs start with the base_sprite_id
+        for tile_id, tile in self.tiles.items():
+            # Handle both direct matches and tile IDs that start with base_sprite_id + "_tile"
+            if (tile_id == base_sprite_id or 
+                tile_id.startswith(f"{base_sprite_id}_tile")):
+                matching_tiles[tile_id] = tile
+        
+        return matching_tiles
     
     def set_visibility(self, visible: bool) -> None:
         """Set renderer visibility."""
@@ -1152,10 +1361,10 @@ class PanoramaRenderer(LayerRenderer):
             "tiles_count": len(self.tiles),
             "tile_ids": list(self.tiles.keys()),
             "tile_info": tile_info,
-            "panorama_opacity": self.panorama_opacity,
-            "panorama_is_fading": self.panorama_is_fading,
-            "panorama_fade_progress": self.panorama_fade_timer / self.panorama_fade_duration if self.panorama_is_fading and self.panorama_fade_duration > 0 else 0.0,
-            "panorama_fade_enabled": self.panorama_fade_duration > 0,
+            "panorama_visibility": self.panorama_visibility,
+            "panorama_is_disappearing": self.panorama_is_disappearing,
+            "panorama_disappear_progress": self.panorama_disappear_timer / self.panorama_disappear_duration if self.panorama_is_disappearing and self.panorama_disappear_duration > 0 else 0.0,
+            "panorama_disappear_enabled": self.panorama_disappear_duration > 0,
             "blur_active": self.blur_active,
             "current_blur": self.current_blur,
             "blur_progress": (self.blur_timer / getattr(self, '_effective_blur_duration', self.panorama_config.blur_duration)) if self.blur_active else 0.0,
