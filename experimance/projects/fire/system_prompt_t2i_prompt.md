@@ -16,6 +16,7 @@ When given a transcript:
 - The conversation has no story content yet
 - The story is completely abstract with no possible visual interpretation
 - The content is too brief (just a few words) to infer any environment
+- Be generous, if you think you can guess at a location, go for it
 
 **THIRD:** If a previous prompt is provided, compare the newest story content with what was used to generate the previous prompt. Only generate a new prompt if:
 - The story has meaningfully expanded with new visual details
