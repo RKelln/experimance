@@ -54,6 +54,7 @@ from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.audio.resamplers.soxr_stream_resampler import SOXRStreamAudioResampler
+from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
 from pipecat.frames.frames import (
     AudioRawFrame, UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
     BotStartedSpeakingFrame, BotStoppedSpeakingFrame, TTSStartedFrame,
@@ -65,7 +66,8 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat_flows import FlowManager, FlowArgs, FlowResult, FlowConfig
 
 from experimance_common.audio_utils import resolve_audio_device_index
-from experimance_common.constants import AGENT_SERVICE_DIR
+from experimance_common.constants import AGENT_SERVICE_DIR, AUDIO_DIR_ABS
+from experimance_common.config import resolve_path
 from ..base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall, UserContext, load_prompt
 
 logger = logging.getLogger(__name__)
@@ -1041,6 +1043,39 @@ class PipecatBackend(AgentBackend):
 
         logger.info(f"Creating transport with device rate: {self.pipecat_config.audio_in_sample_rate}Hz → pipeline rate: {input_rate}Hz")
         
+        # Add background audio mixer if enabled
+        audio_out_mixer = None
+        if (self.pipecat_config.background_audio_enabled and 
+            self.pipecat_config.background_audio_file):
+            
+            # Resolve the audio file path using the smart resolver with AUDIO_DIR_ABS hint
+            try:
+                audio_file_path = resolve_path(
+                    self.pipecat_config.background_audio_file, 
+                    hint=AUDIO_DIR_ABS
+                )
+            except Exception as e:
+                logger.error(f"Failed to resolve background audio file path: {e}")
+                audio_file_path = None
+            
+            if audio_file_path and audio_file_path.exists():
+                logger.info(f"Enabling background audio: {audio_file_path} (volume: {self.pipecat_config.background_audio_volume}, loop: {self.pipecat_config.background_audio_loop})")
+                
+                # Create the SoundfileMixer with the fire crackle audio
+                audio_out_mixer = SoundfileMixer(
+                    sound_files={"background": str(audio_file_path)},
+                    default_sound="background",
+                    volume=self.pipecat_config.background_audio_volume,
+                    loop=self.pipecat_config.background_audio_loop,
+                    mixing=True
+                )
+            else:
+                logger.error(f"Background audio file not found: {audio_file_path}")
+        
+        # Add the mixer to transport params if we have one
+        if audio_out_mixer:
+            transport_params.audio_out_mixer = audio_out_mixer
+        
         # Check if multi-channel output is configured
         if hasattr(self.pipecat_config, 'multi_channel_output') and self.pipecat_config.multi_channel_output:
             transport = self._create_multi_channel_transport(transport_params, input_rate)
@@ -1072,6 +1107,9 @@ class PipecatBackend(AgentBackend):
             audio_out_sample_rate=standard_params.audio_out_sample_rate,
             audio_in_filter=standard_params.audio_in_filter,
             vad_analyzer=standard_params.vad_analyzer,
+            
+            # Copy audio mixer if present
+            audio_out_mixer=getattr(standard_params, 'audio_out_mixer', None),
             
             # Input device configuration (reuse standard input)
             input_device_index=standard_params.input_device_index,

@@ -77,6 +77,14 @@ stt_mute_strategies = ["first_speech"]
 # - "always": Always mute during bot speech (aggressive but prevents interruption)
 # - "first_speech": Mute only during the bot’s first speech utterance. Useful for introductions when you want the bot to complete its greeting before the user can speak.
 
+# Background audio looping (fire crackle)
+# Audio must match output smaple rate and be mono:
+# ffmpeg -i media/audio/environment/bonfire.mp3 -ar 24000 -ac 1 media/audio/environment/bonfire_24k_mono.mp3 -y
+background_audio_enabled = true
+background_audio_file = "media/audio/environment/bonfire_24k_mono.mp3"  # Path relative to project root
+background_audio_volume = 1.0        # Volume level (0.0 to 1.0)
+background_audio_loop = true         # Loop the audio file
+
 # Multi-channel audio output (optional)
 # Enable this for dual speaker setup with echo cancellation delays
 multi_channel_output = false

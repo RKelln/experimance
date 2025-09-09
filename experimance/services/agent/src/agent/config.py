@@ -129,6 +129,12 @@ class PipecatBackendConfig(BaseModel):
         description="Settings for ensemble mode, including TTS and STT providers"
     )
     
+    # Background audio settings
+    background_audio_enabled: bool = Field(default=False, description="Enable background audio looping (e.g., fire crackle)")
+    background_audio_file: Optional[str] = Field(default=None, description="Path to background audio file relative to project root")
+    background_audio_volume: float = Field(default=0.3, description="Background audio volume level (0.0 to 1.0)")
+    background_audio_loop: bool = Field(default=True, description="Loop the background audio file continuously")
+    
     @field_validator('stt_mute_strategies')
     @classmethod
     def validate_stt_mute_strategies(cls, v: list[str]) -> list[str]:
