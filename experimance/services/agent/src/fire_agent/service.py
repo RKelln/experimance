@@ -325,10 +325,17 @@ class FireAgentService(AgentServiceBase):
             # Trigger the backend to generate a proactive greeting
             greeting_prompt = self.config.greeting_prompt
             logger.info("Triggering proactive greeting from backend")
+            if not self.current_backend:
+                logger.warning("No backend available to send proactive greeting")
+                # need to start up the backend if not already started
+                await self._start_backend_for_conversation()
+
             if self.current_backend:
                 # Use backend's trigger_response method to generate immediate LLM response
                 await self.current_backend.trigger_response(greeting_prompt)
-            
+            else:
+                logger.error("Failed to send proactive greeting - no backend available")
+                
         except Exception as e:
             logger.error(f"Failed to send proactive greeting: {e}")
 
