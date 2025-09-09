@@ -17,7 +17,7 @@ start_blur = 30.0
 end_blur = 0.0
 blur_duration = 20
 mirror = true
-disappear_duration = 255.0  # Duration until fade from sight (0 = disabled)
+disappear_duration = 120.0  # Duration until fade from sight (0 = disabled)
 
 [panorama.tiles]
 width = 1920  # Smaller tiles to see more of them
@@ -47,7 +47,6 @@ order = 10  # Lower order = renders first (background effect)
 [shader_effects.effects.vignette.uniforms]
 vignette_strength = 1.0   # Increase to maximum to make effect more visible
 turbulence_amount = 0.5  # Increase turbulence for more visible effect
-full_mask_zone = 0.05   # Small fully masked area at very edge (configurable)
 gradient_zone = 0.25    # Large gradient zone for smooth transition (configurable)
 speed = 1.3
 horizontal_compression = 6.0  # Compression factor for 6x horizontal stretching (6 projectors)
