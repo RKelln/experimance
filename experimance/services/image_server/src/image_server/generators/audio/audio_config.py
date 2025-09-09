@@ -36,6 +36,11 @@ class BaseAudioGeneratorConfig(BaseGeneratorConfig):
     target_lufs: float = Field(default=-23.0, description="Target loudness in LUFS (EBU R128 standard)")
     true_peak_dbfs: float = Field(default=-2.0, description="True peak limit in dBFS")
     
+    # Audio filtering options
+    apply_highpass_filter: bool = Field(default=True, description="Apply high-pass filter to remove low-frequency noise")
+    highpass_cutoff_hz: float = Field(default=80.0, description="High-pass filter cutoff frequency in Hz")
+    highpass_filter_order: int = Field(default=4, description="High-pass filter order (higher = steeper rolloff)")
+    
     # Seamless loop configuration
     enable_seamless_loop: bool = Field(default=True, description="Make audio seamlessly loopable")
     tail_duration_s: float = Field(default=1.5, description="Tail duration for crossfade in seconds")

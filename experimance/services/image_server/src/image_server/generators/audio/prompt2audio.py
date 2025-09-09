@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import random
+import shutil
 import subprocess
 import threading
 import time
@@ -22,6 +23,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import numpy as np
 import soundfile as sf
 import torch
+from scipy import signal
 
 from image_server.generators.audio.audio_generator import (
     AudioGenerator, 
@@ -134,6 +136,34 @@ def normalize_filename(text: str, max_length: int = 40) -> str:
     normalized = normalized.strip('_')
     # Truncate if too long
     return normalized[:max_length] if len(normalized) > max_length else normalized
+
+
+def apply_highpass_filter(audio: np.ndarray, sample_rate: int, cutoff_freq: float = 80.0, order: int = 4) -> np.ndarray:
+    """
+    Apply a high-pass filter to remove low-frequency noise like wind or rumble.
+    
+    Args:
+        audio: Audio signal as numpy array
+        sample_rate: Sample rate in Hz
+        cutoff_freq: High-pass cutoff frequency in Hz (default 80Hz removes most wind noise)
+        order: Filter order (higher = steeper rolloff)
+    
+    Returns:
+        Filtered audio signal
+    """
+    # Design Butterworth high-pass filter
+    nyquist = sample_rate / 2
+    normalized_cutoff = cutoff_freq / nyquist
+    
+    # Clamp to valid range
+    normalized_cutoff = min(max(normalized_cutoff, 0.001), 0.99)
+    
+    b, a = signal.butter(order, normalized_cutoff, btype='high', analog=False)
+    
+    # Apply filter using filtfilt for zero-phase filtering
+    filtered_audio = signal.filtfilt(b, a, audio)
+    
+    return filtered_audio.astype(audio.dtype)
 
 
 @dataclass
@@ -978,11 +1008,21 @@ class Prompt2AudioGenerator(AudioGenerator):
                 else:
                     looped_audio = audio_tensor
                 
-                # Calculate CLAP similarity
+                # Apply high-pass filter to remove low-frequency noise
                 audio_np = looped_audio.cpu().numpy()
                 if looped_audio.ndim > 1:
-                    audio_np = audio_np.mean(axis=0)  # Convert to mono for CLAP
+                    audio_np = audio_np.mean(axis=0)  # Convert to mono for processing
                 
+                if self.config.apply_highpass_filter:
+                    audio_np = apply_highpass_filter(
+                        audio_np, 
+                        SR, 
+                        cutoff_freq=self.config.highpass_cutoff_hz,
+                        order=self.config.highpass_filter_order
+                    )
+                    logger.debug(f"Applied high-pass filter (cutoff: {self.config.highpass_cutoff_hz}Hz)")
+                
+                # Calculate CLAP similarity
                 # Generate temp file for CLAP scoring
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
@@ -1017,32 +1057,84 @@ class Prompt2AudioGenerator(AudioGenerator):
                 
             try:
                 fallback_candidate = candidates[best_idx]
-                audio_np = fallback_candidate.cpu().numpy()
-                if fallback_candidate.ndim > 1:
+                
+                # Process audio: seamless loop and filtering
+                if self.config.enable_seamless_loop:
+                    max_crossfade = duration_s * 0.25
+                    adaptive_crossfade = min(self.config.tail_duration_s, max_crossfade)
+                    processed_audio = AudioNormalizer.make_seamless_loop(
+                        fallback_candidate, SR, adaptive_crossfade
+                    )
+                else:
+                    processed_audio = fallback_candidate
+                
+                audio_np = processed_audio.cpu().numpy()
+                if processed_audio.ndim > 1:
                     audio_np = audio_np.mean(axis=0)
+                
+                # Apply high-pass filter first
+                if self.config.apply_highpass_filter:
+                    audio_np = apply_highpass_filter(
+                        audio_np, 
+                        SR, 
+                        cutoff_freq=self.config.highpass_cutoff_hz,
+                        order=self.config.highpass_filter_order
+                    )
+                    logger.debug(f"Applied high-pass filter to fallback audio (cutoff: {self.config.highpass_cutoff_hz}Hz)")
+                
+                # Apply loudness normalization after filtering
+                temp_for_final = None
+                if self.config.normalize_loudness:
+                    try:
+                        temp_for_norm = self.output_dir / f"temp_fallback_norm_{int(time.time() * 1000)}.wav"
+                        sf.write(str(temp_for_norm), audio_np, SR, subtype='PCM_16')
+                        
+                        # Normalize and get the normalized file (already in MP3 format)
+                        normalized_path = AudioNormalizer.normalize_loudness(
+                            str(temp_for_norm),
+                            target_lufs=self.config.target_lufs,
+                            true_peak_dbfs=self.config.true_peak_dbfs
+                        )
+                        
+                        # Use the normalized file as our final temp file
+                        temp_for_final = normalized_path
+                        
+                        # Clean up the temporary WAV
+                        temp_for_norm.unlink()
+                        
+                        logger.debug(f"Applied loudness normalization to fallback audio")
+                    except Exception as e:
+                        logger.warning(f"Loudness normalization failed on fallback audio: {e}")
+                        temp_for_final = None
                 
                 temp_path = self.output_dir / f"temp_{normalize_filename(prompt)}_{int(time.time() * 1000)}.mp3"
                 
-                # Save as temporary WAV first, then convert to MP3
-                temp_wav = temp_path.with_suffix('.wav')
-                sf.write(str(temp_wav), audio_np, SR, subtype='PCM_16')
-                
-                # Convert WAV to MP3 using ffmpeg
-                try:
-                    subprocess.run([
-                        'ffmpeg', '-i', str(temp_wav), 
-                        '-codec:a', 'libmp3lame', 
-                        '-b:a', '192k', 
-                        '-y',  # overwrite output file
-                        str(temp_path)
-                    ], check=True, capture_output=True)
-                    # Remove temporary WAV file
-                    temp_wav.unlink()
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"Failed to convert temp WAV to MP3: {e}")
-                    # Fallback: keep the WAV file
-                    temp_wav.rename(temp_path.with_suffix('.wav'))
-                    temp_path = temp_path.with_suffix('.wav')
+                if temp_for_final:
+                    # Use the normalized file directly
+                    shutil.move(temp_for_final, str(temp_path))
+                    logger.debug(f"Used normalized fallback audio")
+                else:
+                    # Save as temporary WAV first, then convert to MP3
+                    # Note: soundfile doesn't support MP3 encoding - ffmpeg conversion is required
+                    temp_wav = temp_path.with_suffix('.wav')
+                    sf.write(str(temp_wav), audio_np, SR, subtype='PCM_16')
+                    
+                    # Convert WAV to MP3 using ffmpeg
+                    try:
+                        subprocess.run([
+                            'ffmpeg', '-i', str(temp_wav), 
+                            '-codec:a', 'libmp3lame', 
+                            '-b:a', '192k', 
+                            '-y',  # overwrite output file
+                            str(temp_path)
+                        ], check=True, capture_output=True)
+                        # Remove temporary WAV file
+                        temp_wav.unlink()
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Failed to convert temp WAV to MP3: {e}")
+                        # Fallback: keep the WAV file
+                        temp_wav.rename(temp_path.with_suffix('.wav'))
+                        temp_path = temp_path.with_suffix('.wav')
                 logger.warning(f"No candidates accepted, returning temp file: {temp_path}")
                 return str(temp_path)
             except Exception as e:
@@ -1070,44 +1162,74 @@ class Prompt2AudioGenerator(AudioGenerator):
         
         similarity, looped_audio, audio_np = accepted_candidates[best_idx]
         
+        # Apply high-pass filter first (before loudness normalization)
+        if self.config.apply_highpass_filter:
+            audio_np = apply_highpass_filter(
+                audio_np, 
+                SR, 
+                cutoff_freq=self.config.highpass_cutoff_hz,
+                order=self.config.highpass_filter_order
+            )
+            logger.debug(f"Applied high-pass filter before normalization (cutoff: {self.config.highpass_cutoff_hz}Hz)")
+        
+        # Apply loudness normalization in memory (after filtering)
+        temp_for_final = None
+        if self.config.normalize_loudness:
+            try:
+                # Save filtered audio to temporary file for normalization
+                temp_for_norm = self.output_dir / f"temp_norm_{int(time.time() * 1000)}.wav"
+                sf.write(str(temp_for_norm), audio_np, SR, subtype='PCM_16')
+                
+                # Normalize and get the normalized file (already in MP3 format)
+                normalized_path = AudioNormalizer.normalize_loudness(
+                    str(temp_for_norm),
+                    target_lufs=self.config.target_lufs,
+                    true_peak_dbfs=self.config.true_peak_dbfs
+                )
+                
+                # Use the normalized file as our final audio
+                temp_for_final = normalized_path
+                
+                # Clean up the temporary WAV
+                temp_for_norm.unlink()
+                
+                logger.debug(f"Applied loudness normalization after filtering")
+            except Exception as e:
+                logger.warning(f"Loudness normalization failed: {e}")
+                # Fallback: save the filtered audio directly
+                temp_for_final = None
+        
         # Save final audio as MP3
         filename = f"{normalize_filename(prompt)}_{int(time.time() * 1000)}.mp3"
         audio_path = self.output_dir / filename
         
-        # Save as temporary WAV first, then convert to MP3
-        temp_wav = audio_path.with_suffix('.wav')
-        sf.write(str(temp_wav), audio_np, SR, subtype='PCM_16')
-        
-        # Convert WAV to MP3 using ffmpeg
-        try:
-            subprocess.run([
-                'ffmpeg', '-i', str(temp_wav), 
-                '-codec:a', 'libmp3lame', 
-                '-b:a', '192k', 
-                '-y',  # overwrite output file
-                str(audio_path)
-            ], check=True, capture_output=True)
-            # Remove temporary WAV file
-            temp_wav.unlink()
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to convert WAV to MP3: {e}")
-            # Fallback: keep the WAV file but rename it
-            temp_wav.rename(audio_path.with_suffix('.wav'))
-            audio_path = audio_path.with_suffix('.wav')
-        
-        # Apply loudness normalization if enabled
-        if self.config.normalize_loudness:
+        if temp_for_final:
+            # Use the normalized file directly
+            shutil.move(temp_for_final, str(audio_path))
+            logger.debug(f"Used normalized audio as final output")
+        else:
+            # Save filtered audio as MP3 (no normalization or normalization failed)
+            # Save as temporary WAV first, then convert to MP3
+            # Note: soundfile doesn't support MP3 encoding - ffmpeg conversion is required
+            temp_wav = audio_path.with_suffix('.wav')
+            sf.write(str(temp_wav), audio_np, SR, subtype='PCM_16')
+            
+            # Convert WAV to MP3 using ffmpeg
             try:
-                normalized_path = AudioNormalizer.normalize_loudness(
-                    str(audio_path),
-                    target_lufs=self.config.target_lufs,
-                    true_peak_dbfs=self.config.true_peak_dbfs
-                )
-                # Replace original with normalized version
-                os.rename(normalized_path, str(audio_path))
-                logger.debug(f"Applied loudness normalization to {audio_path}")
-            except Exception as e:
-                logger.warning(f"Loudness normalization failed: {e}")
+                subprocess.run([
+                    'ffmpeg', '-i', str(temp_wav), 
+                    '-codec:a', 'libmp3lame', 
+                    '-b:a', '192k', 
+                    '-y',  # overwrite output file
+                    str(audio_path)
+                ], check=True, capture_output=True)
+                # Remove temporary WAV file
+                temp_wav.unlink()
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to convert WAV to MP3: {e}")
+                # Fallback: keep the WAV file but rename it
+                temp_wav.rename(audio_path.with_suffix('.wav'))
+                audio_path = audio_path.with_suffix('.wav')
         
         # Add to cache
         bge_model = self._lazy.load_bge(self.config.bge_model) if self.config.use_bge else None

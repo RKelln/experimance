@@ -53,6 +53,9 @@ normalize_loudness = true
 target_lufs = -23.0
 true_peak_dbfs = -2.0
 enable_seamless_loop = true
+apply_highpass_filter = true
+highpass_cutoff_hz = 250.0 # High-pass filter cutoff frequency in Hz
+highpass_filter_order = 3 # High-pass filter order (higher = steeper rolloff)
 
 # Just add these two lines for GPU isolation:
 use_subprocess = true        # Enable subprocess execution
