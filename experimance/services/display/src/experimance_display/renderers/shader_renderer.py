@@ -13,6 +13,7 @@ multiple instances coordinated through the layer manager.
 
 import logging
 import time
+import traceback
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
@@ -60,6 +61,20 @@ class ShaderRenderer(LayerRenderer):
         self.uniforms = uniforms or {}
         self.blend_mode = blend_mode
         
+        # DEBUGGING: Track original uniform values from config (lightweight monitoring)
+        self.original_uniforms = self.uniforms.copy()
+        self.uniform_change_count = 0
+        self.critical_uniforms = ['vignette_strength', 'turbulence_amount', 'horizontal_compression', 'gradient_zone', 'speed']
+        
+        # Log initial state only once, concisely
+        critical_in_config = {u: self.original_uniforms[u] for u in self.critical_uniforms if u in self.original_uniforms}
+        if critical_in_config:
+            logger.info(f"Shader '{self.shader_path.name}' critical uniforms: {critical_in_config}")
+        
+        # Minimal tracking flags
+        self.debug_counter = 0
+        self.mismatch_logged = False
+        
         # Validate blend mode
         if self.blend_mode not in ["alpha", "additive"]:
             logger.warning(f"Unknown blend mode '{self.blend_mode}', defaulting to 'alpha'")
@@ -86,6 +101,9 @@ class ShaderRenderer(LayerRenderer):
         self._load_scene_texture()
         
         logger.info(f"ShaderRenderer initialized with shader: {self.shader_path.name}")
+        
+        # DEBUGGING: Log final uniform state after initialization
+        self._debug_uniform_state("after_initialization")
     
     def _init_opengl(self):
         """Initialize OpenGL settings for shader rendering."""
@@ -154,6 +172,23 @@ void main() {
             fragment_shader = Shader(fragment_source, 'fragment')
             self.shader_program = ShaderProgram(vertex_shader, fragment_shader)
             
+            # DEBUGGING: Log detected uniforms and check for missing critical ones
+            if hasattr(self.shader_program, 'uniforms'):
+                detected_uniforms = list(self.shader_program.uniforms.keys())
+                logger.info(f"Shader '{self.shader_path.name}' detected {len(detected_uniforms)} uniforms")
+                
+                # Check which of our critical uniforms are missing
+                missing_critical = [name for name in self.critical_uniforms if name in self.uniforms and name not in detected_uniforms]
+                if missing_critical:
+                    logger.warning(f"Shader '{self.shader_path.name}' missing critical uniforms: {missing_critical}")
+                    logger.info(f"Available uniforms: {detected_uniforms}")
+                else:
+                    critical_found = [name for name in self.critical_uniforms if name in detected_uniforms]
+                    if critical_found:
+                        logger.info(f"All critical uniforms found: {critical_found}")
+            else:
+                logger.warning(f"Shader program for '{self.shader_path.name}' has no uniforms attribute!")
+            
             logger.info(f"Successfully loaded shader: {self.shader_path.name}")
             
         except Exception as e:
@@ -212,7 +247,12 @@ void main() {
         
         # Update timing-based uniforms automatically
         current_time = time.time() - self.start_time
-        self.uniforms['time'] = current_time
+        
+        # DEBUGGING: Only update time if it's not overriding a configured value
+        if 'time' not in self.original_uniforms:
+            self.uniforms['time'] = current_time
+        else:
+            logger.debug(f"Not auto-updating 'time' uniform as it was configured: {self.original_uniforms['time']}")
     
     def render(self):
         """Render the shader effect using Pyglet's batch system.
@@ -223,24 +263,78 @@ void main() {
         if not self._visible or not self.shader_program or not self.quad_vertex_list:
             return
 
+        # DEBUGGING: Only check for mismatches occasionally and when they actually occur
+        self.debug_counter += 1
+        
+        # Only check every 10 seconds (600 frames at 60fps) and only if no mismatch has been logged yet
+        if not self.mismatch_logged and self.debug_counter % 600 == 0:
+            # Quick check if any critical uniforms have changed
+            for name in self.critical_uniforms:
+                if name in self.uniforms and name in self.original_uniforms:
+                    if abs(self.uniforms[name] - self.original_uniforms[name]) > 0.001:
+                        logger.error(f"UNIFORM DRIFT DETECTED: {name} = {self.uniforms[name]}, expected {self.original_uniforms[name]}")
+                        self.mismatch_logged = True  # Only log once
+                        break
+
         # Update uniforms before batch rendering
         try:
             # Set common uniforms only if they exist in the shader
             current_time = time.time() - self.start_time
             if 'time' in self.shader_program.uniforms:
-                self.shader_program['time'] = current_time
+                # DEBUGGING: Check if we're overriding a configured time value
+                if 'time' in self.original_uniforms:
+                    logger.warning(f"Using configured time value {self.uniforms.get('time')} instead of auto-generated {current_time}")
+                    self.shader_program['time'] = self.uniforms.get('time', current_time)
+                else:
+                    self.shader_program['time'] = current_time
             
             # Set resolution uniform only if declared in shader
             if 'resolution' in self.shader_program.uniforms:
-                self.shader_program['resolution'] = (float(self.window.width), float(self.window.height))
+                resolution = (float(self.window.width), float(self.window.height))
+                self.shader_program['resolution'] = resolution
             
             # Set custom uniforms
             for uniform_name, value in self.uniforms.items():
-                if uniform_name in self.shader_program.uniforms:
-                    self.shader_program[uniform_name] = value
+                # DEBUGGING: Check if uniform exists in shader program
+                try:
+                    if uniform_name in self.shader_program.uniforms:
+                        # DEBUGGING: Only log critical uniform changes (the real issue we're tracking)
+                        if uniform_name in self.original_uniforms:
+                            original_val = self.original_uniforms[uniform_name]
+                            if value != original_val and uniform_name != 'time':  # time is expected to change
+                                if uniform_name in self.critical_uniforms:
+                                    logger.error(f"CRITICAL UNIFORM CHANGED: {uniform_name} = {value}, expected {original_val}")
+                        
+                        self.shader_program[uniform_name] = value
+                    else:
+                        # DEBUGGING: Only warn once per shader about missing uniforms
+                        if not hasattr(self, 'warned_missing_uniforms'):
+                            self.warned_missing_uniforms = set()
+                        
+                        if uniform_name not in self.warned_missing_uniforms:
+                            available_uniforms = list(self.shader_program.uniforms.keys()) if hasattr(self.shader_program, 'uniforms') else "UNKNOWN"
+                            logger.warning(f"Uniform '{uniform_name}' not found in shader program for {self.shader_path.name}. Available uniforms: {available_uniforms}")
+                            self.warned_missing_uniforms.add(uniform_name)
+                        
+                        # Try to set it anyway - sometimes the uniforms dict is incomplete
+                        try:
+                            self.shader_program[uniform_name] = value
+                            if uniform_name not in getattr(self, 'warned_missing_uniforms', set()):
+                                logger.info(f"Force-set uniform '{uniform_name}' = {value} (not in uniforms dict but worked)")
+                        except Exception as force_error:
+                            if uniform_name not in getattr(self, 'force_failed_uniforms', set()):
+                                logger.warning(f"Cannot set uniform '{uniform_name}' (optimized out by OpenGL driver): {force_error}")
+                                if not hasattr(self, 'force_failed_uniforms'):
+                                    self.force_failed_uniforms = set()
+                                self.force_failed_uniforms.add(uniform_name)
+                            # This is not a fatal error - the uniform was probably optimized out because it's not used
+                            
+                except Exception as uniform_error:
+                    logger.error(f"Error checking/setting uniform '{uniform_name}': {uniform_error}")
             
         except Exception as e:
             logger.error(f"Error setting uniforms for shader {self.shader_path.name}: {e}")
+            self._debug_uniform_state("error_during_render")
     
     def set_state(self):
         """Set OpenGL state for rendering (called by batch system)."""
@@ -269,19 +363,50 @@ void main() {
         try:
             current_time = time.time() - self.start_time
             if 'time' in self.shader_program.uniforms:
-                self.shader_program['time'] = current_time
+                # DEBUGGING: Check if we're overriding a configured time value
+                if 'time' in self.original_uniforms:
+                    time_value = self.uniforms.get('time', current_time)
+                    self.shader_program['time'] = time_value
+                else:
+                    self.shader_program['time'] = current_time
             
             if 'resolution' in self.shader_program.uniforms:
                 resolution = (float(self.window.width), float(self.window.height))
                 self.shader_program['resolution'] = resolution
             
-            # Set custom uniforms
+            # Set custom uniforms with validation
             for uniform_name, value in self.uniforms.items():
-                if uniform_name in self.shader_program.uniforms:
-                    self.shader_program[uniform_name] = value
+                try:
+                    if uniform_name in self.shader_program.uniforms:
+                        # DEBUGGING: Only check critical uniforms for mismatches (minimal overhead)
+                        if uniform_name in self.critical_uniforms and uniform_name in self.original_uniforms:
+                            expected = self.original_uniforms[uniform_name]
+                            if abs(value - expected) > 0.001:
+                                logger.error(f"CRITICAL UNIFORM MISMATCH in set_state: {uniform_name} = {value}, expected {expected}")
+                        
+                        self.shader_program[uniform_name] = value
+                    else:
+                        # Only warn once per uniform about optimization
+                        if not hasattr(self, 'set_state_warned_missing'):
+                            self.set_state_warned_missing = set()
+                        
+                        if uniform_name not in self.set_state_warned_missing:
+                            if uniform_name in self.critical_uniforms:
+                                logger.warning(f"Critical uniform '{uniform_name}' optimized out by OpenGL driver")
+                            self.set_state_warned_missing.add(uniform_name)
+                        
+                        # Try to set anyway (silently)
+                        try:
+                            self.shader_program[uniform_name] = value
+                        except Exception:
+                            pass  # Expected for optimized-out uniforms
+                            
+                except Exception as uniform_error:
+                    logger.error(f"set_state: Error with uniform '{uniform_name}': {uniform_error}")
                     
         except Exception as e:
             logger.error(f"Error setting uniforms for shader {self.shader_path.name}: {e}")
+            self._debug_uniform_state("error_during_set_state")
     
     def unset_state(self):
         """Unset OpenGL state for rendering (called by batch system)."""
@@ -298,8 +423,34 @@ void main() {
             name: Name of the uniform
             value: Value to set
         """
+        # DEBUGGING: Track critical uniform changes only
+        old_value = self.uniforms.get(name)
+        if old_value != value and name in self.critical_uniforms:
+            self.uniform_change_count += 1
+            logger.warning(f"UNIFORM CHANGE #{self.uniform_change_count} in shader '{self.shader_path.name}': "
+                         f"{name} changed from {old_value} to {value}")
+        
         self.uniforms[name] = value
-        logger.debug(f"Set uniform {name} = {value} for shader {self.shader_path.name}")
+    
+    def _debug_uniform_state(self, context: str):
+        """Debug helper to log current uniform state."""
+        logger.info(f"=== UNIFORM STATE DEBUG ({context}) for shader '{self.shader_path.name}' ===")
+        logger.info(f"Original uniforms: {self.original_uniforms}")
+        logger.info(f"Current uniforms:  {self.uniforms}")
+        
+        # Check for differences
+        for key, original_val in self.original_uniforms.items():
+            current_val = self.uniforms.get(key)
+            if current_val != original_val:
+                logger.warning(f"  CHANGED: {key} = {current_val} (was {original_val})")
+        
+        # Check for new uniforms
+        for key, current_val in self.uniforms.items():
+            if key not in self.original_uniforms:
+                logger.info(f"  NEW: {key} = {current_val}")
+        
+        logger.info(f"Total uniform changes so far: {self.uniform_change_count}")
+        logger.info("=" * 60)
     
     def get_uniform(self, name: str) -> Any:
         """Get a uniform value from the shader.
@@ -352,17 +503,30 @@ void main() {
         """
         logger.info(f"Reloading shader: {self.shader_path.name}")
         
-        # Clean up existing shader
+        # DEBUGGING: Log uniform state before reload
+        self._debug_uniform_state("before_reload")
+        
+        # Clean up existing shader and vertex list
+        if self.quad_vertex_list:
+            if hasattr(self.quad_vertex_list, 'delete'):
+                self.quad_vertex_list.delete()
+            self.quad_vertex_list = None
+        
         if self.shader_program:
             if hasattr(self.shader_program, 'delete'):
                 self.shader_program.delete()
             self.shader_program = None
         
-        # Reload
+        # Reload shader
         self._load_shader()
         
         if self.shader_program:
+            # Recreate vertex list with new shader program
+            self._create_screen_quad()
             logger.info(f"Successfully reloaded shader: {self.shader_path.name}")
+            
+            # DEBUGGING: Log uniform state after reload
+            self._debug_uniform_state("after_reload")
         else:
             logger.error(f"Failed to reload shader: {self.shader_path.name}")
     
@@ -372,8 +536,17 @@ void main() {
         Args:
             new_size: New (width, height) of the window
         """
+        # DEBUGGING: Check if resolution was originally configured
+        old_resolution = self.uniforms.get('resolution')
+        new_resolution = (float(new_size[0]), float(new_size[1]))
+        
+        if 'resolution' in self.original_uniforms:
+            logger.warning(f"Window resize overriding configured resolution! "
+                         f"Original: {self.original_uniforms['resolution']}, "
+                         f"Old: {old_resolution}, New: {new_resolution}")
+        
         # Update resolution uniform
-        self.uniforms['resolution'] = (float(new_size[0]), float(new_size[1]))
+        self.uniforms['resolution'] = new_resolution
         logger.debug(f"Shader {self.shader_path.name} resized to: {new_size}")
     
     async def cleanup(self):

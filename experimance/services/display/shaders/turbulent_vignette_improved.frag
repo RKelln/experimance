@@ -7,7 +7,6 @@ uniform float time;
 uniform vec2 resolution;
 uniform float vignette_strength = 0.7;
 uniform float turbulence_amount = 0.25;
-uniform float full_mask_zone = 0.08;    // Configurable full mask area at edges
 uniform float gradient_zone = 0.25;     // Configurable gradient transition zone
 uniform float speed = 1.0;              // Global speed multiplier for all animations
 uniform float horizontal_compression = 1.0;  // Compression factor for horizontal coordinates (6.0 for 6x projector stretch)
@@ -124,6 +123,10 @@ void main() {
     float dist_from_top = compressed_uv.y;
     float dist_from_bottom = 1.0 - compressed_uv.y;
     
+    // For horizontal stretched displays, we also need to consider side distances for proper effect distribution
+    float dist_from_left = compressed_uv.x;
+    float dist_from_right = 1.0 - compressed_uv.x;
+    
     // Create smooth, continuous edge masks
     float top_base_mask = 0.0;
     float bottom_base_mask = 0.0;
@@ -156,8 +159,9 @@ void main() {
     
     // Generate flowing, steam-like turbulence with ultra-fine texture and tight swirls
     // Top flow moves UPWARD (negative Y), bottom flow moves downward - much slower, more balanced movement
-    vec2 top_flow_coord = uv * vec2(8.0, 6.0) + vec2(time * speed * 0.015, -time * speed * 0.06);  // Fixed: negative Y for upward flow
-    vec2 bottom_flow_coord = uv * vec2(8.0, 6.0) + vec2(time * speed * -0.01, -time * speed * 0.045);
+    // Use compressed UV to account for horizontal stretching in the flow calculations
+    vec2 top_flow_coord = compressed_uv * vec2(8.0, 6.0) + vec2(time * speed * 0.015, -time * speed * 0.06);  // Fixed: negative Y for upward flow
+    vec2 bottom_flow_coord = compressed_uv * vec2(8.0, 6.0) + vec2(time * speed * -0.01, -time * speed * 0.045);
     
     // Apply domain warping for organic distortion
     vec2 warped_top = domain_warp(top_flow_coord, time * speed * 0.06);
