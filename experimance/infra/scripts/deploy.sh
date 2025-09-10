@@ -499,6 +499,20 @@ install_reset_on_input() {
         return
     fi
     
+    # Check if reset-on-input is in the services list for this machine
+    local install_reset=false
+    for service in "${SERVICES[@]}"; do
+        if [[ "$service" == "reset-on-input"* ]] || [[ "$service" == *"reset-on-input" ]]; then
+            install_reset=true
+            break
+        fi
+    done
+    
+    if [[ "$install_reset" != true ]]; then
+        log "Skipping reset-on-input installation (not configured for this machine)"
+        return
+    fi
+    
     log "Installing reset on input listener (keyboard/controller)..."
     
     # Copy the reset on input systemd service
@@ -546,17 +560,87 @@ install_systemd_files_linux() {
     
     log "Installing systemd service files..."
     
-    # Copy all template service files (e.g., core@.service, display@.service)
+    # Determine which service template files are needed for this machine
+    declare -A needed_service_types
+    declare -A service_modules
+    for service in "${SERVICES[@]}"; do
+        # service is in format "service_type@project", e.g., "core@experimance"
+        local service_type="${service%@*}"
+        needed_service_types["$service_type"]=1
+        
+        # Get the module name for this service using the helper script
+        local module_name
+        if [[ "$MODE" == "prod" && "$RUNTIME_USER" == "experimance" && "$EUID" -eq 0 ]]; then
+            # Running as root in production mode, delegate to experimance user
+            module_name=$(sudo -u experimance bash -c "
+                cd '$REPO_DIR'
+                export PATH=\"/home/experimance/.local/bin:\$PATH\"
+                uv run python infra/scripts/get_service_module.py '$PROJECT' '$service_type'
+            " 2>/dev/null || echo "experimance_$service_type")
+        else
+            # Development mode or already running as correct user
+            module_name=$(cd "$REPO_DIR" && uv run python infra/scripts/get_service_module.py "$PROJECT" "$service_type" 2>/dev/null || echo "experimance_$service_type")
+        fi
+        service_modules["$service_type"]="$module_name"
+        log "Service $service_type will use module: $module_name"
+    done
+    
+    # Copy only the needed template service files (e.g., core@.service, display@.service)
     # These are TEMPLATES that systemd uses to create instances like core@experimance.service
     local files_copied=0
     for service_file in "$SCRIPT_DIR"/../systemd/*.service; do
         if [[ -f "$service_file" ]]; then
             local basename_file=$(basename "$service_file")
-            if cp "$service_file" "$SYSTEMD_DIR/"; then
-                log "✓ Copied $basename_file"
-                files_copied=$((files_copied + 1))
+            
+            # Handle template services (contains @) and standalone services
+            if [[ "$basename_file" == *"@.service" ]]; then
+                # Template service - extract service type
+                local service_type="${basename_file%@*}"
+                if [[ "${needed_service_types[$service_type]:-}" == "1" ]]; then
+                    # Get the module name for this service type
+                    local module_name="${service_modules[$service_type]:-experimance_$service_type}"
+                    
+                    # Create a customized version of the template file
+                    local temp_file="/tmp/${basename_file}.$$"
+                    cp "$service_file" "$temp_file"
+                    
+                    # Replace the ExecStart line with the correct module name
+                    sed -i "s|ExecStart=/home/experimance/.local/bin/uv run -m experimance_${service_type}|ExecStart=/home/experimance/.local/bin/uv run -m ${module_name}|g" "$temp_file"
+                    
+                    # Copy the customized file to systemd directory with correct name
+                    if cp "$temp_file" "$SYSTEMD_DIR/$basename_file"; then
+                        log "✓ Copied $basename_file (module: $module_name)"
+                        files_copied=$((files_copied + 1))
+                    else
+                        error "✗ Failed to copy $basename_file"
+                    fi
+                    
+                    # Clean up temp file
+                    rm -f "$temp_file"
+                else
+                    log "Skipping $basename_file (not needed for this machine)"
+                fi
             else
-                error "✗ Failed to copy $basename_file"
+                # Standalone service - check if it's in the services list
+                local service_name="${basename_file%.service}"
+                local found_service=false
+                for service in "${SERVICES[@]}"; do
+                    if [[ "$service" == "$service_name"* ]] || [[ "$service" == *"$service_name" ]]; then
+                        found_service=true
+                        break
+                    fi
+                done
+                
+                if [[ "$found_service" == true ]]; then
+                    if cp "$service_file" "$SYSTEMD_DIR/"; then
+                        log "✓ Copied $basename_file"
+                        files_copied=$((files_copied + 1))
+                    else
+                        error "✗ Failed to copy $basename_file"
+                    fi
+                else
+                    log "Skipping $basename_file (not needed for this machine)"
+                fi
             fi
         fi
     done

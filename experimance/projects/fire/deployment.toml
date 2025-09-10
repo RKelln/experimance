@@ -9,20 +9,6 @@
 project = "fire"
 version = "1.0.0"
 
-# Network configuration for cross-machine communication
-[network]
-# Primary machine (Ubuntu Linux) - where core services run
-primary_host = "fire-linux.local"  # Update with actual hostname/IP
-primary_ip = "192.168.1.100"       # Update with actual IP
-
-# Secondary machine (macOS) - where agent runs  
-secondary_host = "FireProjects-Mac-mini.local" # Update with actual hostname/IP
-secondary_ip = "192.168.1.101"      # Update with actual IP
-
-# ZMQ port overrides for distributed deployment
-# Base ports will be calculated from these
-zmq_base_port = 5555
-
 [machines]
 # Define which services run on which machines
 # Key = machine identifier (hostname or alias)
@@ -30,7 +16,7 @@ zmq_base_port = 5555
 
 # Ubuntu Linux machine
 [machines.ubuntu]
-hostname = "fire-linux.local"  # Must match actual hostname or be overrideable
+hostname = "ia360.local"  # Must match actual hostname or be overrideable
 services = ["core", "image_server", "display", "health"]
 platform = "linux"
 mode = "prod"  # or "dev"
@@ -49,27 +35,16 @@ user = "fireproject"  # System user for this machine
 # Service-specific configuration that might differ in distributed mode
 
 [services.core]
-# Core service needs to bind to all interfaces for remote connections
-zmq_bind_all_interfaces = true
 module_name = "fire_core"  # Override default experimance_core
 
 [services.agent]
-# Agent needs to connect to remote core service
-remote_core_host = "fire-linux.local"
 module_name = "fire_agent"  # Override default experimance_agent
 
 [services.image_server]
-# Image server configuration
-# No special distributed config needed
 module_name = "image_server"  # Uses default
 
 [services.display]
-# Display service configuration  
-# May need to connect to remote image server
-remote_image_server_host = "fire-linux.local"
 module_name = "experimance_display"  # Uses default
 
 [services.health]
-# Health service runs on both machines to monitor local services
-local_only = true
 module_name = "experimance_health"  # Uses default
