@@ -12,6 +12,7 @@ from .config import FireAgentServiceConfig
 from agent.vision.reolink_detector import ReolinkDetector
 from agent.vision.reolink_frame_detector import ReolinkFrameDetector
 from agent.vision.yolo_person_detector import YOLO11PersonDetector
+from agent.vision.mock_detector import MockAudienceDetector
 from agent.tools import create_zmq_tool
 from agent.backends.base import AgentBackendEvent
 
@@ -159,57 +160,73 @@ class FireAgentService(AgentServiceBase):
                 self.osc_client = None
 
         # start audience detector
-        # Automatic discovery with optional known IP
-        if self.config.vision.audience_detection_enabled and self.config.reolink.enabled:
-            # Get credentials from environment variables
-            reolink_user = os.getenv("REOLINK_USER", self.config.reolink.user)
-            reolink_password = os.getenv("REOLINK_PASSWORD")
-            
-            if not reolink_password:
-                logger.error("REOLINK_PASSWORD environment variable is required for camera authentication")
-                raise ValueError("Reolink password not configured - set REOLINK_PASSWORD in .env file")
-            
-            # Use hybrid detection: camera AI trigger + YOLO precision
-            # Auto-discover camera if host not specified or use known IP as hint
-            known_ip = self.config.reolink.host if self.config.reolink.host else None
-            
-            logger.info(f"Initializing hybrid Reolink detector with discovery (known_ip: {known_ip})")
-            
-            # Create YOLO configuration from reolink config  
-            yolo_config = {}
-            if hasattr(self.config.reolink, 'yolo') and self.config.reolink.yolo:
-                # Convert Pydantic model to dict for YOLO detector
-                yolo_config = self.config.reolink.yolo.dict()
-                logger.debug(f"YOLO config loaded from reolink.yolo: confidence_threshold={self.config.reolink.yolo.confidence_threshold}")
-            else:
-                logger.warning(f"No YOLO config found in reolink config, using defaults")
-            
-            self.audience_detector = await ReolinkDetector.create_with_discovery(
-                known_ip=known_ip,
-                user=reolink_user,
-                password=reolink_password,
-                https=self.config.reolink.https,
-                channel=self.config.reolink.channel,
-                timeout=self.config.reolink.timeout,
-                hysteresis_present=self.config.reolink.hysteresis_present,
-                hysteresis_absent=self.config.reolink.hysteresis_absent,
-                hybrid_mode=True,  # Enable hybrid camera AI + YOLO detection
-                yolo_config=yolo_config,
-                yolo_absent_threshold=5,  # YOLO absent readings before switching back to monitoring
-                yolo_check_interval=1.0   # Seconds between YOLO checks in active mode
-            )
-            
-            # Start the detector (initialize HTTP session and login)
-            await self.audience_detector.start()
-            
-            logger.info("Hybrid Reolink detector initialized successfully")
-            
-            # start polling camera
-            self.add_task(self._audience_detection_loop())
+        if self.config.vision.audience_detection_enabled:
 
-            # Send initial OSC signal (no audience present at startup)
-            if self.osc_client:
-                self._send_osc_presence(0)
+            if self.config.mock_detector.enabled:
+                # Use mock detector for testing
+                logger.info("Using mock audience detector for testing")
+                self.audience_detector = MockAudienceDetector(
+                    control_method=self.config.mock_detector.control_method,
+                    control_dir=self.config.mock_detector.control_dir,
+                    initial_state=self.config.mock_detector.initial_state,
+                    initial_count=self.config.mock_detector.initial_count
+                )
+                # Send initial OSC signal
+                if self.osc_client:
+                    self._send_osc_presence(self.config.mock_detector.initial_count)
+
+            elif self.config.reolink.enabled:
+                # Automatic discovery with optional known IP
+                # Get credentials from environment variables
+                reolink_user = os.getenv("REOLINK_USER", self.config.reolink.user)
+                reolink_password = os.getenv("REOLINK_PASSWORD")
+                
+                if not reolink_password:
+                    logger.error("REOLINK_PASSWORD environment variable is required for camera authentication")
+                    raise ValueError("Reolink password not configured - set REOLINK_PASSWORD in .env file")
+                
+                # Use hybrid detection: camera AI trigger + YOLO precision
+                # Auto-discover camera if host not specified or use known IP as hint
+                known_ip = self.config.reolink.host if self.config.reolink.host else None
+                
+                logger.info(f"Initializing hybrid Reolink detector with discovery (known_ip: {known_ip})")
+                
+                # Create YOLO configuration from reolink config  
+                yolo_config = {}
+                if hasattr(self.config.reolink, 'yolo') and self.config.reolink.yolo:
+                    # Convert Pydantic model to dict for YOLO detector
+                    yolo_config = self.config.reolink.yolo.dict()
+                    logger.debug(f"YOLO config loaded from reolink.yolo: confidence_threshold={self.config.reolink.yolo.confidence_threshold}")
+                else:
+                    logger.warning(f"No YOLO config found in reolink config, using defaults")
+                
+                self.audience_detector = await ReolinkDetector.create_with_discovery(
+                    known_ip=known_ip,
+                    user=reolink_user,
+                    password=reolink_password,
+                    https=self.config.reolink.https,
+                    channel=self.config.reolink.channel,
+                    timeout=self.config.reolink.timeout,
+                    hysteresis_present=self.config.reolink.hysteresis_present,
+                    hysteresis_absent=self.config.reolink.hysteresis_absent,
+                    hybrid_mode=True,  # Enable hybrid camera AI + YOLO detection
+                    yolo_config=yolo_config,
+                    yolo_absent_threshold=5,  # YOLO absent readings before switching back to monitoring
+                    yolo_check_interval=1.0   # Seconds between YOLO checks in active mode
+                )
+
+                # Send initial OSC signal (no audience present at startup)
+                if self.osc_client:
+                    self._send_osc_presence(0)
+            
+            # for all detectors:
+            assert self.audience_detector
+            await self.audience_detector.start()
+            logger.info("Mock detector initialized successfully")
+            
+            # start polling
+            self.add_task(self._audience_detection_loop())
+            
         else: # no audience detection
             logger.warning("Audience detection is disabled, no audience monitoring will occur")
             # start voice chat backend, since it won't be started by audience detection
@@ -318,6 +335,11 @@ class FireAgentService(AgentServiceBase):
                             
                             # Update current presence after processing
                             self.current_presence = presence
+
+                        # If absence detected during conversation cooldown, mark it
+                        # so we can cancel cooldown when absence confirmed
+                        if not presence and self.conversation_end_time is not None and self.config.cancel_cooldown_on_absence:
+                            self.audience_went_to_zero_after_conversation = True
                             
                     except Exception as e:
                         logger.error(f"Error in hybrid detection: {e}")
@@ -348,23 +370,27 @@ class FireAgentService(AgentServiceBase):
     async def _send_proactive_greeting(self) -> None:
         """Send a proactive greeting to visitors after a short delay."""
         try:
+            start = time.monotonic()
+            backend_started = await self._wait_for_backend_to_start(timeout=30.0)
+
             if self.config.vision.audience_detection_enabled:
                 # Wait for the configured greeting delay if we've seen the audience
-                await asyncio.sleep(self.config.greeting_delay)
+                elapsed = time.monotonic() - start
+                delay = max(0, self.config.greeting_delay - elapsed)
+                if delay > 0:
+                    logger.info(f"Waiting {delay:.1f}s before sending proactive greeting")
+                    await asyncio.sleep(delay)
 
             # Trigger the backend to generate a proactive greeting
             greeting_prompt = self.config.greeting_prompt
             logger.info("Triggering proactive greeting from backend")
-            if not self.current_backend:
-                logger.warning("No backend available to send proactive greeting")
-                # need to start up the backend if not already started
-                await self._start_backend_for_conversation()
-
-            if self.current_backend:
+            
+            if backend_started and self.current_backend:
                 # Use backend's trigger_response method to generate immediate LLM response
                 await self.current_backend.trigger_response(greeting_prompt)
             else:
                 logger.error("Failed to send proactive greeting - no backend available")
+                self.current_presence = None # reset presence to allow retry later
                 
         except Exception as e:
             logger.error(f"Failed to send proactive greeting: {e}")
@@ -394,6 +420,10 @@ class FireAgentService(AgentServiceBase):
 
         # Publish presence to fire_core via ZMQ
         await self._publish_audience_present(0)
+
+        # If conversation over mark that audience went to zero after conversation
+        if self.conversation_end_time is not None and self.config.cancel_cooldown_on_absence:
+            self.audience_went_to_zero_after_conversation = True
 
     async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle new transcription data."""

@@ -8,13 +8,9 @@ agent_backend = "pipecat"
 
 speech_detection_enabled = true
 
-# Conversation cooldown settings
-# After a conversation ends (e.g., saying goodbye), wait this long before starting a new one
-conversation_cooldown_duration = 12.0  # seconds
-
-# End cooldown early if audience leaves and returns (allows immediate restart on audience change)
-# This prevents the same person from immediately restarting, but allows new people to start immediately
-cancel_cooldown_on_absence = true
+# Conversation management
+cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves then returns
+conversation_cooldown_duration = 3.0  # seconds # After a conversation ends (e.g., saying goodbye), wait this long before starting a new one
 
 # TTS (Text-to-Speech) settings (ensemble mode only)
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
@@ -112,11 +108,15 @@ tts = "cartesia"    # Text-to-speech provider
 
 [vision]
 audience_detection_enabled = true
-
-# Audience Detection Settings  
 audience_detection_interval = 1.5       # Check camera every 1.5 seconds (slightly slower for stability)
-conversation_cooldown_duration = 30     # 30s between conversations
-cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves then returns
+
+# Mock detector configuration (overrides reolink)
+[mock_detector]
+enabled = false                   # Enable mock detector
+control_method = "file"      # Use file-based control (recommended)
+control_dir = "/tmp/mock_detector"
+initial_state = false            # Start with no audience
+initial_count = 0
 
 [reolink]
 # Fire project specific Reolink Camera Settings with asymmetric hysteresis and YOLO11 detection

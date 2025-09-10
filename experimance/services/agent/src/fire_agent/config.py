@@ -56,6 +56,30 @@ class ReolinkConfig(BaseModel):
         description="Reolink camera request timeout (seconds)"
     )
 
+class MockDetectorConfig(BaseModel):
+    """Configuration for mock audience detector (testing only)."""
+    
+    enabled: bool = Field(
+        default=False,
+        description="Enable mock audience detector for testing"
+    )
+    control_method: str = Field(
+        default="file",
+        description="Control method: 'keyboard' or 'file'"
+    )
+    control_dir: str = Field(
+        default="/tmp/mock_detector",
+        description="Directory for file-based control"
+    )
+    initial_state: bool = Field(
+        default=False,
+        description="Initial presence state"
+    )
+    initial_count: int = Field(
+        default=0,
+        description="Initial person count"
+    )
+
 class FireReolinkConfig(ReolinkConfig):
     """Fire project specific Reolink configuration with asymmetric hysteresis."""
     
@@ -126,6 +150,12 @@ class FireAgentServiceConfig(AgentServiceConfig):
     reolink: FireReolinkConfig = Field(
         default_factory=FireReolinkConfig,
         description="Configuration for the Reolink camera detection"
+    )
+    
+    # Mock detector config (testing only)
+    mock_detector: MockDetectorConfig = Field(
+        default_factory=MockDetectorConfig,
+        description="Configuration for mock audience detector (testing only)"
     )
     
     # Proactive greeting configuration

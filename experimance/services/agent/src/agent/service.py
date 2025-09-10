@@ -344,8 +344,15 @@ class AgentServiceBase(BaseService):
             self.record_error(e, is_fatal=True)
             raise
 
-    async def _start_backend_for_conversation(self):
-        """Start the agent backend when a person is detected."""
+    async def _start_backend_for_conversation(self, force=True) -> bool:
+        """Start the agent backend.
+
+        Args:
+            force: If True, force start the backend even if in cooldown.
+
+        Returns True if the backend started successfully or is already running.
+        Returns False if the backend could not be started (e.g., in cooldown).
+        """
         if self.current_backend is not None and self.current_backend.is_connected:
             logger.debug("Backend already exists and is connected, returning True")
             return True
@@ -362,7 +369,7 @@ class AgentServiceBase(BaseService):
             return False
 
         # Check if we're in cooldown period
-        if self._is_in_conversation_cooldown():
+        if self._is_in_conversation_cooldown() and not force:
             cooldown_remaining = max(0, (self.conversation_end_time + self.config.conversation_cooldown_duration) - time.time()) if self.conversation_end_time else 0
             
             if self.config.cancel_cooldown_on_absence:
@@ -397,7 +404,17 @@ class AgentServiceBase(BaseService):
             logger.error(f"Failed to start conversation backend: {e}")
             self.record_error(e, is_fatal=True)
             return False
-        
+
+    async def _wait_for_backend_to_start(self, timeout: float = 10.0) -> bool:
+        """Wait for the backend to finish starting up."""
+        start_time = time.monotonic()
+        while not self._start_backend_for_conversation():
+            if timeout > 0 and time.monotonic() - start_time > timeout:
+                logger.warning("Timeout waiting for backend to start")
+                return False
+            await asyncio.sleep(0.25)
+        return True
+
     def _on_conversation_started(self):
         """Handle logic when a conversation is started."""
         pass
