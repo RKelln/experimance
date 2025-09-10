@@ -14,7 +14,7 @@ conversation_cooldown_duration = 3.0  # seconds # After a conversation ends (e.g
 
 # TTS (Text-to-Speech) settings (ensemble mode only)
 elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
-cartesia_voice_id = "70eefb47-0d9c-45a4-9ffd-2e216b380895"
+cartesia_voice_id = "173250a9-6ea5-48a9-90cf-441535639140"
 # fire spirit cartesia: 15e68ffc-55ad-48e3-9e50-cc8c56281b9d
 # sophia: bf0a246a-8642-498a-9950-80c35e9276b5
 # kyle: 70eefb47-0d9c-45a4-9ffd-2e216b380895
@@ -76,7 +76,7 @@ stt_mute_strategies = ["first_speech"]
 # Background audio looping (fire crackle)
 # Audio must match output smaple rate and be mono:
 # ffmpeg -i media/audio/environment/bonfire.mp3 -ar 24000 -ac 1 media/audio/environment/bonfire_24k_mono.mp3 -y
-background_audio_enabled = true
+background_audio_enabled = false
 background_audio_file = "media/audio/environment/bonfire_24k_mono.mp3"  # Path relative to project root
 background_audio_volume = 1.0        # Volume level (0.0 to 1.0)
 background_audio_loop = true         # Loop the audio file
