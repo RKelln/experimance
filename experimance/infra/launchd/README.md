@@ -189,6 +189,33 @@ This requires uv to have Full Disk Access permission.
 - **Root cause**: macOS TCC (Transparency, Consent, and Control) framework blocking execution
 - **Solution**: Grant Full Disk Access to `/opt/homebrew/bin/uv` in System Settings
 
+### LaunchAgent Failed State (Exit Code 78)
+If services show as "loaded" but with exit code 78, they're in a **failed state**:
+
+```bash
+# Check if services are in failed state
+launchctl list | grep experimance
+# Output: -    78    com.experimance.agent.fire
+```
+
+**Important**: `start` won't work on failed services - use `restart` instead:
+
+```bash
+# ❌ This won't work on failed services
+./infra/scripts/deploy.sh fire start
+
+# ✅ This clears failed state and restarts
+./infra/scripts/deploy.sh fire restart
+```
+
+**Why this happens**:
+- System reboots that don't properly restart services
+- Network/port conflicts from previous runs  
+- Temporary file system or permission issues
+- macOS updates that reset security contexts
+
+**Solution**: Always use `restart` instead of `start` when troubleshooting failed LaunchAgents.
+
 ## Differences from systemd
 
 | Feature          | systemd                    | macOS LaunchAgents              |
