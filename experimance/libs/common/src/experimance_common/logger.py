@@ -177,7 +177,7 @@ def configure_external_loggers(level=logging.WARNING):
     Args:
         level: The logging level to set for external libraries
     """
-    print(f"Setting external loggers to level: {logging.getLevelName(level)}")
+    #print(f"Setting external loggers to level: {logging.getLevelName(level)}")
     for logger_name in [
         "httpx",           # HTTP client library often used by FAL
         "httpcore.http11", # HTTP/1.1 implementation used by httpx
