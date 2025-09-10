@@ -537,6 +537,92 @@ install_reset_on_input() {
     fi
 }
 
+update_health_config() {
+    log "Updating health service configuration for deployment..."
+    
+    local health_config_path="$REPO_DIR/projects/$PROJECT/health.toml"
+    
+    # Check if health.toml exists
+    if [[ ! -f "$health_config_path" ]]; then
+        log "No health.toml found at $health_config_path, skipping health config update"
+        return
+    fi
+    
+    # Get the service types (without @project suffix) for this machine, excluding health service
+    local service_types=()
+    for service in "${SERVICES[@]}"; do
+        # Extract service type from "service_type@project" format
+        local service_type="${service%@*}"
+        # Skip the health service - it shouldn't monitor itself
+        if [[ "$service_type" != "health" ]]; then
+            service_types+=("$service_type")
+        fi
+    done
+    
+    # Get the module names for each service type
+    local expected_services=()
+    for service_type in "${service_types[@]}"; do
+        local module_name
+        if [[ "$MODE" == "prod" && "$RUNTIME_USER" == "experimance" && "$EUID" -eq 0 ]]; then
+            # Running as root in production mode, delegate to experimance user
+            module_name=$(sudo -u experimance bash -c "
+                cd '$REPO_DIR'
+                export PATH=\"/home/experimance/.local/bin:\$PATH\"
+                uv run python infra/scripts/get_service_module.py '$PROJECT' '$service_type'
+            " 2>/dev/null || echo "experimance_$service_type")
+        else
+            # Development mode or already running as correct user
+            module_name=$(cd "$REPO_DIR" && uv run python infra/scripts/get_service_module.py "$PROJECT" "$service_type" 2>/dev/null || echo "experimance_$service_type")
+        fi
+        expected_services+=("$module_name")
+    done
+    
+    # Create the expected_services array string for TOML
+    local services_toml="expected_services = ["
+    for i in "${!expected_services[@]}"; do
+        services_toml+="\n    \"${expected_services[i]}\""
+        if [[ $i -lt $((${#expected_services[@]} - 1)) ]]; then
+            services_toml+=","
+        fi
+    done
+    services_toml+="\n]"
+    
+    # Create a backup of the original file
+    cp "$health_config_path" "$health_config_path.backup"
+    
+    # Update the expected_services in the health.toml file
+    # Use sed to replace the expected_services array
+    local temp_file="$health_config_path.tmp"
+    
+    # Use awk to replace the expected_services section
+    awk -v new_services="$services_toml" '
+    /^expected_services = \[/ {
+        print new_services
+        # Skip lines until we find the closing bracket
+        while (getline && !/^\]/ && !/^[a-zA-Z_]/) {
+            # Skip lines that are part of the array
+        }
+        # If we stopped on a line that is not a closing bracket, print it
+        if (!/^\]/) {
+            print
+        }
+        next
+    }
+    { print }
+    ' "$health_config_path" > "$temp_file"
+    
+    # Replace the original file
+    mv "$temp_file" "$health_config_path"
+    
+    log "Updated health.toml expected_services:"
+    for service in "${expected_services[@]}"; do
+        log "  - $service"
+    done
+    
+    log "Health configuration updated successfully"
+    log "Original config backed up to: $health_config_path.backup"
+}
+
 install_systemd_files() {
     case "$PLATFORM" in
         linux)
@@ -2393,6 +2479,7 @@ main() {
             # Re-populate SERVICES array after dependencies are installed
             load_services_array "$PROJECT"
             check_project
+            update_health_config
             install_systemd_files
             if [[ "$PLATFORM" == "linux" ]]; then
                 install_reset_on_input
