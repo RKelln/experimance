@@ -225,6 +225,20 @@ class AudioConfig(BaseModel):
         default=False,
         description="Force audio generation without using cache"
     )
+    
+    absence_fade_delay: float = Field(
+        default=30.0,
+        description="Delay in seconds before fading audio when audience leaves",
+        ge=0.0,
+        le=300.0
+    )
+    
+    absence_fade_duration: float = Field(
+        default=5.0,
+        description="Duration in seconds for audio fade-out when audience absent",
+        ge=0.0,
+        le=30.0
+    )
 
 
 class FireCoreConfig(BaseServiceConfig):
@@ -270,7 +284,7 @@ class FireCoreConfig(BaseServiceConfig):
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
                 port=DEFAULT_PORTS["agent"],  # Subscribe to agent messages
-                topics=[MessageType.STORY_HEARD, MessageType.UPDATE_LOCATION, MessageType.TRANSCRIPT_UPDATE]
+                topics=[MessageType.STORY_HEARD, MessageType.UPDATE_LOCATION, MessageType.TRANSCRIPT_UPDATE, MessageType.AUDIENCE_PRESENT]
             ),
             workers={
                 "image_server": WorkerConfig(

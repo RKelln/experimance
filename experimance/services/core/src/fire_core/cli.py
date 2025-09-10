@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from experimance_common.constants import DEFAULT_PORTS, ZMQ_TCP_BIND_PREFIX, ZMQ_TCP_CONNECT_PREFIX
-from experimance_common.schemas import MessageType, StoryHeard, TranscriptUpdate # type: ignore
+from experimance_common.schemas import MessageType, StoryHeard, TranscriptUpdate, AudiencePresent # type: ignore
 from experimance_common.zmq.components import PublisherComponent
 from experimance_common.zmq.config import PublisherConfig
 
@@ -240,6 +240,61 @@ SAMPLE_MEDIA_PROMPTS = {
     }
 }
 
+# Sample audience presence scenarios for testing
+SAMPLE_AUDIENCE_SCENARIOS = {
+    "arrival": [
+        {"person_count": 0, "description": "Empty space"},
+        {"person_count": 1, "description": "Person arrives"},
+        {"person_count": 1, "description": "Person stays"},
+        {"person_count": 1, "description": "Person still present"},
+    ],
+    
+    "departure": [
+        {"person_count": 1, "description": "Person present"},
+        {"person_count": 1, "description": "Person still there"},
+        {"person_count": 0, "description": "Person leaves - should trigger fadeout"},
+        {"person_count": 0, "description": "Still empty"},
+    ],
+    
+    "group_arrives": [
+        {"person_count": 0, "description": "Empty space"},
+        {"person_count": 1, "description": "First person arrives"},
+        {"person_count": 2, "description": "Second person joins"},
+        {"person_count": 3, "description": "Third person arrives"},
+        {"person_count": 3, "description": "Group stays"},
+    ],
+    
+    "group_leaves_gradually": [
+        {"person_count": 3, "description": "Group present"},
+        {"person_count": 2, "description": "One person leaves"},
+        {"person_count": 1, "description": "Another leaves"},
+        {"person_count": 0, "description": "Last person leaves - should trigger fadeout"},
+    ],
+    
+    "intermittent": [
+        {"person_count": 1, "description": "Person present"},
+        {"person_count": 0, "description": "Person leaves briefly"},
+        {"person_count": 1, "description": "Person returns quickly (within fade delay)"},
+        {"person_count": 1, "description": "Person stays"},
+        {"person_count": 0, "description": "Person leaves again"},
+        {"person_count": 0, "description": "Still empty - should trigger fadeout"},
+    ],
+    
+    "quick_return": [
+        {"person_count": 1, "description": "Person present"},
+        {"person_count": 0, "description": "Person leaves"},
+        {"person_count": 1, "description": "Person returns quickly (testing fade delay)"},
+        {"person_count": 2, "description": "Another person joins"},
+    ],
+    
+    "fade_test": [
+        {"person_count": 1, "description": "Person present"},
+        {"person_count": 0, "description": "Person leaves - start fade delay countdown"},
+        {"person_count": 0, "description": "Still empty (during fade delay)"},
+        {"person_count": 0, "description": "Still empty (should fade audio after delay)"},
+    ]
+}
+
 
 class FireCoreClient:
     """Simple client for sending messages to the Fire Core Service."""
@@ -375,6 +430,47 @@ class FireCoreClient:
                 await asyncio.sleep(delay_between_messages)
         
         logger.info(f"Conversation complete - sent {len(request_ids)} transcript updates")
+        return request_ids
+
+    async def send_audience_present(self, person_count: int) -> str:
+        """Send an AudiencePresent message via the agent channel."""
+        request_id = str(uuid.uuid4())
+        
+        audience_message = AudiencePresent(
+            person_count=person_count
+        )
+        
+        logger.info(f"Sending audience presence via agent channel: {person_count} people")
+        assert self.agent_publisher is not None, "Agent publisher not initialized"
+        await self.agent_publisher.publish(audience_message, MessageType.AUDIENCE_PRESENT)
+        
+        return request_id
+
+    async def send_audience_scenario(self, scenario: List[Dict[str, Any]], delay_between_updates: float = 2.0) -> List[str]:
+        """Send a sequence of audience presence updates to test presence detection and audio fadeout.
+        
+        Each update in the scenario includes:
+        - person_count: Number of people detected
+        - description: Human-readable description for logging
+        """
+        request_ids = []
+        logger.info(f"Starting audience scenario with {len(scenario)} presence updates")
+        
+        for i, update in enumerate(scenario):
+            person_count = update["person_count"]
+            description = update.get("description", f"{person_count} people")
+            
+            logger.info(f"📊 Step {i+1}/{len(scenario)}: {description}")
+            
+            request_id = await self.send_audience_present(person_count)
+            request_ids.append(request_id)
+            
+            # Add delay between updates to simulate realistic detection flow
+            if i < len(scenario) - 1:  # Don't wait after the last update
+                logger.info(f"Waiting {delay_between_updates}s before next update...")
+                await asyncio.sleep(delay_between_updates)
+        
+        logger.info(f"Audience scenario complete - sent {len(request_ids)} presence updates")
         return request_ids
 
     async def send_audio_render_request(self, audio_prompt: str, duration_s: Optional[int] = None,
@@ -597,12 +693,16 @@ async def interactive_mode(debug: bool = False):
             print("  7. Send audio render request")
             print("  8. Test audio playback (send AudioReady with real audio file)")
             print("  9. Test full audio workflow (story → AudioRenderRequest → AudioReady)")
+            print("\n=== Audience Presence Testing ===")
+            print(" 10. Send single audience presence update")
+            print(" 11. Test audience presence scenario (arrival/departure)")
             if MediaPrompt is not None:
-                print(" 10. Test media prompt generation")
-                print(" 11. Test combined media workflow")
+                print("\n=== Media Prompt Testing ===")
+                print(" 12. Test media prompt generation")
+                print(" 13. Test combined media workflow")
             print("  0. Exit")
 
-            choice = input("\nChoose option (0-11): ").strip()
+            choice = input(f"\nChoose option (0-{13 if MediaPrompt is not None else 11}): ").strip()
 
             if choice == "0":
                 break
@@ -887,7 +987,56 @@ async def interactive_mode(debug: bool = False):
                     print("❌ Invalid or missing audio file path.")
 
             elif choice == "10":
+                # Send single audience presence update
+                print("\n📊 Send Single Audience Presence Update")
+                person_count_input = input("Enter number of people detected (0-10): ").strip()
+                try:
+                    person_count = int(person_count_input)
+                    if 0 <= person_count <= 10:
+                        request_id = await client.send_audience_present(person_count)
+                        print(f"✅ Audience presence sent with ID: {request_id}")
+                        print(f"   Person count: {person_count}")
+                        print("Check Fire Core logs to see if audio fade behavior is triggered.")
+                    else:
+                        print("❌ Invalid person count. Please enter 0-10.")
+                except ValueError:
+                    print("❌ Invalid input. Please enter a number.")
+
+            elif choice == "11":
+                # Test audience presence scenario
+                print("\n📊 Test Audience Presence Scenario")
+                print("Available scenarios:")
+                scenario_options = list(SAMPLE_AUDIENCE_SCENARIOS.keys())
+                for i, name in enumerate(scenario_options):
+                    print(f"  {i+1}. {name.replace('_', ' ').title()}")
+                
+                scenario_choice = input(f"Choose scenario (1-{len(scenario_options)}): ").strip()
+                try:
+                    scenario_index = int(scenario_choice) - 1
+                    if 0 <= scenario_index < len(scenario_options):
+                        scenario_name = scenario_options[scenario_index]
+                        scenario = SAMPLE_AUDIENCE_SCENARIOS[scenario_name]
+                        
+                        print(f"\n🎬 Starting scenario: {scenario_name.replace('_', ' ').title()}")
+                        print(f"   This scenario has {len(scenario)} presence updates")
+                        
+                        delay_input = input("Delay between updates in seconds (default: 3.0): ").strip()
+                        delay = float(delay_input) if delay_input else 3.0
+                        
+                        request_ids = await client.send_audience_scenario(scenario, delay_between_updates=delay)
+                        print(f"✅ Scenario complete - sent {len(request_ids)} presence updates")
+                        print("Watch Fire Core logs to see audio fade behavior!")
+                    else:
+                        print("❌ Invalid scenario selection.")
+                except ValueError:
+                    print("❌ Invalid input. Please enter a number.")
+
+            elif choice == "12":
                 # Test media prompt generation
+                if MediaPrompt is None:
+                    print("❌ MediaPrompt not available")
+                    continue
+                    
                 print("\nTesting MediaPrompt generation:")
                 print("Available sample stories:")
                 story_options = list(SAMPLE_STORIES.keys())
@@ -912,8 +1061,12 @@ async def interactive_mode(debug: bool = False):
                 else:
                     print("MediaPrompt generation test failed.")
 
-            elif choice == "11":
+            elif choice == "13":
                 # Test combined media workflow
+                if MediaPrompt is None:
+                    print("❌ MediaPrompt not available")
+                    continue
+                    
                 print("\nTesting combined media workflow (mock):")
                 print("Available sample media prompts:")
                 media_options = list(SAMPLE_MEDIA_PROMPTS.keys())
@@ -1045,7 +1198,7 @@ async def command_line_mode(args):
             story_content = args.test_audio_workflow[0]
             audio_file_path = args.test_audio_workflow[1]
             
-            print(f"� Testing full audio workflow")
+            print(f"🔄 Testing full audio workflow")
             print(f"Story: {story_content}")
             print(f"Audio file: {audio_file_path}")
             
@@ -1054,6 +1207,33 @@ async def command_line_mode(args):
                 print("✅ Full audio workflow test completed successfully!")
             else:
                 print("❌ Full audio workflow test failed.")
+
+        elif args.audience_presence is not None:
+            # Send single audience presence update
+            person_count = args.audience_presence
+            
+            print(f"📊 Sending audience presence update: {person_count} people")
+            request_id = await client.send_audience_present(person_count)
+            print(f"✅ Audience presence sent with ID: {request_id}")
+            print("Check Fire Core logs to see if audio fade behavior is triggered.")
+
+        elif args.audience_scenario:
+            # Send audience presence scenario
+            scenario_name = args.audience_scenario
+            
+            if scenario_name in SAMPLE_AUDIENCE_SCENARIOS:
+                scenario = SAMPLE_AUDIENCE_SCENARIOS[scenario_name]
+                delay = args.audience_delay
+                
+                print(f"📊 Testing audience scenario: {scenario_name}")
+                print(f"Will send {len(scenario)} presence updates with {delay}s delays...")
+                
+                request_ids = await client.send_audience_scenario(scenario, delay_between_updates=delay)
+                print(f"✅ Scenario complete - sent {len(request_ids)} presence updates")
+                print("Watch Fire Core logs to see audio fade behavior!")
+            else:
+                print(f"❌ Unknown audience scenario: {scenario_name}")
+                print("Available scenarios:", list(SAMPLE_AUDIENCE_SCENARIOS.keys()))
 
     finally:
         await client.stop()
@@ -1153,6 +1333,27 @@ def main():
         action="store_true",
         help="List available sample media prompts and exit"
     )
+    parser.add_argument(
+        "--audience-presence",
+        type=int,
+        help="Send single audience presence update with specified person count"
+    )
+    parser.add_argument(
+        "--audience-scenario",
+        type=str,
+        help="Send audience presence scenario (use scenario name from samples)"
+    )
+    parser.add_argument(
+        "--audience-delay",
+        type=float,
+        default=3.0,
+        help="Delay between audience presence updates in seconds (default: 3.0)"
+    )
+    parser.add_argument(
+        "--list-audience-scenarios",
+        action="store_true",
+        help="List available sample audience scenarios and exit"
+    )
     
     args = parser.parse_args()
     
@@ -1199,6 +1400,19 @@ def main():
             print(f"    Audio: {data['audio']}")
         return
 
+    # List audience scenarios if requested
+    if args.list_audience_scenarios:
+        print("Available sample audience scenarios:")
+        for name, scenario in SAMPLE_AUDIENCE_SCENARIOS.items():
+            print(f"  {name}: {len(scenario)} updates")
+            for i, update in enumerate(scenario[:3]):  # Show first 3 updates as preview
+                count = update["person_count"]
+                desc = update["description"]
+                print(f"    {i+1}. {count} people - {desc}")
+            if len(scenario) > 3:
+                print(f"    ... and {len(scenario) - 3} more updates")
+        return
+
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger("fire_core_cli").setLevel(logging.DEBUG)
@@ -1207,10 +1421,11 @@ def main():
     # Check for interactive mode or required parameters
     if args.interactive:
         asyncio.run(interactive_mode(args.debug))
-    elif args.story or args.prompt or args.conversation or args.transcript or args.audio_prompt or args.test_audio_playback or args.test_audio_workflow:
+    elif args.story or args.prompt or args.conversation or args.transcript or args.audio_prompt or args.test_audio_playback or args.test_audio_workflow or args.audience_presence is not None or args.audience_scenario:
         asyncio.run(command_line_mode(args))
     else:
-        print("Error: Either --interactive mode, --story, --prompt, --conversation, --transcript, --audio-prompt, --test-audio-playback, or --test-audio-workflow must be specified.")
+        print("Error: Either --interactive mode or one of the test options must be specified.")
+        print("Test options: --story, --prompt, --conversation, --transcript, --audio-prompt, --test-audio-playback, --test-audio-workflow, --audience-presence, --audience-scenario")
         parser.print_help()
         return 1
     

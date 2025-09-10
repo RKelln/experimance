@@ -2,9 +2,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Dict, cast, Optional
 
 from experimance_common.transcript_manager import TranscriptMessage, TranscriptMessageType
+from experimance_common.schemas import AudiencePresent, MessageType  # type: ignore
 from agent import AgentServiceBase
 from .config import FireAgentServiceConfig
 from agent.vision.reolink_detector import ReolinkDetector
@@ -208,11 +210,16 @@ class FireAgentService(AgentServiceBase):
             # Send initial OSC signal (no audience present at startup)
             if self.osc_client:
                 self._send_osc_presence(0)
-        else: # no audiencve detection
+        else: # no audience detection
             logger.warning("Audience detection is disabled, no audience monitoring will occur")
             # start voice chat backend, since it won't be started by audience detection
             logger.info("Starting conversation backend immediately since audience detection is disabled")
-            await self.audience_detected()
+            await self.audience_detected(1)  # assume 1 person present
+
+        # send other initial osc messages
+        if self.osc_client:
+            self._send_osc_speaking(self.config.osc.bot_speak_address, False)
+            self._send_osc_speaking(self.config.osc.person_speak_address, False)
 
         logger.info("Fire agent conversation started")
     
@@ -232,9 +239,28 @@ class FireAgentService(AgentServiceBase):
                 self.osc_client = None
                 logger.info("OSC client stopped")
 
+    async def _publish_audience_present(self, person_count: int = 0):
+        """Publish audience presence detection to fire_core."""
+        if not self.running or not self.zmq_service.is_running:
+            logger.debug(f"Skipping audience present publish (service running: {self.running}, zmq running: {self.zmq_service.is_running})")
+            return
+            
+        message = AudiencePresent(
+            person_count=person_count
+        )
+        try:
+            await self.zmq_service.publish(message, MessageType.AUDIENCE_PRESENT)
+            logger.debug(f"Published audience present: (people: {person_count})")
+        except Exception as e:
+            logger.error(f"Failed to publish audience present: {e}")
+
     async def _audience_detection_loop(self):
         """Continuously monitor for audience presence using hybrid detection."""
         last_person_count = None  # Track person count changes for vision messages
+        
+        # Send initial presence (0 people detected) when starting detection
+        if self.running and self.zmq_service.is_running:
+            await self._publish_audience_present(person_count=0)
         
         while self.running:
             # only check presence when no one is speaking so not to interrupt (audio) processing
@@ -243,7 +269,9 @@ class FireAgentService(AgentServiceBase):
                     try:
                         # Use hybrid detection (camera AI + YOLO)
                         presence = await self.audience_detector.check_audience_present()
-                        
+
+                        current_count = 1 if presence else 0 # simple presence is boolean, but we can detect number of people using yolo below
+
                         # Get detection stats for logging
                         stats = self.audience_detector.get_stats()
                         
@@ -271,8 +299,6 @@ class FireAgentService(AgentServiceBase):
                                 # Update tracking
                                 last_person_count = current_count
 
-                                self._send_osc_presence(current_count)
-
                         # Debug logging with detection info
                         logger.debug(f"Hybrid detection - Presence: {presence}, "
                                 f"Mode: {stats.get('detection_mode', 'simple')}, "
@@ -283,7 +309,7 @@ class FireAgentService(AgentServiceBase):
                         if presence != self.current_presence:
                             if presence:
                                 logger.info("Hybrid detector: Audience detected")
-                                await self.audience_detected()
+                                await self.audience_detected(current_count)
                             else:
                                 logger.info("Hybrid detector: Audience left")
                                 await self._audience_left()
@@ -302,6 +328,10 @@ class FireAgentService(AgentServiceBase):
                 await asyncio.sleep(5)
 
             if not await self._sleep_if_running(self.config.vision.audience_detection_interval): break
+
+        # Send final presence (0 people detected) when stopping detection
+        if self.running and self.zmq_service.is_running:
+            await self._publish_audience_present(person_count=0)
 
     def _send_osc_presence(self, person_count: int) -> None:
         """Send OSC presence signal using simple UDP client (fire-and-forget)."""
@@ -339,11 +369,15 @@ class FireAgentService(AgentServiceBase):
         except Exception as e:
             logger.error(f"Failed to send proactive greeting: {e}")
 
-    async def audience_detected(self) -> None:
+    async def audience_detected(self, person_count: int) -> None:
         """Handle audience detection event."""
         logger.info("Audience detected")
         # Send OSC signal as simple fire-and-forget
-        self._send_osc_presence(1)
+        self._send_osc_presence(person_count)
+
+        # Publish presence to fire_core via ZMQ
+        await self._publish_audience_present(person_count)
+
         await self._start_backend_for_conversation()
         
         # Send proactive greeting if enabled (run in background)
@@ -357,6 +391,9 @@ class FireAgentService(AgentServiceBase):
         self._send_osc_presence(0)
         if self.current_backend:
             await self.current_backend.graceful_shutdown()
+
+        # Publish presence to fire_core via ZMQ
+        await self._publish_audience_present(0)
 
     async def _on_transcription_received(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle new transcription data."""

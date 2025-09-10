@@ -31,7 +31,7 @@ from experimance_common.zmq.services import ControllerService, SubscriberCompone
 from experimance_common.schemas import (
     StoryHeard, UpdateLocation, TranscriptUpdate,  # type: ignore
     ImageReady, RenderRequest, DisplayMedia, ContentType, MessageType,
-    AudioRenderRequest, AudioReady  # type: ignore
+    AudioRenderRequest, AudioReady, AudiencePresent  # type: ignore
 )
 from experimance_common.zmq.zmq_utils import prepare_image_source
 
@@ -437,12 +437,17 @@ class FireCoreService(BaseService):
         # Track last generated prompt for deduplication
         self.last_generated_prompt: Optional[MediaPrompt] = None
         
+        # Audio fadeout task tracking
+        self._audio_fade_task: Optional[asyncio.Task] = None
+        self._current_person_count: int = 0  # Track current audience presence
+        
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
         
         print(config.llm.system_prompt_or_file)
 
         # system prompt
+        system_prompt = None
         if config.llm.system_prompt_or_file is not None:
             try:
                 system_prompt = resolve_path(config.llm.system_prompt_or_file, hint="project")
@@ -492,6 +497,7 @@ class FireCoreService(BaseService):
         self.zmq_service.add_message_handler(MessageType.STORY_HEARD, self._handle_story_heard)
         self.zmq_service.add_message_handler(MessageType.UPDATE_LOCATION, self._handle_story_heard) # for now use the same handler
         self.zmq_service.add_message_handler(MessageType.TRANSCRIPT_UPDATE, self._handle_transcription_update)
+        self.zmq_service.add_message_handler(MessageType.AUDIENCE_PRESENT, self._handle_audience_present)
 
         # Add subscriber for updates on port 5556 (core binds, others publish to us)
         updates_config = SubscriberConfig(
@@ -521,6 +527,11 @@ class FireCoreService(BaseService):
     async def stop(self):
         """Stop the service gracefully."""
         logger.info("Stopping Fire core service")
+        
+        # Cancel any pending audio fade task
+        if hasattr(self, '_audio_fade_task') and self._audio_fade_task:
+            self._audio_fade_task.cancel()
+            self._audio_fade_task = None
         
         # Clean up AudioManager
         if hasattr(self, 'audio_manager') and self.audio_manager is not None:
@@ -640,6 +651,72 @@ class FireCoreService(BaseService):
         
         # Request base panorama image
         await self._request_base_image()
+
+    async def _handle_audience_present(self, topic: str, message_data: MessageDataType):
+        """Handle AudiencePresent messages from fire_agent."""
+        logger.debug(f"Received AudiencePresent message: {message_data}")
+        
+        try:
+            person_count = message_data.get('person_count', 0)
+            if person_count < 0:
+                person_count = 0
+                
+            # Update current person count
+            old_count = self._current_person_count
+            self._current_person_count = person_count
+            
+            logger.debug(f"Updated people count: {old_count} -> {person_count}")
+            
+            # Handle audio fadeout logic when audience status changes
+            if self.audio_manager:
+                if person_count == 0 and old_count > 0:
+                    # Audience just left - schedule fadeout after delay
+                    delay = self.config.audio.absence_fade_delay
+                    logger.info(f"Audience left - will fade audio in {delay}s if they don't return")
+                    
+                    # Cancel any existing fade task
+                    if self._audio_fade_task:
+                        self._audio_fade_task.cancel()
+                    
+                    # Schedule fadeout after delay
+                    self._audio_fade_task = asyncio.create_task(
+                        self._delayed_audio_fadeout()
+                    )
+                    
+                elif person_count > 0 and old_count == 0:
+                    # Audience returned - cancel any pending fadeout
+                    logger.info("Audience returned - cancelling audio fadeout")
+                    if self._audio_fade_task:
+                        self._audio_fade_task.cancel()
+                        self._audio_fade_task = None
+                        
+        except Exception as e:
+            logger.error(f"Error processing audience present message: {e}")
+
+    async def _delayed_audio_fadeout(self):
+        """Wait for delay period, then fade out audio if still no audience."""
+        try:
+            delay = self.config.audio.absence_fade_delay
+            logger.debug(f"Waiting {delay}s before audio fadeout")
+            
+            # Simple sleep for the delay period
+            await asyncio.sleep(delay)
+            
+            # Check if audience is still absent and audio is playing
+            if self._current_person_count == 0 and self.audio_manager and self.audio_manager.is_playing():
+                fade_duration = self.config.audio.absence_fade_duration
+                logger.info(f"Audience absent for {delay}s - fading out audio over {fade_duration}s")
+                await self.audio_manager.fade_out_all(duration=fade_duration)
+            else:
+                logger.debug("Audio already stopped or audience returned - no fade needed")
+            
+        except asyncio.CancelledError:
+            logger.debug("Audio fadeout cancelled - audience returned")
+        except Exception as e:
+            logger.error(f"Error during delayed audio fadeout: {e}")
+        finally:
+            # Clear the task reference
+            self._audio_fade_task = None
 
     async def _handle_story_heard(self, topic: str, message_data: MessageDataType):
         """
