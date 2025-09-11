@@ -464,12 +464,11 @@ async def test_yolo11_detector():
         
         # Try camera discovery as fallback
         try:
-            from .reolink_discovery import discover_reolink_cameras_comprehensive
+            from .reolink_discovery import find_first_reolink_camera
             logger.info("🔍 Attempting camera discovery...")
-            cameras = await discover_reolink_cameras_comprehensive()
+            camera = await find_first_reolink_camera()
             
-            if cameras:
-                camera = cameras[0]  # Use first found camera
+            if camera:
                 reolink_ip = camera.host
                 logger.info(f"✅ Found camera via discovery: {camera}")
             else:
@@ -578,19 +577,16 @@ async def test_yolo11_detector():
             if reolink_ip and not reolink_ip.startswith("discovered_"):
                 logger.info("🔍 Camera failed, trying discovery as backup...")
                 try:
-                    from .reolink_discovery import discover_reolink_cameras_comprehensive
-                    cameras = await discover_reolink_cameras_comprehensive()
+                    from .reolink_discovery import find_first_reolink_camera
+                    camera = await find_first_reolink_camera()
                     
-                    if cameras:
-                        for camera in cameras:
-                            if camera.host != reolink_ip:  # Try a different camera
-                                logger.info(f"🔄 Trying discovered camera: {camera}")
-                                # Recursive attempt with discovered IP
-                                new_ip = f"discovered_{camera.host}"
-                                os.environ['REOLINK_HOST'] = new_ip
-                                # Would need to restructure to retry, for now just log
-                                logger.info(f"💡 Alternative camera found: {camera.host}")
-                                break
+                    if camera and camera.host != reolink_ip:  # Try a different camera
+                        logger.info(f"🔄 Trying discovered camera: {camera}")
+                        # Recursive attempt with discovered IP
+                        new_ip = f"discovered_{camera.host}"
+                        os.environ['REOLINK_HOST'] = new_ip 
+                        # Would need to restructure to retry, for now just log
+                        logger.info(f"💡 Alternative camera found: {camera.host}")
                 except Exception as discovery_error:
                     logger.debug(f"Discovery backup failed: {discovery_error}")
             

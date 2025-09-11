@@ -195,7 +195,7 @@ async def _fast_test_reolink_camera(
 
 async def discover_reolink_cameras_fast_scan(
     subnet: Optional[str] = None,
-    port_timeout: float = 0.5  # Very fast port scanning
+    port_timeout: float = 2.0  # Increased from 0.5 to 2.0 for better reliability
 ) -> List[ReolinkCameraInfo]:
     """
     Ultra-fast Reolink discovery using port scanning only.
@@ -251,7 +251,7 @@ async def discover_reolink_cameras_fast_scan(
 async def discover_reolink_cameras_comprehensive(
     known_ip: Optional[str] = None,
     timeout: float = 5.0,
-    port_timeout: float = 0.3,
+    port_timeout: float = 2.0,  # Increased from 0.3 to 2.0 seconds
     subnet: Optional[str] = None
 ) -> List[ReolinkCameraInfo]:
     """
@@ -261,6 +261,7 @@ async def discover_reolink_cameras_comprehensive(
     1. If known_ip provided, test that IP first (fastest)
     2. If not found or no IP provided, do fast port scan for HTTPS devices
     3. Then do signature-based verification on discovered IPs to confirm Reolink cameras
+    4. As a fallback, if Python networking fails, use curl to test connectivity
     
     Args:
         known_ip: Optional IP to test first
@@ -279,29 +280,82 @@ async def discover_reolink_cameras_comprehensive(
     if known_ip:
         logger.info(f"🎯 Testing known IP: {known_ip}")
         
-        # Quick port check first
-        semaphore = asyncio.Semaphore(1)
-        port_result = await _check_port(known_ip, 443, semaphore, port_timeout)
+        # Skip port check for known IPs - some cameras don't respond well to raw socket connections
+        # Go directly to HTTP/HTTPS signature testing
+        logger.info(f"✅ Skipping port check, testing HTTP/HTTPS directly on {known_ip}")
         
-        if port_result[2]:  # HTTPS port is open
-            logger.info(f"✅ HTTPS port open on {known_ip}, checking if it's a Reolink camera...")
-            
-            # Check if it's actually a Reolink camera
-            signature_cameras = await discover_reolink_cameras(
-                timeout=timeout, 
-                subnet=f"{known_ip}/32"  # Just this one IP
-            )
-            
-            if signature_cameras:
-                logger.info(f"🎥 Confirmed: {known_ip} is a Reolink camera")
-                return signature_cameras
-            else:
-                logger.info(f"❌ {known_ip} has HTTPS but is not a Reolink camera")
+        # First, try Python networking
+        # Check if it's actually a Reolink camera using signature detection
+        signature_cameras = await discover_reolink_cameras(
+            timeout=timeout, 
+            subnet=f"{known_ip}/32"  # Just this one IP
+        )
+        
+        if signature_cameras:
+            logger.info(f"🎥 Confirmed: {known_ip} is a Reolink camera")
+            return signature_cameras
         else:
-            logger.info(f"❌ {known_ip} does not have HTTPS port open")
+            logger.info(f"❌ Python networking failed for {known_ip}, trying curl fallback...")
+            
+            # Fallback: Use curl to test if the camera responds
+            curl_result = await _test_camera_with_curl(known_ip)
+            if curl_result:
+                logger.info(f"🎥 Confirmed via curl: {known_ip} is a Reolink camera")
+                return [ReolinkCameraInfo(
+                    host=known_ip,
+                    model="Unknown (detected via curl fallback)",
+                    name=f"reolink-{known_ip.split('.')[-1]}",
+                    serial="Unknown",
+                    firmware="Unknown"
+                )]
+            else:
+                logger.info(f"❌ {known_ip} is not a Reolink camera or not responding to any requests")
     
     # Step 2: Fast network scan for HTTPS devices
-    logger.info("🚀 Known IP not found or not provided, scanning network for HTTPS devices...")
+    logger.info("🚀 Known IP not found or not provided, starting intelligent network discovery...")
+    
+    # Step 2: Intelligent network discovery using multiple methods
+    logger.info("Starting intelligent network discovery...")
+    
+    # Try discovery methods in order of efficiency/reliability
+    discovery_methods = [
+        ("ARP table", discover_reolink_cameras_arp_scan),
+        ("mDNS/Bonjour", discover_reolink_cameras_mdns),
+        ("nmap", discover_reolink_cameras_nmap),
+    ]
+    
+    for method_name, method_func in discovery_methods:
+        logger.info(f"Trying {method_name} discovery...")
+        
+        try:
+            cameras = await method_func()
+            
+            if cameras:
+                logger.info(f"🎥 Found {len(cameras)} camera(s) via {method_name}")
+                
+                # For mDNS results, verify they are actually Reolink cameras
+                if method_name == "mDNS/Bonjour":
+                    verified_cameras = []
+                    for camera in cameras:
+                        if await _test_camera_with_curl(camera.host):
+                            verified_cameras.append(camera)
+                    
+                    if verified_cameras:
+                        return verified_cameras
+                    else:
+                        logger.info(f"mDNS cameras failed Reolink verification, trying next method...")
+                        continue
+                else:
+                    return cameras
+            else:
+                logger.info(f"{method_name} discovery found no cameras, trying next method...")
+                
+        except Exception as e:
+            logger.debug(f"{method_name} discovery failed: {e}")
+            continue
+    
+    # If all efficient methods fail, fall back to port scanning
+    logger.info("🔌 All efficient methods failed, falling back to port scanning...")
     
     fast_scan_results = await discover_reolink_cameras_fast_scan(
         subnet=subnet,
@@ -322,12 +376,27 @@ async def discover_reolink_cameras_comprehensive(
     semaphore = asyncio.Semaphore(10)  # Limit concurrent signature checks
     
     async def verify_reolink_signature(ip: str) -> List[ReolinkCameraInfo]:
-        """Check if a single IP is a Reolink camera"""
+        """Check if a single IP is a Reolink camera with Python + curl fallback"""
         try:
-            # Use the signature-based discovery on just this IP
+            # First try Python networking
             single_ip_subnet = f"{ip}/32"
             result = await discover_reolink_cameras(timeout=timeout, subnet=single_ip_subnet)
-            return result
+            if result:
+                return result
+            
+            # If Python networking fails, try curl fallback
+            logger.debug(f"Python networking failed for {ip}, trying curl fallback...")
+            curl_result = await _test_camera_with_curl(ip)
+            if curl_result:
+                return [ReolinkCameraInfo(
+                    host=ip,
+                    model="Unknown (detected via curl fallback)",
+                    name=f"reolink-{ip.split('.')[-1]}",
+                    serial="Unknown",
+                    firmware="Unknown"
+                )]
+            
+            return []
         except Exception as e:
             logger.debug(f"Signature check failed for {ip}: {e}")
             return []
@@ -349,9 +418,113 @@ async def discover_reolink_cameras_comprehensive(
         for camera in confirmed_cameras:
             logger.info(f"  • {camera.host} - {camera.model} ({camera.name})")
     else:
-        logger.info("❌ No Reolink cameras found after signature verification")
+        # Step 4: If no cameras found via port scanning, try curl-based full network scan
+        logger.info("❌ No cameras found via port scanning, trying comprehensive curl-based scan...")
+        
+        # Determine subnet for full scan
+        scan_subnet = subnet
+        if scan_subnet is None:
+            scan_subnet = _get_local_subnet()
+            if scan_subnet is None:
+                logger.warning("Could not determine subnet for comprehensive scan")
+                return []
+        
+        curl_cameras = await _discover_cameras_with_curl(scan_subnet, timeout)
+        if curl_cameras:
+            logger.info(f"🎥 Found {len(curl_cameras)} camera(s) via comprehensive curl scan")
+            confirmed_cameras.extend(curl_cameras)
+        else:
+            logger.info("❌ No Reolink cameras found after comprehensive scan")
     
     return confirmed_cameras
+
+
+async def find_first_reolink_camera(
+    known_ip: Optional[str] = None,
+    timeout: float = 5.0
+) -> Optional[ReolinkCameraInfo]:
+    """
+    Find the first available Reolink camera, optimized for speed.
+    
+    This function is designed for applications that just need to connect to ANY camera,
+    not enumerate all cameras. It stops as soon as it finds one working camera.
+    
+    Strategy:
+    1. If known_ip provided, test that first
+    2. Try ARP table (fast, only tests active devices)
+    3. Stop immediately when first camera is found
+    
+    Args:
+        known_ip: Optional IP to test first
+        timeout: Timeout for each test
+        
+    Returns:
+        First camera found, or None if no cameras found
+    """
+    logger.info("🎯 Finding first available Reolink camera...")
+    
+    # Step 1: Test known IP if provided
+    if known_ip:
+        logger.info(f"🧪 Testing known IP: {known_ip}")
+        try:
+            # Try fast Python networking first
+            result = await _fast_test_reolink_camera(known_ip, asyncio.Semaphore(1), timeout)
+            if result:
+                logger.info(f"✅ Found camera at known IP: {result}")
+                return result
+        except Exception:
+            pass
+        
+        # Fallback to curl
+        if await _test_camera_with_curl(known_ip):
+            logger.info(f"✅ Found camera at known IP via curl: {known_ip}")
+            return ReolinkCameraInfo(
+                host=known_ip,
+                model="Unknown (detected via curl)",
+                name=f"reolink-{known_ip.split('.')[-1]}",
+                serial="Unknown",
+                firmware="Unknown"
+            )
+    
+    # Step 2: Try ARP table scan (fast, only active devices)
+    logger.info("🔍 Scanning ARP table for first available camera...")
+    
+    active_ips = await _get_active_ips_from_arp()
+    if not active_ips:
+        logger.info("❌ No active devices found in ARP table")
+        return None
+    
+    logger.info(f"📡 Testing {len(active_ips)} active devices from ARP table...")
+    
+    # Test each IP until we find a camera
+    for ip_info in active_ips:
+        ip = ip_info['ip']
+        mac = ip_info.get('mac', 'Unknown')
+        
+        try:
+            # Try Python networking first
+            result = await _fast_test_reolink_camera(ip, asyncio.Semaphore(1), timeout)
+            if result:
+                result.serial = f"MAC: {mac}" if mac != 'Unknown' else result.serial
+                logger.info(f"✅ Found first camera via ARP scan: {result}")
+                return result
+        except Exception:
+            pass
+        
+        # Fallback to curl
+        if await _test_camera_with_curl(ip):
+            camera = ReolinkCameraInfo(
+                host=ip,
+                model="Unknown (detected via ARP + curl)",
+                name=f"reolink-{ip.split('.')[-1]}",
+                serial=f"MAC: {mac}" if mac != 'Unknown' else "Unknown",
+                firmware="Unknown"
+            )
+            logger.info(f"✅ Found first camera via ARP + curl: {camera}")
+            return camera
+    
+    logger.info("❌ No Reolink cameras found")
+    return None
 
 
 async def _check_port(
@@ -440,6 +613,452 @@ async def _test_reolink_camera(
     return None
 
 
+async def discover_reolink_cameras_arp_scan() -> List[ReolinkCameraInfo]:
+    """
+    Discover Reolink cameras using ARP table analysis.
+    Much faster than full network scanning - only tests devices that are actually on the network.
+    """
+    logger.info("Starting ARP-based Reolink camera discovery...")
+    
+    # Get active devices from ARP table
+    active_ips = await _get_active_ips_from_arp()
+    
+    if not active_ips:
+        logger.info("No active devices found in ARP table")
+        return []
+    
+    logger.info(f"Found {len(active_ips)} active devices in ARP table, testing for Reolink cameras...")
+    
+    # Test each active IP for Reolink signatures
+    semaphore = asyncio.Semaphore(20)  # Higher concurrency since we have fewer IPs
+    
+    async def test_active_ip(ip_info: dict) -> Optional[ReolinkCameraInfo]:
+        """Test an active IP for Reolink camera."""
+        ip = ip_info['ip']
+        mac = ip_info.get('mac', 'Unknown')
+        
+        async with semaphore:
+            # Try Python networking first
+            try:
+                result = await _fast_test_reolink_camera(ip, semaphore, 3.0)
+                if result:
+                    # Update with MAC address if we have it
+                    result.serial = f"MAC: {mac}" if mac != 'Unknown' else result.serial
+                    return result
+            except Exception:
+                pass
+            
+            # Fallback to curl if Python networking fails
+            if await _test_camera_with_curl(ip):
+                return ReolinkCameraInfo(
+                    host=ip,
+                    model="Unknown (detected via ARP + curl)",
+                    name=f"reolink-{ip.split('.')[-1]}",
+                    serial=f"MAC: {mac}" if mac != 'Unknown' else "Unknown",
+                    firmware="Unknown"
+                )
+            
+            return None
+    
+    # Test all active IPs
+    tasks = [test_active_ip(ip_info) for ip_info in active_ips]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Collect successful discoveries
+    cameras = []
+    for result in results:
+        if isinstance(result, ReolinkCameraInfo):
+            cameras.append(result)
+            logger.info(f"Found via ARP scan: {result}")
+    
+    logger.info(f"ARP-based discovery complete: found {len(cameras)} Reolink camera(s)")
+    return cameras
+
+
+async def _get_active_ips_from_arp() -> List[dict]:
+    """
+    Get list of active IP addresses from ARP table (works on Linux, macOS, Windows).
+    Returns list of dicts with 'ip' and 'mac' keys.
+    """
+    import platform
+    import subprocess
+    
+    try:
+        system = platform.system().lower()
+        
+        if system == "darwin":  # macOS
+            cmd = ["arp", "-a"]
+        elif system == "linux":
+            cmd = ["arp", "-a"]
+        elif system == "windows":
+            cmd = ["arp", "-a"]
+        else:
+            logger.warning(f"Unsupported platform for ARP scanning: {system}")
+            return []
+        
+        # Run ARP command
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            logger.warning(f"ARP command failed: {stderr.decode()}")
+            return []
+        
+        # Parse ARP output
+        arp_output = stdout.decode('utf-8')
+        active_devices = []
+        
+        for line in arp_output.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Parse different ARP output formats
+            ip = None
+            mac = None
+            
+            if system == "darwin":  # macOS format: "? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]"
+                import re
+                match = re.search(r'\(([0-9.]+)\) at ([a-fA-F0-9:]{17})', line)
+                if match:
+                    ip = match.group(1)
+                    mac = match.group(2)
+            
+            elif system == "linux":  # Linux format: "? (192.168.1.1) at aa:bb:cc:dd:ee:ff [ether] on eth0"
+                import re
+                match = re.search(r'\(([0-9.]+)\) at ([a-fA-F0-9:]{17})', line)
+                if match:
+                    ip = match.group(1)
+                    mac = match.group(2)
+            
+            elif system == "windows":  # Windows format: "  192.168.1.1           aa-bb-cc-dd-ee-ff     dynamic"
+                parts = line.split()
+                if len(parts) >= 2 and '.' in parts[0] and '-' in parts[1]:
+                    ip = parts[0]
+                    mac = parts[1].replace('-', ':')
+            
+            if ip and mac:
+                # Filter out invalid/special addresses
+                if not ip.startswith('169.254.') and ip != '127.0.0.1' and not ip.startswith('224.'):
+                    active_devices.append({'ip': ip, 'mac': mac})
+        
+        logger.debug(f"Found {len(active_devices)} active devices in ARP table")
+        return active_devices
+        
+    except Exception as e:
+        logger.warning(f"Failed to get ARP table: {e}")
+        return []
+
+
+async def discover_reolink_cameras_nmap() -> List[ReolinkCameraInfo]:
+    """
+    Discover Reolink cameras using nmap (if available).
+    Very fast and reliable for finding active devices with open ports.
+    """
+    logger.info("Starting nmap-based Reolink camera discovery...")
+    
+    try:
+        # Check if nmap is available
+        process = await asyncio.create_subprocess_exec(
+            "nmap", "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        
+        if process.returncode != 0:
+            logger.info("nmap not available, skipping nmap discovery")
+            return []
+        
+    except FileNotFoundError:
+        logger.info("nmap not installed, skipping nmap discovery")
+        return []
+    except Exception as e:
+        logger.debug(f"nmap availability check failed: {e}")
+        return []
+    
+    try:
+        # Get local subnet
+        subnet = _get_local_subnet()
+        if not subnet:
+            logger.warning("Could not determine subnet for nmap scan")
+            return []
+        
+        logger.info(f"Using nmap to scan {subnet} for devices with HTTPS ports...")
+        
+        # Run nmap to find devices with port 443 open
+        cmd = [
+            "nmap", "-p", "443", "--open", 
+            "-T4",  # Timing template (faster)
+            "--host-timeout", "5s",
+            subnet
+        ]
+        
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            logger.warning(f"nmap scan failed: {stderr.decode()}")
+            return []
+        
+        # Parse nmap output to find IPs with port 443 open
+        nmap_output = stdout.decode('utf-8')
+        active_ips = []
+        
+        import re
+        # Look for "Nmap scan report for IP" followed by "443/tcp open"
+        ip_pattern = r'Nmap scan report for ([0-9.]+)'
+        port_pattern = r'443/tcp\s+open'
+        
+        lines = nmap_output.split('\n')
+        current_ip = None
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Check for IP address
+            ip_match = re.search(ip_pattern, line)
+            if ip_match:
+                current_ip = ip_match.group(1)
+                continue
+            
+            # Check for open port 443
+            if current_ip and re.search(port_pattern, line):
+                active_ips.append(current_ip)
+                current_ip = None
+        
+        logger.info(f"nmap found {len(active_ips)} device(s) with HTTPS port open")
+        
+        if not active_ips:
+            return []
+        
+        # Test each IP for Reolink signatures
+        semaphore = asyncio.Semaphore(20)
+        
+        async def test_nmap_ip(ip: str) -> Optional[ReolinkCameraInfo]:
+            """Test an nmap-discovered IP for Reolink camera."""
+            async with semaphore:
+                # Try Python networking first
+                try:
+                    result = await _fast_test_reolink_camera(ip, semaphore, 3.0)
+                    if result:
+                        return result
+                except Exception:
+                    pass
+                
+                # Fallback to curl
+                if await _test_camera_with_curl(ip):
+                    return ReolinkCameraInfo(
+                        host=ip,
+                        model="Unknown (detected via nmap + curl)",
+                        name=f"reolink-{ip.split('.')[-1]}",
+                        serial="Unknown",
+                        firmware="Unknown"
+                    )
+                
+                return None
+        
+        # Test all nmap-discovered IPs
+        tasks = [test_nmap_ip(ip) for ip in active_ips]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Collect successful discoveries
+        cameras = []
+        for result in results:
+            if isinstance(result, ReolinkCameraInfo):
+                cameras.append(result)
+                logger.info(f"Found via nmap scan: {result}")
+        
+        logger.info(f"nmap-based discovery complete: found {len(cameras)} Reolink camera(s)")
+        return cameras
+        
+    except Exception as e:
+        logger.debug(f"nmap discovery failed: {e}")
+        return []
+
+
+async def discover_reolink_cameras_mdns() -> List[ReolinkCameraInfo]:
+    """
+    Discover Reolink cameras using mDNS/Bonjour (if available).
+    Many IP cameras advertise themselves via mDNS.
+    """
+    logger.info("Starting mDNS-based Reolink camera discovery...")
+    
+    try:
+        # Try to use zeroconf for mDNS discovery
+        from zeroconf import ServiceBrowser, Zeroconf
+        import time
+        
+    except ImportError:
+        logger.info("zeroconf library not available, skipping mDNS discovery")
+        logger.debug("Install with: pip install zeroconf")
+        return []
+        
+        class ReolinkListener:
+            def __init__(self):
+                self.cameras = []
+            
+            def add_service(self, zeroconf, type, name):
+                info = zeroconf.get_service_info(type, name)
+                if info:
+                    # Check if this looks like a Reolink camera
+                    name_lower = name.lower()
+                    if 'reolink' in name_lower or 'camera' in name_lower:
+                        if info.addresses:
+                            ip = str(ipaddress.ip_address(info.addresses[0]))
+                            self.cameras.append(ReolinkCameraInfo(
+                                host=ip,
+                                model="Unknown (mDNS discovery)",
+                                name=name.split('.')[0],
+                                serial="Unknown",
+                                firmware="Unknown"
+                            ))
+            
+            def remove_service(self, zeroconf, type, name):
+                pass
+            
+            def update_service(self, zeroconf, type, name):
+                pass
+        
+        zeroconf = Zeroconf()
+        listener = ReolinkListener()
+        
+        # Look for common camera service types
+        services = [
+            "_http._tcp.local.",
+            "_https._tcp.local.", 
+            "_rtsp._tcp.local.",
+            "_camera._tcp.local.",
+            "_device-info._tcp.local."
+        ]
+        
+        browsers = []
+        for service in services:
+            browser = ServiceBrowser(zeroconf, service, listener)
+            browsers.append(browser)
+        
+        # Wait a bit for discovery
+        await asyncio.sleep(3)
+        
+        # Clean up
+        for browser in browsers:
+            browser.cancel()
+        zeroconf.close()
+        
+        logger.info(f"mDNS discovery found {len(listener.cameras)} potential camera(s)")
+        return listener.cameras
+        
+    except ImportError:
+        logger.info("zeroconf library not available, skipping mDNS discovery")
+        logger.debug("Install with: pip install zeroconf")
+        return []
+    except Exception as e:
+        logger.info(f"mDNS discovery failed: {e}")
+        return []
+
+
+async def _discover_cameras_with_curl(subnet: str, timeout: float = 5.0, max_concurrent: int = 20) -> List[ReolinkCameraInfo]:
+    """
+    Comprehensive curl-based camera discovery when Python networking fails.
+    Scans the entire subnet using curl to find Reolink cameras.
+    """
+    try:
+        import ipaddress
+        network = ipaddress.IPv4Network(subnet, strict=False)
+        ip_addresses = [str(ip) for ip in network.hosts()]
+    except Exception as e:
+        logger.error(f"Invalid subnet {subnet}: {e}")
+        return []
+    
+    # Limit to reasonable range
+    if len(ip_addresses) > 254:
+        logger.info(f"Large subnet detected ({len(ip_addresses)} hosts), limiting to first 254")
+        ip_addresses = ip_addresses[:254]
+    
+    logger.info(f"Curl-scanning {len(ip_addresses)} IP addresses for Reolink cameras...")
+    
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def test_ip_with_curl(ip: str) -> Optional[ReolinkCameraInfo]:
+        """Test a single IP with curl."""
+        async with semaphore:
+            if await _test_camera_with_curl(ip):
+                return ReolinkCameraInfo(
+                    host=ip,
+                    model="Unknown (detected via curl scan)",
+                    name=f"reolink-{ip.split('.')[-1]}",
+                    serial="Unknown",
+                    firmware="Unknown"
+                )
+            return None
+    
+    # Test all IPs concurrently
+    tasks = [test_ip_with_curl(ip) for ip in ip_addresses]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Collect successful discoveries
+    cameras = []
+    for result in results:
+        if isinstance(result, ReolinkCameraInfo):
+            cameras.append(result)
+            logger.info(f"Found via curl scan: {result}")
+    
+    return cameras
+
+
+async def _test_camera_with_curl(host: str) -> bool:
+    """
+    Fallback test using curl when Python networking fails.
+    Tests if a camera is a Reolink by checking API signatures.
+    """
+    try:
+        # Test HTTPS API endpoint first (most common)
+        for protocol in ["https", "http"]:
+            cmd = [
+                "curl", "-k", "--connect-timeout", "5", "--max-time", "10", "-s",
+                f"{protocol}://{host}/cgi-bin/api.cgi"
+            ]
+            
+            logger.debug(f"Testing {host} with curl: {' '.join(cmd)}")
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                response_text = stdout.decode('utf-8', errors='ignore').lower()
+                
+                # Check for Reolink signatures
+                signatures = ["please login first", "reolink", '"cmd"', '"code"', '"action"']
+                matches = [sig for sig in signatures if sig in response_text]
+                
+                logger.debug(f"Curl response for {host}: {stdout.decode('utf-8', errors='ignore')[:200]}...")
+                logger.debug(f"Signature matches: {matches}")
+                
+                if len(matches) >= 2:
+                    logger.info(f"✅ Reolink camera detected at {host} via curl ({protocol.upper()})")
+                    return True
+        
+    except Exception as e:
+        logger.debug(f"Curl test failed for {host}: {e}")
+    
+    return False
+
+
 def _get_local_subnet() -> Optional[str]:
     """
     Attempt to detect the local subnet by examining network interfaces.
@@ -499,6 +1118,12 @@ async def test_camera_credentials(
     Returns:
         True if credentials are valid, False otherwise
     """
+    # Try curl fallback first since Python networking is currently broken
+    curl_result = await _test_camera_credentials_with_curl(host, user, password, timeout)
+    if curl_result is not None:
+        return curl_result
+    
+    # Fallback to Python HTTP (though this is currently failing)
     try:
         connector = aiohttp.TCPConnector(ssl=False)
         client_timeout = aiohttp.ClientTimeout(total=timeout)
@@ -549,6 +1174,94 @@ async def test_camera_credentials(
         pass
     
     return False
+
+
+async def _test_camera_credentials_with_curl(
+    host: str,
+    user: str, 
+    password: str,
+    timeout: float = 5.0
+) -> Optional[bool]:
+    """
+    Test camera credentials using curl as fallback when Python networking fails.
+    
+    Returns:
+        True if credentials valid, False if invalid, None if curl failed
+    """
+    try:
+        import json
+        
+        # Prepare the login payload
+        payload = [{
+            "cmd": "Login",
+            "action": 0,
+            "param": {
+                "User": {"userName": user, "password": password}
+            }
+        }]
+        
+        payload_json = json.dumps(payload)
+        
+        # Test HTTPS first, then HTTP if needed
+        for protocol in ["https", "http"]:
+            url = f"{protocol}://{host}/cgi-bin/api.cgi?cmd=Login&token=null"
+            
+            cmd = [
+                "curl", "-k", "--connect-timeout", str(int(timeout)), 
+                "--max-time", str(int(timeout * 2)), "-s",
+                "-X", "POST",
+                "-H", "Content-Type: application/json",
+                "-d", payload_json,
+                url
+            ]
+            
+            logger.debug(f"Testing credentials for {host} with curl: {user}/***** via {protocol.upper()}")
+            
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await process.communicate()
+                
+                if process.returncode == 0:
+                    response_text = stdout.decode('utf-8', errors='ignore')
+                    
+                    try:
+                        data = json.loads(response_text)
+                        
+                        if (data and len(data) > 0):
+                            code = data[0].get("code")
+                            
+                            if code == 0:
+                                # Check for valid token
+                                token_info = data[0].get("value", {}).get("Token", {})
+                                if token_info.get("name"):
+                                    logger.debug(f"✅ Credentials valid for {host} via curl ({protocol.upper()})")
+                                    return True
+                            elif code == 1:
+                                # Invalid credentials
+                                logger.debug(f"❌ Invalid credentials for {host} via curl ({protocol.upper()})")
+                                return False
+                        
+                    except json.JSONDecodeError:
+                        logger.debug(f"Failed to parse JSON response from {host} via {protocol}")
+                        continue
+                else:
+                    logger.debug(f"Curl failed for {host} via {protocol}: return code {process.returncode}")
+                    
+            except Exception as e:
+                logger.debug(f"Curl execution failed for {host} via {protocol}: {e}")
+                continue
+        
+        # If we get here, curl worked but no valid response
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Curl credential test failed for {host}: {e}")
+        return None
 
 
 # CLI interface for testing
