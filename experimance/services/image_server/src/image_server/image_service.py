@@ -22,6 +22,7 @@ from experimance_common.schemas import ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS, PROJECT_ROOT, GENERATED_IMAGES_DIR, GENERATED_IMAGES_DIR_ABS
+from experimance_common.config import resolve_path
 from image_server.generators.config import GENERATOR_NAMES
 from pydantic import ValidationError
 from typing import get_args
@@ -822,18 +823,28 @@ class ImageServerService(BaseService):
                           f"({self.config.max_cache_size_gb} GB), cleaning up...")
                 
                 # Get all files sorted by modification time (oldest first)
+                resolved_path = resolve_path(self.config.cache_dir, hint=GENERATED_IMAGES_DIR_ABS)
                 files = sorted(
-                    [f for f in self.config.cache_dir.rglob('*') if f.is_file()],
+                    [f for f in resolved_path.rglob('*') if f.is_file()],
                     key=lambda x: x.stat().st_mtime
                 )
-                
+                logger.debug(f"Found {len(files)} files in cache directory for cleanup") 
                 # Remove files until we're under the limit
                 for file in files:
-                    file.unlink()
-                    total_size -= file.stat().st_size
-                    
-                    if total_size <= max_size_bytes * 0.8:  # Keep 20% buffer
-                        break
+                    try:
+                        file_size = file.stat().st_size
+                        file.unlink()
+                        total_size -= file_size
+                        
+                        if total_size <= max_size_bytes * 0.8:  # Keep 20% buffer
+                            break
+                    except FileNotFoundError:
+                        # File was already deleted, continue
+                        logger.debug(f"File {file} was already deleted during cleanup")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Failed to delete file {file}: {e}")
+                        continue
                 
                 logger.info(f"Cache cleanup completed, new size: {total_size / 1024 / 1024 / 1024:.2f} GB")
                 
