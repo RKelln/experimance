@@ -10,15 +10,30 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Parse arguments
 PROJECT=""
+SKIP_RESET=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --project)
             PROJECT="$2"
             shift 2
             ;;
+        --no-reset)
+            SKIP_RESET=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --help, -h          Show this help message"
+            echo "  --project PROJECT   Set project environment (default: experimance)"
+            echo "  --no-reset          Skip audio reset, just do startup"
+            echo ""
+            exit 0
+            ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 --project <project_name>"
+            echo "Usage: $0 [--project <project_name>] [--no-reset]"
             exit 1
             ;;
     esac
@@ -52,20 +67,24 @@ sudo systemctl stop "experimance@${PROJECT_ENV}.target"
 # Wait for things to settle
 sleep 2
 
-# Reset audio devices (the key fix for crashes)
-log "Resetting audio devices..."
+# Reset audio devices (the key fix for crashes) - only if not skipped
+if [[ "$SKIP_RESET" != "true" ]]; then
+    log "Resetting audio devices..."
 
-# Set up environment for uv (cron has limited PATH)
-export PATH="/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+    # Set up environment for uv (cron has limited PATH)
+    export PATH="/home/experimance/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-if cd "$PROJECT_ROOT" && uv run scripts/audio_recovery.py reset >> "$LOG_FILE" 2>&1; then
-    log "Audio reset completed successfully"
+    if cd "$PROJECT_ROOT" && uv run scripts/audio_recovery.py reset >> "$LOG_FILE" 2>&1; then
+        log "Audio reset completed successfully"
+    else
+        log "WARNING: Audio reset failed, continuing anyway"
+    fi
+
+    # Wait for audio system to stabilize
+    sleep 3
 else
-    log "WARNING: Audio reset failed, continuing anyway"
+    log "Skipping audio reset (--no-reset flag used)"
 fi
-
-# Wait for audio system to stabilize
-sleep 3
 
 # Check system resources before restart
 log "System status before restart:"

@@ -6,6 +6,7 @@
 
 # Default project
 PROJECT="experimance"
+DO_VASTAI=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -14,18 +15,23 @@ while [[ $# -gt 0 ]]; do
             PROJECT="$2"
             shift 2
             ;;
+        --vastai)
+            DO_VASTAI=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --help, -h          Show this help message"
             echo "  --project PROJECT   Set project environment (default: experimance)"
+            echo "  --vastai            Destroy VastAI instances after stopping services"
             echo ""
             exit 0
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 --project <project_name>"
+            echo "Usage: $0 [--project <project_name>] [--vastai]"
             exit 1
             ;;
     esac
@@ -53,20 +59,24 @@ log "=== Starting Experimance Shutdown for project: $PROJECT ==="
 log "Stopping services..."
 sudo systemctl stop "experimance@${PROJECT_ENV}.target"
 
-# Destroy VastAI instances (created by image_server)
-log "Destroying VastAI instances (if any)..."
-cd "$(dirname "$(dirname "$(dirname "$0")")")" # Go to repo root
-if command -v uv &> /dev/null || id "experimance" &>/dev/null; then
-    # Run as experimance user since VastAI credentials are under that account
-    if id "experimance" &>/dev/null; then
-        su - experimance -c "cd $(pwd) && uv run python scripts/vastai_cli.py destroy" >> "$LOG_FILE" 2>&1 || true
+# Destroy VastAI instances (created by image_server) - only if --vastai flag is used
+if [[ "$DO_VASTAI" == "true" ]]; then
+    log "Destroying VastAI instances (--vastai flag enabled)..."
+    cd "$(dirname "$(dirname "$(dirname "$0")")")" # Go to repo root
+    if command -v uv &> /dev/null || id "experimance" &>/dev/null; then
+        # Run as experimance user since VastAI credentials are under that account
+        if id "experimance" &>/dev/null; then
+            su - experimance -c "cd $(pwd) && uv run python scripts/vastai_cli.py destroy" >> "$LOG_FILE" 2>&1 || true
+        else
+            # Fallback: run as current user (development mode)
+            uv run python scripts/vastai_cli.py destroy >> "$LOG_FILE" 2>&1 || true
+        fi
+        log "VastAI destroy operation completed"
     else
-        # Fallback: run as current user (development mode)
-        uv run python scripts/vastai_cli.py destroy >> "$LOG_FILE" 2>&1 || true
+        log "No uv command or experimance user found, skipping VastAI destroy"
     fi
-    log "VastAI destroy operation completed"
 else
-    log "No uv command or experimance user found, skipping VastAI destroy"
+    log "Skipping VastAI destroy (use --vastai flag to enable)"
 fi
 
 log "=== Experimance Shutdown Complete ==="

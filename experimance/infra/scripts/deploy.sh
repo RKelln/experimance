@@ -2378,26 +2378,48 @@ status_services_macos() {
 setup_schedule() {
     local start_schedule="$1"
     local stop_schedule="$2"
+    local use_reset="${3:-false}"  # Optional third parameter for reset mode
+    local use_vastai="${4:-false}" # Optional fourth parameter for VastAI destroy
     
     log "Setting up schedule..."
     log "  Start: $start_schedule"
     log "  Stop: $stop_schedule"
+    log "  Reset mode: $use_reset"
+    log "  VastAI destroy: $use_vastai"
     
     # Create crontab entries
     local temp_cron=$(mktemp)
-    local startup_script="$SCRIPT_DIR/reset.sh"    # Use reset.sh for startup (includes audio reset)
+    local startup_script="$SCRIPT_DIR/startup.sh"
     local shutdown_script="$SCRIPT_DIR/shutdown.sh"
+    
+    # Determine startup flags
+    local startup_flags="--project '$PROJECT'"
+    if [[ "$use_reset" == "true" ]]; then
+        startup_flags="$startup_flags --reset"
+        log "  Using startup.sh with --reset (includes audio reset)"
+    else
+        log "  Using startup.sh for simple start"
+    fi
+    
+    # Determine shutdown flags
+    local shutdown_flags="--project '$PROJECT'"
+    if [[ "$use_vastai" == "true" ]]; then
+        shutdown_flags="$shutdown_flags --vastai"
+        log "  Using shutdown.sh with --vastai (destroys cloud instances)"
+    else
+        log "  Using shutdown.sh for simple stop"
+    fi
     
     # Get existing crontab (excluding our entries)
     crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
     
     # Add startup schedule
     echo "# experimance-start" >> "$temp_cron"
-    echo "$start_schedule cd '$REPO_DIR' && '$startup_script' --project '$PROJECT' >/dev/null 2>&1" >> "$temp_cron"
+    echo "$start_schedule cd '$REPO_DIR' && '$startup_script' $startup_flags >/dev/null 2>&1" >> "$temp_cron"
     
     # Add shutdown schedule  
     echo "# experimance-stop" >> "$temp_cron"
-    echo "$stop_schedule cd '$REPO_DIR' && '$shutdown_script' --project '$PROJECT' >/dev/null 2>&1" >> "$temp_cron"
+    echo "$stop_schedule cd '$REPO_DIR' && '$shutdown_script' $shutdown_flags >/dev/null 2>&1" >> "$temp_cron"
     
     # Install new crontab
     crontab "$temp_cron"
@@ -2434,12 +2456,14 @@ remove_schedule() {
 
 # Preset schedules for common use cases
 setup_gallery_schedule() {
-    # Gallery hours: Monday-Friday, 12PM-5PM
-    local start_schedule="50 11 * * 1-5"  # Start at 11:50 AM, Monday-Friday
-    local stop_schedule="10 17 * * 1-5"   # Stop at 5:10 PM, Monday-Friday
+    local use_reset="${1:-false}"  # Default to false (simple startup)
+    local use_vastai="${2:-false}" # Default to false (no VastAI destroy)
+    # Gallery hours: Tuesday-Saturday, 11AM-6PM
+    local start_schedule="55 10 * * 2-6"  # Start at 10:55 AM, Tues-Saturday
+    local stop_schedule="5 18 * * 2-6"    # Stop at 6:05 PM, Tues-Saturday
 
-    log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)..."
-    setup_schedule "$start_schedule" "$stop_schedule"
+    log "Setting up gallery schedule (Tuesday-Saturday, 11AM-6PM)..."
+    setup_schedule "$start_schedule" "$stop_schedule" "$use_reset" "$use_vastai"
 }
 
 main() {
@@ -2622,24 +2646,113 @@ main() {
             done
             ;;
         schedule-gallery)
-            log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)"
-            setup_gallery_schedule
+            # Check for flags
+            local use_reset=false  # Default to false (simple startup)
+            local use_vastai=false # Default to false (no VastAI destroy)
+            
+            # Parse flags
+            local args=("$@")
+            for arg in "${args[@]}"; do
+                case "$arg" in
+                    --reset)
+                        use_reset=true
+                        ;;
+                    --no-reset)
+                        use_reset=false
+                        ;;
+                    --vastai)
+                        use_vastai=true
+                        ;;
+                    --no-vastai)
+                        use_vastai=false
+                        ;;
+                esac
+            done
+            
+            # Log what we're doing
+            if [[ "$use_reset" == true ]]; then
+                log "Setting up gallery schedule with reset on startup (Tuesday-Saturday, 11AM-6PM)"
+            else
+                log "Setting up gallery schedule with simple startup (Tuesday-Saturday, 11AM-6PM)"
+            fi
+            
+            if [[ "$use_vastai" == true ]]; then
+                log "VastAI instances will be destroyed on shutdown"
+            else
+                log "VastAI instances will be preserved on shutdown (use --vastai to destroy)"
+            fi
+            
+            setup_gallery_schedule "$use_reset" "$use_vastai"
             show_schedule
             ;;
         schedule-custom)
-            # Expect start and stop schedules as additional arguments
+            # Parse arguments: start_schedule, stop_schedule, and optional flags
             local start_schedule="${3:-}"
             local stop_schedule="${4:-}"
+            local use_reset=false  # Default to false (simple startup)
+            local use_vastai=false # Default to false (no VastAI destroy)
+            
+            # Check for flags in any position
+            local args=("$@")
+            for arg in "${args[@]}"; do
+                case "$arg" in
+                    --reset)
+                        use_reset=true
+                        ;;
+                    --no-reset)
+                        use_reset=false
+                        ;;
+                    --vastai)
+                        use_vastai=true
+                        ;;
+                    --no-vastai)
+                        use_vastai=false
+                        ;;
+                esac
+            done
+            
+            # Remove flags from schedule arguments
+            local filtered_args=()
+            local skip_next=false
+            for arg in "${@:3}"; do
+                if [[ "$skip_next" == true ]]; then
+                    skip_next=false
+                    continue
+                fi
+                case "$arg" in
+                    --reset|--no-reset|--vastai|--no-vastai)
+                        # Skip flag arguments
+                        ;;
+                    *)
+                        filtered_args+=("$arg")
+                        ;;
+                esac
+            done
+            
+            # Reassign schedule arguments
+            start_schedule="${filtered_args[0]:-}"
+            stop_schedule="${filtered_args[1]:-}"
             
             if [[ -z "$start_schedule" || -z "$stop_schedule" ]]; then
                 error "Custom schedule requires start and stop cron expressions"
-                error "Usage: $0 $PROJECT schedule-custom 'start-cron' 'stop-cron'"
-                error "Example: $0 $PROJECT schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'"
+                error "Usage: $0 $PROJECT schedule-custom 'start-cron' 'stop-cron' [--reset|--no-reset] [--vastai|--no-vastai]"
+                error "Example: $0 $PROJECT schedule-custom '0 8 * * 1-5' '0 20 * * 1-5' --reset --vastai"
                 exit 1
             fi
             
-            log "Setting up custom schedule"
-            setup_schedule "$start_schedule" "$stop_schedule"
+            if [[ "$use_reset" == true ]]; then
+                log "Setting up custom schedule with reset on startup"
+            else
+                log "Setting up custom schedule with simple startup"
+            fi
+            
+            if [[ "$use_vastai" == true ]]; then
+                log "VastAI instances will be destroyed on shutdown"
+            else
+                log "VastAI instances will be preserved on shutdown"
+            fi
+            
+            setup_schedule "$start_schedule" "$stop_schedule" "$use_reset" "$use_vastai"
             show_schedule
             ;;
         schedule-reset)
@@ -2842,7 +2955,7 @@ main() {
             fi
             ;;
         *)
-            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
+            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
             ;;
     esac
 }
@@ -2853,7 +2966,7 @@ if [[ $# -eq 0 ]]; then
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
     echo "Actions: install, start, stop, restart, status, services, diagnose"
     echo "USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test"
-    echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-shutdown, schedule-remove, schedule-show"
+    echo "Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
     echo "Modes: dev, prod (only for install action)"
     echo ""
     echo "Install Modes:"
@@ -2867,9 +2980,13 @@ if [[ $# -eq 0 ]]; then
     echo "  sudo $0 experimance start            # Start services in production (sudo needed)"
     echo ""
     echo "Schedule Examples:"
-    echo "  $0 experimance schedule-gallery      # Monday-Friday, 12PM-5PM"
+    echo "  $0 experimance schedule-gallery      # Tuesday-Saturday, 11AM-6PM (simple startup, preserve VastAI)"
+    echo "  $0 experimance schedule-gallery --reset    # Tuesday-Saturday, 11AM-6PM (with audio reset)"
+    echo "  $0 experimance schedule-gallery --vastai   # Tuesday-Saturday, 11AM-6PM (destroy VastAI on shutdown)"
+    echo "  $0 experimance schedule-gallery --reset --vastai # Tuesday-Saturday, 11AM-6PM (reset + destroy VastAI)"
     echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'  # Custom: Weekdays 8AM-8PM"
-    echo "  $0 experimance schedule-reset '11:30'    # Call shutdown.sh at 11:30 today"
+    echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5' --reset --vastai  # Custom: with all options"
+    echo "  $0 experimance schedule-reset '11:30'    # Call startup.sh --reset at 11:30 today"
     echo "  $0 experimance schedule-shutdown '12:30' # Call shutdown.sh at 12:30 today"
     echo "  $0 experimance schedule-show         # Show current schedule"
     echo "  $0 experimance schedule-remove       # Remove schedule"
