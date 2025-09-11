@@ -42,7 +42,7 @@ class FireAgentService(AgentServiceBase):
         self.osc_person_address = self._full_osc_address(self.config.osc.person_speak_address)
 
     def _full_osc_address(self, suffix:str) -> str:
-        if self.config.osc.address_prefix is None and self.config.osc.address_prefix == "":
+        if self.config.osc.address_prefix is None or self.config.osc.address_prefix == "":
             addr = f"/{suffix}/"
         else:
             addr =  f"/{self.config.osc.address_prefix}/{suffix}/"
@@ -235,8 +235,12 @@ class FireAgentService(AgentServiceBase):
 
         # send other initial osc messages
         if self.osc_client:
+            # send special osc message to turn on the coals
+            self._send_osc_coals(True)
             self._send_osc_speaking(self.config.osc.bot_speak_address, False)
             self._send_osc_speaking(self.config.osc.person_speak_address, False)
+            # Send service started signal
+            self._send_osc_service_status(True)
 
         logger.info("Fire agent conversation started")
     
@@ -248,6 +252,11 @@ class FireAgentService(AgentServiceBase):
         if self.osc_client:
             try:
                 self._send_osc_presence(0)
+                self._send_osc_coals(False)
+                self._send_osc_speaking(self.config.osc.bot_speak_address, False)
+                self._send_osc_speaking(self.config.osc.person_speak_address, False)
+                # Send service stopped signal
+                self._send_osc_service_status(False)
                 logger.debug("Final absence signal sent")
             except Exception as e:
                 logger.error(f"Error sending final OSC signal: {e}")
@@ -505,3 +514,30 @@ class FireAgentService(AgentServiceBase):
         # don't call super to avoid sending on ZMQ (no one is listening)
         # at this point we just want to send OSC signals
         self._send_osc_speaking(speaker=speaker_type, is_speaking=is_speaking)
+
+    def _send_osc_coals(self, on: bool) -> None:
+        """Send special OSC message to turn on/off the coals."""
+        if not self.osc_client:
+            return
+        
+        try:
+            # Assume coals are controlled via bot speaking address with special value
+            value = 1 if on else 0  # 1 = coals on, 0 = coals off
+            address = self._full_osc_address("coals")
+            self.osc_client.send_message(address, value)
+            logger.info(f"OSC coals signal sent: {address} = {value} ({'on' if on else 'off'})")
+        except Exception as e:
+            logger.error(f"Failed to send OSC coals signal: {e}")
+
+    def _send_osc_service_status(self, running: bool) -> None:
+        """Send OSC service status signal to indicate service start/stop."""
+        if not self.osc_client:
+            return
+        
+        try:
+            value = 1 if running else 0  # 1 = service running, 0 = service stopped
+            address = self._full_osc_address("service_status")
+            self.osc_client.send_message(address, value)
+            logger.info(f"OSC service status signal sent: {address} = {value} ({'running' if running else 'stopped'})")
+        except Exception as e:
+            logger.error(f"Failed to send OSC service status signal: {e}")
