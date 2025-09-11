@@ -718,11 +718,28 @@ manual_unload() {
     # Then unload all LaunchAgents to prevent restart
     while IFS= read -r label; do
         echo -n "Unloading $label... "
-        if launchctl unload ~/Library/LaunchAgents/"$label".plist 2>/dev/null; then
-            echo -e "${GREEN}✓${NC}"
-            ((unloaded++))
+        
+        # Find the plist file for this label
+        local plist_file=""
+        while IFS= read -r pf; do
+            local file_label=$(plutil -extract Label raw "$pf" 2>/dev/null || echo "")
+            if [[ "$file_label" == "$label" ]]; then
+                plist_file="$pf"
+                break
+            fi
+        done < <(get_existing_plist_files "$PROJECT")
+        
+        # Use bootout instead of unload (more reliable)
+        if [[ -n "$plist_file" && -f "$plist_file" ]]; then
+            if launchctl bootout gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓${NC}"
+                ((unloaded++))
+            else
+                echo -e "${YELLOW}○${NC} (already unloaded or failed)"
+                ((failed++))
+            fi
         else
-            echo -e "${YELLOW}○${NC} (already unloaded or failed)"
+            echo -e "${YELLOW}○${NC} (plist not found)"
             ((failed++))
         fi
     done < <(get_service_labels "$PROJECT")
