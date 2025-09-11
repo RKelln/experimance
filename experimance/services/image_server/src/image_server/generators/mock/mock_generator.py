@@ -164,7 +164,7 @@ class MockImageGenerator(ImageGenerator):
 
         # Save the image
         request_id = kwargs.get('request_id')
-        output_path = self._get_output_path("png", request_id=request_id)
+        output_path = self._get_output_path(self.config.image_file_type, request_id=request_id)
         image.save(output_path)
         
         logger.info(f"MockImageGenerator: Saved placeholder image to {output_path}")

@@ -526,7 +526,7 @@ class LocalSDXLGenerator(ImageGenerator):
         result = await asyncio.to_thread(current_pipeline, **pipe_inputs)
         if not hasattr(result, "images") or not result.images:
             raise RuntimeError("Pipeline returned no images")
-        output_path = self._get_output_path("png")
+        output_path = self._get_output_path(self.config.image_file_type)
         result.images[0].save(output_path)
         logger.info("LocalSDXL: saved %s", output_path)
         return output_path
