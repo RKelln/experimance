@@ -302,9 +302,9 @@ create_touchdesigner_launchagent() {
     <key>ThrottleInterval</key>
     <integer>10</integer>
     
-    <!-- Start after a delay to ensure system is ready -->
+    <!-- Start after 10 second delay on boot (let other software start first) -->
     <key>StartInterval</key>
-    <integer>5</integer>
+    <integer>10</integer>
     
     <!-- Don't restart too frequently -->
     <key>ExitTimeOut</key>

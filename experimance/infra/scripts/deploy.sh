@@ -1015,7 +1015,7 @@ create_launchd_agent() {
     
     <!-- Start after a delay to ensure system is ready -->
     <key>StartInterval</key>
-    <integer>5</integer>
+    <integer>30</integer>
 </dict>
 </plist>
 EOF
