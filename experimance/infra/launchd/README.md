@@ -61,6 +61,9 @@ Use the deploy script for automatic installation:
 
 # Check status
 ./infra/scripts/deploy.sh fire status
+
+# Optional: Add gallery hour scheduling
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
 ```
 
 ### 3. Manual Installation (Advanced)
@@ -100,6 +103,23 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.experimance.fire.hea
 ./infra/scripts/deploy.sh fire status
 ```
 
+### Gallery Hour Scheduling (For Installations)
+
+```bash
+# Add automatic gallery hour scheduling
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+
+# Manual controls (gallery staff override)
+./infra/scripts/launchd_scheduler.sh fire manual-start  # Force start now
+./infra/scripts/launchd_scheduler.sh fire manual-stop   # Force stop now
+
+# Check status and schedule
+./infra/scripts/launchd_scheduler.sh fire show-schedule
+
+# Remove scheduling (return to always-on)
+./infra/scripts/launchd_scheduler.sh fire remove-schedule
+```
+
 ### Manual LaunchAgent Commands
 
 ```bash
@@ -121,10 +141,20 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.experimance.fire.healt
 ## Logs
 
 LaunchAgent logs are written to the standard macOS user log directory:
+
+### Main Service Logs
 - `~/Library/Logs/experimance/fire_agent_launchd.log` - Agent service stdout
 - `~/Library/Logs/experimance/fire_agent_launchd_error.log` - Agent service stderr  
 - `~/Library/Logs/experimance/fire_health_launchd.log` - Health service stdout
 - `~/Library/Logs/experimance/fire_health_launchd_error.log` - Health service stderr
+- `~/Library/Logs/experimance/fire_touchdesigner_*_error.log` - TouchDesigner errors
+- `~/Library/Logs/experimance/fire_touchdesigner_*.log` - TouchDesigner output
+
+### Gallery Scheduler Logs
+- `~/Library/Logs/experimance/fire_gallery_starter.log` - Gallery opening automation
+- `~/Library/Logs/experimance/fire_gallery_starter_error.log` - Gallery starter errors
+- `~/Library/Logs/experimance/fire_gallery_stopper.log` - Gallery closing automation  
+- `~/Library/Logs/experimance/fire_gallery_stopper_error.log` - Gallery stopper errors
 
 View logs in real-time:
 ```bash
@@ -134,8 +164,13 @@ tail -f ~/Library/Logs/experimance/fire_agent_launchd_error.log
 # Follow health logs  
 tail -f ~/Library/Logs/experimance/fire_health_launchd_error.log
 
+# Follow gallery automation logs
+tail -f ~/Library/Logs/experimance/fire_gallery_starter.log
+tail -f ~/Library/Logs/experimance/fire_gallery_stopper.log
+
 # List all LaunchAgent logs
 ls -la ~/Library/Logs/experimance/*launchd*.log
+ls -la ~/Library/Logs/experimance/*gallery*.log
 ```
 
 ## Configuration Details
@@ -173,6 +208,7 @@ This requires uv to have Full Disk Access permission.
 2. **Verify Full Disk Access**: System Settings → Privacy & Security → Full Disk Access → ensure uv is listed
 3. **Check uv path**: `which uv` should show `/opt/homebrew/bin/uv`
 4. **Test manual execution**: `PROJECT_ENV=fire uv run -m fire_agent`
+5. **Manual override**: `./infra/scripts/launchd_scheduler.sh fire manual-start`
 
 ### Service Crashes/Restarts
 1. **Check error logs**: `tail -f logs/fire_agent_launchd_error.log`
@@ -216,6 +252,23 @@ launchctl list | grep experimance
 
 **Solution**: Always use `restart` instead of `start` when troubleshooting failed LaunchAgents.
 
+### Gallery Scheduling Issues
+
+**Services start/stop at wrong times**:
+1. **Check schedule configuration**: `./infra/scripts/launchd_scheduler.sh fire show-schedule`
+2. **Verify gallery scheduler logs**: `tail -f ~/Library/Logs/experimance/fire_gallery_*.log`
+3. **Test manual controls**: Use `manual-start`/`manual-stop` for immediate override
+
+**Gallery staff needs immediate control**:
+- **Emergency start**: `./infra/scripts/launchd_scheduler.sh fire manual-start`
+- **Emergency stop**: `./infra/scripts/launchd_scheduler.sh fire manual-stop`
+- **Disable scheduling**: `./infra/scripts/launchd_scheduler.sh fire remove-schedule`
+
+**Services don't auto-restart after reboot**:
+- **Check RunAtLoad**: All main services should have `RunAtLoad=true`
+- **Auto-login required**: Enable auto-login for the user account
+- **Test reboot**: Services should start automatically, then follow gallery schedule
+
 ## Differences from systemd
 
 | Feature          | systemd                    | macOS LaunchAgents              |
@@ -229,13 +282,57 @@ launchctl list | grep experimance
 | Environment      | `Environment=`             | `EnvironmentVariables` dict     |
 | Execution method | Direct binary/script       | Direct uv execution             |
 
+## Gallery Hour Scheduling
+
+For gallery installations, you can add automatic startup/shutdown scheduling while preserving auto-restart capabilities:
+
+### Setup Gallery Hours (Tuesday-Saturday, 11AM-6PM)
+
+```bash
+# Add gallery hour scheduling to existing services
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+
+# Manual override - stop all services immediately
+./infra/scripts/launchd_scheduler.sh fire manual-stop
+
+# Manual override - start all services immediately  
+./infra/scripts/launchd_scheduler.sh fire manual-start
+
+# Check current status and schedule
+./infra/scripts/launchd_scheduler.sh fire show-schedule
+
+# Remove scheduling (return to always-on mode)
+./infra/scripts/launchd_scheduler.sh fire remove-schedule
+```
+
+### How Gallery Scheduling Works
+
+1. **Existing services keep `RunAtLoad=true`** - Auto-start after machine reboot
+2. **Gallery scheduler agents** are added that start/stop services during gallery hours
+3. **Machine stays on 24/7**, services only run when needed
+4. **Manual override** available for special events or testing
+5. **Auto-restart preserved** - services restart if they crash during gallery hours
+
+### Schedule Types
+
+- **`gallery`** - Tuesday-Saturday, 10:55 AM start, 6:05 PM stop (default)
+- **`daily`** - Every day, 9:00 AM start, 10:00 PM stop
+- **`custom`** - Prompts for custom start/stop times
+
+### Gallery Scheduler Logs
+
+- `~/Library/Logs/experimance/fire_gallery_starter.log` - Gallery opening (service start)
+- `~/Library/Logs/experimance/fire_gallery_stopper.log` - Gallery closing (service stop)
+- Original service logs remain unchanged
+
 ## Integration with Multi-Machine Deployment
 
 These LaunchAgent services integrate with the multi-machine deployment system. In a typical fire project setup:
 
-**macOS Machine** (LaunchAgents):
+**macOS Machine** (LaunchAgents with Gallery Scheduling):
 - `fire_agent` - AI interaction service with audio/video processing
 - `experimance_health` - Health monitoring service
+- Gallery hour automation (Tuesday-Saturday, 11AM-6PM)
 
 **Ubuntu Machine** (systemd):
 - `core` - Core state management service  

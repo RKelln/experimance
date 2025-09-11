@@ -48,6 +48,14 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Distributed deployments**: Deploy services across multiple machines (Ubuntu + macOS, etc.)
 - **TOML configuration**: Simple `deployment.toml` files define machine assignments and service distribution
 - **Hostname override testing**: Test deployment configurations from any machine without being on the target
+
+### 7. **Gallery Hour Automation** ✅ (macOS)
+- **Automatic scheduling**: Services start/stop during gallery hours (Tuesday-Saturday, 11AM-6PM)
+- **Manual override**: Gallery staff can immediately start/stop services for special events
+- **Preserves auto-restart**: Services still auto-start after reboot and restart on failure
+- **LaunchAgent integration**: Native macOS scheduling using `StartCalendarInterval`
+- **Multiple schedules**: Gallery hours, daily schedule, or custom timing
+- **TouchDesigner support**: Works with both Python services and TouchDesigner applications
 - **Per-machine user configuration**: Different users on different machines (e.g., "experimance" vs "FireProject")
 - **Service module name mapping**: Custom module names per service (e.g., `fire_core`, `fire_agent`)
 - **Consolidated service detection**: Automatic fallback to single-machine configurations for compatibility
@@ -700,6 +708,14 @@ sudo ./infra/scripts/deploy.sh fire start
 
 # Verify services (macOS uses launchctl)
 sudo launchctl list | grep fire
+
+# Optional: Add gallery hour scheduling (Tuesday-Saturday, 11AM-6PM)
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+
+# Gallery staff manual controls
+./infra/scripts/launchd_scheduler.sh fire manual-stop   # Emergency stop
+./infra/scripts/launchd_scheduler.sh fire manual-start  # Emergency start  
+./infra/scripts/launchd_scheduler.sh fire show-schedule # Check status
 ```
 
 ### Network Communication

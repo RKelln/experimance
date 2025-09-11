@@ -32,6 +32,22 @@ Main deployment script for Experimance services. Supports multiple projects, pla
 
 See [`README_TOUCHDESIGNER.md`](README_TOUCHDESIGNER.md) for detailed documentation.
 
+### `launchd_scheduler.sh`
+**macOS only** - Adds gallery hour scheduling to existing LaunchAgent services. Perfect for gallery installations that need automatic startup/shutdown with manual override capabilities.
+
+```bash
+./launchd_scheduler.sh <project> <action> [schedule_type]
+```
+
+**Actions**: setup-schedule, remove-schedule, show-schedule, manual-start, manual-stop
+**Schedule Types**: gallery, daily, custom
+**Examples**:
+- `./launchd_scheduler.sh fire setup-schedule gallery`
+- `./launchd_scheduler.sh fire manual-stop`
+- `./launchd_scheduler.sh fire show-schedule`
+
+See [`README_LAUNCHD_SCHEDULER.md`](README_LAUNCHD_SCHEDULER.md) for detailed documentation.
+
 ## System Management Scripts
 
 ### `startup.sh`
