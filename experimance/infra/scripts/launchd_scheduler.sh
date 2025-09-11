@@ -2,7 +2,7 @@
 
 # Experimance Project LaunchAgent Scheduler
 # Usage: ./launchd_scheduler.sh <project> <action> [schedule_type]
-# Actions: setup-schedule, remove-schedule, show-schedule, manual-start, manual-stop
+# Actions: setup-schedule, remove-schedule, show-schedule, manual-start, manual-stop, manual-unload
 # Schedule Types: gallery, custom, daily
 #
 # This script modifies existing LaunchAgents to add gallery hour scheduling while
@@ -77,7 +77,8 @@ show_usage() {
     echo "  remove-schedule   Remove scheduling and return to always-on mode"
     echo "  show-schedule     Show current schedule configuration and service status"
     echo "  manual-start      Manually start all project services"
-    echo "  manual-stop       Manually stop all project services"
+    echo "  manual-stop       Manually stop all project services (may auto-restart)"
+    echo "  manual-unload     Unload services completely (no auto-restart)"
     echo ""
     echo -e "${GREEN}Schedule Types:${NC}"
     echo "  gallery     Tuesday-Saturday, 11AM-6PM (default)"
@@ -88,14 +89,15 @@ show_usage() {
     echo "  $0 fire setup-schedule gallery"
     echo "  $0 fire setup-schedule custom"
     echo "  $0 fire show-schedule"
-    echo "  $0 fire manual-stop"
+    echo "  $0 fire manual-stop          # Kill services (may auto-restart)"
+    echo "  $0 fire manual-unload        # Unload services (no auto-restart)"
     echo "  $0 fire remove-schedule"
     echo ""
     echo -e "${YELLOW}How it works:${NC}"
     echo "• Existing services keep RunAtLoad=true (auto-start after reboot)"
     echo "• Additional scheduler agents start/stop services during gallery hours"  
     echo "• Machine stays on 24/7, services only run during scheduled times"
-    echo "• Gallery can manually override with manual-start/manual-stop"
+    echo "• Gallery can manually override with manual-start/manual-stop/manual-unload"
     echo ""
 }
 
@@ -486,6 +488,34 @@ remove_schedule() {
     done < <(get_service_labels "$PROJECT")
 }
 
+# Helper function to ensure a service is loaded before starting
+ensure_service_loaded() {
+    local label="$1"
+    
+    # Check if service is already loaded
+    if launchctl list | grep -q "$label"; then
+        return 0  # Already loaded
+    fi
+    
+    # Find the plist file for this label
+    local plist_file=""
+    while IFS= read -r pf; do
+        local file_label=$(plutil -extract Label raw "$pf" 2>/dev/null || echo "")
+        if [[ "$file_label" == "$label" ]]; then
+            plist_file="$pf"
+            break
+        fi
+    done < <(get_existing_plist_files "$PROJECT")
+    
+    # Load the service if plist file exists
+    if [[ -n "$plist_file" && -f "$plist_file" ]]; then
+        launchctl bootstrap gui/$(id -u) "$plist_file" 2>/dev/null
+        return $?
+    else
+        return 1  # Plist file not found
+    fi
+}
+
 # Manually start all project services
 manual_start() {
     log "Manually starting all $PROJECT services..."
@@ -493,16 +523,71 @@ manual_start() {
     local started=0
     local failed=0
     
+    # Separate services into Python and TouchDesigner
+    local python_services=()
+    local td_services=()
+    
     while IFS= read -r label; do
-        echo -n "Starting $label... "
-        if launchctl kickstart gui/$(id -u)/"$label" 2>/dev/null; then
-            echo -e "${GREEN}✓${NC}"
-            ((started++))
+        if [[ "$label" == *"touchdesigner"* ]]; then
+            td_services+=("$label")
         else
-            echo -e "${RED}✗${NC}"
-            ((failed++))
+            python_services+=("$label")
         fi
     done < <(get_service_labels "$PROJECT")
+    
+    # First, start TouchDesigner services
+    if [ ${#td_services[@]} -gt 0 ]; then
+        echo -e "${BLUE}Starting TouchDesigner services first...${NC}"
+        for label in "${td_services[@]}"; do
+            echo -n "Starting $label... "
+            
+            # Ensure service is loaded first
+            if ! ensure_service_loaded "$label"; then
+                echo -e "${RED}✗ (failed to load)${NC}"
+                ((failed++))
+                continue
+            fi
+            
+            # Now try to start it
+            if launchctl kickstart gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓${NC}"
+                ((started++))
+            else
+                echo -e "${RED}✗${NC}"
+                ((failed++))
+            fi
+        done
+        
+        # Wait for TouchDesigner to initialize before starting Python services
+        if [ ${#python_services[@]} -gt 0 ]; then
+            echo -e "${YELLOW}Waiting 20 seconds for TouchDesigner to initialize...${NC}"
+            sleep 20
+        fi
+    fi
+    
+    # Then start Python services
+    if [ ${#python_services[@]} -gt 0 ]; then
+        echo -e "${BLUE}Starting Python services...${NC}"
+        for label in "${python_services[@]}"; do
+            echo -n "Starting $label... "
+            
+            # Ensure service is loaded first
+            if ! ensure_service_loaded "$label"; then
+                echo -e "${RED}✗ (failed to load)${NC}"
+                ((failed++))
+                continue
+            fi
+            
+            # Now try to start it
+            if launchctl kickstart gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓${NC}"
+                ((started++))
+            else
+                echo -e "${RED}✗${NC}"
+                ((failed++))
+            fi
+        done
+    fi
     
     echo ""
     log "Manual start complete: $started started, $failed failed"
@@ -520,23 +605,134 @@ manual_stop() {
     local stopped=0
     local failed=0
     
+    # Separate services into Python and TouchDesigner
+    local python_services=()
+    local td_services=()
+    
     while IFS= read -r label; do
-        echo -n "Stopping $label... "
-        if launchctl kill TERM gui/$(id -u)/"$label" 2>/dev/null; then
-            echo -e "${GREEN}✓${NC}"
-            ((stopped++))
+        if [[ "$label" == *"touchdesigner"* ]]; then
+            td_services+=("$label")
         else
-            echo -e "${YELLOW}○${NC} (already stopped or failed)"
-            ((failed++))
+            python_services+=("$label")
         fi
     done < <(get_service_labels "$PROJECT")
+    
+    # First, stop Python services
+    if [ ${#python_services[@]} -gt 0 ]; then
+        echo -e "${BLUE}Stopping Python services first...${NC}"
+        for label in "${python_services[@]}"; do
+            echo -n "Stopping $label... "
+            if launchctl kill TERM gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓${NC}"
+                ((stopped++))
+            else
+                echo -e "${YELLOW}○${NC} (already stopped or failed)"
+                ((failed++))
+            fi
+        done
+        
+        # Wait for Python services to shut down gracefully
+        if [ ${#td_services[@]} -gt 0 ]; then
+            echo -e "${YELLOW}Waiting 10 seconds for Python services to shut down...${NC}"
+            sleep 10
+        fi
+    fi
+    
+    # Then stop TouchDesigner services
+    if [ ${#td_services[@]} -gt 0 ]; then
+        echo -e "${BLUE}Stopping TouchDesigner services...${NC}"
+        for label in "${td_services[@]}"; do
+            echo -n "Stopping $label... "
+            if launchctl kill TERM gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓${NC}"
+                ((stopped++))
+            else
+                echo -e "${YELLOW}○${NC} (already stopped or failed)"
+                ((failed++))
+            fi
+        done
+    fi
     
     echo ""
     log "Manual stop complete: $stopped stopped, $failed already stopped/failed"
     
     echo ""
     echo -e "${YELLOW}Note: Services with KeepAlive will restart automatically.${NC}"
-    echo -e "${YELLOW}Use 'remove-schedule' to disable auto-restart if needed.${NC}"
+    echo -e "${YELLOW}Use 'manual-unload' to truly stop without auto-restart.${NC}"
+}
+
+# Manually unload all project services (stops without auto-restart)
+manual_unload() {
+    log "Manually unloading all $PROJECT services (no auto-restart)..."
+    
+    local unloaded=0
+    local failed=0
+    
+    # Separate services into Python and TouchDesigner
+    local python_services=()
+    local td_services=()
+    
+    while IFS= read -r label; do
+        if [[ "$label" == *"touchdesigner"* ]]; then
+            td_services+=("$label")
+        else
+            python_services+=("$label")
+        fi
+    done < <(get_service_labels "$PROJECT")
+    
+    # First, stop Python services
+    if [ ${#python_services[@]} -gt 0 ]; then
+        echo -e "${BLUE}Stopping Python services first...${NC}"
+        for label in "${python_services[@]}"; do
+            echo -n "Stopping $label... "
+            if launchctl kill TERM gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓ killed${NC}"
+            else
+                echo -e "${YELLOW}○ not running${NC}"
+            fi
+        done
+        
+        # Wait for Python services to shut down gracefully
+        if [ ${#td_services[@]} -gt 0 ]; then
+            echo -e "${YELLOW}Waiting 10 seconds for Python services to shut down...${NC}"
+            sleep 10
+        fi
+    fi
+    
+    # Then stop TouchDesigner services
+    if [ ${#td_services[@]} -gt 0 ]; then
+        echo -e "${BLUE}Stopping TouchDesigner services...${NC}"
+        for label in "${td_services[@]}"; do
+            echo -n "Stopping $label... "
+            if launchctl kill TERM gui/$(id -u)/"$label" 2>/dev/null; then
+                echo -e "${GREEN}✓ killed${NC}"
+            else
+                echo -e "${YELLOW}○ not running${NC}"
+            fi
+        done
+    fi
+    
+    echo ""
+    echo -e "${BLUE}Unloading all LaunchAgents to prevent restart...${NC}"
+    
+    # Then unload all LaunchAgents to prevent restart
+    while IFS= read -r label; do
+        echo -n "Unloading $label... "
+        if launchctl unload ~/Library/LaunchAgents/"$label".plist 2>/dev/null; then
+            echo -e "${GREEN}✓${NC}"
+            ((unloaded++))
+        else
+            echo -e "${YELLOW}○${NC} (already unloaded or failed)"
+            ((failed++))
+        fi
+    done < <(get_service_labels "$PROJECT")
+    
+    echo ""
+    log "Manual unload complete: $unloaded unloaded, $failed already unloaded/failed"
+    
+    echo ""
+    echo -e "${GREEN}Services are now stopped and will NOT restart automatically.${NC}"
+    echo -e "${BLUE}Use 'manual-start' to restart them.${NC}"
 }
 
 # Show current schedule
@@ -658,6 +854,9 @@ main() {
             ;;
         manual-stop)
             manual_stop
+            ;;
+        manual-unload)
+            manual_unload
             ;;
         *)
             show_usage

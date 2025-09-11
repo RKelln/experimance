@@ -12,8 +12,10 @@ This script enhances existing LaunchAgent services with time-based scheduling wh
 - ✅ **Keeps RunAtLoad=true** - Services auto-start after machine reboot  
 - ✅ **Gallery hour automation** - Start/stop services during operating hours
 - ✅ **Manual override** - Gallery staff can immediately start/stop services
+- ✅ **Staged startup/shutdown** - TouchDesigner and Python services coordinate properly
 - ✅ **Auto-restart preserved** - Services restart if they crash during gallery hours
 - ✅ **Multiple schedules** - Gallery, daily, or custom timing
+- ✅ **Complete stop option** - manual-unload prevents auto-restart for maintenance
 
 ## Quick Start
 
@@ -27,8 +29,9 @@ This script enhances existing LaunchAgent services with time-based scheduling wh
 ./infra/scripts/launchd_scheduler.sh fire show-schedule
 
 # Manual override for gallery staff
-./infra/scripts/launchd_scheduler.sh fire manual-stop   # Stop everything now
-./infra/scripts/launchd_scheduler.sh fire manual-start  # Start everything now
+./infra/scripts/launchd_scheduler.sh fire manual-stop     # Stop everything now (may auto-restart)
+./infra/scripts/launchd_scheduler.sh fire manual-unload   # Stop everything now (no auto-restart)
+./infra/scripts/launchd_scheduler.sh fire manual-start    # Start everything now
 
 # Remove scheduling (return to always-on)
 ./infra/scripts/launchd_scheduler.sh fire remove-schedule
@@ -59,10 +62,29 @@ This script enhances existing LaunchAgent services with time-based scheduling wh
 
 **What Happens:**
 - Machine stays on 24/7
-- Services auto-start after reboot
+- Services auto-start after reboot with staging delays (TouchDesigner 10s, Python 30s)
 - Gallery scheduler starts services 5 minutes before opening
 - Gallery scheduler stops services 5 minutes after closing
 - Manual override available for special events
+
+## Staged Service Management
+
+The scheduler implements intelligent staging for reliable TouchDesigner and Python service coordination:
+
+### Startup Sequence
+1. **TouchDesigner services** start first (10 seconds after boot via plist)
+2. **20-second delay** for TouchDesigner to fully initialize
+3. **Python services** start second (30 seconds after boot via plist)
+
+### Shutdown Sequence  
+1. **Python services** stopped first (clean API disconnection)
+2. **10-second grace period** for graceful shutdown
+3. **TouchDesigner services** stopped last
+
+### Manual Operations
+- `manual-start`: Follows staging (TD first → 20s delay → Python)
+- `manual-stop`: Follows staging (Python first → 10s delay → TD) + may auto-restart
+- `manual-unload`: Follows staging + prevents auto-restart (maintenance mode)
 
 ## Usage
 
@@ -82,10 +104,13 @@ This script enhances existing LaunchAgent services with time-based scheduling wh
 ### Manual Controls (Gallery Staff)
 
 ```bash
-# Emergency stop (immediate)
+# Emergency stop (services may auto-restart)
 ./infra/scripts/launchd_scheduler.sh fire manual-stop
 
-# Emergency start (immediate)  
+# Complete stop (no auto-restart)
+./infra/scripts/launchd_scheduler.sh fire manual-unload
+
+# Emergency start (staged: TouchDesigner first, then Python services)
 ./infra/scripts/launchd_scheduler.sh fire manual-start
 
 # Check what's running
@@ -144,25 +169,29 @@ tail -f ~/Library/Logs/experimance/fire_touchdesigner_*_error.log
 ### Services Don't Stop After Hours
 1. **Check stopper logs**: `tail -f ~/Library/Logs/experimance/fire_gallery_stopper_error.log`
 2. **Manual test**: `./infra/scripts/launchd_scheduler.sh fire manual-stop`
-3. **Note**: Services with `KeepAlive` will restart - this is expected behavior
+3. **Complete stop**: `./infra/scripts/launchd_scheduler.sh fire manual-unload` (no auto-restart)
+4. **Note**: Services with `KeepAlive` will restart after `manual-stop` - this is expected behavior
 
 ### Gallery Staff Emergency Override
 ```bash
 # Emergency procedures for gallery staff:
 
-# 1. Stop everything immediately (technical issues)
+# 1. Stop everything immediately (services may restart automatically)
 ./infra/scripts/launchd_scheduler.sh fire manual-stop
 
-# 2. Start everything immediately (special event)
+# 2. Stop everything completely (for maintenance - no auto-restart)
+./infra/scripts/launchd_scheduler.sh fire manual-unload
+
+# 3. Start everything immediately (staged startup with delays)
 ./infra/scripts/launchd_scheduler.sh fire manual-start
 
-# 3. Check what's supposed to be running
+# 4. Check what's supposed to be running
 ./infra/scripts/launchd_scheduler.sh fire show-schedule
 
-# 4. Disable automation temporarily (maintenance)
+# 5. Disable automation temporarily (maintenance)
 ./infra/scripts/launchd_scheduler.sh fire remove-schedule
 
-# 5. Re-enable automation after maintenance
+# 6. Re-enable automation after maintenance
 ./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
 ```
 
@@ -192,6 +221,7 @@ The scheduler works seamlessly with TouchDesigner LaunchAgents created by `touch
 **Existing Services (preserved):**
 - `RunAtLoad=true` - Auto-start after reboot  
 - `KeepAlive=true` - Auto-restart if crashed
+- `StartInterval` - TouchDesigner: 10s delay, Python services: 30s delay
 - No scheduling added - controlled by starter/stopper
 
 ### File Locations
