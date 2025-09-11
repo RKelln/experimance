@@ -200,9 +200,6 @@ def resolve_path(
         resolve_path("system_prompt.txt", hint="project") 
         # -> PROJECT_ROOT/projects/fire/system_prompt.txt
     """
-    if not is_file(path_or_string):
-        raise ConfigError(f"Invalid path: {path_or_string}. Expected a file path.")
-
     path = Path(path_or_string)
 
     # If it's already absolute, return as-is (but validate existence)
@@ -216,7 +213,8 @@ def resolve_path(
         PROJECT_ROOT, PROJECT_SPECIFIC_DIR,
         CORE_SERVICE_DIR, AGENT_SERVICE_DIR, DISPLAY_SERVICE_DIR,
         AUDIO_SERVICE_DIR, IMAGE_SERVER_SERVICE_DIR, DATA_DIR,
-        MEDIA_DIR_ABS, AUDIO_DIR_ABS, IMAGES_DIR_ABS, VIDEOS_DIR_ABS
+        MEDIA_DIR_ABS, AUDIO_DIR_ABS, IMAGES_DIR_ABS, VIDEOS_DIR_ABS,
+        GENERATED_IMAGES_DIR_ABS, MOCK_IMAGES_DIR_ABS, GENERATED_AUDIO_DIR_ABS
     )
 
     # Determine base directories based on hint
@@ -279,7 +277,8 @@ def resolve_path(
         candidates.append(direct_path)
         
         # Try smart deduplication for media directories
-        if base_dir in (MEDIA_DIR_ABS, AUDIO_DIR_ABS, IMAGES_DIR_ABS, VIDEOS_DIR_ABS):
+        if base_dir in (MEDIA_DIR_ABS, AUDIO_DIR_ABS, IMAGES_DIR_ABS, VIDEOS_DIR_ABS, 
+                        GENERATED_IMAGES_DIR_ABS, MOCK_IMAGES_DIR_ABS, GENERATED_AUDIO_DIR_ABS) or base_dir.is_relative_to(MEDIA_DIR_ABS):
             relative_base = base_dir.relative_to(PROJECT_ROOT)
             path_parts = Path(path).parts
             
@@ -287,9 +286,14 @@ def resolve_path(
             if len(path_parts) >= len(relative_base.parts):
                 # See if the beginning of the path matches the relative base
                 if path_parts[:len(relative_base.parts)] == relative_base.parts:
-                    # Path already includes the base structure, resolve from PROJECT_ROOT
-                    deduplicated_path = PROJECT_ROOT / path
-                    candidates.append(deduplicated_path)
+                    # Path already includes the base structure - check if it's exactly the same
+                    if path_parts == relative_base.parts:
+                        # Path is exactly the base directory, return the hint itself
+                        candidates.append(base_dir)
+                    else:
+                        # Path includes the base structure, resolve from PROJECT_ROOT
+                        deduplicated_path = PROJECT_ROOT / path
+                        candidates.append(deduplicated_path)
                     
                 # Also try partial matches (e.g., path starts with "audio" when base is "media/audio")
                 elif len(relative_base.parts) > 1:
