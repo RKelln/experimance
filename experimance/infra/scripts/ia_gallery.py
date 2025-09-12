@@ -17,12 +17,11 @@ SSH Config Setup Required:
         IdentityFile ~/.ssh/ia_fire
 
 Usage:
-    python3 ia_gallery.py              # Run interactive menu
-    python3 ia_gallery.py --install    # Install as systemd service (auto-start)
-    python3 ia_gallery.py --uninstall  # Remove systemd service
+    python3 ia_gallery.py                  # Run interactive menu
+    python3 ia_gallery.py --install        # Install as systemd service (auto-start)
+    python3 ia_gallery.py --uninstall      # Remove systemd service
 
-    
-Manual service controls
+Manual service controls:
 # Start the service now (for testing)
 systemctl --user start ia-gallery.service
 
@@ -139,16 +138,14 @@ def get_platform_command(platform, project_dir, action, project="fire"):
         commands = {
             "start": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} start",
             "stop": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} stop",
-            "emergency_stop": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} stop",
             "status_systemd": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} status",
             "status_processes": 'ps aux | grep -E "(uv run -m|scripts/dev)" | grep -v grep | grep -E "(fire_|experimance_)" || echo "No processes running"'
         }
     elif platform == "macos":
-        # macOS commands
+        # macOS commands (use manual-unload instead of manual-stop since services auto-restart with KeepAlive)
         commands = {
             "start": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} manual-start",
-            "stop": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} manual-stop",
-            "emergency_stop": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} manual-unload",
+            "stop": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} manual-unload",
             "status": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} show-schedule",
             "setup_gallery": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} setup-schedule gallery",
             "remove_gallery": f"cd {project_dir} && {SCRIPT_DIR}/launchd_scheduler.sh {project} remove-schedule"
@@ -269,19 +266,6 @@ def test_connections():
         print("❌ Some connections failed. Check SSH setup.")
     
     return all_good
-
-def emergency_stop():
-    """Emergency stop - completely unload services (no auto-restart)"""
-    print("🚨 EMERGENCY STOP - Completely shutting down all services")
-    
-    for machine_name, config in MACHINES.items():
-        platform = config["platform"]
-        project_dir = config["project_dir"]
-        
-        print(f"\n📍 Emergency stop on {machine_name} ({platform})")
-        
-        command = get_platform_command(platform, project_dir, "emergency_stop")
-        run_command_on_machine(config, command)
 
 def setup_gallery_schedule():
     """Set up gallery hour scheduling on macOS machine"""
@@ -458,25 +442,22 @@ def main_menu():
     
     while True:
         print("\n" + "="*70)
-        print("🔥 IA GALLERY FIRE PROJECT CONTROL")
+        print("🔥 IA GALLERY Feed the Fires PROJECT CONTROL")
         print(f"Mode: {mode_info}")
         print("Managing: ia360 (Ubuntu) + iamini (macOS)")
         print("="*70)
-        print("1. Start all services")
-        print("2. Stop all services") 
-        print("3. Restart all services")
-        print("4. Show service status")
-        print("5. Emergency stop (complete shutdown)")
+        print("1. Start")
+        print("2. Stop") 
+        print("3. Restart")
+        print("4. Show status")
         print("")
-        print("6. Set up gallery hours (macOS auto-schedule)")
-        print("7. Remove gallery hours (macOS always-on)")
+        print("9. Test network connections")
         print("")
-        print("8. Test connections")
-        print("0. Exit")
+        print("💡 This interface runs continuously. Use Ctrl+C to exit if needed.")
         print("-"*70)
         
         try:
-            choice = input("Enter choice (0-8): ").strip()
+            choice = input("Enter choice (1-4, 9): ").strip()
             
             if choice == "1":
                 start_services()
@@ -486,23 +467,10 @@ def main_menu():
                 restart_services()
             elif choice == "4":
                 show_status()
-            elif choice == "5":
-                confirm = input("⚠️  EMERGENCY STOP - Are you sure? (yes/no): ").strip().lower()
-                if confirm == "yes":
-                    emergency_stop()
-                else:
-                    print("Cancelled.")
-            elif choice == "6":
-                setup_gallery_schedule()
-            elif choice == "7":
-                remove_gallery_schedule()
-            elif choice == "8":
+            elif choice == "9":
                 test_connections()
-            elif choice == "0":
-                print("Goodbye! 👋")
-                break
             else:
-                print("Invalid choice. Please enter 0-8.")
+                print("Invalid choice. Please enter 1-4 or 9.")
                 
         except KeyboardInterrupt:
             print("\n\nGoodbye! 👋")
@@ -541,10 +509,6 @@ if __name__ == "__main__":
             print("📊 Checking service status via command line...")
             show_status()
             sys.exit(0)
-        elif arg == "--emergency-stop":
-            print("🚨 Emergency stop via command line...")
-            emergency_stop()
-            sys.exit(0)
         elif arg == "--setup-gallery":
             print("⏰ Setting up gallery hours via command line...")
             setup_gallery_schedule()
@@ -572,7 +536,6 @@ if __name__ == "__main__":
             print("  python3 ia_gallery.py --stop             # Stop all services")
             print("  python3 ia_gallery.py --restart          # Restart all services")
             print("  python3 ia_gallery.py --status           # Show service status")
-            print("  python3 ia_gallery.py --emergency-stop   # Emergency shutdown")
             print("")
             print("Gallery Hours:")
             print("  python3 ia_gallery.py --setup-gallery    # Enable gallery hour scheduling")
