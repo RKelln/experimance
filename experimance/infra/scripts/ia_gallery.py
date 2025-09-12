@@ -66,7 +66,7 @@ def get_machine_config():
         "ia360": {
             "ssh_host": "ia360",  # SSH config shortcut
             "platform": "linux",
-            "project_dir": "/home/experimance/experimance",
+            "project_dir": "/opt/experimance",
             "services": ["core", "image_server", "display", "health"],
             "local": running_on_ia360  # Local if we're running on ia360, remote otherwise
         },
@@ -157,7 +157,7 @@ def get_platform_command(platform, project_dir, action, project="fire"):
 
 def start_services():
     """Start Fire project services across all machines"""
-    print("� Starting Fire project services...")
+    print("Starting Fire project services...")
     
     for machine_name, config in MACHINES.items():
         services = config["services"]
@@ -318,20 +318,20 @@ def install_systemd_service():
     # Create service file content
     service_content = f"""[Unit]
 Description=IA Gallery Fire Project Control Terminal Kiosk
-Wants=graphical-session.target
-After=graphical-session.target
-After=network-online.target
-Wants=network-online.target
+Wants=graphical-session.target network-online.target
+After=graphical-session.target network-online.target
+Requisite=graphical-session.target
 
 [Service]
-Type=exec
+Type=simple
 # Inherit session environment (DISPLAY / Wayland, DBus):
 PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
-# Launch GNOME Terminal full-screen with restart loop for resilience:
-ExecStart=/usr/bin/gnome-terminal --full-screen --hide-menubar \\
-  -- bash -lc 'while true; do python3 {script_path}; echo "Gallery control exited. Restarting in 3 seconds..."; sleep 3; done'
-Restart=always
-RestartSec=5
+# Set environment explicitly
+Environment="DISPLAY=:0"
+# Launch with a wrapper script approach
+ExecStart=/bin/bash -c 'exec gnome-terminal --full-screen --hide-menubar -- bash -lc "while true; do python3 /opt/experimance/infra/scripts/ia_gallery.py; echo Gallery control exited. Restarting in 3 seconds...; sleep 3; done"'
+Restart=on-failure
+RestartSec=10
 # Keep logs per-instance (handy for debugging)
 StandardOutput=journal
 StandardError=journal
