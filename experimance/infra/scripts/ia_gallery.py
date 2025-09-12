@@ -135,12 +135,12 @@ def run_command_on_machine(config, command):
 def get_platform_command(platform, project_dir, action, project="fire"):
     """Get the appropriate command for a platform and action"""
     if platform == "linux":
-        # Ubuntu commands (using system services, not --user)
+        # Ubuntu commands (using deploy.sh for proper systemd target management)
         commands = {
-            "start": f"cd {project_dir} && sudo {SCRIPT_DIR}/startup.sh --project {project}",
-            "stop": f"cd {project_dir} && sudo {SCRIPT_DIR}/shutdown.sh --project {project}",
-            "emergency_stop": f"cd {project_dir} && sudo {SCRIPT_DIR}/shutdown.sh --project {project}",
-            "status_systemd": "sudo systemctl status 'experimance@fire.target' --no-pager -l || echo 'Target not active'",
+            "start": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} start",
+            "stop": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} stop",
+            "emergency_stop": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} stop",
+            "status_systemd": f"cd {project_dir} && sudo ./infra/scripts/deploy.sh {project} status",
             "status_processes": 'ps aux | grep -E "(uv run -m|scripts/dev)" | grep -v grep | grep -E "(fire_|experimance_)" || echo "No processes running"'
         }
     elif platform == "macos":

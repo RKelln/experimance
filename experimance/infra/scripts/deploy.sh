@@ -522,6 +522,10 @@ ${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop *@${PROJECT}.service
 ${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *@${PROJECT}.service
 ${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl status *@${PROJECT}.service
 ${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/startup.sh
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/shutdown.sh
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/reset.sh
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/deploy.sh
 EOF
     
     # Set proper permissions for sudoers file
