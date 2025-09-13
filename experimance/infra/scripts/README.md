@@ -39,14 +39,34 @@ See [`README_TOUCHDESIGNER.md`](README_TOUCHDESIGNER.md) for detailed documentat
 ./launchd_scheduler.sh <project> <action> [schedule_type]
 ```
 
-**Actions**: setup-schedule, remove-schedule, show-schedule, manual-start, manual-stop
+**Actions**: setup-schedule, remove-schedule, show-schedule, manual-start, manual-stop, manual-unload
 **Schedule Types**: gallery, daily, custom
 **Examples**:
 - `./launchd_scheduler.sh fire setup-schedule gallery`
 - `./launchd_scheduler.sh fire manual-stop`
 - `./launchd_scheduler.sh fire show-schedule`
 
+**Recent improvements (Sept 2025)**: Fixed self-referencing scheduler services and XML encoding issues that prevented proper loading.
+
 See [`README_LAUNCHD_SCHEDULER.md`](README_LAUNCHD_SCHEDULER.md) for detailed documentation.
+
+### `ia_gallery.py`
+**Multi-machine gallery control** - Controls Fire project services across Ubuntu (ia360) and macOS (iamini) machines via SSH. Designed for IA Gallery installations.
+
+```bash
+python infra/scripts/ia_gallery.py                  # Interactive menu
+python infra/scripts/ia_gallery.py --start          # Start all services
+python infra/scripts/ia_gallery.py --stop           # Stop all services
+python infra/scripts/ia_gallery.py --status         # Show service status
+python infra/scripts/ia_gallery.py --install        # Install as systemd service (Ubuntu only)
+```
+
+**Machine configuration**:
+- **ia360 (Ubuntu)**: Core, Image Server, Display, Health services
+- **iamini (macOS)**: Agent, Health services + TouchDesigner
+- **SSH shortcuts**: Uses `ia360` and `iamini` hostnames from ~/.ssh/config
+
+Works with `launchd_scheduler.sh` for coordinated gallery hour automation.
 
 ## System Management Scripts
 

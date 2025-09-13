@@ -79,6 +79,38 @@ uv run python infra/scripts/get_deployment_services.py fire fire-ubuntu.local
 uv run python infra/scripts/get_deployment_services.py fire fire-macos.local
 ```
 
+### Gallery Automation (IA Gallery)
+
+**For IA Gallery installations**, use the coordinated multi-machine control system:
+
+```bash
+# Interactive gallery control terminal (from any machine)
+python infra/scripts/ia_gallery.py
+
+# Command-line controls
+python infra/scripts/ia_gallery.py --start     # Start all services
+python infra/scripts/ia_gallery.py --stop      # Stop all services  
+python infra/scripts/ia_gallery.py --status    # Check service status
+```
+
+**Gallery hour scheduling** (macOS only):
+```bash
+# Setup automatic gallery hours (Tuesday-Saturday, 10:55 AM - 6:05 PM)
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+
+# Manual override for gallery staff
+./infra/scripts/launchd_scheduler.sh fire manual-start
+./infra/scripts/launchd_scheduler.sh fire manual-stop
+./infra/scripts/launchd_scheduler.sh fire show-schedule
+```
+
+**Machine configuration:**
+- **ia360 (Ubuntu)**: Core, Image Server, Display, Health
+- **iamini (macOS)**: Agent, Health, TouchDesigner
+- **Coordination**: ia_gallery.py manages both machines via SSH
+
+See [`infra/scripts/README.md`](../../infra/scripts/README.md) for detailed gallery automation documentation.
+
 
 ## Responsibilities
 

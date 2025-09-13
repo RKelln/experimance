@@ -107,20 +107,26 @@ create_gallery_starter() {
     local project="$2"
     local plist_file="$LAUNCHD_DIR/com.experimance.${project}.gallery-starter.plist"
     
-    # Get all service labels to start
+    # Get all service labels to start (excluding gallery scheduler services themselves)
     local service_labels=()
     while IFS= read -r label; do
-        service_labels+=("$label")
+        # Skip gallery scheduler services to avoid self-referencing
+        if [[ "$label" != *"gallery-starter"* && "$label" != *"gallery-stopper"* ]]; then
+            service_labels+=("$label")
+        fi
     done < <(get_service_labels "$project")
     
     if [[ ${#service_labels[@]} -eq 0 ]]; then
         error "No existing services found for project $project"
     fi
     
-    # Create start script content
+    # Create start script content with proper XML escaping
     local start_commands=""
     for label in "${service_labels[@]}"; do
-        start_commands+="\nlaunchctl kickstart gui/\$(id -u)/$label"
+        if [[ -n "$start_commands" ]]; then
+            start_commands+="; "
+        fi
+        start_commands+="launchctl kickstart gui/\$(id -u)/$label"
     done
     
     cat > "$plist_file" << EOF
@@ -172,16 +178,22 @@ create_gallery_stopper() {
     local project="$2"
     local plist_file="$LAUNCHD_DIR/com.experimance.${project}.gallery-stopper.plist"
     
-    # Get all service labels to stop
+    # Get all service labels to stop (excluding gallery scheduler services themselves)
     local service_labels=()
     while IFS= read -r label; do
-        service_labels+=("$label")
+        # Skip gallery scheduler services to avoid self-referencing
+        if [[ "$label" != *"gallery-starter"* && "$label" != *"gallery-stopper"* ]]; then
+            service_labels+=("$label")
+        fi
     done < <(get_service_labels "$project")
     
-    # Create stop script content
+    # Create stop script content with proper XML escaping
     local stop_commands=""
     for label in "${service_labels[@]}"; do
-        stop_commands+="\nlaunchctl kill TERM gui/\$(id -u)/$label"
+        if [[ -n "$stop_commands" ]]; then
+            stop_commands+="; "
+        fi
+        stop_commands+="launchctl kill TERM gui/\$(id -u)/$label"
     done
     
     cat > "$plist_file" << EOF

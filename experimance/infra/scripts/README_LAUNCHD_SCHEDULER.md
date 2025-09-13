@@ -231,6 +231,52 @@ The scheduler works seamlessly with TouchDesigner LaunchAgents created by `touch
 - **Scheduler Services**: `~/Library/LaunchAgents/com.experimance.fire.gallery-*.plist`
 - **Logs**: `~/Library/Logs/experimance/`
 
+## Troubleshooting
+
+### Recent Bug Fixes (September 2025)
+
+**Issue**: Gallery scheduler services not loading properly
+- **Symptoms**: Scheduler shows "Not loaded" or XML parsing errors
+- **Cause**: Self-referencing services and XML encoding problems  
+- **Fix**: Updated to filter scheduler services from their own commands and use semicolon separators instead of `&&`
+
+**Issue**: TouchDesigner not included in scheduling
+- **Symptoms**: TouchDesigner service not starting during gallery hours
+- **Cause**: This was actually a false alarm - TouchDesigner was included but scheduler bugs prevented it from working
+- **Fix**: Fixed scheduler bugs resolved TouchDesigner scheduling
+
+### Common Issues
+
+**Gallery Scheduler Shows "Not loaded"**
+```bash
+# Check for XML parsing errors
+plutil ~/Library/LaunchAgents/com.experimance.fire.gallery-*.plist
+
+# If errors found, regenerate:
+./infra/scripts/launchd_scheduler.sh fire remove-schedule
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+```
+
+**Services Not Starting During Gallery Hours**
+```bash
+# Check scheduler logs
+tail -f ~/Library/Logs/experimance/fire_gallery_starter.log
+tail -f ~/Library/Logs/experimance/fire_gallery_starter_error.log
+
+# Test manual start to verify service health
+./infra/scripts/launchd_scheduler.sh fire manual-start
+```
+
+**TouchDesigner Not Responding to Scheduling**
+```bash
+# Verify TouchDesigner service exists and is properly configured
+launchctl list | grep touchdesigner
+plutil ~/Library/LaunchAgents/com.experimance.touchdesigner.*.plist
+
+# Check for multiple TouchDesigner processes
+ps aux | grep -i touchdesigner
+```
+
 ## Comparison with Linux cron
 
 | Feature | Linux cron | macOS cron | macOS LaunchAgent Scheduler |

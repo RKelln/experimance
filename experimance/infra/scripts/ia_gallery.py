@@ -4,6 +4,10 @@ IA Gallery Control Script for Fire Project
 Controls Fire project services across Ubuntu (ia360) and macOS (iamini) machines.
 Uses SSH shortcuts defined in ~/.ssh/config for remote control.
 
+This script coordinates with launchd_scheduler.sh for gallery hour automation.
+Recent improvements (Sept 2025): Fixed launchd_scheduler.sh bugs that prevented
+TouchDesigner and other services from properly scheduling during gallery hours.
+
 SSH Config Setup Required:
 ~/.ssh/config should contain:
     Host iamini
