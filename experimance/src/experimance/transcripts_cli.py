@@ -43,6 +43,7 @@ def _default_dir_candidates() -> list[Path]:
         candidates.append(Path(env_dir).expanduser())
     candidates.append(Path("/var/log/experimance/transcripts"))
     candidates.append(Path.cwd() / "transcripts")
+    candidates.append(Path.cwd() / "logs" / "transcripts")
     return candidates
 
 console = Console()
@@ -150,7 +151,7 @@ def discover_directory(explicit: Optional[str]) -> Path:
         console.print(f"[red]Provided transcripts directory not found: {p}")
         sys.exit(2)
     for candidate in _default_dir_candidates():
-        if candidate.is_dir():
+        if candidate.is_dir() and any(candidate.glob("transcript_*.jsonl")):
             return candidate
     console.print("[red]No transcripts directory found. Use --path to specify.")
     sys.exit(2)
