@@ -8,7 +8,7 @@
 # This script creates and manages macOS LaunchAgents for TouchDesigner files.
 # LaunchAgents run as the current user and restart automatically on failure.
 
-set -euo pipefail
+set -eu
 
 # Trap function to show big error on any script failure
 trap_error() {
@@ -93,13 +93,35 @@ TD_FILE=""
 
 # Parse command line arguments
 parse_arguments() {
+    # Handle case with no arguments
     if [[ $# -eq 0 ]]; then
         show_usage
         exit 1
     fi
     
-    TD_FILE="$1"
+    # First argument could be either a .toe file or an action
+    first_arg="$1"
     shift
+    
+    # Check if first argument is an action (for non-install commands)
+    case "$first_arg" in
+        start|stop|restart|status|uninstall)
+            ACTION="$first_arg"
+            TD_FILE=""  # Will be determined from existing plist files
+            ;;
+        install)
+            ACTION="install"
+            if [[ $# -eq 0 ]]; then
+                error "Install action requires a TouchDesigner .toe file path"
+            fi
+            TD_FILE="$1"
+            shift
+            ;;
+        *)
+            # First argument is a .toe file path
+            TD_FILE="$first_arg"
+            ;;
+    esac
     
     # Parse remaining arguments
     while [[ $# -gt 0 ]]; do
@@ -109,12 +131,16 @@ parse_arguments() {
                 shift
                 ;;
             install|start|stop|restart|status|uninstall)
-                ACTION="$1"
+                if [[ -z "$ACTION" ]]; then
+                    ACTION="$1"
+                else
+                    error "Action already specified: $ACTION. Found duplicate: $1"
+                fi
                 shift
                 ;;
             *)
-                if [[ -z "$ACTION" ]]; then
-                    ACTION="$1"
+                if [[ -z "$TD_FILE" && "$ACTION" == "install" ]]; then
+                    TD_FILE="$1"
                 else
                     error "Unknown argument: $1"
                 fi
@@ -131,6 +157,11 @@ parse_arguments() {
     if [[ -z "$ACTION" ]]; then
         ACTION="install"
     fi
+    
+    # Validate arguments based on action
+    if [[ "$ACTION" == "install" && -z "$TD_FILE" ]]; then
+        error "Install action requires a TouchDesigner .toe file path"
+    fi
 }
 
 # Show usage information
@@ -139,13 +170,14 @@ show_usage() {
     echo -e "${BLUE}TouchDesigner LaunchAgent Management Script${NC}"
     echo ""
     echo -e "${GREEN}Usage:${NC}"
-    echo "  $0 <touchdesigner_file> [action] [--project=<project>]"
+    echo "  $0 <touchdesigner_file> install [--project=<project>]     # Install new LaunchAgent"
+    echo "  $0 <action> [--project=<project>]                        # Manage existing LaunchAgent"
     echo ""
-    echo -e "${GREEN}Arguments:${NC}"
+    echo -e "${GREEN}Install (requires .toe file):${NC}"
     echo "  touchdesigner_file    Path to the TouchDesigner .toe file"
     echo ""
     echo -e "${GREEN}Actions:${NC}"
-    echo "  install      Create and install the LaunchAgent (default)"
+    echo "  install      Create and install the LaunchAgent (requires .toe file)"
     echo "  start        Start the LaunchAgent service"
     echo "  stop         Stop the LaunchAgent service"
     echo "  restart      Restart the LaunchAgent service"
@@ -156,11 +188,15 @@ show_usage() {
     echo "  --project=<project>    Override project name (default: fire)"
     echo ""
     echo -e "${GREEN}Examples:${NC}"
-    echo "  $0 /path/to/fire.toe"
+    echo -e "${BLUE}Install:${NC}"
     echo "  $0 /path/to/fire.toe install --project=fire"
-    echo "  $0 /path/to/fire.toe start"
-    echo "  $0 /path/to/fire.toe status"
-    echo "  $0 /path/to/fire.toe uninstall"
+    echo "  $0 /path/to/fire.toe    # install is default action"
+    echo ""
+    echo -e "${BLUE}Manage existing:${NC}"
+    echo "  $0 start                # Start the fire project TouchDesigner"
+    echo "  $0 stop                 # Stop the fire project TouchDesigner"
+    echo "  $0 status               # Show status"
+    echo "  $0 restart --project=fire"
     echo ""
 }
 
@@ -173,14 +209,17 @@ validate_td_file() {
         td_file="$(pwd)/$td_file"
     fi
     
-    # Resolve symbolic links and normalize path
+    # Resolve symbolic links and normalize path (with error handling)
     if command -v realpath >/dev/null 2>&1; then
-        td_file="$(realpath "$td_file")"
+        td_file="$(realpath "$td_file" 2>/dev/null || echo "$td_file")"
     elif command -v greadlink >/dev/null 2>&1; then
-        td_file="$(greadlink -f "$td_file")"
+        td_file="$(greadlink -f "$td_file" 2>/dev/null || echo "$td_file")"
     else
-        # Fallback for macOS without GNU coreutils
-        td_file="$(cd "$(dirname "$td_file")" && pwd)/$(basename "$td_file")"
+        # Fallback for macOS without GNU coreutils (with error handling)
+        local dir_path="$(dirname "$td_file")"
+        if [[ -d "$dir_path" ]]; then
+            td_file="$(cd "$dir_path" 2>/dev/null && pwd || echo "$dir_path")/$(basename "$td_file")"
+        fi
     fi
     
     if [[ ! -f "$td_file" ]]; then
@@ -192,6 +231,73 @@ validate_td_file() {
     fi
     
     echo "$td_file"
+}
+
+# Find existing TouchDesigner LaunchAgent plist files for a project
+find_existing_td_plist() {
+    local project="$1"
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    # Look for plist files matching the pattern
+    local plist_files=($(find "$launchd_dir" -name "com.experimance.touchdesigner.$project.*.plist" 2>/dev/null || true))
+    
+    if [[ ${#plist_files[@]} -eq 0 ]]; then
+        return 1
+    elif [[ ${#plist_files[@]} -eq 1 ]]; then
+        echo "${plist_files[0]}"
+        return 0
+    else
+        # Multiple files found, show them and let user choose
+        echo ""
+        warn "Multiple TouchDesigner LaunchAgent plist files found for project '$project':"
+        local i=1
+        for plist in "${plist_files[@]}"; do
+            local basename=$(basename "$plist" .plist)
+            echo "  $i) $basename"
+            ((i++))
+        done
+        echo ""
+        echo "Please specify the .toe file path to select the specific TouchDesigner service."
+        return 1
+    fi
+}
+
+# Extract .toe file path from a plist file
+extract_toe_path_from_plist() {
+    local plist_file="$1"
+    
+    if [[ ! -f "$plist_file" ]]; then
+        return 1
+    fi
+    
+    # Extract the second ProgramArgument (the .toe file path)
+    local toe_path=$(plutil -extract ProgramArguments.1 raw "$plist_file" 2>/dev/null || echo "")
+    
+    if [[ -n "$toe_path" && -f "$toe_path" ]]; then
+        echo "$toe_path"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Auto-detect TouchDesigner file from existing plist
+auto_detect_td_file() {
+    local project="$1"
+    
+    # Find existing plist (without logging to avoid pollution)
+    local plist_file=$(find_existing_td_plist "$project" 2>/dev/null)
+    if [[ $? -ne 0 || -z "$plist_file" ]]; then
+        return 1
+    fi
+    
+    local toe_path=$(extract_toe_path_from_plist "$plist_file")
+    if [[ $? -ne 0 || -z "$toe_path" ]]; then
+        return 1
+    fi
+    
+    echo "$toe_path"
+    return 0
 }
 
 # Find TouchDesigner application
@@ -334,7 +440,7 @@ install_touchdesigner_agent() {
     local plist_file="$HOME/Library/LaunchAgents/$service_label.plist"
     
     # Load the LaunchAgent
-    if launchctl load "$plist_file"; then
+    if launchctl load "$plist_file" 2>/dev/null; then
         log "✓ TouchDesigner LaunchAgent installed and loaded successfully"
         
         # Show status
@@ -351,7 +457,13 @@ install_touchdesigner_agent() {
         echo ""
         
     else
-        error "Failed to load TouchDesigner LaunchAgent"
+        # Try to check if it's already loaded
+        if launchctl list | grep -q "$service_label"; then
+            warn "LaunchAgent appears to already be loaded. Current status:"
+            show_service_status "$service_label"
+        else
+            error "Failed to load TouchDesigner LaunchAgent. Check the plist file and try again."
+        fi
     fi
 }
 
@@ -364,12 +476,27 @@ start_service() {
     
     log "Starting TouchDesigner LaunchAgent: $service_label"
     
-    if launchctl start "$service_label"; then
+    # Check if service is loaded first
+    if ! launchctl list | grep -q "$service_label"; then
+        warn "LaunchAgent is not loaded. Try installing it first:"
+        echo "  $0 \"$td_file\" install --project=$project"
+        return 1
+    fi
+    
+    # Try to start the service
+    if launchctl start "$service_label" 2>/dev/null; then
         log "✓ TouchDesigner LaunchAgent started successfully"
         sleep 2
         show_service_status "$service_label"
     else
-        error "Failed to start TouchDesigner LaunchAgent"
+        # Check if it's already running
+        local status_output=$(launchctl list "$service_label" 2>/dev/null || echo "")
+        if echo "$status_output" | grep -q "PID"; then
+            warn "LaunchAgent appears to already be running:"
+            show_service_status "$service_label"
+        else
+            error "Failed to start TouchDesigner LaunchAgent. Check logs for details."
+        fi
     fi
 }
 
@@ -382,12 +509,19 @@ stop_service() {
     
     log "Stopping TouchDesigner LaunchAgent: $service_label"
     
-    if launchctl stop "$service_label"; then
+    # Check if service is loaded first
+    if ! launchctl list | grep -q "$service_label"; then
+        warn "LaunchAgent is not loaded or not running"
+        return 0
+    fi
+    
+    if launchctl stop "$service_label" 2>/dev/null; then
         log "✓ TouchDesigner LaunchAgent stopped successfully"
         sleep 2
         show_service_status "$service_label"
     else
         warn "TouchDesigner LaunchAgent may not have been running"
+        show_service_status "$service_label"
     fi
 }
 
@@ -397,7 +531,7 @@ restart_service() {
     local project="$2"
     
     log "Restarting TouchDesigner LaunchAgent..."
-    stop_service "$td_file" "$project"
+    stop_service "$td_file" "$project" || true
     sleep 3
     start_service "$td_file" "$project"
 }
@@ -470,8 +604,20 @@ main() {
     # Parse command line arguments
     parse_arguments "$@"
     
+    # Auto-detect TouchDesigner file for non-install actions if not provided
+    if [[ -z "$TD_FILE" && "$ACTION" != "install" ]]; then
+        log "No .toe file specified, attempting to auto-detect from existing LaunchAgent..."
+        TD_FILE=$(auto_detect_td_file "$PROJECT_NAME")
+        if [[ $? -ne 0 || -z "$TD_FILE" ]]; then
+            error "Could not auto-detect TouchDesigner file for project '$PROJECT_NAME'. Use 'install' first or specify the .toe file path."
+        fi
+        log "Auto-detected TouchDesigner file: $TD_FILE"
+    fi
+    
     log "TouchDesigner LaunchAgent Manager"
-    log "TouchDesigner file: $TD_FILE"
+    if [[ -n "$TD_FILE" ]]; then
+        log "TouchDesigner file: $TD_FILE"
+    fi
     log "Project: $PROJECT_NAME"
     log "Action: $ACTION"
     

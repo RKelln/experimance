@@ -109,6 +109,36 @@ tail -f ~/Library/Logs/experimance/fire_touchdesigner_yourfile_error.log
 3. **File not found**: Ensure the .toe file path is correct and the file exists
 4. **Service won't start**: Check the error logs and ensure TouchDesigner can open the file
 
+## Gallery Installation Workflow
+
+For gallery installations that need coordinated service management, follow this workflow:
+
+### Step 1: Install and Test TouchDesigner Service
+```bash
+# Install TouchDesigner LaunchAgent
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe install --project=fire
+
+# Test individually to ensure TouchDesigner works
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe start
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe status
+```
+
+### Step 2: Add Gallery Hour Coordination
+```bash
+# Add gallery hour scheduling that includes TouchDesigner + Python services
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+
+# Now everything starts/stops together during gallery hours
+./infra/scripts/launchd_scheduler.sh fire show-schedule
+```
+
+### Why Two Scripts?
+
+- **`touchdesigner_agent.sh`**: Creates individual TouchDesigner LaunchAgent, good for testing
+- **`launchd_scheduler.sh`**: Coordinates ALL services for gallery operations
+
+This allows you to install and test TouchDesigner independently, then add coordinated gallery management.
+
 ## File Locations
 
 - **LaunchAgent plist**: `~/Library/LaunchAgents/com.experimance.touchdesigner.<project>.<filename>.plist`

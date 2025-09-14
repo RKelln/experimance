@@ -126,6 +126,48 @@ Get deployment service configuration.
 ### `get_project_services.py` 
 Get project-specific service configuration.
 
+## TouchDesigner Setup Workflow (macOS)
+
+For gallery installations using TouchDesigner, follow this workflow:
+
+### 1. Install and Test TouchDesigner Service
+Use `touchdesigner_agent.sh` to create the TouchDesigner LaunchAgent and verify it works:
+
+```bash
+# Install TouchDesigner LaunchAgent
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe install --project=fire
+
+# Test TouchDesigner service individually
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe start
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe status
+./infra/scripts/touchdesigner_agent.sh /path/to/fire.toe stop
+```
+
+### 2. Add Gallery Hour Automation
+Use `launchd_scheduler.sh` to coordinate TouchDesigner + Python services with gallery hours:
+
+```bash
+# Set up gallery hour scheduling for ALL services (TouchDesigner + Python)
+./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
+
+# Verify gallery scheduling is active
+./infra/scripts/launchd_scheduler.sh fire show-schedule
+
+# Test coordinated service management
+./infra/scripts/launchd_scheduler.sh fire manual-start    # Start everything
+./infra/scripts/launchd_scheduler.sh fire manual-stop     # Stop everything
+```
+
+### 3. Why This Two-Step Process?
+
+- **`touchdesigner_agent.sh`**: Creates and tests individual TouchDesigner LaunchAgent
+- **`launchd_scheduler.sh`**: Coordinates ALL services (TouchDesigner + Python) for gallery operations
+
+This separation allows you to:
+- Install and test TouchDesigner independently
+- Add/remove gallery scheduling without affecting individual services
+- Use coordinated control for reliable gallery operations
+
 ## Usage Patterns
 
 ### Multi-Project Support
