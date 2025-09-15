@@ -17,6 +17,7 @@ import argparse
 import logging
 import uuid
 import time
+from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from .llm import LLMProvider, get_llm_provider
 from .llm_prompt_builder import InsufficientContentException, UnchangedContentException, LLMPromptBuilder
 from .tiler import PanoramaTiler, TileSpec, create_tiler_from_config
 from .audio_manager import AudioManager
+from .prompt_logger import get_prompt_logger
 
 SERVICE_TYPE = "core"
 AGENTS = ['llm', 'agent', 'assistant', 'fire_agent', 'experimance_agent']
@@ -441,6 +443,9 @@ class FireCoreService(BaseService):
         self._audio_fade_task: Optional[asyncio.Task] = None
         self._current_person_count: int = 0  # Track current audience presence
         
+        # Initialize prompt logger
+        self.prompt_logger = get_prompt_logger()
+        
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
         
@@ -628,14 +633,47 @@ class FireCoreService(BaseService):
         logger.info(f"Created new request {request.request_id} with {len(tiles)} tiles{audio_info}")
         return request
 
-    def queue_new_request(self, prompt) -> str:
+    def queue_new_request(self, prompt, source_context: Optional[dict] = None) -> str:
         """Queue a new image generation request.
         
         Args:
             prompt: Either ImagePrompt or MediaPrompt
+            source_context: Optional context about where this prompt came from
         """
         request = self.create_request(prompt)
         self.request_queue.append(request)
+        
+        # Log the prompt for monitoring and timeline tracking - this is the single place all prompts are logged
+        session_id = getattr(self, 'current_display_session_id', None) or datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Build metadata from source context and request details
+        metadata = {
+            "queue_size": len(self.request_queue),
+            "total_tiles": request.total_tiles,
+        }
+        
+        # Add source context if provided
+        if source_context:
+            metadata.update(source_context)
+        
+        if isinstance(prompt, MediaPrompt):
+            metadata["has_audio"] = prompt.audio_prompt is not None
+            self.prompt_logger.log_media_prompt(
+                media_prompt=prompt,
+                request_id=request.request_id,
+                session_id=session_id,
+                event_type="prompt_queued",
+                metadata=metadata
+            )
+        elif isinstance(prompt, ImagePrompt):
+            self.prompt_logger.log_image_prompt(
+                image_prompt=prompt,
+                request_id=request.request_id,
+                session_id=session_id,
+                event_type="image_prompt_queued",
+                metadata=metadata
+            )
+        
         logger.info(f"Queued new request {request.request_id} (queue size: {len(self.request_queue)})")
         return request.request_id
 
@@ -643,6 +681,19 @@ class FireCoreService(BaseService):
         """Start processing a request by transitioning through states."""
         self.current_request = request
         request.transition_to_state(RequestState.WAITING_BASE)
+        
+        # Log request processing start
+        session_id = getattr(self, 'current_display_session_id', None) or datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.prompt_logger.log_request_event(
+            request_id=request.request_id,
+            event_type="request_processing_started",
+            content=f"Started processing request with {request.total_tiles} tiles",
+            session_id=session_id,
+            metadata={
+                "total_tiles": request.total_tiles,
+                "has_audio": request.has_audio()
+            }
+        )
         
         logger.info(f"🚀 STARTING request processing: {request.request_id}")
         
@@ -763,8 +814,13 @@ class FireCoreService(BaseService):
                 # Store the successfully generated prompt
                 self.last_generated_prompt = media_prompt
                 
-                # Queue the new request
-                request_id = self.queue_new_request(media_prompt)
+                # Queue the new request with source context
+                source_context = {
+                    "source": "story_heard",
+                    "story_length": len(str(story.content)),
+                    "has_previous_prompt": previous_media_prompt is not None
+                }
+                request_id = self.queue_new_request(media_prompt, source_context)
                 logger.info(f"Queued story-based request {request_id}")
                 
             except UnchangedContentException as e:
@@ -960,8 +1016,14 @@ class FireCoreService(BaseService):
                 # Store the successfully generated prompt
                 self.last_generated_prompt = media_prompt
                 
-                # Queue the new request
-                request_id = self.queue_new_request(media_prompt)
+                # Queue the new request with source context
+                source_context = {
+                    "source": "transcript_processing",
+                    "transcript_lines": len(self.transcript_accumulator.conversation_lines),
+                    "context_length": len(full_context),
+                    "has_previous_prompt": self.last_generated_prompt is not None
+                }
+                request_id = self.queue_new_request(media_prompt, source_context)
                 logger.info(f"🖼️ Queued transcript-based request {request_id} (total queue: {len(self.request_queue)})")
                 
                 # Mark LLM processing as completed
@@ -1074,8 +1136,13 @@ class FireCoreService(BaseService):
             if media_prompt.audio_prompt:
                 logger.debug(f"Debug audio: {media_prompt.audio_prompt}")
             
-            # Queue the new request
-            request_id = self.queue_new_request(media_prompt)
+            # Queue the new request with source context
+            source_context = {
+                "source": "debug_prompt",
+                "prompt_length": len(prompt),
+                "has_audio_prompt": audio_prompt is not None
+            }
+            request_id = self.queue_new_request(media_prompt, source_context)
             logger.info(f"Queued debug request {request_id}")
             
             # Request processing will be handled by _state_monitor_task
