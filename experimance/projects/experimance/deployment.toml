@@ -8,7 +8,7 @@
 
 [deployment]
 # Project-wide deployment settings
-project = "fire"
+project = "experimance"
 version = "1.0.0"
 
 [machines]
@@ -18,31 +18,22 @@ version = "1.0.0"
 
 # Ubuntu Linux machine
 [machines.ubuntu]
-hostname = "ia360.local"  # Must match actual hostname or be overrideable
-services = ["core", "image_server", "display", "health"]
+hostname = "gallery"  # Must match actual hostname or be overrideable
+services = ["core", "image_server", "display", "agent", "health"]
 platform = "linux"
 mode = "prod"  # or "dev"
 user = "experimance"  # System user for this machine
-ssh_hostname = "ia360"  # Optional: override for different network contexts
-
-# macOS machine  
-[machines.macos]
-hostname = "FireProjects-Mac-mini.local"  # Must match actual hostname or be overrideable
-services = ["agent", "health"]
-platform = "macos"
-mode = "prod"  # or "dev"
-user = "fireproject"  # System user for this machine
-ssh_hostname = "iamini"  # Optional: override for different network contexts
+ssh_hostname = "gallery"  # Optional: override for different network contexts
 
 # Optional: Define service-specific overrides
 [services]
 # Service-specific configuration that might differ in distributed mode
 
 [services.core]
-module_name = "fire_core"  # Override default experimance_core
+module_name = "experimance_core"  # Override default experimance_core
 
 [services.agent]
-module_name = "fire_agent"  # Override default experimance_agent
+module_name = "experimance_agent"  # Override default experimance_agent
 
 [services.image_server]
 module_name = "image_server"  # Uses default

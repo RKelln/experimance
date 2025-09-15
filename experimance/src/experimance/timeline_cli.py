@@ -13,13 +13,18 @@ Usage examples:
   experimance-timeline follow --session session_20250812_132151
   experimance-timeline show --transcripts-only   # filter to just transcripts
   experimance-timeline show --prompts-only       # filter to just prompts
+  
+  # Distributed deployment support:
+  experimance-timeline --deployment show 3       # auto-discover from deployment.toml
+  experimance-timeline --deployment stream       # stream from multiple machines
 
 Environment overrides:
   EXPERIMANCE_TRANSCRIPTS_DIR - path to transcript directory 
   EXPERIMANCE_PROMPTS_DIR - path to prompt directory
 
 Design: Merges JSONL files from both transcript and prompt logs, sorts by timestamp,
-and presents a unified timeline view with rich formatting.
+and presents a unified timeline view with rich formatting. Supports distributed 
+deployments via deployment.toml configuration.
 """
 from __future__ import annotations
 
@@ -39,6 +44,13 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich import box
+
+# Import deployment utilities for distributed log access
+from experimance.deployment_utils import (
+    DeploymentParser, 
+    RemoteLogAccess, 
+    find_deployment_file
+)
 
 console = Console()
 
@@ -120,7 +132,7 @@ def _default_dir_candidates(log_type: str) -> list[Path]:
     return candidates
 
 def discover_directories(explicit_transcripts: Optional[str] = None, 
-                        explicit_prompts: Optional[str] = None) -> tuple[Path, Path]:
+                        explicit_prompts: Optional[str] = None) -> tuple[Path, Optional[Path]]:
     """Discover transcript and prompt directories."""
     
     # Transcripts directory
@@ -157,12 +169,115 @@ def discover_directories(explicit_transcripts: Optional[str] = None,
     
     return transcripts_dir, prompts_dir
 
+def discover_directories_with_deployment(deployment_file: Optional[str] = None,
+                                        explicit_transcripts: Optional[str] = None,
+                                        explicit_prompts: Optional[str] = None,
+                                        base_log_dir: str = "/var/log/experimance") -> tuple[Path, Optional[Path]]:
+    """Discover directories using deployment.toml configuration for distributed setups.
+    
+    This function extends the basic directory discovery to support multi-machine deployments
+    by automatically syncing remote logs via SSH based on deployment.toml configuration.
+    
+    Args:
+        deployment_file: Path to deployment.toml (auto-discovered if None)
+        explicit_transcripts: Override transcripts path 
+        explicit_prompts: Override prompts path
+        base_log_dir: Base log directory on remote machines
+        
+    Returns:
+        Tuple of (transcripts_dir, prompts_dir) pointing to local cache directories
+    """
+    # If explicit paths are provided, use standard discovery
+    if explicit_transcripts or explicit_prompts:
+        return discover_directories(explicit_transcripts, explicit_prompts)
+    
+    # Find deployment file
+    if deployment_file:
+        deploy_path = Path(deployment_file)
+    else:
+        deploy_path = find_deployment_file()
+        
+    if not deploy_path:
+        console.print("[yellow]No deployment.toml found - falling back to local discovery")
+        return discover_directories(explicit_transcripts, explicit_prompts)
+    
+    console.print(f"[dim]Using deployment config: {deploy_path}")
+    
+    try:
+        # Parse deployment configuration
+        parser = DeploymentParser(deploy_path)
+        config = parser.parse()
+        
+        # Get log locations based on service distribution
+        log_locations = parser.get_log_locations(base_log_dir)
+        
+        # Initialize remote access handler
+        remote_access = RemoteLogAccess()
+        
+        # Sync remote logs to local cache
+        transcripts_dir = None
+        prompts_dir = None
+        
+        if 'transcripts' in log_locations:
+            location = log_locations['transcripts']
+            console.print(f"[dim]Syncing transcripts from {location.user}@{location.hostname}...")
+            transcripts_dir = remote_access.sync_remote_logs(location, ['*.jsonl'], config.project)
+            
+        if 'prompts' in log_locations:
+            location = log_locations['prompts']
+            console.print(f"[dim]Syncing prompts from {location.user}@{location.hostname}...")
+            prompts_dir = remote_access.sync_remote_logs(location, ['*.jsonl'], config.project)
+        
+        # Verify we have at least transcripts
+        if not transcripts_dir or not transcripts_dir.exists():
+            console.print("[red]Failed to sync transcripts from deployment")
+            sys.exit(2)
+            
+        return transcripts_dir, prompts_dir
+        
+    except Exception as e:
+        console.print(f"[red]Failed to use deployment config: {e}")
+        console.print("[yellow]Falling back to local discovery")
+        return discover_directories(explicit_transcripts, explicit_prompts)
+
+def get_directories_for_args(args) -> tuple[Path, Optional[Path]]:
+    """Choose the appropriate directory discovery method based on arguments."""
+    if args.deployment:
+        return discover_directories_with_deployment(
+            deployment_file=getattr(args, 'deployment_file', None),
+            explicit_transcripts=args.transcripts_path,
+            explicit_prompts=args.prompts_path
+        )
+    else:
+        return discover_directories(args.transcripts_path, args.prompts_path)
+
 def extract_session_id_from_filename(filename: str) -> Optional[str]:
     """Extract session ID from transcript or prompt filename."""
     # Format: transcript_20250812_132151_session_20250812_132151.jsonl
     # Format: prompts_20250812_132151_session_20250812_132151.jsonl
     if "_session_" in filename:
         return filename.split("_session_")[1].replace(".jsonl", "")
+    return None
+
+def extract_timestamp_from_filename(filename: str) -> Optional[float]:
+    """Extract timestamp from filename as fallback when JSONL has no valid timestamps.
+    
+    Filenames contain timestamps like: transcript_20250728_170119_session_20250728_170119.jsonl
+    Returns timestamp as epoch seconds or None if parsing fails.
+    """
+    import re
+    
+    # Look for YYYYMMDD_HHMMSS pattern in filename
+    match = re.search(r'(\d{8})_(\d{6})', filename)
+    if match:
+        date_str, time_str = match.groups()
+        try:
+            # Parse YYYYMMDD_HHMMSS format
+            dt = datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
+            return dt.timestamp()
+        except ValueError:
+            pass
+    
     return None
 
 def find_sessions(transcripts_dir: Path, prompts_dir: Optional[Path]) -> Dict[str, SessionInfo]:
@@ -225,6 +340,18 @@ def find_sessions(transcripts_dir: Path, prompts_dir: Optional[Path]) -> Dict[st
                         entry_count += 1
             except Exception:
                 continue
+        
+        # If no valid timestamps found in JSONL files, use filename timestamps as fallback
+        if not timestamps:
+            # Try to extract timestamps from filenames
+            filename_timestamps = []
+            for file_path in session_info.transcript_files + session_info.prompt_files:
+                filename_ts = extract_timestamp_from_filename(file_path.name)
+                if filename_ts:
+                    filename_timestamps.append(filename_ts)
+            
+            if filename_timestamps:
+                timestamps = filename_timestamps
         
         if timestamps:
             session_info.start_time = datetime.fromtimestamp(min(timestamps))
@@ -386,6 +513,24 @@ def render_timeline_entry(entry: TimelineEntry, width: int, full_ts: bool = Fals
     
     return text
 
+def format_duration(total_seconds: float) -> str:
+    """Format duration in a human-readable way.
+    
+    For durations >= 1 minute, show as "Xm Ys".
+    For durations < 1 minute, show as "Xs".
+    """
+    total_seconds = int(total_seconds)
+    
+    if total_seconds >= 60:
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        if seconds > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{minutes}m"
+    else:
+        return f"{total_seconds}s"
+
 def build_sessions_table(sessions: List[SessionInfo], show_details: bool = True) -> Table:
     """Build a table showing available sessions."""
     table = Table(title="Timeline Sessions", box=box.SIMPLE_HEAVY, show_lines=False)
@@ -402,7 +547,7 @@ def build_sessions_table(sessions: List[SessionInfo], show_details: bool = True)
         
         if session.start_time != datetime.min and session.end_time != datetime.min:
             duration = session.end_time - session.start_time
-            duration_str = f"{duration.total_seconds():.0f}s"
+            duration_str = format_duration(duration.total_seconds())
         else:
             duration_str = "Unknown"
         
@@ -427,7 +572,7 @@ def build_sessions_table(sessions: List[SessionInfo], show_details: bool = True)
 
 def cmd_list(args: argparse.Namespace) -> None:
     """List available timeline sessions."""
-    transcripts_dir, prompts_dir = discover_directories(args.transcripts_path, args.prompts_path)
+    transcripts_dir, prompts_dir = get_directories_for_args(args)
     
     sessions_dict = find_sessions(transcripts_dir, prompts_dir)
     sessions = list(sessions_dict.values())
@@ -467,7 +612,7 @@ def resolve_session(sessions: Dict[str, SessionInfo], index: Optional[int],
 
 def cmd_show(args: argparse.Namespace) -> None:
     """Show timeline for a specific session."""
-    transcripts_dir, prompts_dir = discover_directories(args.transcripts_path, args.prompts_path)
+    transcripts_dir, prompts_dir = get_directories_for_args(args)
     
     sessions = find_sessions(transcripts_dir, prompts_dir)
     
@@ -513,7 +658,7 @@ def cmd_show(args: argparse.Namespace) -> None:
 
 def cmd_follow(args: argparse.Namespace) -> None:
     """Follow (tail) a specific session."""
-    transcripts_dir, prompts_dir = discover_directories(args.transcripts_path, args.prompts_path)
+    transcripts_dir, prompts_dir = get_directories_for_args(args)
     
     sessions = find_sessions(transcripts_dir, prompts_dir)
     
@@ -563,7 +708,7 @@ def cmd_follow(args: argparse.Namespace) -> None:
 
 def cmd_stream(args: argparse.Namespace) -> None:
     """Stream the latest activity across all sessions."""
-    transcripts_dir, prompts_dir = discover_directories(args.transcripts_path, args.prompts_path)
+    transcripts_dir, prompts_dir = get_directories_for_args(args)
     
     console.print("[bold]Streaming Latest Timeline Activity[/bold] (Ctrl-C to stop)")
     
@@ -608,8 +753,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Unified timeline viewer for transcripts and prompts"
     )
     
+    # Global options
     p.add_argument("--transcripts-path", help="Transcripts directory (default auto-detect)")
     p.add_argument("--prompts-path", help="Prompts directory (default auto-detect)")
+    p.add_argument("--deployment", action="store_true", 
+                   help="Use deployment.toml for distributed log access")
+    p.add_argument("--deployment-file", help="Path to deployment.toml file")
     p.add_argument("--force-color", action="store_true", help="Force color output")
     
     sub = p.add_subparsers(dest="command")
