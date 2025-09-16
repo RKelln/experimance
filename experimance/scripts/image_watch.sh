@@ -1,15 +1,48 @@
 #!/bin/bash
 # Image watcher script for Experimance - monitors remote gallery for new images
 # Supports both feh and eog viewers with auto-update capabilities
+#
+# Usage: ./image_watch.sh --host gallery --viewer [feh|eog|auto]
+# Default viewer is 'auto' which selects the best available viewer
+#
+# Requires SSH key-based authentication to the remote host
+# Dependencies: ssh, scp, eog or feh, (optional: inotify-tools for real-time monitoring)
 
-REMOTE_HOST="gallery"
+# Default values
+DEFAULT_REMOTE_HOST="gallery"
+REMOTE_HOST="$DEFAULT_REMOTE_HOST"
+VIEWER="auto"
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --host)
+            REMOTE_HOST="$2"
+            shift # past argument
+            shift # past value
+            ;;
+        --viewer)
+            VIEWER="$2"
+            shift # past argument
+            shift # past value
+            ;;
+        --help|-h)
+            # Handle help flag here, will show usage below
+            SHOW_HELP=1
+            shift
+            ;;
+        *)
+            # For backward compatibility, treat unknown args as viewer
+            VIEWER="$1"
+            shift
+            ;;
+    esac
+done
+
 REMOTE_IMAGE_DIR="/home/experimance/experimance/media/images/generated"
 REMOTE_LATEST="$REMOTE_IMAGE_DIR/latest.jpg"
 LOCAL_TEMP="/tmp/latest_experimance.jpg"
 SCP_OPTS="-q -o ConnectTimeout=3 -o ConnectionAttempts=1"
-
-# Default viewer (can be overridden with command line argument)
-VIEWER="${1:-auto}"
 
 # Function to detect best available viewer
 detect_viewer() {
@@ -57,8 +90,12 @@ start_viewer() {
 }
 
 # Show usage if help requested
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $0 [viewer]"
+if [ "$SHOW_HELP" = "1" ]; then
+    echo "Usage: $0 [--host HOSTNAME] [--viewer VIEWER]"
+    echo ""
+    echo "Options:"
+    echo "  --host HOSTNAME    Remote host to connect to (default: gallery)"
+    echo "  --viewer VIEWER    Image viewer to use (default: auto)"
     echo ""
     echo "Viewers:"
     echo "  auto  - Automatically detect best viewer (default)"
@@ -66,9 +103,11 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  feh   - Use feh with 2-second auto-reload"
     echo ""
     echo "Examples:"
-    echo "  $0        # Use auto-detection"
-    echo "  $0 eog    # Force eog"
-    echo "  $0 feh    # Force feh"
+    echo "  $0                                    # Use defaults (gallery host, auto viewer)"
+    echo "  $0 --host myserver                   # Connect to 'myserver' with auto viewer"
+    echo "  $0 --host myserver --viewer eog      # Connect to 'myserver' using eog"
+    echo "  $0 --viewer feh                      # Use default host with feh viewer"
+    echo "  $0 feh                               # Backward compatible: positional viewer arg"
     exit 0
 fi
 
