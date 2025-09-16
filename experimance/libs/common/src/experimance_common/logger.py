@@ -90,7 +90,8 @@ def setup_logging(
         log_filename: Log file name (auto-generated if None)
         include_console: Whether to include console output. If None, auto-detects:
                         - Development: True (console + file)
-                        - Production: False (file only, systemd handles console)
+                        - Production with systemd: True (console for journalctl + file)
+                        - Production without systemd: False (file only)
         external_level: Level for external libraries
     
     Returns:
@@ -98,15 +99,27 @@ def setup_logging(
     """
     # Auto-detect console logging preference if not specified
     if include_console is None:
-        # Check if we're in a production environment
-        is_production = (
-            os.geteuid() == 0 or  # Running as root
-            os.environ.get("EXPERIMANCE_ENV") == "production" or
-            Path("/etc/experimance").exists()  # Production marker
-        )
-        # In production, let systemd handle console output (file-only logging)
-        # In development, show console output for debugging
-        include_console = not is_production
+        # Allow explicit override via environment variable
+        console_override = os.environ.get("EXPERIMANCE_LOG_CONSOLE")
+        if console_override is not None:
+            include_console = console_override.lower() in ("true", "1", "yes", "on")
+        else:
+            # Check if we're in a production environment
+            is_production = (
+                os.geteuid() == 0 or  # Running as root
+                os.environ.get("EXPERIMANCE_ENV") == "production" or
+                Path("/etc/experimance").exists()  # Production marker
+            )
+            
+            # Check if we're running under systemd (which captures stdout/stderr to journalctl)
+            is_systemd = (
+                os.environ.get("JOURNAL_STREAM") is not None or  # systemd sets this
+                os.environ.get("SYSTEMD_EXEC_PID") is not None or  # systemd execution
+                os.getppid() == 1  # Parent is init (systemd)
+            )
+            
+            # Enable console logging in development, or in production when running under systemd
+            include_console = not is_production or is_systemd
 
     # Convert str log level if needed
     if isinstance(level, str):

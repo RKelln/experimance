@@ -449,8 +449,6 @@ class FireCoreService(BaseService):
         # Initialize components
         self.llm = get_llm_provider(**config.llm.model_dump())
         
-        print(config.llm.system_prompt_or_file)
-
         # system prompt
         system_prompt = None
         if config.llm.system_prompt_or_file is not None:
