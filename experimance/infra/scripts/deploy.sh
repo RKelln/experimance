@@ -608,22 +608,11 @@ update_health_config() {
         fi
     done
     
-    # Get the module names for each service type
+    # Use service types directly (not module names) as expected_services
+    # The health service expects service types like "core", "display", not module names like "fire_core"
     local expected_services=()
     for service_type in "${service_types[@]}"; do
-        local module_name
-        if [[ "$MODE" == "prod" && "$RUNTIME_USER" == "experimance" && "$EUID" -eq 0 ]]; then
-            # Running as root in production mode, delegate to experimance user
-            module_name=$(sudo -u experimance bash -c "
-                cd '$REPO_DIR'
-                export PATH=\"/home/experimance/.local/bin:\$PATH\"
-                uv run python infra/scripts/get_service_module.py '$PROJECT' '$service_type'
-            " 2>/dev/null || echo "experimance_$service_type")
-        else
-            # Development mode or already running as correct user
-            module_name=$(cd "$REPO_DIR" && uv run python infra/scripts/get_service_module.py "$PROJECT" "$service_type" 2>/dev/null || echo "experimance_$service_type")
-        fi
-        expected_services+=("$module_name")
+        expected_services+=("$service_type")
     done
     
     # Create the expected_services array string for TOML
@@ -662,6 +651,13 @@ update_health_config() {
     
     # Replace the original file
     mv "$temp_file" "$health_config_path"
+    
+    # Set proper ownership for the health config file
+    if [[ "$USE_SYSTEMD" == true && "$RUNTIME_USER" == "experimance" ]]; then
+        chown experimance:$(get_chown_group) "$health_config_path"
+        chown experimance:$(get_chown_group) "$health_config_path.backup"
+        log "Set ownership of health config files to experimance user"
+    fi
     
     log "Updated health.toml expected_services:"
     for service in "${expected_services[@]}"; do
