@@ -41,7 +41,7 @@ done
 
 REMOTE_IMAGE_DIR="/home/experimance/experimance/media/images/generated"
 REMOTE_LATEST="$REMOTE_IMAGE_DIR/latest.jpg"
-LOCAL_TEMP="/tmp/latest_experimance.jpg"
+LOCAL_TEMP="/tmp/latest_experimance_${REMOTE_HOST}.jpg"
 SCP_OPTS="-q -o ConnectTimeout=3 -o ConnectionAttempts=1"
 
 # Function to detect best available viewer
@@ -67,14 +67,14 @@ start_viewer() {
     case "$viewer" in
         "eog")
             echo "Starting eog viewer (auto-detects file changes)..."
-            eog --single-window "$image_file" &
+            eog --new-instance --single-window "$image_file" &
             VIEWER_PID=$!
             echo "eog started with PID $VIEWER_PID"
             ;;
         "feh")
             echo "Starting feh viewer with auto-reload..."
             feh --reload 2 --scale-down --auto-zoom \
-                --title "Experimance Latest Image" \
+                --title "Experimance Latest Image ($REMOTE_HOST)" \
                 --geometry 1024x1024 \
                 --borderless \
                 "$image_file" &
