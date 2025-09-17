@@ -408,7 +408,7 @@ class AgentServiceBase(BaseService):
     async def _wait_for_backend_to_start(self, timeout: float = 10.0) -> bool:
         """Wait for the backend to finish starting up."""
         start_time = time.monotonic()
-        while not self._start_backend_for_conversation():
+        while not await self._start_backend_for_conversation():
             if timeout > 0 and time.monotonic() - start_time > timeout:
                 logger.warning("Timeout waiting for backend to start")
                 return False

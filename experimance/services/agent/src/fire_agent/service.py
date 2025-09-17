@@ -284,6 +284,11 @@ class FireAgentService(AgentServiceBase):
         """Continuously monitor for audience presence using hybrid detection."""
         last_person_count = None  # Track person count changes for vision messages
         
+        # Initialize current_presence explicitly to avoid None state issues
+        if self.current_presence is None:
+            self.current_presence = False
+            logger.info("Initialized current_presence to False (no audience initially)")
+        
         # Send initial presence (0 people detected) when starting detection
         if self.running and self.zmq_service.is_running:
             await self._publish_audience_present(person_count=0)
@@ -325,14 +330,16 @@ class FireAgentService(AgentServiceBase):
                                 # Update tracking
                                 last_person_count = current_count
 
-                        # Debug logging with detection info
-                        logger.debug(f"Hybrid detection - Presence: {presence}, "
-                                f"Mode: {stats.get('detection_mode', 'simple')}, "
-                                f"Checks: {stats['total_checks']}, "
-                                f"Switches: {stats.get('mode_switches', 0)}")
+
                         
                         # Check for state changes
                         if presence != self.current_presence:
+                            # Debug logging with detection info
+                            logger.debug(f"Hybrid detection - Presence: {presence}, "
+                                    f"Mode: {stats.get('detection_mode', 'simple')}, "
+                                    f"Checks: {stats['total_checks']}, "
+                                    f"Switches: {stats.get('mode_switches', 0)}")
+                            
                             if presence:
                                 logger.info("Hybrid detector: Audience detected")
                                 await self.audience_detected(current_count)
@@ -344,6 +351,11 @@ class FireAgentService(AgentServiceBase):
                             
                             # Update current presence after processing
                             self.current_presence = presence
+                            logger.debug(f"Updated current_presence to: {self.current_presence}")
+                        else:
+                            # Log periodically to track presence state even when unchanged
+                            if stats['total_checks'] % 20 == 0:  # Every 20 checks (~30 seconds at 1.5s intervals)
+                                logger.debug(f"Presence unchanged: current_presence={self.current_presence}, detected={presence}")
 
                         # If absence detected during conversation cooldown, mark it
                         # so we can cancel cooldown when absence confirmed
@@ -352,8 +364,13 @@ class FireAgentService(AgentServiceBase):
                             
                     except Exception as e:
                         logger.error(f"Error in hybrid detection: {e}")
+                        # On detection error, ensure current_presence is set to a known state
+                        # Default to False (no presence) to avoid getting stuck in "present" state
+                        if self.current_presence is None:
+                            self.current_presence = False
+                            logger.warning(f"Set current_presence to False due to detection error")
                         await asyncio.sleep(1.0)  # Brief pause on error
-                        continue 
+                        continue
             else: # no detector
                 logger.warning("Audience detector not initialized, skipping detection loop")
                 await asyncio.sleep(5)

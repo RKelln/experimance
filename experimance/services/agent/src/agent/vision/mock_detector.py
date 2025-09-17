@@ -134,11 +134,12 @@ class MockAudienceDetector:
             self._reading_count = 1
         else:
             self._reading_count += 1
-            
-        self._last_reading = self._current_state
         
-        logger.debug(f"Mock detection check #{self._total_checks}: "
-                    f"state={self._current_state}, count={self._current_person_count}")
+        if self._last_reading is None or self._current_state != self._last_reading:
+            logger.debug(f"Mock detection check #{self._total_checks}: "
+                        f"state={self._current_state}, count={self._current_person_count}")
+        
+        self._last_reading = self._current_state
         
         return self._current_state
     

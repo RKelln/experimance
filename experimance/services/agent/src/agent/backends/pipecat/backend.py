@@ -268,6 +268,7 @@ class PipecatEventProcessor(FrameProcessor):
         self.bot_speaking = False
         self._conversation_ending = False  # Track if we're in normal conversation end sequence
         self._idle_timeout_triggered = False  # Track if EndFrame was triggered by idle timeout
+        self._end_frame_processed = False  # Prevent double EndFrame processing
         
         # Audio output monitoring
         self._last_tts_start_time = None
@@ -309,11 +310,13 @@ class PipecatEventProcessor(FrameProcessor):
             })
             
         elif isinstance(frame, TTSStoppedFrame):
-            self.bot_speaking = False
-            self._expected_audio_output = False
-            await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
-                "speaker": "agent"
-            })
+            # TTSStoppedFrame is the low-level TTS service completion
+            if self.bot_speaking:  # Only emit if we haven't already handled this
+                self.bot_speaking = False
+                self._expected_audio_output = False
+                await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
+                    "speaker": "agent"
+                })
             
             # Check if we had a reasonable TTS duration (audio output health check)
             if self._last_tts_start_time:
@@ -325,9 +328,24 @@ class PipecatEventProcessor(FrameProcessor):
                         "timestamp": time.time()
                     })
                 self._last_tts_start_time = None
+                
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            # BotStoppedSpeakingFrame is the high-level speaking state change
+            if self.bot_speaking:  # Only emit if we haven't already handled this
+                self.bot_speaking = False
+                self._expected_audio_output = False
+                await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
+                    "speaker": "agent"
+                })
         # Handle pipeline shutdown - EndFrame → CancelFrame sequence
         elif isinstance(frame, EndFrame):
+            # Prevent double processing of EndFrame
+            if self._end_frame_processed:
+                logger.debug("EndFrame already processed, ignoring duplicate")
+                return
+                
             logger.info("Pipeline EndFrame received, starting conversation end sequence")
+            self._end_frame_processed = True
             self._conversation_ending = True
             # Mark this as a natural shutdown in the backend
             self.backend._shutdown_reason = "natural"
@@ -581,22 +599,31 @@ class PipecatBackend(AgentBackend):
             return True
             
         try:
-            # Check if agent service has presence detection capabilities
-            if hasattr(self.agent_service, 'current_presence'):
-                presence = self.agent_service.current_presence
-                logger.debug(f"Current presence from agent service: {presence}")
-                return bool(presence) if presence is not None else True
-            elif hasattr(self.agent_service, 'audience_detector') and self.agent_service.audience_detector:
-                # Fallback to direct audience detector check
+            # First try to get real-time presence from the audience detector (most accurate)
+            if hasattr(self.agent_service, 'audience_detector') and self.agent_service.audience_detector:
+                # Get fresh presence detection - don't rely on cached current_presence
                 presence = await self.agent_service.audience_detector.check_audience_present()
-                logger.debug(f"Presence from audience detector: {presence}")
+                logger.info(f"Presence check - real-time detector result: {presence}")
                 return bool(presence)
+                
+            # Fallback to cached presence if no detector available
+            elif hasattr(self.agent_service, 'current_presence'):
+                presence = self.agent_service.current_presence
+                logger.info(f"Presence check - cached current_presence: {presence} (type: {type(presence)})")
+                
+                # Handle None case more explicitly - treat None as "no presence"
+                # This prevents getting stuck in re-engagement loops when presence detection fails
+                if presence is None:
+                    logger.warning("current_presence is None, treating as no presence (False)")
+                    return False
+                else:
+                    return bool(presence)
             else:
-                logger.debug("No presence detection available, assuming presence")
-                return True
+                logger.warning("No presence detection available, defaulting to no presence")
+                return False  # Changed from True to False to be more conservative
         except Exception as e:
-            logger.warning(f"Error checking presence, assuming present: {e}")
-            return True
+            logger.error(f"Error checking presence, defaulting to no presence: {e}")
+            return False  # Changed from True to False to avoid infinite re-engagement
 
     async def _on_idle_timeout(self, task) -> None:
         """Handle pipeline idle timeout with presence awareness.
@@ -639,10 +666,9 @@ class PipecatBackend(AgentBackend):
                 if self.event_processor:
                     self.event_processor._idle_timeout_triggered = True
                 
-                # Use say_goodbye_and_shutdown to handle message + natural end
-                await self.say_goodbye_and_shutdown(
-                    self.pipecat_config.idle_timeout_goodbye_message
-                )
+                # End conversation naturally without goodbye message to avoid TTS issues
+                logger.info("Ending conversation silently due to idle timeout and no presence")
+                await self.end_conversation_naturally()
                 
         except Exception as e:
             logger.error(f"Error in idle timeout handler: {e}")

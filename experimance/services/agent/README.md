@@ -49,6 +49,40 @@ webcam_enabled = false
 audience_detection_enabled = false
 ```
 
+### Mock Audience Testing (Fire Project)
+
+For testing presence detection without a camera, use the mock audience detector.
+Update the `agent.toml` for shorter timeouts and mock presence detector:
+
+```toml
+# Timeout - Reduced for testing (normally 300s for production)
+idle_timeout_secs = 30                 # 30 seconds for testing (was 300)
+
+# Faster testing timings
+conversation_cooldown_duration = 5.0   # seconds (reduced from 12.0)
+audience_detection_interval = 1.0      # seconds (reduced from 1.5)
+
+# Enable mock detector (overrides camera)
+[mock_detector]
+enabled = true                   # Enable mock detector
+control_method = "file"          # Use file-based control
+control_dir = "/tmp/mock_detector"
+initial_state = false            # Start with no audience
+initial_count = 0
+```
+
+```bash
+# Start fire agent
+uv run -m fire_agent
+
+# Control presence interactively (in another terminal)
+uv run python scripts/mock_control.py -i
+
+uv run python scripts/mock_control.py --test-scenarios
+```
+
+For complete mock detector setup and usage, see [Mock Detector Testing Guide](../../docs/mock_detector_testing.md).
+
 This allows you to test the conversation AI independently without requiring:
 - Physical webcam hardware
 - Core service for audience presence coordination
@@ -75,6 +109,12 @@ cancel_cooldown_on_absence = true      # End cooldown if audience changes
 [vision]
 webcam_enabled = false           # Set to true for vision features
 audience_detection_enabled = false
+
+# Mock detector for testing (Fire project)
+[mock_detector]
+enabled = false                  # Enable for testing without camera
+control_method = "file"          # "file" or "keyboard" control
+control_dir = "/tmp/mock_detector"
 ```
 
 ## Audio Setup
@@ -155,6 +195,18 @@ uv run -m experimance_agent --no-vision-webcam_enabled --no_vision_audience_dete
 # Test with vision (requires webcam)
 uv run -m experimance_agent
 ```
+
+### Mock Audience Testing (Fire Project)
+```bash
+# Test presence detection without camera
+cp projects/fire/config_mock_detector.toml projects/fire/config.toml
+uv run -m fire_agent
+
+# Interactive control (in another terminal)
+uv run python scripts/mock_control.py -i
+```
+
+For detailed mock testing procedures and scenarios, see [Mock Detector Testing Guide](../../docs/mock_detector_testing.md).
 
 ### Audio Testing
 ```bash
