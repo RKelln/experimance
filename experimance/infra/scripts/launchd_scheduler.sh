@@ -78,6 +78,7 @@ show_usage() {
     echo "  show-schedule     Show current schedule configuration and service status"
     echo "  manual-start      Manually start all project services"
     echo "  manual-stop       Manually stop all project services (may auto-restart)"
+    echo "  manual-restart    Manually restart all project services (stop + auto-restart)"
     echo "  manual-unload     Unload services completely (no auto-restart)"
     echo ""
     echo -e "${GREEN}Schedule Types:${NC}"
@@ -90,6 +91,7 @@ show_usage() {
     echo "  $0 fire setup-schedule custom"
     echo "  $0 fire show-schedule"
     echo "  $0 fire manual-stop          # Kill services (may auto-restart)"
+    echo "  $0 fire manual-restart       # Restart all services"
     echo "  $0 fire manual-unload        # Unload services (no auto-restart)"
     echo "  $0 fire remove-schedule"
     echo ""
@@ -866,6 +868,18 @@ show_schedule() {
     echo ""
 }
 
+# Restart all project services (services auto-restart due to KeepAlive=true)
+manual_restart() {
+    log "Manually restarting all $PROJECT services..."
+    
+    echo ""
+    echo -e "${BLUE}Stopping services (they will auto-restart)...${NC}"
+    manual_stop
+    
+    echo ""
+    log "Manual restart complete - services will restart automatically due to KeepAlive=true"
+}
+
 # Main function
 main() {
     case "$ACTION" in
@@ -886,6 +900,9 @@ main() {
             ;;
         manual-unload)
             manual_unload
+            ;;
+        manual-restart)
+            manual_restart
             ;;
         *)
             show_usage
