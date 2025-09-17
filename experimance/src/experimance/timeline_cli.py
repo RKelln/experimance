@@ -252,12 +252,22 @@ def get_directories_for_args(args) -> tuple[Path, Optional[Path]]:
     else:
         return discover_directories(args.transcripts_path, args.prompts_path)
 
+def normalize_session_id(session_id: str) -> str:
+    """Normalize session ID to handle different formats.
+    
+    Both 'session_20250916_160711' and '20250916_160711' should map to the same session.
+    """
+    if session_id.startswith("session_"):
+        return session_id[8:]  # Remove 'session_' prefix
+    return session_id
+
 def extract_session_id_from_filename(filename: str) -> Optional[str]:
     """Extract session ID from transcript or prompt filename."""
     # Format: transcript_20250812_132151_session_20250812_132151.jsonl
     # Format: prompts_20250812_132151_session_20250812_132151.jsonl
     if "_session_" in filename:
-        return filename.split("_session_")[1].replace(".jsonl", "")
+        session_id = filename.split("_session_")[1].replace(".jsonl", "")
+        return normalize_session_id(session_id)
     return None
 
 def extract_timestamp_from_filename(filename: str) -> Optional[float]:
@@ -414,7 +424,7 @@ def parse_timeline_entry(data: dict, source_file: Path) -> Optional[TimelineEntr
         return None
     
     # Extract basic fields
-    session_id = data.get("session_id", "unknown")
+    session_id = normalize_session_id(data.get("session_id", "unknown"))
     role = data.get("role", "unknown")
     speaker_id = data.get("speaker_id", role)
     speaker_display = data.get("speaker_display_name", speaker_id)
@@ -490,7 +500,11 @@ def render_timeline_entry(entry: TimelineEntry, width: int, full_ts: bool = Fals
         type_indicator = "⚙️"
     else:  # transcript
         style = ROLE_STYLES.get(entry.role, "white")
-        type_indicator = "💬"
+        # Use robot emoji for Experimance agent, regular speech bubble for others
+        if entry.speaker and any(term in entry.speaker.lower() for term in ["experimance", "agent", "bot"]):
+            type_indicator = "🤖"
+        else:
+            type_indicator = "💬"
     
     # Build the header line
     header = Text(f"{ts_str} {type_indicator} ", style="dim")
