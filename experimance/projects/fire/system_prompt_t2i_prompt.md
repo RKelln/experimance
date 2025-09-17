@@ -51,6 +51,7 @@ Try infer location based on story content.
 6. Be concrete & sensory but ONLY VISUAL ELEMENTS (NO sounds or smells) in the visual prompt:
     Concrete nouns: weathered red barn, misty pine forest, cobbled courtyard
     Sensory adjectives: glistening, soft golden light
+    Don't use "or" or provide options, the prompt is specific and definite
 7. Create an audio prompt that captures the environmental sounds of the location:
    - Focus on natural ambient sounds that would exist in that environment
    - Keep it simple and atmospheric (10-20 words describing the environmental audio atmosphere)
