@@ -82,12 +82,14 @@ show_usage() {
     echo "  manual-unload     Unload services completely (no auto-restart)"
     echo ""
     echo -e "${GREEN}Schedule Types:${NC}"
-    echo "  gallery     Tuesday-Saturday, 11AM-6PM (default)"
-    echo "  daily       Every day, 9AM-10PM"
-    echo "  custom      Prompts for custom times"
+    echo "  gallery          Tuesday-Saturday, 11AM-6PM (default)"
+    echo "  gallery-extended Tuesday-Saturday, 11AM-6PM (Wed until 9PM)"
+    echo "  daily            Every day, 9AM-10PM"
+    echo "  custom           Prompts for custom times"
     echo ""
     echo -e "${GREEN}Examples:${NC}"
     echo "  $0 fire setup-schedule gallery"
+    echo "  $0 fire setup-schedule gallery-extended"
     echo "  $0 fire setup-schedule custom"
     echo "  $0 fire show-schedule"
     echo "  $0 fire manual-stop          # Kill services (may auto-restart)"
@@ -292,6 +294,52 @@ get_schedule_config() {
         </dict>
     </array>'
             ;;
+        gallery-extended)
+            # Tuesday-Saturday, 10:55 AM start (same as gallery)
+            echo '<array>
+        <!-- Start: Tuesday-Saturday at 10:55 AM -->
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>55</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>55</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>55</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>55</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>6</integer>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>55</integer>
+        </dict>
+    </array>'
+            ;;
         daily)
             # Every day at 9AM start
             echo '<dict>
@@ -370,6 +418,56 @@ get_shutdown_schedule_config() {
         </dict>
     </array>'
             ;;
+        gallery-extended)
+            # Tuesday, Thursday, Friday, Saturday at 6:05 PM; Wednesday at 9:05 PM
+            echo '<array>
+        <!-- Stop: Tuesday at 6:05 PM -->
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>5</integer>
+        </dict>
+        <!-- Stop: Wednesday at 9:05 PM -->
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>21</integer>
+            <key>Minute</key>
+            <integer>5</integer>
+        </dict>
+        <!-- Stop: Thursday at 6:05 PM -->
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>5</integer>
+        </dict>
+        <!-- Stop: Friday at 6:05 PM -->
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>5</integer>
+        </dict>
+        <!-- Stop: Saturday at 6:05 PM -->
+        <dict>
+            <key>Weekday</key>
+            <integer>6</integer>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>5</integer>
+        </dict>
+    </array>'
+            ;;
         daily)
             # Every day at 10PM stop
             echo '<dict>
@@ -410,6 +508,15 @@ setup_schedule() {
         error "No existing LaunchAgent services found for project $PROJECT. Run deploy.sh first."
     fi
     
+    # Auto-remove existing gallery scheduling if present
+    local starter_plist="$LAUNCHD_DIR/com.experimance.${PROJECT}.gallery-starter.plist"
+    local stopper_plist="$LAUNCHD_DIR/com.experimance.${PROJECT}.gallery-stopper.plist"
+    
+    if [[ -f "$starter_plist" || -f "$stopper_plist" ]]; then
+        log "Removing existing gallery scheduling first..."
+        remove_schedule_internal
+    fi
+    
     log "Found existing services for $PROJECT:"
     while IFS= read -r plist_file; do
         local label=$(plutil -extract Label raw "$plist_file" 2>/dev/null || echo "unknown")
@@ -444,6 +551,12 @@ setup_schedule() {
             echo "  • Start: 10:55 AM (services begin)"
             echo "  • Stop:   6:05 PM (services end)"
             ;;
+        gallery-extended)
+            echo "Gallery Hours: Tuesday-Saturday"
+            echo "  • Start: 10:55 AM (services begin)"
+            echo "  • Stop:   6:05 PM (Tues, Thurs, Fri, Sat)"
+            echo "  • Stop:   9:05 PM (Wednesday night)"
+            ;;
         daily)
             echo "Daily Schedule:"
             echo "  • Start: 9:00 AM (services begin)"
@@ -470,6 +583,20 @@ setup_schedule() {
     echo "1. Test with: $0 $PROJECT manual-stop"
     echo "2. Then test: $0 $PROJECT manual-start"
     echo "3. Check status: $0 $PROJECT show-schedule"
+}
+
+# Remove scheduled LaunchAgents (internal version - minimal output)
+remove_schedule_internal() {
+    local starter_plist="$LAUNCHD_DIR/com.experimance.${PROJECT}.gallery-starter.plist"
+    local stopper_plist="$LAUNCHD_DIR/com.experimance.${PROJECT}.gallery-stopper.plist"
+    
+    # Unload scheduler agents
+    launchctl bootout gui/$(id -u) "$starter_plist" 2>/dev/null || true
+    launchctl bootout gui/$(id -u) "$stopper_plist" 2>/dev/null || true
+    
+    # Remove scheduler plist files
+    rm -f "$starter_plist"
+    rm -f "$stopper_plist"
 }
 
 # Remove scheduled LaunchAgents
@@ -766,6 +893,98 @@ manual_unload() {
     echo -e "${BLUE}Use 'manual-start' to restart them.${NC}"
 }
 
+# Helper function to show combined schedule times from both starter and stopper plists
+show_schedule_times() {
+    local starter_plist="$LAUNCHD_DIR/com.experimance.${PROJECT}.gallery-starter.plist"
+    local stopper_plist="$LAUNCHD_DIR/com.experimance.${PROJECT}.gallery-stopper.plist"
+    
+    local weekdays=("Sunday" "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday")
+    
+    # Variables to store times for each weekday (1-7)
+    local start_1="" start_2="" start_3="" start_4="" start_5="" start_6="" start_7=""
+    local stop_1="" stop_2="" stop_3="" stop_4="" stop_5="" stop_6="" stop_7=""
+    
+    # Extract start times
+    if [[ -f "$starter_plist" ]]; then
+        local index=0
+        while [[ $index -lt 20 ]]; do
+            local hour=$(plutil -extract "StartCalendarInterval.$index.Hour" raw "$starter_plist" 2>/dev/null)
+            if [[ $? -ne 0 || "$hour" =~ "Could not extract" ]]; then
+                break
+            fi
+            
+            local minute=$(plutil -extract "StartCalendarInterval.$index.Minute" raw "$starter_plist" 2>/dev/null)
+            local weekday=$(plutil -extract "StartCalendarInterval.$index.Weekday" raw "$starter_plist" 2>/dev/null)
+            
+            if [[ -n "$hour" && -n "$minute" && -n "$weekday" && "$weekday" -ge 1 && "$weekday" -le 7 ]]; then
+                local time_str=$(printf "%02d:%02d" "$hour" "$minute")
+                case $weekday in
+                    1) start_1="$time_str" ;;
+                    2) start_2="$time_str" ;;
+                    3) start_3="$time_str" ;;
+                    4) start_4="$time_str" ;;
+                    5) start_5="$time_str" ;;
+                    6) start_6="$time_str" ;;
+                    7) start_7="$time_str" ;;
+                esac
+            fi
+            
+            ((index++))
+        done
+    fi
+    
+    # Extract stop times
+    if [[ -f "$stopper_plist" ]]; then
+        local index=0
+        while [[ $index -lt 20 ]]; do
+            local hour=$(plutil -extract "StartCalendarInterval.$index.Hour" raw "$stopper_plist" 2>/dev/null)
+            if [[ $? -ne 0 || "$hour" =~ "Could not extract" ]]; then
+                break
+            fi
+            
+            local minute=$(plutil -extract "StartCalendarInterval.$index.Minute" raw "$stopper_plist" 2>/dev/null)
+            local weekday=$(plutil -extract "StartCalendarInterval.$index.Weekday" raw "$stopper_plist" 2>/dev/null)
+            
+            if [[ -n "$hour" && -n "$minute" && -n "$weekday" && "$weekday" -ge 1 && "$weekday" -le 7 ]]; then
+                local time_str=$(printf "%02d:%02d" "$hour" "$minute")
+                case $weekday in
+                    1) stop_1="$time_str" ;;
+                    2) stop_2="$time_str" ;;
+                    3) stop_3="$time_str" ;;
+                    4) stop_4="$time_str" ;;
+                    5) stop_5="$time_str" ;;
+                    6) stop_6="$time_str" ;;
+                    7) stop_7="$time_str" ;;
+                esac
+            fi
+            
+            ((index++))
+        done
+    fi
+    
+    # Display combined schedule
+    local found_any=false
+    for weekday in {1..7}; do
+        local start_var="start_${weekday}"
+        local stop_var="stop_${weekday}"
+        local start_time="${!start_var}"
+        local stop_time="${!stop_var}"
+        
+        if [[ -n "$start_time" ]]; then
+            local schedule_line="  ${weekdays[$weekday]}: $start_time"
+            if [[ -n "$stop_time" ]]; then
+                schedule_line="${schedule_line}-${stop_time}"
+            fi
+            echo "$schedule_line"
+            found_any=true
+        fi
+    done
+    
+    if [[ "$found_any" != true ]]; then
+        echo "  Could not parse schedule times"
+    fi
+}
+
 # Show current schedule
 show_schedule() {
     echo ""
@@ -795,8 +1014,13 @@ show_schedule() {
         else
             echo -e "  Status: ${RED}Not loaded${NC}"
         fi
-    else
-        echo -e "${YELLOW}○${NC} No gallery hour scheduling"
+    fi
+    
+    # Show combined schedule times if both exist
+    if [[ -f "$starter_plist" || -f "$stopper_plist" ]]; then
+        echo ""
+        echo -e "${BLUE}Schedule:${NC}"
+        show_schedule_times
     fi
     
     echo ""
