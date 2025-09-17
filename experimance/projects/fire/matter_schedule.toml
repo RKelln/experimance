@@ -1,0 +1,75 @@
+# Matter Device Scheduler Configuration
+# 
+# This file defines schedules and sequences for controlling Matter devices
+# via chip-tool commands.
+
+# Example schedules using cron syntax
+[[schedules]]
+name = "Installation Power On"
+description = "Turn on installation devices at 9 AM daily"
+schedule = "55 10 * * 2-6"  # 10:55 AM Tues-Sat
+device_id = 110  # Your TP-Link smart plug
+command = "on"
+endpoint = 1
+enabled = true
+
+[[schedules]]
+name = "Installation Power Off" 
+description = "Turn off installation devices at 10 PM daily"
+schedule = "5 18 * * 2,4,5,6"  # 6:05 PM Tues, Thurs, Fri, Sat
+device_id = 110
+command = "off"
+endpoint = 1
+enabled = true
+
+[[schedules]]
+name = "Wednesday night"
+description = "Stay on late on Wednesday"
+schedule = "5 21 * * 3"  # 9:05pm Wed
+device_id = 110
+command = "off"
+endpoint = 1
+enabled = true
+
+# Example sequence for complex startup procedure
+#[[sequences]]
+#name = "Installation Startup Sequence"
+#description = "Coordinated startup of multiple devices"
+#run_once = false  # Set to true to run once on scheduler start
+#enabled = false
+#
+#  [[sequences.steps]]
+#  description = "Turn on main power"
+#  device_id = 110
+#  command = "on"
+#  delay = 2.0  # Wait 2 seconds before next step
+#  
+#  [[sequences.steps]]
+#  description = "Allow system boot time"
+#  device_id = 110
+#  command = "on"  # Ensure it stays on
+#  delay = 30.0  # Wait 30 seconds for devices to boot
+  
+  # Could add more devices here...
+  # [[sequences.steps]]
+  # description = "Turn on secondary device"
+  # device_id = 111
+  # command = "on"
+  # delay = 1.0
+
+# Cron syntax reference:
+# ┌───────────── minute (0 - 59)
+# │ ┌───────────── hour (0 - 23)
+# │ │ ┌───────────── day of month (1 - 31)
+# │ │ │ ┌───────────── month (1 - 12)
+# │ │ │ │ ┌───────────── day of week (0 - 6) (Sunday to Saturday)
+# │ │ │ │ │
+# │ │ │ │ │
+# * * * * *
+#
+# Examples:
+# "0 9 * * *"        # Every day at 9 AM
+# "30 18 * * 1-5"    # Weekdays at 6:30 PM  
+# "0 */4 * * *"      # Every 4 hours
+# "0 9-17 * * 1-5"   # Every hour from 9 AM to 5 PM, weekdays only
+# "*/15 * * * *"     # Every 15 minutes
