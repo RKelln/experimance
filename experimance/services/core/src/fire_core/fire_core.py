@@ -17,6 +17,7 @@ import argparse
 import logging
 import uuid
 import time
+import difflib
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List, Any
@@ -404,6 +405,30 @@ class TranscriptAccumulator:
     session_id: Optional[str] = None
     conversation_lines: List[str] = field(default_factory=list)  # Simple "Speaker: content" strings
     last_update_time: float = field(default_factory=lambda: 0.0)
+
+
+def prompts_are_similar(prompt1: str, prompt2: str, threshold: float = 0.95) -> bool:
+    """
+    Check if two prompts are semantically similar using fuzzy string matching.
+    
+    This helps catch cases where the LLM generates slightly different prompts
+    for essentially the same content (e.g., typos, minor word variations).
+    
+    Args:
+        prompt1: First prompt to compare
+        prompt2: Second prompt to compare  
+        threshold: Similarity threshold (0-1, where 1 is identical)
+        
+    Returns:
+        True if prompts are similar enough to be considered "unchanged"
+    """
+    if not prompt1 or not prompt2:
+        return False
+        
+    # Use difflib to calculate similarity ratio
+    similarity = difflib.SequenceMatcher(None, prompt1.lower(), prompt2.lower()).ratio()
+    return similarity >= threshold
+
 
 class FireCoreService(BaseService):
     """
@@ -934,8 +959,11 @@ class FireCoreService(BaseService):
                 state=RequestState.PROCESSING_LLM
             )
             
+            # Capture the current prompt at this moment to avoid race conditions
+            previous_prompt_snapshot = self.last_generated_prompt
+            
             # Schedule the heavy processing in a background task that doesn't block ZMQ
-            task = asyncio.create_task(self._process_transcript_in_background())
+            task = asyncio.create_task(self._process_transcript_in_background(previous_prompt_snapshot))
             self.llm_processing_request.processing_task = task
             
             # Return immediately so ZMQ can continue receiving messages
@@ -945,7 +973,7 @@ class FireCoreService(BaseService):
             logger.error(f"🔬 EXCEPTION IN _handle_transcription_update: {e}")
             self.record_error(e, is_fatal=False, custom_message="Failed to process transcript update")
 
-    async def _process_transcript_in_background(self):
+    async def _process_transcript_in_background(self, previous_prompt: Optional[MediaPrompt] = None):
         """
         Process accumulated transcripts in background without blocking ZMQ reception.
         
@@ -960,6 +988,10 @@ class FireCoreService(BaseService):
            - WAITING_TILES: Cancel remaining tiles (base already displayed)
         4. Queues new request for processing
         
+        Args:
+            previous_prompt: The prompt that was current at the time this task was started.
+                           Used to avoid race conditions with self.last_generated_prompt.
+        
         This ensures responsive behavior while minimizing wasted work.
         """
         try:
@@ -971,7 +1003,7 @@ class FireCoreService(BaseService):
             try:
                 media_prompt = await self.prompt_builder.build_media_prompt(
                     full_context,
-                    previous_prompt=self.last_generated_prompt,
+                    previous_prompt=previous_prompt,
                     audio_prefix=["high quality professional recording", "pristine", "high SNR"],
                     audio_suffix=["air utterly still", "stable ambience"],
                     transcript_callback=self._handle_curated_transcript
@@ -983,23 +1015,64 @@ class FireCoreService(BaseService):
                     return
                 
                 # Compare with previous prompt to detect changes
-                visual_changed = (
-                    not self.last_generated_prompt or 
-                    media_prompt.visual_prompt != self.last_generated_prompt.visual_prompt or
-                    media_prompt.visual_negative_prompt != self.last_generated_prompt.visual_negative_prompt
-                )
-                audio_changed = (
-                    media_prompt.audio_prompt is not None and
-                    (not self.last_generated_prompt or 
-                    media_prompt.audio_prompt != self.last_generated_prompt.audio_prompt)
+                # First check exact equality (preferred for performance)
+                visual_exactly_equal = (
+                    previous_prompt and
+                    media_prompt.visual_prompt == previous_prompt.visual_prompt and
+                    media_prompt.visual_negative_prompt == previous_prompt.visual_negative_prompt
                 )
                 
-                # Debug logging for prompt comparison
+                # If not exactly equal, check similarity as fallback
+                visual_changed = not (
+                    visual_exactly_equal or
+                    (previous_prompt and 
+                     prompts_are_similar(media_prompt.visual_prompt, previous_prompt.visual_prompt) and
+                     prompts_are_similar(media_prompt.visual_negative_prompt or "", 
+                                       previous_prompt.visual_negative_prompt or ""))
+                )
+                
+                # If no previous prompt, consider visual changed
+                if not previous_prompt:
+                    visual_changed = True
+                
+                # Audio comparison with similarity fallback
+                audio_exactly_equal = (
+                    media_prompt.audio_prompt is not None and
+                    previous_prompt and
+                    media_prompt.audio_prompt == previous_prompt.audio_prompt
+                )
+                
+                audio_changed = (
+                    media_prompt.audio_prompt is not None and
+                    not (audio_exactly_equal or
+                         (previous_prompt and previous_prompt.audio_prompt and
+                          prompts_are_similar(media_prompt.audio_prompt, previous_prompt.audio_prompt)))
+                )
+                
+                # Debug logging for prompt comparison with similarity metrics
                 logger.debug(f"🔍 PROMPT COMPARISON:")
-                logger.debug(f"  Previous visual: {self.last_generated_prompt.visual_prompt if self.last_generated_prompt else 'None'}...")
+                logger.debug(f"  Previous visual: {previous_prompt.visual_prompt if previous_prompt else 'None'}...")
                 logger.debug(f"  New visual:      {media_prompt.visual_prompt}...")
-                logger.debug(f"  Previous audio:  {self.last_generated_prompt.audio_prompt if self.last_generated_prompt and self.last_generated_prompt.audio_prompt else 'None'}...")
+                logger.debug(f"  Previous audio:  {previous_prompt.audio_prompt if previous_prompt and previous_prompt.audio_prompt else 'None'}...")
                 logger.debug(f"  New audio:       {media_prompt.audio_prompt if media_prompt.audio_prompt else 'None'}...")
+                
+                # Show similarity metrics for debugging
+                if previous_prompt:
+                    visual_similarity = difflib.SequenceMatcher(
+                        None, 
+                        media_prompt.visual_prompt.lower(), 
+                        previous_prompt.visual_prompt.lower()
+                    ).ratio()
+                    logger.debug(f"  Visual similarity: {visual_similarity:.3f} (threshold: 0.95)")
+                    
+                    if media_prompt.audio_prompt and previous_prompt.audio_prompt:
+                        audio_similarity = difflib.SequenceMatcher(
+                            None,
+                            media_prompt.audio_prompt.lower(),
+                            previous_prompt.audio_prompt.lower()
+                        ).ratio()
+                        logger.debug(f"  Audio similarity: {audio_similarity:.3f} (threshold: 0.95)")
+                
                 logger.debug(f"  Visual changed:  {visual_changed}, Audio changed: {audio_changed}")
                 
                 if not visual_changed and not audio_changed:
@@ -1019,7 +1092,7 @@ class FireCoreService(BaseService):
                     "source": "transcript_processing",
                     "transcript_lines": len(self.transcript_accumulator.conversation_lines),
                     "context_length": len(full_context),
-                    "has_previous_prompt": self.last_generated_prompt is not None
+                    "has_previous_prompt": previous_prompt is not None
                 }
                 request_id = self.queue_new_request(media_prompt, source_context)
                 logger.info(f"🖼️ Queued transcript-based request {request_id} (total queue: {len(self.request_queue)})")
