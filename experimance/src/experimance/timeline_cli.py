@@ -128,7 +128,8 @@ def _default_dir_candidates(log_type: str) -> list[Path]:
         candidates.append(Path(env_dir).expanduser())
     candidates.append(Path(default_path))
     candidates.append(Path.cwd() / fallback_path)
-    
+    candidates.append(Path.cwd() / "logs" / fallback_path)
+    console.print(candidates)
     return candidates
 
 def discover_directories(explicit_transcripts: Optional[str] = None, 
@@ -473,8 +474,8 @@ def load_session_timeline(session_info: SessionInfo, entry_filter: Optional[str]
     entries.sort(key=lambda e: e.timestamp)
     return entries
 
-def render_timeline_entry(entry: TimelineEntry, width: int, full_ts: bool = False) -> Text:
-    """Render a timeline entry as Rich Text."""
+def render_timeline_entry(entry: TimelineEntry, width: int, full_ts: bool = False, detailed: bool = False, visual_only: bool = False, audio_only: bool = False) -> Union[Text, Group]:
+    """Render a timeline entry as Rich Text or Group for detailed view."""
     
     # Format timestamp
     ts_format = "%Y-%m-%d %H:%M:%S" if full_ts else "%H:%M:%S"
@@ -491,27 +492,66 @@ def render_timeline_entry(entry: TimelineEntry, width: int, full_ts: bool = Fals
         style = ROLE_STYLES.get(entry.role, "white")
         type_indicator = "💬"
     
-    # Build the rendered line
-    text = Text(f"{ts_str} {type_indicator} ", style="dim")
+    # Build the header line
+    header = Text(f"{ts_str} {type_indicator} ", style="dim")
     
     # Speaker/role label
     label = entry.speaker[:12] if entry.speaker else entry.role[:12]
-    text.append(f"{label:<12}"[:12], style=style)
-    text.append(" ")
+    header.append(f"{label:<12}"[:12], style=style)
+    header.append(" ")
     
-    # Content with optional metadata
-    content = entry.content
+    # Add request ID if available
     if entry.request_id:
-        content = f"[{entry.request_id[:8]}] {content}"
+        header.append(f"[{entry.request_id[:8]}] ", style="dim cyan")
     
-    # Wrap content if needed
-    avail_width = max(width - 25, 20) if width else None
-    if avail_width and len(content) > avail_width:
-        content = content[:avail_width-3] + "..."
+    if not detailed:
+        # Compact view - truncate content as before
+        content = entry.content
+        avail_width = max(width - 25, 20) if width else None
+        if avail_width and len(content) > avail_width:
+            content = content[:avail_width-3] + "..."
+        header.append(content, style=None)
+        return header
     
-    text.append(content, style=None)
+    # Detailed view - show full content with word wrapping
+    if entry.entry_type == "prompt":
+        # For prompts, show visual and audio prompts separately with proper formatting
+        elements = [header]
+        
+        # Show visual prompt unless audio_only is specified
+        if entry.visual_prompt and not audio_only:
+            visual_header = Text("  Visual: ", style="bold cyan")
+            visual_text = Text(entry.visual_prompt)
+            visual_text.no_wrap = False  # Enable wrapping
+            elements.append(visual_header)
+            elements.append(visual_text)
+        
+        # Show audio prompt unless visual_only is specified
+        if entry.audio_prompt and not visual_only:
+            audio_header = Text("  Audio: ", style="bold magenta")
+            audio_text = Text(entry.audio_prompt)
+            audio_text.no_wrap = False  # Enable wrapping
+            elements.append(audio_header)
+            elements.append(audio_text)
+        
+        # Add metadata if available (unless filtering to visual/audio only)
+        if entry.metadata and not visual_only and not audio_only:
+            metadata_text = Text(f"  Metadata: {entry.metadata}", style="dim")
+            metadata_text.no_wrap = False
+            elements.append(metadata_text)
+        
+        return Group(*elements)
     
-    return text
+    else:
+        # For transcripts and events, show full content with wrapping
+        full_content = Text(entry.content)
+        full_content.no_wrap = False  # Enable wrapping
+        
+        # Indent the content for better readability
+        indented_content = Text("  ")
+        indented_content.append(full_content)
+        
+        return Group(header, indented_content)
 
 def format_duration(total_seconds: float) -> str:
     """Format duration in a human-readable way.
@@ -653,7 +693,13 @@ def cmd_show(args: argparse.Namespace) -> None:
     
     # Render entries
     for entry in entries:
-        rendered = render_timeline_entry(entry, width, full_ts=args.full_ts)
+        rendered = render_timeline_entry(
+            entry, width, 
+            full_ts=args.full_ts, 
+            detailed=getattr(args, 'detailed', False),
+            visual_only=getattr(args, 'visual_only', False),
+            audio_only=getattr(args, 'audio_only', False)
+        )
         console.print(rendered)
 
 def cmd_follow(args: argparse.Namespace) -> None:
@@ -687,7 +733,13 @@ def cmd_follow(args: argparse.Namespace) -> None:
         initial_entries = load_session_timeline(session, entry_filter)
         for entry in initial_entries:
             seen_timestamps.add(entry.timestamp)
-            rendered = render_timeline_entry(entry, width, full_ts=args.full_ts)
+            rendered = render_timeline_entry(
+                entry, width, 
+                full_ts=args.full_ts, 
+                detailed=getattr(args, 'detailed', False),
+                visual_only=getattr(args, 'visual_only', False),
+                audio_only=getattr(args, 'audio_only', False)
+            )
             console.print(rendered)
     
     try:
@@ -698,7 +750,13 @@ def cmd_follow(args: argparse.Namespace) -> None:
             for entry in new_entries:
                 if entry.timestamp not in seen_timestamps:
                     seen_timestamps.add(entry.timestamp)
-                    rendered = render_timeline_entry(entry, width, full_ts=args.full_ts)
+                    rendered = render_timeline_entry(
+                        entry, width, 
+                        full_ts=args.full_ts, 
+                        detailed=getattr(args, 'detailed', False),
+                        visual_only=getattr(args, 'visual_only', False),
+                        audio_only=getattr(args, 'audio_only', False)
+                    )
                     console.print(rendered)
             
             time.sleep(args.interval)
@@ -738,7 +796,13 @@ def cmd_stream(args: argparse.Namespace) -> None:
             # Sort by timestamp and display
             new_entries.sort(key=lambda e: e.timestamp)
             for entry in new_entries:
-                rendered = render_timeline_entry(entry, width, full_ts=args.full_ts)
+                rendered = render_timeline_entry(
+                    entry, width, 
+                    full_ts=args.full_ts, 
+                    detailed=getattr(args, 'detailed', False),
+                    visual_only=getattr(args, 'visual_only', False),
+                    audio_only=getattr(args, 'audio_only', False)
+                )
                 console.print(rendered)
             
             time.sleep(args.interval)
@@ -773,9 +837,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_show.add_argument("--session", help="Explicit session ID")
     p_show.add_argument("--transcripts-only", action="store_true", help="Show only transcript entries")
     p_show.add_argument("--prompts-only", action="store_true", help="Show only prompt entries")
+    p_show.add_argument("--visual-only", action="store_true", help="Show only visual prompts (requires --detailed)")
+    p_show.add_argument("--audio-only", action="store_true", help="Show only audio prompts (requires --detailed)")
     p_show.add_argument("--last", type=int, help="Show only last N entries")
     p_show.add_argument("--width", type=int, help="Display width")
     p_show.add_argument("--full-ts", action="store_true", help="Show full timestamps")
+    p_show.add_argument("--detailed", action="store_true", help="Show full content with word wrapping")
     p_show.set_defaults(func=cmd_show)
     
     # Follow command
@@ -784,19 +851,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_follow.add_argument("--session", help="Explicit session ID")
     p_follow.add_argument("--transcripts-only", action="store_true", help="Show only transcript entries")
     p_follow.add_argument("--prompts-only", action="store_true", help="Show only prompt entries")
+    p_follow.add_argument("--visual-only", action="store_true", help="Show only visual prompts (requires --detailed)")
+    p_follow.add_argument("--audio-only", action="store_true", help="Show only audio prompts (requires --detailed)")
     p_follow.add_argument("--from-start", action="store_true", help="Show existing entries first")
     p_follow.add_argument("--interval", type=float, default=1.0, help="Polling interval seconds")
     p_follow.add_argument("--width", type=int, help="Display width")
     p_follow.add_argument("--full-ts", action="store_true", help="Show full timestamps")
+    p_follow.add_argument("--detailed", action="store_true", help="Show full content with word wrapping")
     p_follow.set_defaults(func=cmd_follow)
     
     # Stream command
     p_stream = sub.add_parser("stream", help="Stream latest activity across all sessions")
     p_stream.add_argument("--transcripts-only", action="store_true", help="Show only transcript entries")
     p_stream.add_argument("--prompts-only", action="store_true", help="Show only prompt entries")
+    p_stream.add_argument("--visual-only", action="store_true", help="Show only visual prompts (requires --detailed)")
+    p_stream.add_argument("--audio-only", action="store_true", help="Show only audio prompts (requires --detailed)")
     p_stream.add_argument("--interval", type=float, default=1.0, help="Polling interval seconds")
     p_stream.add_argument("--width", type=int, help="Display width")
     p_stream.add_argument("--full-ts", action="store_true", help="Show full timestamps")
+    p_stream.add_argument("--detailed", action="store_true", help="Show full content with word wrapping")
     p_stream.set_defaults(func=cmd_stream)
     
     return p
