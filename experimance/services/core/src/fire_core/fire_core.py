@@ -659,10 +659,27 @@ class FireCoreService(BaseService):
     def queue_new_request(self, prompt, source_context: Optional[dict] = None) -> str:
         """Queue a new image generation request.
         
+        Each new request cancels any pending queued requests to ensure only the
+        latest content is processed. The currently processing request continues.
+        
         Args:
             prompt: Either ImagePrompt or MediaPrompt
             source_context: Optional context about where this prompt came from
         """
+        # Cancel any pending requests - only process the latest prompt
+        for request in self.request_queue:
+            if not request.is_completed():
+                logger.debug(f"🚫 Cancelling queued request {request.request_id}")
+                request.state = RequestState.CANCELLED
+        
+        # Clear cancelled requests from queue
+        original_queue_size = len(self.request_queue)
+        self.request_queue = [req for req in self.request_queue if not req.is_completed()]
+        cancelled_count = original_queue_size - len(self.request_queue)
+        
+        if cancelled_count > 0:
+            logger.info(f"🗑️ Cancelled {cancelled_count} pending requests for new prompt")
+        
         request = self.create_request(prompt)
         self.request_queue.append(request)
         
@@ -1819,10 +1836,16 @@ class FireCoreService(BaseService):
     async def _process_request_queue(self):
         """Start processing the next queued request if conditions are met."""
         if (not self.current_request and self.request_queue):
-            # Process next request regardless of core state, as long as no current request
-            next_request = self.request_queue.pop(0)
-            logger.info(f"🚀 PROCESSING queued request {next_request.request_id} (queue size: {len(self.request_queue)})")
-            await self.start_request_processing(next_request)
+            # Skip any cancelled requests at the front of the queue
+            while self.request_queue and self.request_queue[0].is_completed():
+                cancelled_request = self.request_queue.pop(0)
+                logger.debug(f"🗑️ Skipping cancelled request {cancelled_request.request_id}")
+            
+            # Process next valid request if any remain
+            if self.request_queue:
+                next_request = self.request_queue.pop(0)
+                logger.info(f"🚀 PROCESSING queued request {next_request.request_id} (queue size: {len(self.request_queue)})")
+                await self.start_request_processing(next_request)
 
 
 async def run_fire_core_service(
