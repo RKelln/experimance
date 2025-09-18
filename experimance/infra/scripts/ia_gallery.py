@@ -44,16 +44,8 @@ import sys
 import time
 import os
 from pathlib import Path
+import tomllib
 
-try:
-    import tomllib
-except ImportError:
-    # Python < 3.11 fallback
-    try:
-        import tomli as tomllib
-    except ImportError:
-        print("Warning: tomllib/tomli not available, using hardcoded machine config")
-        tomllib = None
 
 def load_env_file(env_path):
     """Load environment variables from .env file"""
@@ -74,7 +66,7 @@ def load_env_file(env_path):
 
 # Configuration
 SCRIPT_DIR = "infra/scripts"
-MATTER_SCHEDULER_SCRIPT = "scripts/manage_matter_scheduler.sh"
+MATTER_SCHEDULER_SCRIPT = "scripts/matter_scheduler.sh"
 
 def get_current_hostname():
     """Get current hostname to determine if we're running locally or remotely"""
@@ -850,24 +842,17 @@ def main_menu():
         print("5. Smart startup (Power on → Services)")
         print("6. Smart shutdown (Services → Power off)")
         print("")
-        print("MATTER DEVICES:")
-        print("7. Turn smart plug ON")
-        print("8. Turn smart plug OFF")
-        print("9. Toggle smart plug")
+        print("POWER:")
+        print("7. Turn installation power ON")
+        print("8. Turn installation power OFF")
         print("")
         print("SCHEDULER:")
-        print("11. Start auto-scheduler (gallery hours)")
-        print("12. Stop auto-scheduler")
-        print("13. Scheduler status")
-        print("")
-        print("MATTER SETUP:")
-        print("14. Install chip-tool")
-        print("15. Setup Matter devices (pair & test)")
+        print("9. Start auto-scheduler (gallery hours)")
+        print("10. Stop auto-scheduler")
+        print("11. Scheduler status")
         print("")
         print("TOOLS:")
         print("0. Test network connections")
-        print("")
-        print("💡 This interface runs continuously. Use Ctrl+C to exit if needed.")
         print("-"*70)
         
         try:
@@ -890,23 +875,11 @@ def main_menu():
             elif choice == "8":
                 matter_control("off")
             elif choice == "9":
-                matter_control("toggle")
-            elif choice == "11":
                 matter_scheduler_control("start")
-            elif choice == "12":
+            elif choice == "10":
                 matter_scheduler_control("stop")
-            elif choice == "13":
+            elif choice == "11":
                 matter_scheduler_control("status")
-            elif choice == "14":
-                if is_matter_controller():
-                    install_chip_tool()
-                else:
-                    print("❌ chip-tool installation only supported on machines designated as Matter controllers")
-            elif choice == "15":
-                if is_matter_controller():
-                    setup_matter_devices()
-                else:
-                    print("❌ Matter device setup only supported on machines designated as Matter controllers")
             elif choice == "0":
                 test_connections()
             else:
