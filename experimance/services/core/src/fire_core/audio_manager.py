@@ -100,12 +100,18 @@ class AudioTrack:
             else:
                 initial_volume = self.volume
             
-            # Build mpv command with IPC support
+            # Build mpv command for background audio playbook (no window/interface)
             cmd = [
-                '/usr/bin/mpv',        # Use full path to regular package mpv
-                '--no-video',          # Audio only
+                'mpv',                 # Use mpv from PATH
+                '--no-config',         # Don't load user config files
+                '--no-video',          # Audio only, no video processing
                 '--no-terminal',       # No interactive terminal
-                '--really-quiet',      # Suppress output
+                '--really-quiet',      # Suppress all output
+                '--no-input-default-bindings',  # Disable keyboard shortcuts
+                '--no-osc',            # No on-screen controller
+                '--no-osd-bar',        # No on-screen display bar
+                '--keep-open=no',      # Exit when playback finishes
+                '--force-window=no',   # Don't create any window
                 '--volume={}'.format(int(initial_volume * 100)),
                 '--audio-channels=stereo',  # Force stereo output for mono compatibility
                 f'--input-ipc-server={self.ipc_socket_path}',  # Enable IPC
@@ -118,11 +124,13 @@ class AudioTrack:
             #cmd.append("media/audio/audio-test-5a-43676.mp3")
             
             logger.info(f"Starting audio track {self.track_id}: {self.uri} (initial volume: {initial_volume})")
+            logger.debug(f"mpv command: {' '.join(cmd)}")
 
+            # Capture stderr for debugging when things go wrong
             self.process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, #DEVNULL
+                stderr=subprocess.PIPE, #DEVNULL
                 preexec_fn=None  # Allow signal handling
             )
             
@@ -131,7 +139,24 @@ class AudioTrack:
             
             # Check if it started successfully
             if self.process.poll() is not None:
-                logger.error(f"Audio track {self.track_id} failed to start (exit code: {self.process.returncode})")
+                # Capture any error output for debugging
+                try:
+                    stdout, stderr = self.process.communicate(timeout=1.0)
+                    stdout_str = stdout.decode('utf-8', errors='ignore').strip() if stdout else ""
+                    stderr_str = stderr.decode('utf-8', errors='ignore').strip() if stderr else ""
+                    
+                    error_msg = f"Audio track {self.track_id} failed to start (exit code: {self.process.returncode})"
+                    if stderr_str:
+                        error_msg += f"\nSTDERR: {stderr_str}"
+                    if stdout_str:
+                        error_msg += f"\nSTDOUT: {stdout_str}"
+                    
+                    logger.error(error_msg)
+                except subprocess.TimeoutExpired:
+                    logger.error(f"Audio track {self.track_id} failed to start (exit code: {self.process.returncode}) - no error output captured")
+                except Exception as e:
+                    logger.error(f"Audio track {self.track_id} failed to start (exit code: {self.process.returncode}) - error capturing output: {e}")
+                
                 return False
             
             # Connect to IPC socket
@@ -486,7 +511,6 @@ class AudioManager:
         """Clean up all resources."""
         logger.info("Cleaning up AudioManager")
         await self.stop_all()
-
 
 # Test function for development
 async def test_audio_manager():
