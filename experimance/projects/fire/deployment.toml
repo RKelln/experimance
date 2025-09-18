@@ -24,6 +24,11 @@ platform = "linux"
 mode = "prod"  # or "dev"
 user = "experimance"  # System user for this machine
 ssh_hostname = "ia360"  # Optional: override for different network contexts
+matter_controller = true  # This machine controls Matter devices
+matter_devices = [
+    { id = 110, type = "smart_plug", name = "Installation Power", description = "TP-Link Kasa smart plug for installation power control" }
+]
+matter_setup = { install_chip_tool = true, auto_pair = true }
 
 # macOS machine  
 [machines.macos]
@@ -33,6 +38,7 @@ platform = "macos"
 mode = "prod"  # or "dev"
 user = "fireproject"  # System user for this machine
 ssh_hostname = "iamini"  # Optional: override for different network contexts
+matter_controller = false  # This machine does not control Matter devices
 
 # Optional: Define service-specific overrides
 [services]
