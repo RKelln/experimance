@@ -57,7 +57,7 @@ audio_device_retry_attempts = 3      # Retry attempts for device initialization
 audio_device_retry_delay = 1.0       # Delay between retries (seconds)
 
 # Timeout
-#idle_timeout_secs = 300
+idle_timeout_secs = 60
 #idle_timeout_re_engagement_message
 #idle_timeout_goodbye_message
 
@@ -134,7 +134,8 @@ hysteresis_present = 3                  # Quick to detect presence (YOLO11n is r
 hysteresis_absent = 8                   # Slower to lose presence (12 seconds at 1.5s intervals)
 
 # Person detection method configuration
-detection_method = "yolo11"             # Detection method: "hog", "yolo11", or "hybrid"
+detection_method = "hybrid"             # Detection method: "yolo11" (YOLO-only) or "hybrid" (camera AI trigger + YOLO)
+                                        # Note: Camera AI-only is not supported as it only provides alarm events, not presence state
 
 # YOLO11 detection settings nested properly
 [reolink.yolo]

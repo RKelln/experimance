@@ -189,7 +189,22 @@ class FireAgentService(AgentServiceBase):
                 # Auto-discover camera if host not specified or use known IP as hint
                 known_ip = self.config.reolink.host if self.config.reolink.host else None
                 
-                logger.info(f"Initializing hybrid Reolink detector with discovery (known_ip: {known_ip})")
+                # Determine detection mode based on configuration
+                detection_method = self.config.reolink.detection_method
+                
+                # Camera AI-only mode is not supported because it only gives alarm events, not presence state
+                # Valid modes: "yolo11" (YOLO-only) or "hybrid" (camera AI trigger + YOLO precision)
+                if detection_method == "yolo11":
+                    hybrid_mode = False
+                    logger.info(f"Initializing YOLO-only Reolink detector (known_ip: {known_ip})")
+                elif detection_method == "hybrid":
+                    hybrid_mode = True
+                    logger.info(f"Initializing hybrid Reolink detector with camera AI + YOLO (known_ip: {known_ip})")
+                else:
+                    # Default to hybrid mode when YOLO config is available
+                    # Camera AI alone cannot provide presence state, only alarm events
+                    hybrid_mode = True
+                    logger.warning(f"Detection method '{detection_method}' not supported - defaulting to hybrid mode")
                 
                 # Create YOLO configuration from reolink config  
                 yolo_config = {}
@@ -198,7 +213,8 @@ class FireAgentService(AgentServiceBase):
                     yolo_config = self.config.reolink.yolo.dict()
                     logger.debug(f"YOLO config loaded from reolink.yolo: confidence_threshold={self.config.reolink.yolo.confidence_threshold}")
                 else:
-                    logger.warning(f"No YOLO config found in reolink config, using defaults")
+                    logger.error(f"Detection method '{detection_method}' requires YOLO config, but none found!")
+                    raise ValueError("YOLO configuration is required for Reolink detector")
                 
                 self.audience_detector = await ReolinkDetector.create_with_discovery(
                     known_ip=known_ip,
@@ -209,9 +225,9 @@ class FireAgentService(AgentServiceBase):
                     timeout=self.config.reolink.timeout,
                     hysteresis_present=self.config.reolink.hysteresis_present,
                     hysteresis_absent=self.config.reolink.hysteresis_absent,
-                    hybrid_mode=True,  # Enable hybrid camera AI + YOLO detection
+                    hybrid_mode=hybrid_mode,  # Respect configured detection method
                     yolo_config=yolo_config,
-                    yolo_absent_threshold=5,  # YOLO absent readings before switching back to monitoring
+                    yolo_absent_threshold=self.config.reolink.hysteresis_absent,  # Match hysteresis for consistent state
                     yolo_check_interval=1.0   # Seconds between YOLO checks in active mode
                 )
 
@@ -558,3 +574,13 @@ class FireAgentService(AgentServiceBase):
             logger.info(f"OSC service status signal sent: {address} = {value} ({'running' if running else 'stopped'})")
         except Exception as e:
             logger.error(f"Failed to send OSC service status signal: {e}")
+
+    async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
+        """Handle conversation ended event - reset detector state after base cleanup."""
+        # Call the base implementation first
+        await super()._on_conversation_ended(event, data)
+        
+        # Reset speaking states to ensure audience detection can resume immediately
+        self.agent_speaking = False
+        self.user_speaking = False
+        logger.info("🔇 Reset speaking states after conversation ended")

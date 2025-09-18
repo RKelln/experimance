@@ -601,9 +601,18 @@ class PipecatBackend(AgentBackend):
         try:
             # First try to get real-time presence from the audience detector (most accurate)
             if hasattr(self.agent_service, 'audience_detector') and self.agent_service.audience_detector:
-                # Get fresh presence detection - don't rely on cached current_presence
+                
+                # For backend validation, we want immediate presence, not stable state
+                # Use immediate check if available to bypass hysteresis
+                # FIXME: need hystersis, single checks not stable enough
+                # if hasattr(self.agent_service.audience_detector, 'check_immediate_presence'):
+                #     presence = await self.agent_service.audience_detector.check_immediate_presence()
+                #     logger.info(f"🎯 Backend presence check - immediate result: {presence}")
+                #     return bool(presence)
+                
+                # Fallback to regular detection if immediate check not available
                 presence = await self.agent_service.audience_detector.check_audience_present()
-                logger.info(f"Presence check - real-time detector result: {presence}")
+                logger.debug(f"🔍 Backend presence check - full detector result: {presence}")
                 return bool(presence)
                 
             # Fallback to cached presence if no detector available
@@ -631,7 +640,7 @@ class PipecatBackend(AgentBackend):
         This handler is called when the pipeline has been idle for the configured timeout.
         It checks if someone is still present before deciding whether to end the conversation.
         """
-        logger.info("Pipeline idle timeout detected, checking presence...")
+        logger.info(f"Pipeline idle timeout detected after {self.pipecat_config.idle_timeout_secs}s, checking presence...")
         
         try:
             # Check if presence detection is enabled and someone is still present
@@ -645,12 +654,14 @@ class PipecatBackend(AgentBackend):
                 logger.info("Presence check disabled, treating as if someone is present")
             
             if is_present:
-                logger.info("Someone is still present, keeping conversation active despite idle timeout")
+                logger.info(f"Someone is still present after {self.pipecat_config.idle_timeout_secs}s idle, sending re-engagement")
                 
                 # Send a gentle prompt to re-engage without being intrusive
                 try:
+                    re_engagement_msg = getattr(self.pipecat_config, 'idle_timeout_re_engagement_message', 
+                                              "I'm still here if you'd like to continue our conversation.")
                     await self.send_message(
-                        self.pipecat_config.idle_timeout_re_engagement_message, 
+                        re_engagement_msg, 
                         speaker="system", 
                         say_tts=True
                     )
@@ -1317,6 +1328,7 @@ class PipecatBackend(AgentBackend):
 
         # Create task and runner
         logger.info("Creating pipeline task...")
+        logger.info(f"🕒 Setting pipeline idle timeout to {self.pipecat_config.idle_timeout_secs} seconds")
         self.task = PipelineTask(
             self.pipeline,
             params=PipelineParams(allow_interruptions=True),
