@@ -270,10 +270,34 @@ class PipecatEventProcessor(FrameProcessor):
         self._idle_timeout_triggered = False  # Track if EndFrame was triggered by idle timeout
         self._end_frame_processed = False  # Prevent double EndFrame processing
         
+        # Speech timing tracking for accurate idle timeout
+        self._last_user_speech_time = None
+        self._last_bot_speech_time = None
+        
         # Audio output monitoring
         self._last_tts_start_time = None
         self._expected_audio_output = False
         self._audio_output_timeout = 10.0  # seconds to wait for audio after TTS starts
+        
+    def get_seconds_since_last_speech(self) -> float:
+        """Get the number of seconds since the last speech activity (user or bot).
+        
+        Returns:
+            Seconds since last speech, or float('inf') if no speech has occurred yet
+        """
+        current_time = time.monotonic()
+        last_speech_times = []
+        
+        if self._last_user_speech_time is not None:
+            last_speech_times.append(self._last_user_speech_time)
+        if self._last_bot_speech_time is not None:
+            last_speech_times.append(self._last_bot_speech_time)
+            
+        if not last_speech_times:
+            return float('inf')  # No speech activity yet
+            
+        most_recent_speech = max(last_speech_times)
+        return current_time - most_recent_speech
         
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Process frames and extract conversation events."""
@@ -290,12 +314,15 @@ class PipecatEventProcessor(FrameProcessor):
         # Handle user speaking state
         if isinstance(frame, UserStartedSpeakingFrame):
             self.user_speaking = True
+            self._last_user_speech_time = time.monotonic()
             await self.backend.emit_event(AgentBackendEvent.SPEECH_DETECTED, {
                 "speaker": "user"
             })
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self.user_speaking = False
+            # Update last speech time when user stops speaking (more accurate for idle tracking)
+            self._last_user_speech_time = time.monotonic()
             await self.backend.emit_event(AgentBackendEvent.SPEECH_ENDED, {
                 "speaker": "user"
             })
@@ -303,7 +330,8 @@ class PipecatEventProcessor(FrameProcessor):
         # Handle bot speaking state  
         elif isinstance(frame, TTSStartedFrame):
             self.bot_speaking = True
-            self._last_tts_start_time = time.time()
+            self._last_tts_start_time = time.monotonic()
+            self._last_bot_speech_time = time.monotonic()
             self._expected_audio_output = True
             await self.backend.emit_event(AgentBackendEvent.BOT_STARTED_SPEAKING, {
                 "speaker": "agent"
@@ -314,13 +342,15 @@ class PipecatEventProcessor(FrameProcessor):
             if self.bot_speaking:  # Only emit if we haven't already handled this
                 self.bot_speaking = False
                 self._expected_audio_output = False
+                # Update last speech time when bot stops speaking (more accurate for idle tracking)
+                self._last_bot_speech_time = time.monotonic()
                 await self.backend.emit_event(AgentBackendEvent.BOT_STOPPED_SPEAKING, {
                     "speaker": "agent"
                 })
             
             # Check if we had a reasonable TTS duration (audio output health check)
             if self._last_tts_start_time:
-                tts_duration = time.time() - self._last_tts_start_time
+                tts_duration = time.monotonic() - self._last_tts_start_time
                 if tts_duration < 0.1:  # Very short TTS might indicate audio output issues
                     logger.warning(f"Very short TTS duration: {tts_duration:.2f}s - possible audio output issue")
                     await self.backend.emit_event(AgentBackendEvent.AUDIO_OUTPUT_ISSUE_DETECTED, {
@@ -638,12 +668,36 @@ class PipecatBackend(AgentBackend):
         """Handle pipeline idle timeout with presence awareness.
         
         This handler is called when the pipeline has been idle for the configured timeout.
-        It checks if someone is still present before deciding whether to end the conversation.
+        It checks actual speech timing first, then presence before deciding what to do.
         """
-        logger.info(f"Pipeline idle timeout detected after {self.pipecat_config.idle_timeout_secs}s, checking presence...")
+        pipeline_timeout = self.pipecat_config.idle_timeout_secs
+        logger.info(f"Pipeline idle timeout detected after {pipeline_timeout}s")
         
         try:
-            # Check if presence detection is enabled and someone is still present
+            # First check: Is someone currently speaking? (Immediate protection)
+            if self.event_processor:
+                if self.event_processor.user_speaking:
+                    logger.info("🎤 User is currently speaking - ignoring idle timeout")
+                    return
+                    
+                if self.event_processor.bot_speaking:
+                    logger.info("🤖 Bot is currently speaking - ignoring idle timeout")
+                    return
+                
+                # Second check: Has enough time actually passed since last speech?
+                seconds_since_speech = self.event_processor.get_seconds_since_last_speech()
+                logger.info(f"⏱️ Time since last speech activity: {seconds_since_speech:.1f}s (timeout: {pipeline_timeout}s)")
+                
+                # If someone was speaking recently, this might be a false timeout
+                if seconds_since_speech < pipeline_timeout:
+                    logger.info(f"🗣️ Recent speech activity detected ({seconds_since_speech:.1f}s < {pipeline_timeout}s) - ignoring idle timeout")
+                    return
+                    
+                logger.info(f"✅ Confirmed idle timeout - no speech for {seconds_since_speech:.1f}s")
+            else:
+                logger.warning("No event processor available for speech timing check")
+            
+            # Second check: Is someone still present?
             presence_check_enabled = self.pipecat_config.idle_timeout_presence_check
             is_present = True  # Default to present if presence checking is disabled
             
@@ -654,7 +708,7 @@ class PipecatBackend(AgentBackend):
                 logger.info("Presence check disabled, treating as if someone is present")
             
             if is_present:
-                logger.info(f"Someone is still present after {self.pipecat_config.idle_timeout_secs}s idle, sending re-engagement")
+                logger.info(f"Someone is still present after {pipeline_timeout}s idle, sending re-engagement")
                 
                 # Send a gentle prompt to re-engage without being intrusive
                 try:
