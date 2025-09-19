@@ -799,6 +799,26 @@ def uninstall_systemd_service():
     
     return True
 
+def wait_for_user():
+    """Wait for user to press any key before continuing"""
+    try:
+        input("\nPress ENTER to continue...")
+    except KeyboardInterrupt:
+        pass
+
+def get_screen_size():
+    """Get terminal screen size, return (rows, cols)"""
+    try:
+        import shutil
+        cols, rows = shutil.get_terminal_size()
+        return rows, cols
+    except:
+        return 24, 80  # Default fallback
+
+def clear_screen():
+    """Clear the terminal screen"""
+    os.system('clear' if os.name == 'posix' else 'cls')
+
 def main_menu():
     """Display main menu and handle user input"""
     # Show current running mode
@@ -811,10 +831,11 @@ def main_menu():
         mode_info = f"Running remotely from {hostname} - controlling both machines via SSH"
     
     # Test connections on startup
+    clear_screen()
+    print("🔧 Testing connections...")
     if not test_connections():
         print("\n❌ Connection issues detected. Please check SSH setup.")
-        print("\nRequired SSH config:")
-        print("~/.ssh/config should contain:")
+        print("\nRequired SSH config in ~/.ssh/config:")
         print("  Host iamini")
         print("    HostName FireProjects-Mac-mini.local")
         print("    User fireproject")
@@ -824,66 +845,92 @@ def main_menu():
             print("    HostName ia360.local")
             print("    User experimance")
             print("    IdentityFile ~/.ssh/ia_fire")
+        wait_for_user()
         return
     
     while True:
-        print("\n" + "="*70)
-        print("🔥 IA GALLERY Feed the Fires PROJECT CONTROL")
-        print(f"Mode: {mode_info}")
-        print("Managing: ia360 (Ubuntu) + iamini (macOS)")
-        print("="*70)
-        print("SERVICES:")
-        print("1. Start services")
-        print("2. Stop services") 
-        print("3. Restart services")
-        print("4. Show status")
-        print("")
-        print("SMART CONTROL (Services + Power):")
-        print("5. Smart startup (Power on → Services)")
-        print("6. Smart shutdown (Services → Power off)")
-        print("")
-        print("POWER:")
-        print("7. Turn installation power ON")
-        print("8. Turn installation power OFF")
-        print("")
-        print("SCHEDULER:")
-        print("9. Start auto-scheduler (gallery hours)")
-        print("10. Stop auto-scheduler")
-        print("11. Scheduler status")
-        print("")
-        print("TOOLS:")
-        print("0. Test network connections")
-        print("-"*70)
+        clear_screen()
+        rows, cols = get_screen_size()
+        max_length = cols-2
+        # Ultra-compact menu for very small screens (less than 15 rows)
+        if rows < 15:
+            print("🔥 IA GALLERY Control")
+            print("1=Start 2=Stop 3=Restart 4=Status")
+            print("5=SmartStart 6=SmartStop 7=PwrON 8=PwrOFF")
+            print("9=SchedStart 10=SchedStop 11=SchedStat 0=Test")
+            print("-" * max_length)
+        else:
+            
+            # Regular compact menu
+            print("🔥 IA GALLERY - Feed the Fires Control")
+            print(f"Mode: {mode_info[:max_length]}")  # Adjust to screen width
+            print("="*max_length)
+            print("SERVICES: 1=Start  2=Stop  3=Restart     4=Status")
+            print()
+            print("SERV+PWR: 5=Start All      6=Stop All")
+            print()
+            print("POWER:    7=Power ON       8=Power OFF")
+            print()
+            print("SCHEDULE: 9=Start Auto     10=Stop Auto  11=Status")
+            print()
+            print("TEST:     0=Test Connections")
+            print("-"*max_length)
         
         try:
-            choice = input("Enter choice: ").strip()
+            choice = input("Choice: ").strip()
+            print()  # Add space before output
             
             if choice == "1":
+                clear_screen()
                 start_services()
+                wait_for_user()
             elif choice == "2":
+                clear_screen()
                 stop_services()
+                wait_for_user()
             elif choice == "3":
+                clear_screen()
                 restart_services()
+                wait_for_user()
             elif choice == "4":
+                clear_screen()
                 show_status()
+                wait_for_user()
             elif choice == "5":
+                clear_screen()
                 smart_startup()
+                wait_for_user()
             elif choice == "6":
+                clear_screen()
                 smart_shutdown()
+                wait_for_user()
             elif choice == "7":
+                clear_screen()
                 matter_control("on")
+                wait_for_user()
             elif choice == "8":
+                clear_screen()
                 matter_control("off")
+                wait_for_user()
             elif choice == "9":
+                clear_screen()
                 matter_scheduler_control("start")
+                wait_for_user()
             elif choice == "10":
+                clear_screen()
                 matter_scheduler_control("stop")
+                wait_for_user()
             elif choice == "11":
+                clear_screen()
                 matter_scheduler_control("status")
+                wait_for_user()
             elif choice == "0":
+                clear_screen()
                 test_connections()
+                wait_for_user()
             else:
                 print("Invalid choice. Please try again.")
+                wait_for_user()
                 
         except KeyboardInterrupt:
             print("\n\nGoodbye! 👋")
@@ -1060,39 +1107,20 @@ if __name__ == "__main__":
             sys.exit(1)
     
     # Normal interactive mode
-    print("🎭 IA Gallery Control Script Starting...")
+    clear_screen()
+    print("🎭 IA Gallery Control Starting...")
     
-    # Show current running mode
+    # Show current running mode (compact)
     hostname = get_current_hostname()
     if is_running_on_ia360():
-        print(f"📍 Running locally on ia360 ({hostname})")
-        print("💡 Tip: Use --install to set up auto-start kiosk mode")
+        print(f"📍 Local: ia360 ({hostname[:10]}...)")
     else:
-        print(f"📍 Running remotely from {hostname}")
-        print("🌐 Remote admin mode - controlling both machines via SSH")
-        print("💡 Note: --install/--uninstall only work when running locally on ia360")
+        print(f"📍 Remote from: {hostname[:15]}...")
     
-    print("\n📋 Gallery Setup:")
-    for machine_name, config in MACHINES.items():
-        services_str = ", ".join(config["services"])
-        platform = config["platform"].title()
-        
-        matter_info = ""
-        if config.get("has_matter", False):
-            matter_devices = config.get("matter_devices", [])
-            if matter_devices:
-                device_names = [f"ID {dev['id']}" for dev in matter_devices]
-                matter_info = f" + Matter devices ({', '.join(device_names)})"
-            else:
-                matter_info = " + Matter controller"
-        
-        print(f"• {platform} ({machine_name}): {services_str}{matter_info}")
+    # Quick setup summary
+    service_count = sum(len(config["services"]) for config in MACHINES.values())
+    matter_count = sum(len(config.get("matter_devices", [])) for config in MACHINES.values())
+    print(f"📋 {service_count} services, {matter_count} Matter devices, SSH ready")
     
-    print("• SSH shortcuts: " + ", ".join(config["ssh_host"] for config in MACHINES.values()))
-    
-    # Show auto-scheduler info if Matter devices are configured
-    matter_machine = next((config for config in MACHINES.values() if config.get("has_matter")), None)
-    if matter_machine:
-        print("• Auto-scheduler: Gallery hours Tues-Sat (10:55 AM - 6:05/9:05 PM)")
-    
+    wait_for_user()
     main_menu()
