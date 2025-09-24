@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SERVICE_NAME="matter-scheduler"
 USERNAME="${USER}"
 
@@ -107,7 +107,7 @@ test_config() {
     log "Testing configuration..."
     cd "$PROJECT_ROOT"
     
-    if uv run python scripts/matter_scheduler.py "$config_file" --test; then
+    if uv run python infra/scripts/matter_scheduler.py "$config_file" --test; then
         success "Configuration test passed"
     else
         error "Configuration test failed"

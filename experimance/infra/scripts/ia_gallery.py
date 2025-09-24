@@ -66,7 +66,7 @@ def load_env_file(env_path):
 
 # Configuration
 SCRIPT_DIR = "infra/scripts"
-MATTER_SCHEDULER_SCRIPT = "scripts/matter_scheduler.sh"
+MATTER_SCHEDULER_SCRIPT = "infra/scripts/matter_scheduler.sh"
 
 def get_current_hostname():
     """Get current hostname to determine if we're running locally or remotely"""
@@ -620,6 +620,30 @@ def setup_matter_devices():
     matter_setup = config.get("matter_setup", {})
     matter_devices = config.get("matter_devices", [])
     
+    # Check for required environment variables before proceeding
+    if matter_setup.get("auto_pair", False) and matter_devices:
+        missing_vars = []
+        
+        # Check for device-specific pairing codes
+        for device in matter_devices:
+            if device.get("type") == "smart_plug":
+                if not env_vars.get("MATTER_SMART_PLUG_PAIRING_CODE"):
+                    missing_vars.append("MATTER_SMART_PLUG_PAIRING_CODE")
+            # Add other device types as needed
+        
+        if missing_vars:
+            print("❌ Missing required environment variables for Matter device pairing:")
+            for var in missing_vars:
+                print(f"   • {var}")
+            print(f"\nPlease add these variables to: {env_file}")
+            print("\nExample:")
+            print("   MATTER_SMART_PLUG_PAIRING_CODE=12345-67890-12345")
+            print("   MATTER_BYPASS_ATTESTATION=true")
+            print("\nSkipping auto-pairing. You can:")
+            print("1. Add the environment variables and run: python3 ia_gallery.py --setup-matter")
+            print("2. Manually pair devices using chip-tool")
+            return False
+    
     # Install chip-tool if configured
     if matter_setup.get("install_chip_tool", False):
         if not install_chip_tool():
@@ -631,14 +655,14 @@ def setup_matter_devices():
             device_id = device["id"]
             device_name = device.get("name", f"Device {device_id}")
             
-            # Get pairing code from environment
+            # Get pairing code from environment (already validated above)
             pairing_code = None
             if device.get("type") == "smart_plug":
                 pairing_code = env_vars.get("MATTER_SMART_PLUG_PAIRING_CODE")
             
+            # This shouldn't happen since we validated above, but just in case
             if not pairing_code:
-                print(f"⚠️  No pairing code found for {device_name} - skipping auto-pairing")
-                print(f"   Add MATTER_SMART_PLUG_PAIRING_CODE to {env_file}")
+                print(f"⚠️  Unexpected: No pairing code for {device_name}")
                 continue
             
             bypass_attestation = env_vars.get("MATTER_BYPASS_ATTESTATION", "true").lower() == "true"

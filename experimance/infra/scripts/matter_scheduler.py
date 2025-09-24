@@ -20,7 +20,7 @@ import tomllib
 from croniter import croniter
 
 # Add experimance_common to path for logging
-sys.path.append(str(Path(__file__).parent.parent / "libs" / "common" / "src"))
+sys.path.append(str(Path(__file__).parent.parent.parent / "libs" / "common" / "src"))
 
 try:
     from experimance_common.logger import setup_logging

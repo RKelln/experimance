@@ -7,12 +7,12 @@ Wants=network.target
 Type=simple
 User=%i
 Group=%i
-WorkingDirectory=/home/%i/Documents/Projects/Art/experimance/installation/software/experimance
+WorkingDirectory=/opt/experimance
 Environment=PATH=/home/%i/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=PYTHONPATH=/home/%i/Documents/Projects/Art/experimance/installation/software/experimance/libs/common/src
+Environment=PYTHONPATH=/opt/experimance/libs/common/src
 
 # Use uv to run the scheduler
-ExecStart=/home/%i/.local/bin/uv run python scripts/matter_scheduler.py projects/fire/matter_schedule.toml
+ExecStart=/home/%i/.local/bin/uv run python infra/scripts/matter_scheduler.py projects/fire/matter_schedule.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
@@ -27,7 +27,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/home/%i/Documents/Projects/Art/experimance/installation/software/experimance/logs
+ReadWritePaths=/opt/experimance/logs
 
 [Install]
 WantedBy=default.target
