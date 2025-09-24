@@ -738,6 +738,28 @@ install_systemd_files_linux() {
                     # Replace the ExecStart line with the correct module name
                     sed -i "s|ExecStart=/home/experimance/.local/bin/uv run -m experimance_${service_type}|ExecStart=/home/experimance/.local/bin/uv run -m ${module_name}|g" "$temp_file"
                     
+                    # Get the actual UID of the runtime user and customize XDG_RUNTIME_DIR
+                    if [[ "$RUNTIME_USER" == "experimance" ]] && id "$RUNTIME_USER" &>/dev/null; then
+                        local runtime_uid=$(id -u "$RUNTIME_USER")
+                        log "Customizing systemd service for user $RUNTIME_USER (UID: $runtime_uid)"
+                        
+                        # Replace XDG_RUNTIME_DIR with correct UID
+                        sed -i "s|Environment=XDG_RUNTIME_DIR=/run/user/1000|Environment=XDG_RUNTIME_DIR=/run/user/${runtime_uid}|g" "$temp_file"
+                        
+                        # Update PULSE_SERVER if present (for audio service)
+                        sed -i "s|Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native|Environment=PULSE_SERVER=unix:/run/user/${runtime_uid}/pulse/native|g" "$temp_file"
+                        
+                        # Also update ReadWritePaths to include the correct runtime directory
+                        sed -i "s|ReadWritePaths=\([^[:space:]]*\) /run/user/1000|ReadWritePaths=\1 /run/user/${runtime_uid}|g" "$temp_file"
+                        
+                        # Ensure audio group is included in SupplementaryGroups (this may already be correct in template)
+                        if grep -q "SupplementaryGroups=.*video" "$temp_file" && ! grep -q "SupplementaryGroups=.*audio" "$temp_file"; then
+                            sed -i "s|SupplementaryGroups=video|SupplementaryGroups=audio video|g" "$temp_file"
+                        fi
+                    else
+                        warn "Could not determine UID for user $RUNTIME_USER, using template defaults"
+                    fi
+                    
                     # Copy the customized file to systemd directory with correct name
                     if cp "$temp_file" "$SYSTEMD_DIR/$basename_file"; then
                         log "✓ Copied $basename_file (module: $module_name)"

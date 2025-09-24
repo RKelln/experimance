@@ -44,10 +44,10 @@ NoNewPrivileges=true
 PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /var/log/experimance /home/experimance/.local /home/experimance/.pyenv /tmp
+ReadWritePaths=/opt/experimance /var/cache/experimance /var/log/experimance /home/experimance/.local /home/experimance/.pyenv /tmp /run/user/1000
 
-# Audio and video access for camera
-SupplementaryGroups=video
+# Audio and video access
+SupplementaryGroups=audio video
 
 [Install]
 WantedBy=experimance@.target

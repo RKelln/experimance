@@ -100,7 +100,7 @@ class AudioTrack:
             else:
                 initial_volume = self.volume
             
-            # Build mpv command for background audio playbook (no window/interface)
+            # Build mpv command for background audio playback (no window/interface)
             cmd = [
                 'mpv',                 # Use mpv from PATH
                 '--no-config',         # Don't load user config files
