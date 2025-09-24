@@ -224,7 +224,9 @@ class AudioGeneratorManager:
 
     async def stop_all(self):
         """Stop all managed generators."""
-        for strategy, generator in self._generators.items():
+        # Create a copy of items to avoid "dictionary changed size during iteration" error
+        generators_to_stop = list(self._generators.items())
+        for strategy, generator in generators_to_stop:
             try:
                 await generator.stop()
                 logger.debug(f"Stopped audio generator: {strategy}")
