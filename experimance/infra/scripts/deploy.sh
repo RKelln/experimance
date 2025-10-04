@@ -2,10 +2,10 @@
 
 # Experimance Deployment Script
 # Usage: ./deploy.sh [project_name] [action] [mode]
-# Actions: install, start, stop, restart, status, services, diagnose
+# Actions: install, uninstall, remove, start, stop, restart, status, services, diagnose
 # USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test
 # Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show
-# Modes: dev, prod (only for install action)
+# Modes: dev, prod (only for install/uninstall/remove actions)
 #
 # SYSTEMD TEMPLATE SYSTEM:
 # This script uses systemd template services for multi-project support:
@@ -1381,6 +1381,254 @@ remove_schedule() {
     log "✓ Schedule removed successfully"
 }
 
+# Uninstall: Disable systemd services and remove auto-start configuration
+# This keeps directories, data, and dependencies intact - just prevents auto-start
+uninstall_services() {
+    log "Starting uninstall (disabling auto-start)..."
+    
+    # 1. Stop and disable all services
+    if [[ "$USE_SYSTEMD" == true ]]; then
+        log "Stopping and disabling systemd services..."
+        
+        # Get services for the project (may fail if already uninstalled)
+        if [[ ${#SERVICES[@]} -eq 0 ]]; then
+            log "Attempting to detect services for cleanup..."
+            readarray -t SERVICES < <(get_project_services "$PROJECT" 2>/dev/null || echo "")
+        fi
+        
+        # Stop services first
+        if [[ ${#SERVICES[@]} -gt 0 ]]; then
+            for service in "${SERVICES[@]}"; do
+                local full_service_name="$service.service"
+                if systemctl is-active "$full_service_name" &>/dev/null; then
+                    log "Stopping $full_service_name..."
+                    systemctl stop "$full_service_name" || warn "Failed to stop $full_service_name"
+                fi
+            done
+        fi
+        
+        # Stop target
+        local target="experimance@${PROJECT}.target"
+        if systemctl is-active "$target" &>/dev/null; then
+            log "Stopping target $target..."
+            systemctl stop "$target" || warn "Failed to stop target $target"
+        fi
+        
+        # Disable services
+        if [[ ${#SERVICES[@]} -gt 0 ]]; then
+            for service in "${SERVICES[@]}"; do
+                local full_service_name="$service.service"
+                if systemctl is-enabled "$full_service_name" &>/dev/null; then
+                    log "Disabling $full_service_name..."
+                    systemctl disable "$full_service_name" || warn "Failed to disable $full_service_name"
+                fi
+            done
+        fi
+        
+        # Disable target
+        if systemctl is-enabled "$target" &>/dev/null; then
+            log "Disabling target $target..."
+            systemctl disable "$target" || warn "Failed to disable target $target"
+        fi
+        
+        # Stop and disable reset-on-input service
+        if systemctl list-unit-files | grep -q "reset-on-input.service"; then
+            log "Stopping and disabling reset-on-input service..."
+            systemctl stop reset-on-input.service 2>/dev/null || true
+            systemctl disable reset-on-input.service 2>/dev/null || true
+        fi
+        
+        log "✓ All services stopped and disabled"
+    fi
+    
+    # 2. Remove scheduled cron jobs
+    log "Removing scheduled cron jobs..."
+    remove_schedule
+    
+    # 3. Summary
+    log "Uninstall complete!"
+    echo ""
+    log "Services have been disabled and will NOT auto-start on boot."
+    log "What was changed:"
+    log "  ✓ Systemd services stopped and disabled"
+    log "  ✓ Reset-on-input service stopped and disabled"
+    log "  ✓ Scheduled cron jobs removed"
+    
+    echo ""
+    log "What was KEPT (still available for manual use):"
+    log "  • Systemd service template files in /etc/systemd/system/"
+    log "  • All directories (/var/cache/experimance, /var/log/experimance, $REPO_DIR)"
+    log "  • User account and group memberships"
+    log "  • Python/uv installations"
+    log "  • Project files and data"
+    
+    echo ""
+    log "To manually start services:"
+    log "  sudo ./deploy.sh $PROJECT start"
+    echo ""
+    log "To completely remove systemd files, directories, and user, use:"
+    log "  sudo ./deploy.sh $PROJECT remove"
+    echo ""
+}
+
+# Remove: Complete cleanup including files, directories, and configurations
+remove_services() {
+    log "Starting complete removal..."
+    
+    # First run uninstall to stop and disable services
+    log "Step 1: Disabling services..."
+    uninstall_services
+    
+    echo ""
+    log "Step 2: Removing systemd files and directories..."
+    
+    # Remove systemd files
+    if [[ "$USE_SYSTEMD" == true ]]; then
+        log "Removing systemd template files..."
+        
+        # Get services if not already populated
+        if [[ ${#SERVICES[@]} -eq 0 ]]; then
+            readarray -t SERVICES < <(get_project_services "$PROJECT" 2>/dev/null || echo "")
+        fi
+        
+        # Remove service template files
+        if [[ ${#SERVICES[@]} -gt 0 ]]; then
+            for service in "${SERVICES[@]}"; do
+                local service_type="${service%@*}"
+                local template_file="$SYSTEMD_DIR/${service_type}@.service"
+                if [[ -f "$template_file" ]]; then
+                    log "Removing $template_file"
+                    rm -f "$template_file" || warn "Failed to remove $template_file"
+                fi
+            done
+        fi
+        
+        # Remove target template file
+        if [[ -f "$SYSTEMD_DIR/experimance@.target" ]]; then
+            log "Removing $SYSTEMD_DIR/experimance@.target"
+            rm -f "$SYSTEMD_DIR/experimance@.target" || warn "Failed to remove target template"
+        fi
+        
+        # Remove reset-on-input service file
+        if [[ -f "$SYSTEMD_DIR/reset-on-input.service" ]]; then
+            log "Removing $SYSTEMD_DIR/reset-on-input.service"
+            rm -f "$SYSTEMD_DIR/reset-on-input.service" || warn "Failed to remove reset-on-input service"
+        fi
+        
+        # Reload systemd to recognize removed files
+        log "Reloading systemd daemon..."
+        systemctl daemon-reload
+    fi
+    
+    # Remove symlinks
+    local symlink_target="/opt/experimance"
+    if [[ -L "$symlink_target" ]]; then
+        log "Removing symlink $symlink_target"
+        rm -f "$symlink_target" || warn "Failed to remove symlink $symlink_target"
+    elif [[ -e "$symlink_target" ]]; then
+        warn "Warning: $symlink_target exists but is not a symlink, not removing"
+    fi
+    
+    # Remove production directories (only if in production mode)
+    if [[ "$MODE" == "prod" ]]; then
+        echo ""
+        read -p "Remove production directories (/var/cache/experimance, /var/log/experimance)? (y/N): " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            log "Removing production directories..."
+            
+            if [[ -d "/var/cache/experimance" ]]; then
+                log "Removing /var/cache/experimance"
+                rm -rf "/var/cache/experimance" || warn "Failed to remove /var/cache/experimance"
+            fi
+            
+            if [[ -d "/var/log/experimance" ]]; then
+                log "Removing /var/log/experimance"
+                rm -rf "/var/log/experimance" || warn "Failed to remove /var/log/experimance"
+            fi
+        else
+            log "Keeping production directories"
+        fi
+    else
+        log "Development mode: Keeping local directories in $REPO_DIR"
+    fi
+    
+    # Remove user from groups (ask first)
+    if id "$RUNTIME_USER" &>/dev/null; then
+        echo ""
+        log "Current user group memberships:"
+        id -nG "$RUNTIME_USER" | tr ' ' '\n' | grep -E '^(video|audio|input)$' | sed 's/^/  - /' || echo "  (none of video, audio, input)"
+        echo ""
+        read -p "Remove user $RUNTIME_USER from video, audio, and input groups? (y/N): " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            log "Removing user from groups..."
+            
+            # Remove from video group
+            if id -nG "$RUNTIME_USER" | grep -qw "video"; then
+                log "Removing $RUNTIME_USER from video group"
+                if [[ "$MODE" == "prod" ]]; then
+                    gpasswd -d "$RUNTIME_USER" video || warn "Failed to remove from video group"
+                else
+                    sudo gpasswd -d "$RUNTIME_USER" video || warn "Failed to remove from video group"
+                fi
+            fi
+            
+            # Remove from audio group
+            if id -nG "$RUNTIME_USER" | grep -qw "audio"; then
+                log "Removing $RUNTIME_USER from audio group"
+                if [[ "$MODE" == "prod" ]]; then
+                    gpasswd -d "$RUNTIME_USER" audio || warn "Failed to remove from audio group"
+                else
+                    sudo gpasswd -d "$RUNTIME_USER" audio || warn "Failed to remove from audio group"
+                fi
+            fi
+            
+            # Remove from input group
+            if id -nG "$RUNTIME_USER" | grep -qw "input"; then
+                log "Removing $RUNTIME_USER from input group"
+                if [[ "$MODE" == "prod" ]]; then
+                    gpasswd -d "$RUNTIME_USER" input || warn "Failed to remove from input group"
+                else
+                    sudo gpasswd -d "$RUNTIME_USER" input || warn "Failed to remove from input group"
+                fi
+            fi
+            
+            log "Group removal complete. Changes will take effect on next login."
+        else
+            log "Keeping user group memberships unchanged"
+        fi
+    fi
+    
+    # Summary
+    log "Complete removal finished!"
+    echo ""
+    log "What was removed:"
+    log "  ✓ Systemd service template files"
+    log "  ✓ Service instances (disabled and removed)"
+    log "  ✓ Reset-on-input service"
+    log "  ✓ Symlink /opt/experimance"
+    log "  ✓ Scheduled cron jobs"
+    
+    echo ""
+    log "What was NOT removed (manual cleanup if desired):"
+    log "  • The experimance user account (use 'sudo userdel -r experimance' if needed)"
+    log "  • Python/uv installations"
+    log "  • System packages"
+    log "  • Project files in $REPO_DIR"
+    if [[ "$MODE" != "prod" ]] || [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log "  • Local directories ($REPO_DIR/cache, $REPO_DIR/logs, $REPO_DIR/media, etc.)"
+    fi
+    
+    echo ""
+    log "To completely remove the experimance user and home directory:"
+    log "  sudo userdel -r experimance"
+    echo ""
+    log "To remove Python environments (if using pyenv):"
+    log "  pyenv uninstall <version>  # for each Python version"
+    echo ""
+}
+
 # Preset schedules for common use cases
 setup_gallery_schedule() {
     # Gallery hours: Monday-Friday, 12PM-5PM
@@ -1753,8 +2001,78 @@ main() {
                 echo "  3. Target was never enabled"
             fi
             ;;
+        uninstall)
+            # Uninstall: Disable auto-start but keep everything else
+            log "Uninstalling (disabling auto-start for) Experimance project: $PROJECT"
+            
+            # Check prerequisites
+            if [[ "$MODE" == "prod" || "$USE_SYSTEMD" == true ]]; then
+                check_root
+            fi
+            check_user
+            
+            # Warn user about what will be changed
+            echo ""
+            warn "This will DISABLE auto-start by:"
+            warn "  • Stopping and disabling all systemd services"
+            warn "  • Removing scheduled cron jobs"
+            echo ""
+            warn "This will KEEP (available for manual use):"
+            warn "  • All systemd template files"
+            warn "  • All directories and data"
+            warn "  • User account and group memberships"
+            warn "  • Python/uv installations"
+            warn "  • Project files"
+            echo ""
+            
+            # Confirmation prompt
+            read -p "Disable auto-start? (y/N): " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log "Uninstall cancelled"
+                exit 0
+            fi
+            
+            uninstall_services
+            ;;
+        remove)
+            # Remove: Complete cleanup
+            log "Removing Experimance project: $PROJECT"
+            
+            # Check prerequisites
+            if [[ "$MODE" == "prod" || "$USE_SYSTEMD" == true ]]; then
+                check_root
+            fi
+            check_user
+            
+            # Warn user about what will be removed
+            echo ""
+            warn "This will REMOVE:"
+            warn "  • All systemd service template files"
+            warn "  • Symlink /opt/experimance"
+            warn "  • Production directories (with confirmation)"
+            warn "  • User group memberships (with confirmation)"
+            warn "  • Scheduled cron jobs"
+            echo ""
+            warn "This will NOT remove:"
+            warn "  • The experimance user account"
+            warn "  • Python/uv installations"
+            warn "  • System packages"
+            warn "  • Project files in $REPO_DIR"
+            echo ""
+            
+            # Confirmation prompt
+            read -p "Proceed with complete removal? (y/N): " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log "Removal cancelled"
+                exit 0
+            fi
+            
+            remove_services
+            ;;
         *)
-            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
+            error "Unknown action: $ACTION. Use: install, uninstall, remove, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
             ;;
     esac
 }
@@ -1763,10 +2081,10 @@ main() {
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 [project_name] [action] [mode]"
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
-    echo "Actions: install, start, stop, restart, status, services, diagnose"
+    echo "Actions: install, uninstall, remove, start, stop, restart, status, services, diagnose"
     echo "USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test"
     echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-shutdown, schedule-remove, schedule-show"
-    echo "Modes: dev, prod (only for install action)"
+    echo "Modes: dev, prod (only for install/uninstall/remove actions)"
     echo ""
     echo "Install Modes:"
     echo "  dev     # Development setup - no systemd, local directories, current user"
@@ -1776,6 +2094,8 @@ if [[ $# -eq 0 ]]; then
     echo "  $0 experimance services              # Show services (no sudo needed)"
     echo "  $0 experimance install dev           # Development setup (no sudo needed)"
     echo "  sudo $0 experimance install prod     # Production setup (sudo needed)"
+    echo "  sudo $0 experimance uninstall        # Disable auto-start (keeps data/files)"
+    echo "  sudo $0 experimance remove           # Complete removal (asks before deleting)"
     echo "  sudo $0 experimance start            # Start services in production (sudo needed)"
     echo ""
     echo "Schedule Examples:"
@@ -1794,6 +2114,8 @@ if [[ $# -eq 0 ]]; then
     echo "  sudo useradd -m -s /bin/bash experimance    # Create experimance user (first time)"
     echo "  sudo $0 experimance install prod            # Install for production"
     echo "  sudo $0 experimance start                   # Start all services"
+    echo "  sudo $0 experimance uninstall               # Disable auto-start (keeps everything)"
+    echo "  sudo $0 experimance remove                  # Complete removal (interactive)"
     echo ""
     echo "Reset on Input (Gallery Staff):"
     echo "  sudo $0 experimance reset-on-input-start   # Start input listener"
