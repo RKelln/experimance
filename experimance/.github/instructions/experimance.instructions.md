@@ -130,6 +130,9 @@ experimance/
 - Always handle cleanup in services (note base classes handle most cleanup)
 - Use proper logging with configurable log levels
 - Services should implement a standard interface with `start()`, `stop()`, and `run()` methods
+- When doing file locations, use pathlib and look into `constants_base.py` for path constants relevant to your service/media type
+  - Use `resolve_path()` to convert from file locations specified in config to absolute paths
+- Use `logger = logging.getLogger(__name__)` for module-level logging
 
 ## Dependency Management
 
