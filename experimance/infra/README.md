@@ -97,8 +97,10 @@ infra/
 │   └── update.sh              # Safe update script with rollback capability
 ├── docs/                      # Documentation
 │   ├── deployment.md          # Detailed deployment instructions
+│   ├── installation_teardown.md # How to disable or remove installations
 │   ├── emergency-reference.md # Quick emergency procedures
-│   └── emergency-ssh-recovery.md # SSH lockout recovery guide
+│   ├── emergency-ssh-recovery.md # SSH lockout recovery guide
+│   └── new_machine_setup.md   # Fresh machine setup procedures
 │   
 scripts/                       # Development tools
 └── dev                        # Development service runner

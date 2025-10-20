@@ -277,6 +277,22 @@ plutil ~/Library/LaunchAgents/com.experimance.touchdesigner.*.plist
 ps aux | grep -i touchdesigner
 ```
 
+## Installation Teardown
+
+For completely disabling or removing services (ending an installation):
+
+```bash
+# Disable services without deleting files (pause installation)
+./infra/scripts/launchd_scheduler.sh fire manual-unload
+
+# Complete removal (delete LaunchAgent files)
+./infra/scripts/launchd_scheduler.sh fire manual-unload
+rm ~/Library/LaunchAgents/com.experimance.fire.*.plist
+rm ~/Library/LaunchAgents/com.experimance.touchdesigner.fire.*.plist
+```
+
+For detailed teardown procedures, see [Installation Teardown Guide](../docs/installation_teardown.md).
+
 ## Comparison with Linux cron
 
 | Feature | Linux cron | macOS cron | macOS LaunchAgent Scheduler |
