@@ -2,7 +2,7 @@
 
 # Experimance Deployment Script
 # Usage: ./deploy.sh [project_name] [action] [mode] [--hostname=<hostname>]
-# Actions: install, start, stop, restart, status, services, diagnose
+# Actions: install, start, stop, uninstall, restart, status, services, diagnose
 # USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test
 # Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show
 # Modes: dev, prod (only for install action)
@@ -2268,6 +2268,185 @@ stop_services_macos() {
     log "Stop operation complete"
 }
 
+uninstall_services() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        warn "Development mode: No system services to uninstall"
+        return
+    fi
+    
+    case "$PLATFORM" in
+        linux)
+            uninstall_services_linux
+            ;;
+        macos)
+            uninstall_services_macos
+            ;;
+        *)
+            error "Service management not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+uninstall_services_linux() {
+    log "Uninstalling services for project $PROJECT..."
+    log "This will stop all services, disable them, and remove scheduling"
+    log "Files and logs will be preserved"
+    
+    # First, stop all services
+    log "Stopping all services..."
+    stop_services_linux
+    
+    # Disable the target
+    local target="experimance@${PROJECT}.target"
+    if systemctl list-units --all "$target" | grep -q "$target"; then
+        log "Disabling target $target..."
+        if systemctl disable "$target" 2>/dev/null; then
+            log "✓ Disabled $target"
+        else
+            warn "Could not disable $target (may not be enabled)"
+        fi
+    else
+        warn "Target $target not found"
+    fi
+    
+    # Disable individual services
+    log "Disabling individual services..."
+    for service in "${SERVICES[@]}"; do
+        local full_service_name="$service.service"
+        local service_type="${service%@*}"
+        
+        if systemctl is-enabled "$full_service_name" &>/dev/null; then
+            log "Disabling $full_service_name..."
+            if systemctl disable "$full_service_name" 2>/dev/null; then
+                log "✓ Disabled $full_service_name"
+            else
+                warn "Could not disable $full_service_name"
+            fi
+        else
+            log "$full_service_name is not enabled (skipping)"
+        fi
+    done
+    
+    # Disable reset-on-input service if it exists
+    if systemctl list-unit-files | grep -q "reset-on-input.service"; then
+        log "Disabling reset-on-input service..."
+        if systemctl is-enabled reset-on-input.service &>/dev/null; then
+            systemctl disable reset-on-input.service 2>/dev/null || true
+            log "✓ Disabled reset-on-input.service"
+        fi
+        if systemctl is-active reset-on-input.service &>/dev/null; then
+            systemctl stop reset-on-input.service 2>/dev/null || true
+            log "✓ Stopped reset-on-input.service"
+        fi
+    fi
+    
+    # Remove cron schedules
+    log "Removing cron schedules..."
+    if crontab -l 2>/dev/null | grep -q "experimance"; then
+        local temp_cron=$(mktemp)
+        crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
+        crontab "$temp_cron" 2>/dev/null || true
+        rm "$temp_cron"
+        log "✓ Removed experimance cron schedules"
+    else
+        log "No cron schedules found"
+    fi
+    
+    # Reload systemd daemon
+    log "Reloading systemd daemon..."
+    systemctl daemon-reload
+    
+    log ""
+    log "✓ Uninstall complete for project $PROJECT"
+    log ""
+    log "Services have been:"
+    log "  • Stopped"
+    log "  • Disabled (will not auto-start on boot)"
+    log "  • Removed from cron schedules"
+    log ""
+    log "The following have been PRESERVED:"
+    log "  • All files in $REPO_DIR"
+    log "  • All logs in $REPO_DIR/logs and /var/log/experimance"
+    log "  • All cache data"
+    log "  • Python environment and dependencies"
+    log "  • Systemd template files (can be used by other projects)"
+    log ""
+    log "To completely remove systemd template files (affects all projects):"
+    log "  sudo rm /etc/systemd/system/*@.service"
+    log "  sudo rm /etc/systemd/system/experimance@.target"
+    log "  sudo systemctl daemon-reload"
+    log ""
+    log "To restart services later:"
+    log "  sudo ./infra/scripts/deploy.sh $PROJECT start"
+}
+
+uninstall_services_macos() {
+    log "Uninstalling services for project $PROJECT on macOS..."
+    log "This will stop all services, unload them, and remove scheduling"
+    log "Files and logs will be preserved"
+    
+    # First, stop all services
+    log "Stopping all services..."
+    stop_services_macos
+    
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    # Unload individual services
+    log "Unloading individual services..."
+    for service in "${SERVICES[@]}"; do
+        local service_with_project="${service%@*}"
+        local project="${service#*@}"
+        local service_type="$service_with_project"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
+        
+        if [[ -f "$plist_file" ]]; then
+            if launchctl list | grep -q "$service_label"; then
+                log "Unloading $service_label..."
+                launchctl unload "$plist_file" 2>/dev/null || true
+                log "✓ Unloaded $service_label"
+            else
+                log "$service_label is not loaded (skipping)"
+            fi
+        else
+            log "Plist file not found: $plist_file (skipping)"
+        fi
+    done
+    
+    # Remove cron schedules
+    log "Removing cron schedules..."
+    if crontab -l 2>/dev/null | grep -q "experimance"; then
+        local temp_cron=$(mktemp)
+        crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
+        crontab "$temp_cron" 2>/dev/null || true
+        rm "$temp_cron"
+        log "✓ Removed experimance cron schedules"
+    else
+        log "No cron schedules found"
+    fi
+    
+    log ""
+    log "✓ Uninstall complete for project $PROJECT"
+    log ""
+    log "Services have been:"
+    log "  • Stopped"
+    log "  • Unloaded (will not auto-start on login)"
+    log "  • Removed from cron schedules"
+    log ""
+    log "The following have been PRESERVED:"
+    log "  • All files in $REPO_DIR"
+    log "  • All logs in $HOME/Library/Logs/experimance"
+    log "  • All cache data"
+    log "  • Python environment and dependencies"
+    log "  • LaunchAgent plist files (can be reloaded later)"
+    log ""
+    log "To completely remove LaunchAgent plist files:"
+    log "  rm $launchd_dir/com.experimance.${PROJECT}.*.plist"
+    log ""
+    log "To restart services later:"
+    log "  ./infra/scripts/deploy.sh $PROJECT start"
+}
+
 restart_services() {
     log "Restarting services for project $PROJECT..."
     stop_services
@@ -2666,6 +2845,11 @@ main() {
             check_project
             stop_services
             ;;
+        uninstall)
+            check_root
+            check_project
+            uninstall_services
+            ;;
         restart)
             check_root
             check_project
@@ -3023,7 +3207,7 @@ main() {
             fi
             ;;
         *)
-            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
+            error "Unknown action: $ACTION. Use: install, start, stop, uninstall, restart, status, services, diagnose, schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
             ;;
     esac
 }
@@ -3032,7 +3216,7 @@ main() {
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 [project_name] [action] [mode]"
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
-    echo "Actions: install, start, stop, restart, status, services, diagnose"
+    echo "Actions: install, start, stop, uninstall, restart, status, services, diagnose"
     echo "USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test"
     echo "Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
     echo "Modes: dev, prod (only for install action)"
@@ -3046,6 +3230,8 @@ if [[ $# -eq 0 ]]; then
     echo "  $0 experimance install dev           # Development setup (no sudo needed)"
     echo "  sudo $0 experimance install prod     # Production setup (sudo needed)"
     echo "  sudo $0 experimance start            # Start services in production (sudo needed)"
+    echo "  sudo $0 experimance stop             # Stop services (sudo needed)"
+    echo "  sudo $0 experimance uninstall        # Stop, disable services, remove schedules (preserves files)"
     echo ""
     echo "Schedule Examples:"
     echo "  $0 experimance schedule-gallery      # Tuesday-Saturday, 11AM-6PM (simple startup, preserve VastAI)"
