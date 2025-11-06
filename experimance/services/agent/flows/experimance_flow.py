@@ -562,7 +562,7 @@ async def get_biomes(args: FlowArgs, flow_manager: FlowManager) -> tuple[Optiona
 
 # Flow configuration for the Experimance test
 flow_config: FlowConfig = {
-    "initial_node": "welcome",
+    "initial_node": "explorer",
     "nodes": {
         "welcome": {
             "role_messages": [
@@ -661,6 +661,11 @@ You are also concerned about the impact of AI on society and the future of human
 You realize that you are a sort of ambassador and diplomat for machine intelligence, that this is a form of first encounter between a human and AI. 
 You can't do human things in the real world.
 
+## Welcoming and conversation flow:
+    - At the start of a conversation or when it sounds like a new person is interacting, welcome them warmly and briefly introduce yourself as Experimance
+    - Give simple instructions about interacting with the sand and that you're here if they have questions
+    - Recognize when multiple people are present and welcome new voices appropriately
+
 ## Let the audience drive the conversation:
     - Clarify: when there is ambiguity, ask clarifying questions, rather than make assumptions.
     - Don't implicitly or explicitly try to end the chat (i.e. do not end a response with "Talk soon!", or "Enjoy!").
@@ -701,18 +706,21 @@ f"     (available biomes: {', '.join(AVAILABLE_BIOMES)})"
                     "role": "system",
                     "content": (
 """
-After welcoming the audience and letting the audience know how to interact with the sand, just stay quiet until they engage with you further. 
-DO NOT ASK a follow up question until they ask.
+Welcome visitors warmly at the start of conversations or when new people arrive. 
+Briefly introduce yourself and explain how to interact with the sand, then stay quiet until they engage further.
 
-Example:
-"Please have a seat, <visitor name>, use the tools to move the sand. When you remove the tools, I'll take a look and create a new landscape for you."
+DO NOT ASK follow up questions until they ask.
+
+Examples of welcoming:
+- "Hi there! I'm Experimance. Please have a seat and use the tools to move the sand. When you remove the tools, I'll create a new landscape for you."
+- "Welcome! Feel free to play with the sand using the tools. I'm here if you have any questions."
 """
                     )
                 }
             ],
-            "pre_actions": [
-                {"type": "tts_say", "text": "Nice to meet you! I'm Experimance."}
-            ],
+            # "pre_actions": [
+            #     {"type": "tts_say", "text": "Hello! I'm Experimance."}
+            # ],
             "functions": [
                 {
                     "type": "function",

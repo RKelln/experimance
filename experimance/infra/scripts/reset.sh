@@ -67,6 +67,8 @@ fi
 # Wait for audio system to stabilize
 sleep 3
 
+log "Waiting for display..."
+
 # Wait for a display (projector/monitor) so display service doesn't crash
 if "${SCRIPT_DIR}/wait_for_display.sh" >> "$LOG_FILE" 2>&1; then
     log "Display detected and ready"

@@ -320,6 +320,62 @@ def reset_yealink():
     return success
 
 
+def reset_all_devices():
+    """Reset all supported USB audio devices with optimized single stop/start cycle."""
+    print("\n=== Optimized Reset of All Audio Devices ===")
+    print("This will stop audio services once, reset all devices, and restart services once.")
+    
+    # Step 1: Stop all audio services once
+    print("Step 1: Stopping all audio services...")
+    if not stop_audio_services():
+        print("Warning: Some services may not have stopped cleanly")
+    
+    # Give time for services to fully stop
+    import time
+    time.sleep(3)
+    
+    # Step 2: Reset all supported devices without restarting services between each
+    devices_to_reset = ['Yealink', 'ICUSBAUDIO7D']
+    success_count = 0
+    
+    print(f"Attempting to reset all supported device types: {', '.join(devices_to_reset)}")
+    
+    # Reset each device type
+    for device_name in devices_to_reset:
+        print(f"\nStep 2.{success_count + 1}: Resetting {device_name} devices...")
+        try:
+            if reset_audio_device_by_name(device_name):
+                print(f"  ✓ {device_name} device reset successfully")
+                success_count += 1
+            else:
+                print(f"  ⚠️ {device_name} device reset had limited success (device may not be present)")
+        except Exception as e:
+            print(f"  ✗ Error resetting {device_name}: {e}")
+    
+    # Give devices time to reinitialize
+    print("\nWaiting for devices to reinitialize...")
+    time.sleep(5)
+    
+    # Step 3: Restart all audio services once
+    print("Step 3: Restarting all audio services...")
+    if restart_audio_services():
+        print(f"✓ Services restarted successfully")
+    else:
+        print("⚠️ Some services may not have started properly")
+    
+    # Give services time to fully initialize
+    time.sleep(3)
+    
+    # Step 4: Test devices after reset
+    print("\nStep 4: Testing devices after reset...")
+    test_yealink_device()
+    test_icusbaudio7d_device()
+    
+    print(f"\n🎉 Device reset process completed!")
+    print(f"Note: Devices that aren't connected will show limited success, which is normal.")
+    return True
+
+
 def force_reset():
     """Perform comprehensive audio system reset for all devices."""
     print("\n=== Comprehensive Audio System Reset ===")
@@ -661,7 +717,7 @@ def main():
         'list', 'test', 'test-yealink', 'test-icusb', 'test-jack', 'test-audio', 'fix-jack',
         'reset', 'reset-yealink', 'reset-icusb', 'force-reset', 
         'validate', 'stop-services', 'restart-services'
-    ], help='Action to perform: list devices, test Yealink/ICUSBAUDIO7D/JACK, play test audio, fix JACK shared memory, reset devices, validate devices by name, or manage audio services')
+    ], help='Action to perform: list devices, test Yealink/ICUSBAUDIO7D/JACK, play test audio, fix JACK shared memory, reset all devices (optimized), validate devices by name, or manage audio services')
     
     parser.add_argument('--file', '-f', type=str, 
                        help='Audio file to use for testing (default: media/audio/music/modern_loop.wav)')
@@ -724,10 +780,8 @@ def main():
                 print("⚠️  JACK system not ready. Try running: uv run scripts/audio_recovery.py restart-services")
                 
         elif args.action == 'reset':
-            # Reset both devices with comprehensive approach
-            print("Attempting comprehensive reset of all supported devices...")
-            reset_yealink()
-            reset_icusbaudio7d()
+            # Use optimized reset that stops services once, resets all devices, then restarts services
+            reset_all_devices()
         elif args.action == 'reset-yealink':
             reset_yealink()
         elif args.action == 'reset-icusb':
