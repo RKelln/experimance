@@ -1,0 +1,45 @@
+# Fire Project Multi-Machine Deployment Configuration
+#
+# This file defines which services run on which machines for distributed deployment.
+# The deploy.sh script will read this file to determine which services to install/manage
+# on the current machine.
+
+# See scripts/infra/deployment_utils.py and project_utils.py for code to help work with this file.
+
+[deployment]
+# Project-wide deployment settings
+project = "experimance"
+version = "1.0.0"
+
+[machines]
+# Define which services run on which machines
+# Key = machine identifier (hostname or alias)
+# Value = list of service types to run on that machine
+
+# Ubuntu Linux machine
+[machines.ubuntu]
+hostname = "gallery"  # Must match actual hostname or be overrideable
+services = ["core", "image_server", "display", "agent", "health"]
+platform = "linux"
+mode = "prod"  # or "dev"
+user = "experimance"  # System user for this machine
+ssh_hostname = "gallery"  # Optional: override for different network contexts
+
+# Optional: Define service-specific overrides
+[services]
+# Service-specific configuration that might differ in distributed mode
+
+[services.core]
+module_name = "experimance_core"  # Override default experimance_core
+
+[services.agent]
+module_name = "experimance_agent"  # Override default experimance_agent
+
+[services.image_server]
+module_name = "image_server"  # Uses default
+
+[services.display]
+module_name = "experimance_display"  # Uses default
+
+[services.health]
+module_name = "experimance_health"  # Uses default

@@ -194,6 +194,114 @@ ls -la /var/cache/experimance/health/
 cat /var/cache/experimance/health/experimance-core.json
 ```
 
+## macOS Production Setup with LaunchAgents (45 minutes)
+
+For macOS deployments, use LaunchAgents instead of systemd services. This is particularly useful for multi-machine deployments where some services run on macOS (like audio/agent services) while others run on Linux.
+
+### Prerequisites
+
+- **macOS 12.0+** (Monterey or later)
+- **Auto-login enabled** for the user account that will run services
+- **Homebrew** installed (for uv installation)
+- **Git repository** cloned to your workspace
+
+### Step 1: Install Dependencies (10 minutes)
+
+```bash
+# Install uv via Homebrew (preferred for LaunchAgents)
+brew install uv
+
+# Clone repository (if not already done)
+git clone https://github.com/RKelln/experimance.git
+cd experimance
+
+# Verify uv installation
+which uv  # Should show /opt/homebrew/bin/uv
+```
+
+### Step 2: Configure Project (10 minutes)
+
+```bash
+# Copy and customize project configuration
+cp projects/fire/.env.example projects/fire/.env
+
+# Edit the .env file with your API keys
+nano projects/fire/.env
+
+# Test that services work manually
+PROJECT_ENV=fire uv run -m fire_agent      # Should start successfully
+PROJECT_ENV=fire uv run -m experimance_health  # Should start successfully
+```
+
+### Step 3: Install LaunchAgents (15 minutes)
+
+```bash
+# Install LaunchAgent plist files
+./infra/scripts/deploy.sh fire install dev
+
+# This creates LaunchAgent files in ~/Library/LaunchAgents/
+# Example: com.experimance.fire.agent.plist, com.experimance.fire.health.plist
+```
+
+### Step 4: Grant Full Disk Access (5 minutes)
+
+**Important**: LaunchAgents require Full Disk Access to run uv.
+
+1. Open **System Settings → Privacy & Security → Full Disk Access**
+2. Click the **+** button to add applications  
+3. Navigate to `/opt/homebrew/bin/uv` (or the path shown by `which uv`)
+4. Toggle the switch to grant Full Disk Access
+5. **Note**: This is required only once for the uv binary
+
+### Step 5: Start Services (5 minutes)
+
+```bash
+# Start LaunchAgent services
+./infra/scripts/deploy.sh fire start
+
+# Check status
+./infra/scripts/deploy.sh fire status
+
+# Or check manually
+launchctl list | grep experimance
+```
+
+### macOS-Specific Management
+
+#### LaunchAgent Commands
+```bash
+# Manual LaunchAgent management
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.experimance.fire.agent.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.experimance.fire.agent.plist
+
+# Check running services
+launchctl list | grep experimance
+```
+
+#### View Logs
+```bash
+# LaunchAgent logs are written to project logs/ directory
+tail -f logs/fire_agent_launchd_error.log
+tail -f logs/fire_health_launchd_error.log
+
+# Check for recent LaunchAgent activity
+ls -la logs/*launchd*.log
+```
+
+#### Troubleshooting
+
+**"Operation not permitted" errors**: 
+- Ensure uv has Full Disk Access (System Settings → Privacy & Security → Full Disk Access)
+- Check that auto-login is enabled for better LaunchAgent reliability
+
+**Services not starting at boot**:
+- Verify auto-login is enabled (System Settings → Users & Groups → Login Options)
+- Check LaunchAgent plist files exist in `~/Library/LaunchAgents/`
+
+**Configuration errors**:
+- Make sure to use the correct module name (e.g., `fire_agent` not `experimance_agent`)
+- Verify PROJECT_ENV is set correctly in the plist files
+
 ## Daily Operations
 
 ### Check Status

@@ -1,10 +1,15 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, Type, List
+from typing import Dict, Any, Optional, Union, Type, List, Set, cast
 
-from image_server.generators.generator import ImageGenerator
+from image_server.generators.generator import ImageGenerator, GeneratorCapabilities
 from image_server.generators.config import BaseGeneratorConfig
+from image_server.generators.subprocess_wrapper import (
+    SubprocessImageGenerator, 
+    SubprocessGeneratorConfig,
+    create_subprocess_wrapper
+)
 from image_server.generators.mock.mock_generator import MockImageGenerator
 from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 from image_server.generators.fal.fal_comfy_generator import FalComfyGenerator
@@ -14,7 +19,7 @@ from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2I
 from image_server.generators.vastai.vastai_generator import VastAIGenerator
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 #from image_server.generators.openai.openai_generator import OpenAIGenerator, OpenAIGeneratorConfig
-#from image_server.generators.local.sdxl_generator import LocalSDXLGenerator, SDXLGeneratorConfig
+from image_server.generators.local.sdxl_generator import LocalSDXLGenerator, LocalSDXLConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +46,14 @@ GENERATORS = {
     #     "config_class": OpenAIGeneratorConfig,
     #     "generator_class": OpenAIGenerator
     # },
-    # "local": {
-    #     "config_class": SDXLGeneratorConfig,
-    #     "generator_class": LocalSDXLGenerator
-    # },
+    "local_sdxl": {
+        "config_class": LocalSDXLConfig,
+        "generator_class": LocalSDXLGenerator
+    },
+    "subprocess": {
+        "config_class": SubprocessGeneratorConfig,
+        "generator_class": SubprocessImageGenerator
+    },
 }
 
 def create_generator_from_config(
@@ -71,6 +80,25 @@ def create_generator_from_config(
         available_strategies = list(GENERATORS.keys())
         raise ValueError(f"Unsupported generator strategy: {strategy}. "
                          f"Available strategies: {available_strategies}")
+    
+    # Special handling for subprocess wrapper
+    if strategy == "subprocess":
+        # Extract subprocess-specific config
+        wrapped_class = config_data.get("wrapped_generator_class")
+        wrapped_config = config_data.get("wrapped_generator_config", {})
+        cuda_devices = config_data.get("cuda_visible_devices")
+        
+        if not wrapped_class:
+            raise ValueError("subprocess strategy requires 'wrapped_generator_class'")
+        
+        return cast(ImageGenerator, create_subprocess_wrapper(
+            generator_class=wrapped_class,
+            generator_config=wrapped_config,
+            generator_type="image",
+            cuda_visible_devices=cuda_devices,
+            timeout_seconds=config_data.get("timeout_seconds", timeout),
+            max_retries=config_data.get("max_retries", 3)
+        ))
     
     # Create a base configuration with common settings
     base_config = {
@@ -225,12 +253,51 @@ class GeneratorManager:
         Returns:
             True if the strategy supports image-to-image generation
         """
+        return self.supports_capability(strategy, GeneratorCapabilities.IMAGE_TO_IMAGE)
+    
+    def supports_capability(self, strategy: Optional[str], capability: str) -> bool:
+        """Check if the specified strategy supports a specific capability.
+        
+        Args:
+            strategy: Generator strategy to check (defaults to default_strategy)
+            capability: Capability to check (use GeneratorCapabilities constants)
+            
+        Returns:
+            True if the strategy supports the capability
+        """
         if strategy is None:
             strategy = self.default_strategy
         
-        # Check if strategy name indicates image-to-image capability
-        i2i_strategies = {"falai_lightning_i2i"}
-        return strategy in i2i_strategies
+        # Get the generator class and check its capabilities
+        if strategy not in GENERATORS:
+            logger.warning(f"Unknown strategy '{strategy}', assuming no support for '{capability}'")
+            return False
+        
+        generator_class = GENERATORS[strategy]["generator_class"]
+        return generator_class.supports_capability_class(capability)
+    
+    def get_supported_capabilities(self, strategy: Optional[str] = None) -> Set[str]:
+        """Get all capabilities supported by the specified strategy.
+        
+        Args:
+            strategy: Generator strategy to check (defaults to default_strategy)
+            
+        Returns:
+            Set of supported capability strings
+        """
+        if strategy is None:
+            strategy = self.default_strategy
+        
+        if strategy not in GENERATORS:
+            logger.warning(f"Unknown strategy '{strategy}', returning empty capabilities")
+            return set()
+        
+        generator_class = GENERATORS[strategy]["generator_class"]
+        
+        # Get capabilities from the class
+        capabilities = set(getattr(generator_class, 'supported_capabilities', set()))
+        
+        return capabilities
     
     def get_available_strategies(self) -> List[str]:
         """Get list of available generator strategies.
@@ -244,7 +311,9 @@ class GeneratorManager:
         """Stop all cached generators and clear the cache."""
         logger.info("Stopping all generators...")
         
-        for strategy, generator in self._generators.items():
+        # Create a copy of items to avoid dictionary changed size during iteration
+        generators_to_stop = list(self._generators.items())
+        for strategy, generator in generators_to_stop:
             try:
                 if hasattr(generator, 'stop'):
                     await generator.stop()

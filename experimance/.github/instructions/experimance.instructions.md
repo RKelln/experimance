@@ -72,8 +72,8 @@ experimance/
 │   │   ├─ constants.py     # constants specific to Experimance project
 │   │   ├─ schemas.py       # schemas specific to Experimance project
 │   │   └─ schemas.pyi      # type stubs for schemas
-│   └─ sohkepayin/          # overrides for Sohkepayin project
-│       └─ ...              # configuration files for Sohkepayin project  
+│   └─ fire/                # overrides for Feed the Fires project
+│       └─ ...              # configuration files for Feed the Fires project
 ```
 
 # Primary Development Guidelines
@@ -109,6 +109,10 @@ experimance/
 - **Development**: Use `scripts/dev <service>` or `scripts/dev all` for coordinated development (auto-cleanup, logging). For isolated testing use `uv run -m` directly.
 - **Environment Variables**: Override any config setting with `EXPERIMANCE_<SECTION>_<KEY>=value` (e.g., `EXPERIMANCE_ZMQ_BASE_PORT=6000`)
 
+## Other tools (MCP, etc)
+
+- use context7 to look up API and other library docs
+
 ## ZeroMQ Communication
 
 - Services communicate via ZMQ PUB/SUB and PUSH/PULL patterns
@@ -126,6 +130,9 @@ experimance/
 - Always handle cleanup in services (note base classes handle most cleanup)
 - Use proper logging with configurable log levels
 - Services should implement a standard interface with `start()`, `stop()`, and `run()` methods
+- When doing file locations, use pathlib and look into `constants_base.py` for path constants relevant to your service/media type
+  - Use `resolve_path()` to convert from file locations specified in config to absolute paths
+- Use `logger = logging.getLogger(__name__)` for module-level logging
 
 ## Dependency Management
 

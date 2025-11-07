@@ -15,8 +15,8 @@ import cv2
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from experimance_agent.config import VisionConfig
-from experimance_agent.vision import WebcamManager, CPUAudienceDetector
+from agent.config import VisionConfig
+from agent.vision import WebcamManager, CPUAudienceDetector
 
 
 async def test_cpu_detection():

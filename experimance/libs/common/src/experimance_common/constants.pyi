@@ -66,6 +66,7 @@ from experimance_common.constants_base import (
     MOCK_IMAGES_DIR,
     AUDIO_DIR,
     VIDEOS_DIR,
+    GENERATED_AUDIO_DIR,
 
     # Media directories (absolute paths)
     MEDIA_DIR_ABS,
@@ -74,6 +75,7 @@ from experimance_common.constants_base import (
     MOCK_IMAGES_DIR_ABS,
     AUDIO_DIR_ABS,
     VIDEOS_DIR_ABS,
+    GENERATED_AUDIO_DIR_ABS,
 
     # Services directories
     SERVICES_DIR,
@@ -86,6 +88,7 @@ from experimance_common.constants_base import (
     # Other directories
     LOGS_DIR,
     DATA_DIR,
+    MODELS_DIR,
 )
 
 # PROJECT constant that's set dynamically
@@ -100,9 +103,9 @@ if TYPE_CHECKING:
         # For now, the experimance constants.py file is mostly empty,
         # but this allows for future project-specific constants
         pass
-    elif _PROJECT_ENV == "sohkepayin":
-        # Import sohkepayin-specific constants if they exist
-        # For now, the sohkepayin constants.py file is mostly empty,
+    elif _PROJECT_ENV == "fire":
+        # Import Feed the Fires-specific constants if they exist
+        # For now, the fire constants.py file is mostly empty,
         # but this allows for future project-specific constants
         pass
     else:
@@ -163,6 +166,7 @@ __all__: list[str] = [
     "MOCK_IMAGES_DIR",
     "AUDIO_DIR",
     "VIDEOS_DIR",
+    "GENERATED_AUDIO_DIR",
 
     # Media directories (absolute paths)
     "MEDIA_DIR_ABS",
@@ -171,6 +175,7 @@ __all__: list[str] = [
     "MOCK_IMAGES_DIR_ABS",
     "AUDIO_DIR_ABS",
     "VIDEOS_DIR_ABS",
+    "GENERATED_AUDIO_DIR_ABS",
 
     # Services directories
     "SERVICES_DIR",
@@ -183,4 +188,5 @@ __all__: list[str] = [
     # Other directories
     "LOGS_DIR",
     "DATA_DIR",
+    "MODELS_DIR",
 ]

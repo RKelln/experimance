@@ -8,13 +8,13 @@ This allows the display service to be run as a module:
 import sys
 
 from experimance_common.cli import create_simple_main
-from experimance_display.display_service import run_display_service
+from experimance_display.display_service import run_display_service, SERVICE_TYPE
 from experimance_display.config import DisplayServiceConfig, DEFAULT_CONFIG_PATH
 
 # Create the main function using the enhanced CLI utility with auto-generated args
 main = create_simple_main(
     service_name="Display",
-    description="Visual display and rendering service for the sand table",
+    service_type=SERVICE_TYPE,
     service_runner=run_display_service,
     default_config_path=DEFAULT_CONFIG_PATH,
     config_class=DisplayServiceConfig

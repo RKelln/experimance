@@ -6,9 +6,6 @@ service_name = "agent"
 # Agent backend selection - use pipecat for local audio processing
 agent_backend = "pipecat"
 
-# Tool calling capabilities
-tool_calling_enabled = true
-biome_suggestions_enabled = true
 speech_detection_enabled = true
 
 [backend_config.pipecat]

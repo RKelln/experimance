@@ -38,7 +38,7 @@ from experimance_common.logger import setup_logging, get_log_file_path
 
 SERVICE_TYPE = "audio"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 class AudioService(BaseService):
     """

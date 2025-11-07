@@ -1,5 +1,6 @@
 # Fresh install on new Ubuntu machine
 
+
 ## 1 | First boot in Windows 11 (10 min)
 
     BIOS / EC update
@@ -10,6 +11,7 @@
 
     Full Shutdown (⚠ not reboot).
     This releases the Bluetooth/Wi-Fi firmware so Linux sees the devices on next power-up.
+
 
 ## 2 | BIOS tweaks before installing Linux (3 min)
 
@@ -22,7 +24,8 @@
     
     Save & exit.
 
-## 3 | Install Linux (30 min)
+
+## 3 | Install Linux and the project (30 min)
 
     Boot from USB installer.
     *Install Ubuntu 24.04 LTS* (or later).
@@ -38,14 +41,18 @@
     # 1. system up to date
     sudo apt update && sudo apt full-upgrade
 
-    # 2. Vulkan & VA-API accel for video playback
-    sudo apt install mesa-vulkan-drivers mesa-va-drivers libvulkan1
+    # 2. Install git
+    sudo apt install git
 
-    # 3. Create the directory you want experimance to live
+    # 3. Set git credentials
+    git config --global user.name "Your Name"
+    git config --global user.email "your.email@example.com"
+
+    # 4. Create the directtory you want experimance to live
     mkdir -p Documents/art
     cd Documents/art
 
-    # clone the repo
+    # 5. clone the repo
     git clone https://github.com/RKelln/experimance.git
 
     cd experimance/experimance
@@ -56,6 +63,7 @@
     cd experimance
     ```
 
+
 ## 4 | Deploy the application
 
 You can deploy in dev (development) or prod (production) mode. See the [infrastructure README](../README.md) for details. In production services are controlled by systemctl, so in general you'll want to install in dev mode, you can install in production mode afterwards.
@@ -65,6 +73,11 @@ You can deploy in dev (development) or prod (production) mode. See the [infrastr
 ```
 
 This will install all dependencies, including `uv` (used for python package management and virtual environments) and `pyenv` (used for managing Python versions) and all Ubuntu packages needed.
+
+
+### 4.1 | .env file
+
+Create or copy a .env file for your project and put into `projects/<project_name>/`.
 
 
 ## 5 | SSH remote access (key only)
@@ -157,6 +170,7 @@ This will install all dependencies, including `uv` (used for python package mana
    xdg-user-dirs-update
    ```
 
+
 ## 7 | Lock down SSH
 
     In the project root:
@@ -165,6 +179,7 @@ This will install all dependencies, including `uv` (used for python package mana
     sudo infra/scripts/secure_ssh.sh test-keys
     sudo infra/scripts/secure_ssh.sh secure
     ```
+
 
 ## 8 | Run deploy
 

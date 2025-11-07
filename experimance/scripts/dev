@@ -3,14 +3,20 @@
 # Development script for Experimance
 # Usage: ./scripts/dev [service_name|all]
 # 
+# Supports multiple project environments via PROJECT_ENV:
+# - PROJECT_ENV=experimance (default): Uses experimance_core, experimance_agent
+# - PROJECT_ENV=fire: Uses fire_core, fire_agent
+# 
 # Automatically detects remote vs local development:
 # - Remote (SSH): Display service runs on installation monitors via desktop session
 # - Local: Display service uses normal X11/Wayland environment
 # 
 # Examples:
 #   ./scripts/dev display          # Start display service 
+#   ./scripts/dev image            # Start image_server service (shortcut)
 #   ./scripts/dev health core      # Start multiple services
 #   ./scripts/dev all              # Start all services
+#   PROJECT_ENV=fire ./scripts/dev all  # Start all services using fire project
 
 # Color definitions
 RED='\033[0;31m'
@@ -22,6 +28,10 @@ NC='\033[0m' # No Color
 # Get script directory and repo root
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Determine project environment (default to experimance)
+PROJECT_ENV="${PROJECT_ENV:-experimance}"
+echo -e "${BLUE}Using project environment: ${PROJECT_ENV}${NC}"
 
 # Simple warn function
 warn() {
@@ -46,7 +56,7 @@ cleanup_existing_services() {
     # Send SIGINT to processes that match our service patterns (graceful shutdown)
     for suffix in "${service_suffixes[@]}"; do
         # Pattern: any process running python with module ending in our suffix
-        # This catches: python -m experimance_core, python -m sohkepayin_core, etc.
+        # This catches: python -m experimance_core, python -m fire_core, etc.
         if pgrep -f "experimance.*python.*-m.*${suffix}(\$| )" >/dev/null 2>&1; then
             echo -e "  ${YELLOW}Sending SIGINT to existing ${suffix} processes...${NC}"
             pkill -INT -f "experimance.*python.*-m.*${suffix}(\$| )" 2>/dev/null || true
@@ -128,15 +138,25 @@ cleanup_existing_services() {
 # Map service names to module paths
 get_module_name() {
     local service="$1"
+    local project_env="${PROJECT_ENV:-experimance}"
+    
     case "$service" in
         "core")
-            echo "experimance_core"
+            if [ "$project_env" = "fire" ]; then
+                echo "fire_core"
+            else
+                echo "experimance_core"
+            fi
             ;;
         "display")
             echo "experimance_display"
             ;;
         "agent")
-            echo "experimance_agent"
+            if [ "$project_env" = "fire" ]; then
+                echo "fire_agent"
+            else
+                echo "experimance_agent"
+            fi
             ;;
         "audio")
             echo "experimance_audio"
@@ -144,7 +164,7 @@ get_module_name() {
         "health")
             echo "experimance_health"
             ;;
-        "image_server")
+        "image_server"|"image")
             echo "image_server"
             ;;
         "transition")
@@ -153,7 +173,11 @@ get_module_name() {
         *)
             # Try to find the service directory and guess module name
             if [ -d "$REPO_DIR/services/$service" ]; then
-                echo "experimance_${service}"
+                if [ "$project_env" = "fire" ] && [[ "$service" == "core" || "$service" == "agent" ]]; then
+                    echo "fire_${service}"
+                else
+                    echo "experimance_${service}"
+                fi
             else
                 echo "$service"  # Fallback to service name as-is
             fi
@@ -342,8 +366,11 @@ get_available_services() {
     fi
 }
 
-# Get available services
-readarray -t AVAILABLE_SERVICES < <(get_available_services "${PROJECT:-experimance}")
+# Get available services (bash 3.2 compatible)
+AVAILABLE_SERVICES=()
+while IFS= read -r line; do
+    AVAILABLE_SERVICES[${#AVAILABLE_SERVICES[@]}]="$line"
+done < <(get_available_services "$PROJECT_ENV")
 
 # Parse command line arguments
 REQUESTED_SERVICES=()
@@ -361,13 +388,19 @@ if [ ${#REQUESTED_SERVICES[@]} -eq 0 ]; then
     for service in "${AVAILABLE_SERVICES[@]}"; do
         echo "  - $service"
     done
+    echo "  - image                        # Shortcut for image_server"
     echo "  - all                          # Start all services"
     echo "  - no_agent                     # Start all services except agent service"
     echo ""
+    echo "Environment variables:"
+    echo "  PROJECT_ENV=fire               # Use fire project modules (fire_core, fire_agent)"
+    echo ""
     echo "Examples:"
     echo "  ./scripts/dev display          # Start display service on monitors"
+    echo "  ./scripts/dev image            # Start image_server service"
     echo "  ./scripts/dev health core      # Start multiple services"
     echo "  ./scripts/dev all              # Start all services"
+    echo "  PROJECT_ENV=fire ./scripts/dev all  # Start all services using fire project"
     exit 1
 fi
 
@@ -394,7 +427,10 @@ elif [[ "${REQUESTED_SERVICES[0]}" == "no_agent" ]]; then
 else
     # Validate that all requested services exist
     for service in "${REQUESTED_SERVICES[@]}"; do
-        if [[ " ${AVAILABLE_SERVICES[@]} " =~ " ${service} " ]]; then
+        # Handle "image" shortcut
+        if [ "$service" = "image" ]; then
+            SERVICES_TO_START+=("image_server")
+        elif [[ " ${AVAILABLE_SERVICES[@]} " =~ " ${service} " ]]; then
             SERVICES_TO_START+=("$service")
         else
             echo -e "${RED}Error: Service '${service}' not found${NC}"
@@ -402,6 +438,7 @@ else
             for available_service in "${AVAILABLE_SERVICES[@]}"; do
                 echo "  - $available_service"
             done
+            echo "  - image                        # Shortcut for image_server"
             exit 1
         fi
     done
@@ -414,7 +451,12 @@ cleanup_existing_services
 if [[ ${#SERVICES_TO_START[@]} -eq 1 ]]; then
     # Single service mode - run in foreground
     SERVICE="${SERVICES_TO_START[0]}"
-    SERVICE_PATH="$REPO_DIR/services/$SERVICE"
+    # Handle special case for image_server service path
+    if [ "$SERVICE" = "image_server" ]; then
+        SERVICE_PATH="$REPO_DIR/services/image_server"
+    else
+        SERVICE_PATH="$REPO_DIR/services/$SERVICE"
+    fi
     
     # Check if service directory exists
     if [ ! -d "$SERVICE_PATH" ]; then

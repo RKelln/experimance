@@ -36,13 +36,14 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 
-def _default_dir_candidates() -> list[Path]:
+def _default_dir_candidates(leaf_dir: str = "transcripts") -> list[Path]:
     candidates: list[Path] = []
     env_dir = os.environ.get("EXPERIMANCE_TRANSCRIPTS_DIR")
     if env_dir:
         candidates.append(Path(env_dir).expanduser())
-    candidates.append(Path("/var/log/experimance/transcripts"))
-    candidates.append(Path.cwd() / "transcripts")
+    candidates.append(Path(f"/var/log/experimance/{leaf_dir}"))
+    candidates.append(Path.cwd() / leaf_dir)
+    candidates.append(Path.cwd() / "logs" / leaf_dir )   
     return candidates
 
 console = Console()
@@ -150,7 +151,7 @@ def discover_directory(explicit: Optional[str]) -> Path:
         console.print(f"[red]Provided transcripts directory not found: {p}")
         sys.exit(2)
     for candidate in _default_dir_candidates():
-        if candidate.is_dir():
+        if candidate.is_dir() and any(candidate.glob("transcript_*.jsonl")):
             return candidate
     console.print("[red]No transcripts directory found. Use --path to specify.")
     sys.exit(2)

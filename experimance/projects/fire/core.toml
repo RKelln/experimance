@@ -1,0 +1,62 @@
+# Feed the Fires Core Service Configuration
+
+[panorama]
+# Base panorama dimensions (before mirroring)
+display_width = 5760
+display_height = 1080
+generated_width = 2240  # 3 tiles
+generated_height = 424
+
+[tiles]
+# Tile generation settings
+display_width = 1920
+display_height = 1080
+generated_width = 1344
+generated_height = 760
+min_overlap_percent = 10  # 10.0 = 10%
+max_megapixels = 1.1  # Keep tiles around 1MP for reasonable generation time
+
+[llm]
+# LLM provider configuration
+provider = "openai"
+model = "gpt-4o"
+max_completion_tokens = 150
+temperature = 0.7
+timeout = 30.0
+system_prompt_or_file = "system_prompt_t2i_prompt.md"
+
+[rendering]
+# Image generation timeouts
+timeout = 120.0
+base_image_timeout = 60.0
+tile_timeout = 90.0
+# Strength for img2img tile generation (0.0 = no change from reference, 1.0 = ignore reference)
+tile_strength = 0.25
+
+[audio]
+# Audio playback configuration
+enabled = true
+default_volume = 1.0  # Moderate volume for installation environment
+crossfade_duration = 10.0  # Smooth 10-second crossfades between tracks
+no_cache = true  # Set to true to force audio generation without using cache
+#absence_fade_delay = 30
+#absence_fade_duration = 5
+
+[zmq.publisher]
+address = "tcp://*"
+port = 5555
+default_topic = "DisplayMedia"
+
+[zmq.subscriber]
+address = "tcp://FireProjects-Mac-mini.local"
+port = 5557
+topics = ["StoryHeard", "UpdateLocation", "TranscriptUpdate", "AudiencePresent"]
+
+[zmq.workers.image_server]
+name = "image_server"
+
+[zmq.workers.image_server.push_config]
+port = 5564  # DEFAULT_PORTS["image_requests"]
+
+[zmq.workers.image_server.pull_config]
+port = 5565  # DEFAULT_PORTS["image_results"]

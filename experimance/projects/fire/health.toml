@@ -1,0 +1,10 @@
+# Health service configuration
+
+service_name = "sohkepayin_health"
+health_dir = "/var/cache/experimance/health"
+check_interval = 30  # seconds
+service_timeout = 120  # seconds - services are considered unhealthy if not updated within this time
+notification_cooldown = 300  # seconds between notifications for same service
+expected_services = [
+    "fire_agent"
+]

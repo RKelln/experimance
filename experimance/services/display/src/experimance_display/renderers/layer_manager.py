@@ -172,7 +172,21 @@ class LayerManager:
 
         self.window.clear()
 
-        self.batch.draw()  # Draw the batch containing all layers
+        # First draw all batch-based renderers (sprites, shapes, etc.)
+        self.batch.draw()
+        
+        # Then render layers that need direct OpenGL calls (like shaders)
+        # Sort by order to ensure correct rendering sequence
+        sorted_layers = sorted(self.layers.items(), key=lambda item: getattr(item[1], 'order', 0))
+        
+        for layer_name, renderer in sorted_layers:
+            try:
+                if hasattr(renderer, 'render') and callable(renderer.render):
+                    # Check if this renderer needs direct rendering (like shaders)
+                    if hasattr(renderer, '_visible') and renderer._visible:
+                        renderer.render()
+            except Exception as e:
+                logger.error(f"Error rendering layer {layer_name}: {e}", exc_info=True)
 
         # Track performance
         render_time = time.time() - start_time

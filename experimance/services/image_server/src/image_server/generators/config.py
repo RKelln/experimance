@@ -11,6 +11,7 @@ GENERATOR_NAMES = Literal[
     "vastai",
     "fal_comfy",
     "fal_lightning_i2i",
+    "local_sdxl",
 ]
 
 class BaseGeneratorConfig(BaseConfig, MessageSchema):
@@ -30,6 +31,11 @@ class BaseGeneratorConfig(BaseConfig, MessageSchema):
         description="Whether to pre-warm the generator. If True, the generator will be sent a test image at startup."
     )
 
+    image_file_type: Literal["png", "jpg"] = Field(
+        default="jpg",
+        description="File type to save generated images as."
+    )
+
 class SDXLConfig(BaseGeneratorConfig):
     lora_strength: float = 0.8
     dimensions: list[int] = [1024, 1024]
@@ -45,11 +51,13 @@ if TYPE_CHECKING:
     from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
     from image_server.generators.fal.fal_lightning_i2i_config import FalLightningI2IConfig
     from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
+    from image_server.generators.local.sdxl_generator import LocalSDXLConfig
     
     # Type for all possible generator configs
     GeneratorConfigType = Union[
         MockGeneratorConfig,
         FalComfyGeneratorConfig,
         FalLightningI2IConfig,
-        VastAIGeneratorConfig
+        VastAIGeneratorConfig,
+        LocalSDXLConfig,
     ]

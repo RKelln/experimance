@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quick integration test for Sohkepayin core service.
+Quick integration test for Feed the Fires core service.
 
 This is a simple test to verify the basic components work together
 without requiring full ZMQ infrastructure.
@@ -14,22 +14,22 @@ from pathlib import Path
 # Add the source directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sohkepayin_core.config import SohkepayinCoreConfig, LLMConfig, PanoramaConfig, TileConfig
-from sohkepayin_core.tiler import PanoramaTiler
-from sohkepayin_core.llm_prompt_builder import LLMPromptBuilder
-from sohkepayin_core.llm import MockLLMProvider
+from fire_core.config import FireCoreConfig, LLMConfig, PanoramaConfig, TileConfig
+from fire_core.tiler import PanoramaTiler
+from fire_core.llm_prompt_builder import LLMPromptBuilder
+from fire_core.llm import MockLLMProvider
 
 
 async def test_basic_components():
     """Test basic component functionality."""
-    print("🧪 Testing basic Sohkepayin components...")
+    print("🧪 Testing basic Feed the Fires components...")
     
     # Test 1: Configuration loading
     print("1. Testing configuration...")
     
     # Create config directly using proper config classes
-    config = SohkepayinCoreConfig(
-        service_name="test_sohkepayin_core",
+    config = FireCoreConfig(
+        service_name="test_fire_core",
         llm=LLMConfig(
             provider="mock",
             model="test-model"
@@ -124,7 +124,7 @@ async def test_service_lifecycle():
     print("\n🔄 Testing service lifecycle (without ZMQ)...")
     
     # Create config directly using proper config classes
-    config = SohkepayinCoreConfig(
+    config = FireCoreConfig(
         service_name="test_lifecycle",
         llm=LLMConfig(
             provider="mock",
@@ -141,10 +141,10 @@ async def test_service_lifecycle():
     )
     
     # Import here to avoid circular imports
-    from sohkepayin_core.sohkepayin_core import SohkepayinCoreService, CoreState
+    from fire_core.fire_core import FireCoreService, CoreState
     
     # Create service (but don't start ZMQ)
-    service = SohkepayinCoreService(config)
+    service = FireCoreService(config)
     
     print(f"   ✅ Service created: {service.config.service_name}")
     print(f"   📊 Initial state: {service.core_state}")
@@ -168,8 +168,8 @@ async def test_service_lifecycle():
 
 if __name__ == "__main__":
     async def main():
-        print("🚀 Running Sohkepayin Core Service Quick Tests\n")
-        
+        print("🚀 Running Feed the Fires Core Service Quick Tests\n")
+
         try:
             success1 = await test_basic_components()
             success2 = await test_service_lifecycle()

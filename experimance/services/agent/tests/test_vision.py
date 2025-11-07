@@ -15,8 +15,8 @@ from pathlib import Path
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from experimance_agent.config import VisionConfig
-from experimance_agent.vision import WebcamManager, VLMProcessor, AudienceDetector
+from agent.config import VisionConfig
+from agent.vision import WebcamManager, VLMProcessor, AudienceDetector
 
 # Configure logging
 logging.basicConfig(
@@ -150,9 +150,9 @@ async def test_audience_detection():
                 frame = await webcam.capture_frame()
                 if frame is not None:
                     print(f"\nDetection cycle {i+1}:")
-                    
-                    result = await detector.detect_audience(frame, webcam, vlm)
-                    
+
+                    result = await detector.detect_audience(frame, webcam_manager=webcam, vlm=vlm)
+
                     if result.get("success", False):
                         detected = result["audience_detected"]
                         confidence = result["confidence"]

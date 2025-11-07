@@ -615,6 +615,60 @@ heartbeat = {
 await service.publish(heartbeat, "heartbeat")
 ```
 
+## Topic Subscription Behavior
+
+### Subscribe to All Topics
+
+Use an empty string `""` in the topics list to subscribe to ALL messages:
+
+```python
+# Subscribe to ALL topics (catch-all subscription)
+subscriber_config = SubscriberConfig(
+    address="tcp://localhost",
+    port=5555,
+    topics=[""]  # Empty string subscribes to ALL topics
+)
+
+# Register handler for all messages
+async def handle_all_messages(message):
+    print(f"Received message: {message}")
+
+service.add_subscriber_handler("", handle_all_messages)
+```
+
+### Mixed Topic Subscriptions
+
+Combine specific topics with catch-all:
+
+```python
+# Subscribe to specific topics AND all topics
+subscriber_config = SubscriberConfig(
+    address="tcp://localhost", 
+    port=5555,
+    topics=["heartbeat", "alerts", ""]  # Specific + catch-all
+)
+
+# Specific handlers take priority
+service.add_subscriber_handler("heartbeat", handle_heartbeat)
+service.add_subscriber_handler("alerts", handle_alerts) 
+service.add_subscriber_handler("", handle_everything_else)  # Fallback
+```
+
+### Topic Handler Priority
+
+Handler selection follows this priority:
+
+1. **Exact topic match** - handler registered for specific topic
+2. **Catch-all handler** - handler registered for `""` (empty topic)
+3. **Default handler** - fallback for unhandled messages
+
+```python
+# This message with topic "error" will be handled by:
+# 1. handle_error (if registered for "error")
+# 2. handle_all (if registered for "" and no specific handler)
+# 3. default_handler (if set and no other handlers match)
+```
+
 ## Communication Patterns
 
 ### PubSub Pattern (Many-to-Many)

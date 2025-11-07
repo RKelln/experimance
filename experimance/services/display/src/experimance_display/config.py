@@ -97,7 +97,7 @@ class RenderingConfig(BaseModel):
     )
     
     shader_path: Path = Field(
-        default=Path("shaders/"),
+        default=Path("services/display/shaders/"),
         description="Path to shader files"
     )
     
@@ -390,6 +390,74 @@ class PanoramaConfig(BaseModel):
         description="Configuration for panorama tiles"
     )
 
+    disappear_duration: float = Field(
+        default=0,
+        description="Duration for panorama-wide fade to transparency in seconds (0 = disabled, starts after final tile)"
+    )
+
+
+class ShaderEffectConfig(BaseModel):
+    """Configuration for a single shader effect."""
+    
+    enabled: bool = Field(
+        default=True,
+        description="Whether this shader effect is enabled"
+    )
+    
+    shader_file: str = Field(
+        description="Path to the fragment shader file (.frag)"
+    )
+    
+    order: int = Field(
+        default=10,
+        description="Render order (higher numbers render on top)"
+    )
+    
+    blend_mode: str = Field(
+        default="alpha",
+        description="Blending mode: 'alpha' for standard transparency, 'additive' for glow effects"
+    )
+    
+    uniforms: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Uniform values to pass to the shader"
+    )
+
+
+class ShaderEffectsConfig(BaseModel):
+    """Configuration for shader effects system."""
+    
+    enabled: bool = Field(
+        default=False,
+        description="Whether to enable shader effects"
+    )
+    
+    effects: Dict[str, ShaderEffectConfig] = Field(
+        default_factory=lambda: {
+            "turbulent_vignette": ShaderEffectConfig(
+                shader_file="services/display/shaders/turbulent_vignette.frag",
+                order=10,
+                uniforms={
+                    "vignette_strength": 0.7,
+                    "turbulence_amount": 0.25
+                }
+            ),
+            "rising_sparks": ShaderEffectConfig(
+                shader_file="services/display/shaders/rising_sparks.frag",
+                order=20,
+                uniforms={
+                    "spark_intensity": 0.5
+                }
+            )
+        },
+        description="Configuration for individual shader effects"
+    )
+    
+    auto_reload_shaders: bool = Field(
+        default=False,
+        description="Whether to automatically reload shaders when files change"
+    )
+
 
 class DisplayServiceConfig(BaseServiceConfig):
     """Complete configuration schema for the Display Service."""
@@ -423,6 +491,7 @@ class DisplayServiceConfig(BaseServiceConfig):
     title_screen: TitleScreenConfig = Field(default_factory=TitleScreenConfig)
     video_overlay: VideoOverlayConfig = Field(default_factory=VideoOverlayConfig)
     panorama: PanoramaConfig = Field(default_factory=PanoramaConfig)
+    shader_effects: ShaderEffectsConfig = Field(default_factory=ShaderEffectsConfig)
     
 
 def create_test_display_config(**overrides) -> DisplayServiceConfig:

@@ -61,6 +61,8 @@ ruff.toml.swo
 logs/
 media/
 transcripts/
+models/
+.project
 
 # Rust code and artifacts
 *.rs.bk

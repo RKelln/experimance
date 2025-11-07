@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-CLI utility for testing the Image Server Service by sending RenderRequest messages.
+CLI utility for testing the Image Server Service and Audio Generation.
 
-This utility allows users to send test        # Create proper RenderRequest object like core service does
-        request = RenderRequest(
-            request_id=request_id,
-            era=era,  # Pass string directly, let RenderRequest handle conversion
-            biome=biome,  # Pass string directly, let RenderRequest handle conversion
-            prompt=prompt,
-            depth_map=depth_map_source
-        )eneration requests to the Image Server Service
-using ZeroMQ. It supports selecting predefined prompts or entering custom prompts,
-specifying era and biome parameters, and optionally including a depth map image.
+This utility allows users to:
+1. Send test image generation requests to the Image Server Service using ZeroMQ
+2. Test audio generation directly using the TangoFlux generator
+3. Select from predefined prompts or enter custom prompts
+4. Configure era/biome parameters for Experimance project
+5. Include depth maps and source images for advanced generation modes
 
-$ uv run -m image_server.cli
+Image Generation Mode (ZeroMQ):
+    $ uv run -m image_server.cli -i
+    $ uv run -m image_server.cli --prompt "forest scene"
+
+Audio Generation Mode (Direct Testing):
+    $ uv run -m image_server.cli --audio --audio-prompt "gentle rain"
+    $ uv run -m image_server.cli --audio -i
 """
 
 import argparse
@@ -24,6 +26,7 @@ import logging
 import os
 import sys
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -35,8 +38,24 @@ from experimance_common.zmq.components import PushComponent, PullComponent
 from experimance_common.zmq.config import ControllerPushConfig, ControllerPullConfig
 from experimance_common.zmq.zmq_utils import prepare_image_source, IMAGE_TRANSPORT_MODES
 
+# Check if audio support is available in schemas
+try:
+    from experimance_common.schemas import AudioRenderRequest, AudioReady
+    AUDIO_SUPPORT = True
+except ImportError:
+    AUDIO_SUPPORT = False
+
+PROJECT_ENV = os.getenv("PROJECT_ENV", "experimance").lower()
 # Import project-specific schemas (Era, Biome, RenderRequest)
-from experimance_common.schemas import Era, Biome, RenderRequest
+if PROJECT_ENV == "experimance":
+    try:
+        from experimance_common.schemas import Era, Biome
+        EXPERIMANCE_SUPPORT = True
+    except ImportError:
+        EXPERIMANCE_SUPPORT = False
+else:
+    EXPERIMANCE_SUPPORT = False
+from experimance_common.schemas import RenderRequest
 
 # Try to import prompt generator for enhanced prompt generation
 try:
@@ -66,6 +85,22 @@ SAMPLE_PROMPTS = {
     "futuristic_metropolis": "Futuristic metropolis with flying vehicles and holographic billboards",
     "ancient_ruins": "Ancient stone ruins covered in vines and vegetation, partially submerged in water",
     "underwater_scene": "Vibrant coral reef with colorful fish and underwater vegetation",
+}
+
+# Define sample audio prompts for environmental sounds
+SAMPLE_AUDIO_PROMPTS = {
+    "forest_ambience": "gentle forest sounds with birds chirping and rustling leaves",
+    "ocean_waves": "peaceful ocean waves lapping against the shore with distant seagulls",
+    "rain_on_leaves": "light rain falling on forest leaves with distant thunder",
+    "mountain_stream": "babbling brook flowing over rocks in a mountain valley",
+    "campfire": "crackling campfire with gentle flames and occasional wood pops",
+    "desert_wind": "soft desert wind blowing through sand dunes with distant howling",
+    "cave_drips": "water droplets echoing in a deep cave with ambient reverb",
+    "grassland_breeze": "gentle wind through tall grass with chirping insects",
+    "ice_cave": "subtle ice creaking and wind in a frozen glacial cave",
+    "tropical_jungle": "dense jungle with exotic birds, insects, and rustling foliage",
+    "arctic_wind": "cold arctic wind with snow blowing and ice shifting",
+    "urban_park": "city park ambience with distant traffic and nearby bird songs",
 }
 
 
@@ -139,31 +174,56 @@ class ImageServerClient:
         self,
         prompt: str,
         depth_map_path: Optional[Path] = None,
-        era: str = "wilderness",
-        biome: str = "forest"
+        image_path: Optional[Path] = None,
+        era: Optional[str] = None,
+        biome: Optional[str] = None
     ) -> str:
         request_id = str(uuid.uuid4())
         
         # Handle depth map similar to core service using prepare_image_source
-        image_source = None
+        depth_map_source = None
         if depth_map_path and depth_map_path.exists():
             logger.info(f"Including depth map from {depth_map_path}")
             # Use prepare_image_source like the core service does
-            image_source = prepare_image_source(
+            depth_map_source = prepare_image_source(
                 image_data=depth_map_path,  # Can pass Path directly
                 transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
                 request_id=request_id,
             )
         
-        # Create proper RenderRequest object like core service does
-        request = RenderRequest(
-            request_id=request_id,
-            era=Era(era),  # Convert string to enum
-            biome=Biome(biome),  # Convert string to enum
-            prompt=prompt,
-            depth_map=image_source
-        )
+        # Handle source image for image-to-image generation
+        reference_image_source = None
+        if image_path and image_path.exists():
+            logger.info(f"Including source image for image-to-image from {image_path}")
+            reference_image_source = prepare_image_source(
+                image_data=image_path,  # Can pass Path directly
+                transport_mode=IMAGE_TRANSPORT_MODES['BASE64'],
+                request_id=request_id,
+            )
+
+        # Create base RenderRequest data
+        request_data = {
+            "request_id": request_id,
+            "prompt": prompt,
+            "depth_map": depth_map_source,
+            "reference_image": reference_image_source
+        }
         
+        # Add era and biome if available and supported
+        if PROJECT_ENV == "experimance" and EXPERIMANCE_SUPPORT:
+            if era:
+                try:
+                    request_data["era"] = Era(era)
+                except:
+                    pass  # Skip if Era doesn't exist or value is invalid
+            if biome:
+                try:
+                    request_data["biome"] = Biome(biome)
+                except:
+                    pass  # Skip if Biome doesn't exist or value is invalid
+
+        request = RenderRequest(**request_data)
+
         logger.debug(f"Sending RenderRequest: {request.request_id}")
         assert self.push_component is not None, "PushComponent not initialized"
         await self.push_component.push(request)
@@ -214,6 +274,33 @@ async def interactive_mode(debug: bool = False):
         push_address = input(f"Push address [{push_address}]: ") or push_address
         pull_address = input(f"Pull address [{pull_address}]: ") or pull_address
 
+    # Main menu selection
+    while True:
+        print("\n=== Main Menu ===")
+        print("  1. Image Generation (ZMQ to Image Server)")
+        if AUDIO_SUPPORT:
+            print("  2. Audio Generation (ZMQ to Image Server)")
+        print("  3. Exit")
+        
+        max_choice = 3 if AUDIO_SUPPORT else 2
+        if AUDIO_SUPPORT:
+            main_choice = input(f"Choose mode (1-{max_choice}, default=1): ") or "1"
+        else:
+            main_choice = input("Choose mode (1-2, default=1): ") or "1"
+        
+        if main_choice == "1":
+            await image_generation_mode(push_address, pull_address, debug)
+        elif main_choice == "2" and AUDIO_SUPPORT:
+            await audio_generation_mode(push_address, pull_address, debug)
+        elif main_choice == "3" or (main_choice == "2" and not AUDIO_SUPPORT):
+            break
+        else:
+            print("Invalid choice, please try again.")
+
+
+async def image_generation_mode(push_address: str, pull_address: str, debug: bool = False):
+    """Run image generation testing mode."""
+
     # Initialize prompt generator if available
     prompt_gen = None
     available_eras = []
@@ -251,20 +338,21 @@ async def interactive_mode(debug: bool = False):
 
             # Prompt selection
             print("\nSelect a prompt source:")
-            print("  1. Generate from era/biome (recommended)" if prompt_gen else "  1. Generate from era/biome (unavailable)")
-            print("  2. Select from predefined prompts")
-            print("  3. Enter custom prompt")
+            print("  1. Select from predefined prompts")
+            print("  2. Enter custom prompt")
+            if PROJECT_ENV == "experimance":
+                print("  3. Generate from era/biome (recommended)" if prompt_gen else "  3. Generate from era/biome (unavailable)")
 
             if prompt_gen:
-                prompt_choice = input("Choose option (1-3, default=1): ") or "1"
+                prompt_choice = input("Choose option (1-3, default=3): ") or "3"
             else:
-                prompt_choice = input("Choose option (2-3, default=2): ") or "2"
+                prompt_choice = input("Choose option (1-2, default=1): ") or "1"
 
             selected_prompt = ""
             selected_era = "wilderness"
             selected_biome = "temperate_forest"
 
-            if prompt_choice == "1" and prompt_gen:
+            if prompt_choice == "3" and prompt_gen:
                 # Era/biome based prompt generation
                 print(f"\nEra selection (available: {len(available_eras)}):")
                 for i, era in enumerate(available_eras):
@@ -317,7 +405,7 @@ async def interactive_mode(debug: bool = False):
                     print(f"Error generating prompt: {e}")
                     selected_prompt = "A beautiful landscape"
 
-            elif prompt_choice == "2":
+            elif prompt_choice == "1":
                 # Predefined prompts
                 print("\nSelect a predefined prompt:")
                 print("  0. Enter custom prompt")
@@ -338,30 +426,97 @@ async def interactive_mode(debug: bool = False):
                 # Custom prompt
                 selected_prompt = input("Enter your custom prompt: ")
 
-            # Era and biome selection (if not already set from prompt generation)
-            if prompt_choice != "1" or not prompt_gen:
-                print(f"\nEra context (default: wilderness):")
-                era_options = [e.value for e in Era]
-                for i, era in enumerate(era_options):
-                    print(f"  {i+1}. {era}")
-                era_choice = input(f"Choose era (1-{len(era_options)}, default=1): ") or "1"
-                try:
-                    selected_era = era_options[int(era_choice) - 1]
-                except (ValueError, IndexError):
-                    selected_era = "wilderness"
+            if PROJECT_ENV == "experimance":
+                # Era and biome selection (if not already set from prompt generation)
+                if prompt_choice != "3" or not prompt_gen:
+                    print(f"\nEra context (default: wilderness):")
+                    era_options = [e.value for e in Era]
+                    for i, era in enumerate(era_options):
+                        print(f"  {i+1}. {era}")
+                    era_choice = input(f"Choose era (1-{len(era_options)}, default=1): ") or "1"
+                    try:
+                        selected_era = era_options[int(era_choice) - 1]
+                    except (ValueError, IndexError):
+                        selected_era = "wilderness"
 
-                print(f"\nBiome context (default: temperate_forest):")
-                biome_options = [b.value for b in Biome]
-                for i, biome in enumerate(biome_options):
-                    print(f"  {i+1}. {biome}")
-                biome_choice = input(f"Choose biome (1-{len(biome_options)}, default=2): ") or "2"
-                try:
-                    selected_biome = biome_options[int(biome_choice) - 1]
-                except (ValueError, IndexError):
-                    selected_biome = "temperate_forest"
+                    print(f"\nBiome context (default: temperate_forest):")
+                    biome_options = [b.value for b in Biome]
+                    for i, biome in enumerate(biome_options):
+                        print(f"  {i+1}. {biome}")
+                    biome_choice = input(f"Choose biome (1-{len(biome_options)}, default=2): ") or "2"
+                    try:
+                        selected_biome = biome_options[int(biome_choice) - 1]
+                    except (ValueError, IndexError):
+                        selected_biome = "temperate_forest"
+
+            # Source image selection (for image-to-image generation)
+            use_source_image = input("\nUse a source image for image-to-image generation? (y/N): ").lower() == 'y'
+            source_image_path = None
+            if use_source_image:
+                print("\nSource image options:")
+                print("  1. Browse media/images/ directory")
+                print("  2. Enter custom path")
+                
+                image_choice = input("Choose option (1-2, default=1): ") or "1"
+                
+                if image_choice == "1":
+                    # Browse media/images directory
+                    script_dir = Path(__file__).parent
+                    project_root = script_dir.parent.parent.parent.parent  # Navigate up to project root
+                    media_images_dir = project_root / "media" / "images"
+                    
+                    if media_images_dir.exists():
+                        # Find image files in media/images and subdirectories
+                        image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp'}
+                        image_files = []
+                        
+                        for subdir in media_images_dir.iterdir():
+                            if subdir.is_dir():
+                                for img_file in subdir.rglob('*'):
+                                    if img_file.is_file() and img_file.suffix.lower() in image_extensions:
+                                        # Store relative path from media/images for display
+                                        rel_path = img_file.relative_to(media_images_dir)
+                                        image_files.append((str(rel_path), img_file))
+                        
+                        if image_files:
+                            print(f"\nFound {len(image_files)} images in media/images/:")
+                            for i, (rel_path, full_path) in enumerate(image_files[:20]):  # Show first 20
+                                size_kb = full_path.stat().st_size // 1024
+                                print(f"  {i+1}. {rel_path} ({size_kb}KB)")
+                            
+                            if len(image_files) > 20:
+                                print(f"  ... and {len(image_files) - 20} more")
+                            
+                            print("  0. Enter custom path")
+                            
+                            img_choice = input(f"Choose image (0-{min(len(image_files), 20)}, default=1): ") or "1"
+                            try:
+                                img_idx = int(img_choice)
+                                if img_idx == 0:
+                                    source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                                elif 1 <= img_idx <= len(image_files):
+                                    source_image_path = image_files[img_idx - 1][1]
+                                    print(f"Selected: {image_files[img_idx - 1][0]}")
+                                else:
+                                    source_image_path = image_files[0][1] if image_files else None
+                            except (ValueError, IndexError):
+                                source_image_path = image_files[0][1] if image_files else None
+                        else:
+                            print(f"No images found in {media_images_dir}")
+                            source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                    else:
+                        print(f"Media directory not found at {media_images_dir}")
+                        source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                else:
+                    # Custom path
+                    source_image_path = Path(input("Enter path to source image: ")).expanduser().absolute()
+                
+                if source_image_path and not source_image_path.exists():
+                    print(f"Warning: Source image file not found at {source_image_path}")
+                    source_image_path = None
 
             # Depth map selection
-            use_depth_map = input("\nUse a depth map? (Y/n): ").lower() != 'n'
+            use_depth_map = input("\nUse a depth map? (y/N): ").lower() == 'y'
             depth_map_path = None
             if use_depth_map:
                 default_depth_map = MOCK_IMAGES_DIR / "depth" / "mock_depth_map.png"
@@ -374,9 +529,21 @@ async def interactive_mode(debug: bool = False):
             # Show summary and confirm
             print("\n=== Request Summary ===")
             print(f"Prompt: {selected_prompt}")
-            print(f"Era: {selected_era}")
-            print(f"Biome: {selected_biome}")
+            if PROJECT_ENV == "experimance":
+                print(f"Era: {selected_era}")
+                print(f"Biome: {selected_biome}")
+            print(f"Source Image: {'Yes - ' + str(source_image_path) if source_image_path else 'No'}")
             print(f"Depth Map: {'Yes - ' + str(depth_map_path) if depth_map_path else 'No'}")
+            
+            # Show generation mode
+            if source_image_path and depth_map_path:
+                print("Generation Mode: Image-to-image with ControlNet depth guidance")
+            elif source_image_path:
+                print("Generation Mode: Image-to-image")
+            elif depth_map_path:
+                print("Generation Mode: Text-to-image with ControlNet depth guidance")
+            else:
+                print("Generation Mode: Text-to-image")
 
             confirm = input("\nSend this request? (Y/n): ").lower() != 'n'
             if not confirm:
@@ -384,15 +551,22 @@ async def interactive_mode(debug: bool = False):
                 continue
 
             # Send request and wait for response
-            request_id = await client.send_render_request(
-                prompt=selected_prompt,
-                depth_map_path=depth_map_path,
-                era=selected_era,
-                biome=selected_biome
-            )
+            request = {
+                "prompt": selected_prompt,
+                "depth_map_path": depth_map_path,
+                "image_path": source_image_path,
+            }
+            if PROJECT_ENV == "experimance":
+                request["era"] = selected_era
+                request["biome"] = selected_biome
+
+            request_id = await client.send_render_request(**request)
 
             print(f"\nRequest {request_id} sent. Waiting for response...")
+            start_time = time.monotonic()   
             response = await client.wait_for_response(request_id)
+            duration = time.monotonic() - start_time
+            print(f"Response received in {duration:.1f} seconds")
 
             if response:
                 if response.get("type") == MessageType.IMAGE_READY:
@@ -437,15 +611,13 @@ async def command_line_mode(args):
     await client.start()
 
     try:
-        # Send the render request
-        depth_map_path = Path(args.depth_map) if args.depth_map else None
-
-        request_id = await client.send_render_request(
-            prompt=args.prompt,
-            depth_map_path=depth_map_path,
-            era=args.era,
-            biome=args.biome
-        )
+        # Determine if this is audio or image generation
+        if args.audio_prompt:
+            # Send audio render request
+            request_id = await send_audio_render_request(client, args)
+        else:
+            # Send image render request
+            request_id = await send_image_render_request(client, args)
 
         if args.no_wait:
             print(f"Request {request_id} sent. Not waiting for response.")
@@ -468,11 +640,207 @@ async def command_line_mode(args):
                     if file_path.exists():
                         print(f"\nImage saved to: {file_path}")
                         print(f"File size: {file_path.stat().st_size} bytes")
+
+            # If it's an audio response, show file info
+            elif response.get("type") == "AudioReady":
+                uri = response.get("uri", "")
+                if uri.startswith("file://"):
+                    audio_path = Path(uri.replace("file://", ""))
+                    if audio_path.exists():
+                        file_size = audio_path.stat().st_size
+                        print(f"\nAudio saved to: {audio_path}")
+                        print(f"File size: {file_size // 1024}KB")
+                    else:
+                        print(f"Generated audio path: {audio_path} (file not found)")
         else:
             print("No response received within the timeout period")
 
     finally:
         await client.stop()
+
+
+async def send_image_render_request(client: ImageServerClient, args) -> str:
+    """Send an image render request."""
+    # Determine prompt
+    selected_prompt = args.prompt
+    selected_era = getattr(args, 'era', 'wilderness') if PROJECT_ENV == "experimance" else None
+    selected_biome = getattr(args, 'biome', 'temperate_forest') if PROJECT_ENV == "experimance" else None
+    
+    # Send image render request
+    depth_map_path = Path(args.depth_map) if args.depth_map else None
+    source_image_path = Path(args.source_image) if args.source_image else None
+
+    request_kwargs = {
+        "prompt": selected_prompt,
+        "depth_map_path": depth_map_path,
+        "image_path": source_image_path,
+    }
+    if PROJECT_ENV == "experimance" and EXPERIMANCE_SUPPORT:
+        request_kwargs["era"] = selected_era
+        request_kwargs["biome"] = selected_biome
+
+    return await client.send_render_request(**request_kwargs)
+
+
+async def send_audio_render_request(client: ImageServerClient, args) -> str:
+    """Send an audio render request via ZMQ."""
+    if not AUDIO_SUPPORT:
+        raise RuntimeError("Audio generation not supported - missing audio schemas")
+    
+    request_id = str(uuid.uuid4())
+    
+    # Create AudioRenderRequest
+    request = AudioRenderRequest(
+        request_id=request_id,
+        prompt=args.audio_prompt,
+        duration_s=getattr(args, 'audio_duration', 10)
+    )
+    
+    logger.debug(f"Sending AudioRenderRequest: {request.request_id}")
+    assert client.push_component is not None, "PushComponent not initialized"
+    await client.push_component.push(request)
+    logger.info(f"Sent AudioRenderRequest with ID: {request_id}")
+    return request_id
+
+
+async def audio_generation_mode(push_address: str, pull_address: str, debug: bool = False):
+    """Run audio generation testing mode using ZMQ to Image Server Service."""
+    if not AUDIO_SUPPORT:
+        print("❌ Audio generation is not available. Missing audio schemas.")
+        print("Audio support needs AudioRenderRequest and AudioReady in schemas.")
+        return
+
+    print("\n=== Audio Generation Mode (ZMQ) ===")
+    print("Testing audio generation via Image Server Service...")
+    
+    # Create and start client
+    client = ImageServerClient(push_address, pull_address)
+    await client.start()
+
+    try:
+        while True:
+            print("\n=== Audio Generation Menu ===")
+            
+            # Prompt selection
+            print("\nSelect an audio prompt:")
+            print("  1. Select from predefined audio prompts")
+            print("  2. Enter custom audio prompt")
+            print("  3. Return to main menu")
+            
+            prompt_choice = input("Choose option (1-3, default=1): ") or "1"
+            
+            if prompt_choice == "3":
+                break
+            
+            selected_prompt = ""
+            
+            if prompt_choice == "1":
+                print("\nAvailable audio prompts:")
+                audio_prompt_options = list(SAMPLE_AUDIO_PROMPTS.keys())
+                for i, name in enumerate(audio_prompt_options):
+                    print(f"  {i+1}. {name}: {SAMPLE_AUDIO_PROMPTS[name]}")
+                
+                try:
+                    predefined_choice = int(input(f"Select prompt (1-{len(audio_prompt_options)}): "))
+                    if 1 <= predefined_choice <= len(audio_prompt_options):
+                        selected_prompt = SAMPLE_AUDIO_PROMPTS[audio_prompt_options[predefined_choice - 1]]
+                        print(f"Selected: {selected_prompt}")
+                    else:
+                        print("Invalid selection, using default")
+                        selected_prompt = SAMPLE_AUDIO_PROMPTS["forest_ambience"]
+                except ValueError:
+                    print("Invalid input, using default")
+                    selected_prompt = SAMPLE_AUDIO_PROMPTS["forest_ambience"]
+            
+            else:
+                selected_prompt = input("Enter audio prompt: ").strip()
+            
+            if not selected_prompt.strip():
+                print("Empty prompt, skipping...")
+                continue
+            
+            # Duration selection
+            duration_s = int(input("Audio duration in seconds (default=10): ") or "10")
+            
+            # Show summary and confirm
+            print("\n=== Audio Generation Summary ===")
+            print(f"Prompt: {selected_prompt}")
+            print(f"Duration: {duration_s} seconds")
+            print(f"Method: ZMQ to Image Server Service")
+            
+            confirm = input("\nGenerate this audio? (Y/n): ").lower() != 'n'
+            if not confirm:
+                continue
+            
+            # Send audio render request
+            request_id = str(uuid.uuid4())
+            
+            try:
+                # Create AudioRenderRequest
+                request = AudioRenderRequest(
+                    request_id=request_id,
+                    prompt=selected_prompt,
+                    duration_s=duration_s
+                )
+                
+                logger.debug(f"Sending AudioRenderRequest: {request.request_id}")
+                assert client.push_component is not None, "PushComponent not initialized"
+                await client.push_component.push(request)
+                logger.info(f"Sent AudioRenderRequest with ID: {request_id}")
+                
+                print(f"\nRequest {request_id} sent. Waiting for response...")
+                start_time = time.monotonic()   
+                response = await client.wait_for_response(request_id)
+                duration = time.monotonic() - start_time
+                print(f"Response received in {duration:.1f} seconds")
+
+                if response:
+                    print("\nAudio generation completed!")
+                    print(json.dumps(response, indent=2))
+                    
+                    # Show file info if available
+                    uri = response.get("uri", "")
+                    if uri.startswith("file://"):
+                        audio_path = Path(uri.replace("file://", ""))
+                        if audio_path.exists():
+                            file_size = audio_path.stat().st_size
+                            print(f"\n📁 Audio file: {audio_path}")
+                            print(f"📊 File size: {file_size // 1024}KB")
+                            
+                            # Try to get audio info
+                            try:
+                                import soundfile as sf
+                                with sf.SoundFile(str(audio_path)) as f:
+                                    actual_duration = len(f) / f.samplerate
+                                    print(f"⏱️  Actual duration: {actual_duration:.1f}s")
+                                    print(f"🔊 Sample rate: {f.samplerate}Hz")
+                                    print(f"🎼 Channels: {f.channels}")
+                            except ImportError:
+                                print("📊 Install soundfile for detailed audio info: uv add soundfile")
+                            except Exception as e:
+                                print(f"📊 Could not read audio info: {e}")
+                        else:
+                            print(f"Audio path: {audio_path} (file not found)")
+                else:
+                    print("❌ No response received within the timeout period")
+
+            except Exception as e:
+                print(f"❌ Error sending audio request: {e}")
+                if debug:
+                    print(f"Traceback:\n{traceback.format_exc()}")
+            
+            # Ask to continue
+            if input("\nGenerate another audio? (Y/n): ").lower() == 'n':
+                break
+                
+    except Exception as e:
+        print(f"❌ Failed in audio generation mode: {e}")
+        if debug:
+            print(f"Traceback:\n{traceback.format_exc()}")
+    finally:
+        await client.stop()
+        print("❌ Audio generation is not available. Missing dependencies or modules.")
+        return
 
 
 def main():
@@ -484,28 +852,39 @@ def main():
         help="Run in interactive mode with a menu interface"
     )
     parser.add_argument(
+        "--audio", "-a",
+        action="store_true",
+        help="Run in audio generation mode (ZMQ to Image Server Service)"
+    )
+    parser.add_argument(
         "--prompt", "-p",
         type=str,
         help="Text prompt for image generation"
     )
-    parser.add_argument(
-        "--era", "-e",
-        type=str,
-        choices=[e.value for e in Era],
-        default="wilderness",
-        help="Era context for the image"
-    )
-    parser.add_argument(
-        "--biome", "-b",
-        type=str,
-        choices=[b.value for b in Biome],
-        default="forest",
-        help="Biome context for the image"
-    )
+    if PROJECT_ENV == "experimance" and EXPERIMANCE_SUPPORT:
+        parser.add_argument(
+            "--era", "-e",
+            type=str,
+            choices=[e.value for e in Era],
+            default="wilderness",
+            help="Era context for the image"
+        )
+        parser.add_argument(
+            "--biome", "-b",
+            type=str,
+            choices=[b.value for b in Biome],
+            default="temperate_forest",
+            help="Biome context for the image"
+        )
     parser.add_argument(
         "--depth-map", "--depth_map", "-d",
         type=str,
-        help="Path to depth map PNG file"
+        help="Path to depth map PNG file for ControlNet guidance"
+    )
+    parser.add_argument(
+        "--source-image", "--source_image",
+        type=str,
+        help="Path to source image for image-to-image generation"
     )
     parser.add_argument(
         "--request-address", "--requests_address",
@@ -545,6 +924,27 @@ def main():
         type=str,
         help="Use a sample prompt by name (use --list-prompts to see available options)"
     )
+    parser.add_argument(
+        "--audio-prompt", "--audio_prompt",
+        type=str,
+        help="Audio prompt for audio generation (when using --audio mode)"
+    )
+    parser.add_argument(
+        "--audio-duration", "--audio_duration",
+        type=int,
+        default=10,
+        help="Duration of audio in seconds for audio generation (default: 10)"
+    )
+    parser.add_argument(
+        "--list-audio-prompts", "--list_audio_prompts",
+        action="store_true",
+        help="List available sample audio prompts and exit"
+    )
+    parser.add_argument(
+        "--sample-audio-prompt", "--sample_audio_prompt",
+        type=str,
+        help="Use a sample audio prompt by name (use --list-audio-prompts to see available options)"
+    )
     
     args = parser.parse_args()
     
@@ -552,6 +952,13 @@ def main():
     if args.list_prompts:
         print("Available sample prompts:")
         for name, prompt in SAMPLE_PROMPTS.items():
+            print(f"  {name}: {prompt}")
+        return
+    
+    # List audio prompts if requested
+    if args.list_audio_prompts:
+        print("Available sample audio prompts:")
+        for name, prompt in SAMPLE_AUDIO_PROMPTS.items():
             print(f"  {name}: {prompt}")
         return
     
@@ -565,6 +972,16 @@ def main():
             print("Use --list-prompts to see available options.")
             return 1
 
+    # Use a sample audio prompt if specified
+    if args.sample_audio_prompt:
+        if args.sample_audio_prompt in SAMPLE_AUDIO_PROMPTS:
+            args.audio_prompt = SAMPLE_AUDIO_PROMPTS[args.sample_audio_prompt]
+            print(f"Using sample audio prompt: {args.audio_prompt}")
+        else:
+            print(f"Error: Sample audio prompt '{args.sample_audio_prompt}' not found.")
+            print("Use --list-audio-prompts to see available options.")
+            return 1
+
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger("image_server_cli").setLevel(logging.DEBUG)
@@ -572,11 +989,19 @@ def main():
 
     # Check for interactive mode or required parameters
     if args.interactive:
-        asyncio.run(interactive_mode())
+        asyncio.run(interactive_mode(args.debug))
+    elif args.audio and args.audio_prompt:
+        # Audio generation via ZMQ
+        if AUDIO_SUPPORT:
+            asyncio.run(command_line_mode(args))
+        else:
+            print("❌ Audio generation is not available. Missing audio schemas.")
+            print("Direct audio testing available at: uv run python services/image_server/tests/test_audio_direct.py")
+            return 1
     elif args.prompt or args.sample_prompt:
         asyncio.run(command_line_mode(args))
     else:
-        print("Error: Either --interactive mode or --prompt must be specified.")
+        print("Error: Must specify one of: --interactive, --prompt, or --audio with --audio-prompt")
         parser.print_help()
         return 1
     

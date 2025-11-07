@@ -1,18 +1,23 @@
 #!/bin/bash
 
 # Experimance Deployment Script
-# Usage: ./deploy.sh [project_name] [action] [mode]
-# Actions: install, start, stop, restart, status, services, diagnose
+# Usage: ./deploy.sh [project_name] [action] [mode] [--hostname=<hostname>]
+# Actions: install, start, stop, uninstall, restart, status, services, diagnose
 # USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test
 # Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show
 # Modes: dev, prod (only for install action)
+# Options: --hostname=<hostname> - Override hostname for multi-machine deployment
 #
 # SYSTEMD TEMPLATE SYSTEM:
 # This script uses systemd template services for multi-project support:
 # - Template files: core@.service, display@.service, experimance@.target (installed to /etc/systemd/system/)
-# - Instance services: core@experimance.service, display@sohkepayin.service (created when started)
+# - Instance services: core@experimance.service, display@fire.service (created when started)
 # - The @ symbol makes it a template, %i gets replaced with project name
 # - Multiple projects can share the same templates with different instances
+#
+# MULTI-MACHINE DEPLOYMENT:
+# For distributed deployments, create projects/<project>/deployment.toml to specify which
+# services run on which machines. Use --hostname to override auto-detection.
 
 set -euo pipefail
 
@@ -62,26 +67,172 @@ error() {
     exit 1
 }
 
+# Platform detection
+detect_platform() {
+    case "$(uname -s)" in
+        Linux*)     PLATFORM=linux ;;
+        Darwin*)    PLATFORM=macos ;;
+        CYGWIN*|MINGW*) PLATFORM=windows ;;
+        *)          PLATFORM=unknown ;;
+    esac
+    
+    log "Detected platform: $PLATFORM"
+}
+
 # Configuration
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 SYSTEMD_DIR="/etc/systemd/system"
+
+# Detect platform early
+detect_platform
+
+# Helper function to get the correct group for chown operations
+get_chown_group() {
+    if [[ "$PLATFORM" == "macos" ]]; then
+        echo "staff"
+    else
+        echo "$RUNTIME_USER"
+    fi
+}
+
+# Helper function to get deployment user from config
+get_deployment_user() {
+    local project="$1"
+    local deployment_utils_script="$SCRIPT_DIR/deployment_utils.py"
+    
+    if [[ ! -f "$deployment_utils_script" ]]; then
+        return 1
+    fi
+    
+    # Try to get user from deployment config
+    local deployment_user=""
+    
+    # Change to repo directory for uv to work properly
+    cd "$REPO_DIR" || return 1
+    
+    # Try uv first (preferred), then fallback to python3
+    if command -v uv >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            deployment_user=$(uv run python "$deployment_utils_script" "$project" user "$HOSTNAME_OVERRIDE" 2>/dev/null || echo "")
+        else
+            deployment_user=$(uv run python "$deployment_utils_script" "$project" user 2>/dev/null || echo "")
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            deployment_user=$(python3 "$deployment_utils_script" "$project" user "$HOSTNAME_OVERRIDE" 2>/dev/null || echo "")
+        else
+            deployment_user=$(python3 "$deployment_utils_script" "$project" user 2>/dev/null || echo "")
+        fi
+    fi
+    
+    if [[ -n "$deployment_user" ]]; then
+        echo "$deployment_user"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Helper function to get service module name from deployment config
+get_service_module_name() {
+    local project="$1"
+    local service="$2"
+    local deployment_utils_script="$SCRIPT_DIR/deployment_utils.py"
+    
+    # Extract service name without @project suffix
+    local service_name="${service%@*}"
+    
+    if [[ ! -f "$deployment_utils_script" ]]; then
+        # Fall back to default naming
+        if [[ "$service_name" == "core" || "$service_name" == "agent" ]]; then
+            echo "${project}_${service_name}"
+        else
+            echo "experimance_${service_name}"
+        fi
+        return 0
+    fi
+    
+    # Try to get module name from deployment config
+    local module_name=""
+    
+    # Change to repo directory for uv to work properly
+    cd "$REPO_DIR" || return 1
+    
+    # Try uv first (preferred), then fallback to python3
+    if command -v uv >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            module_name=$(uv run python "$deployment_utils_script" "$project" services-with-modules "$HOSTNAME_OVERRIDE" 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        else
+            module_name=$(uv run python "$deployment_utils_script" "$project" services-with-modules 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if [[ -n "$HOSTNAME_OVERRIDE" ]]; then
+            module_name=$(python3 "$deployment_utils_script" "$project" services-with-modules "$HOSTNAME_OVERRIDE" 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        else
+            module_name=$(python3 "$deployment_utils_script" "$project" services-with-modules 2>/dev/null | grep "^${service_name}:" | cut -d: -f2 || echo "")
+        fi
+    fi
+    
+    if [[ -n "$module_name" ]]; then
+        echo "$module_name"
+        return 0
+    else
+        # Fall back to default naming
+        if [[ "$service_name" == "core" || "$service_name" == "agent" ]]; then
+            echo "${project}_${service_name}"
+        else
+            echo "experimance_${service_name}"
+        fi
+        return 0
+    fi
+}
 
 # Default values
 PROJECT="${1:-experimance}"
 ACTION="${2:-install}"
 MODE="${3:-}"
 
+# Parse hostname override from remaining arguments
+HOSTNAME_OVERRIDE=""
+for arg in "${@:4}"; do
+    case $arg in
+        --hostname=*)
+            HOSTNAME_OVERRIDE="${arg#*=}"
+            shift
+            ;;
+        *)
+            # Unknown option
+            ;;
+    esac
+done
+
 # Auto-detect mode if not specified for install action
 if [[ "$ACTION" == "install" && -z "$MODE" ]]; then
-    if [[ "${EXPERIMANCE_ENV:-}" == "development" ]]; then
-        MODE="dev"
-    elif id experimance &>/dev/null; then
-        MODE="prod" 
-        warn "Auto-detected production mode. Use 'dev' mode explicitly for development: $0 $PROJECT install dev"
-    else
-        MODE="dev"
-        warn "No experimance user found, defaulting to development mode"
+    # Try deployment config first
+    deployment_script="$SCRIPT_DIR/deployment_utils.py"
+    if [[ -f "$deployment_script" ]]; then
+        # Try to get mode from deployment config
+        if command -v python3 >/dev/null 2>&1; then
+            config_mode=$(python3 "$deployment_script" "$PROJECT" mode "$HOSTNAME_OVERRIDE" 2>/dev/null || echo "")
+            if [[ -n "$config_mode" ]]; then
+                MODE="$config_mode"
+                log "Auto-detected mode from deployment config: $MODE"
+            fi
+        fi
+    fi
+    
+    # Fall back to original logic if no mode from config
+    if [[ -z "$MODE" ]]; then
+        if [[ "${EXPERIMANCE_ENV:-}" == "development" ]]; then
+            MODE="dev"
+        elif id experimance &>/dev/null; then
+            MODE="prod" 
+            warn "Auto-detected production mode. Use 'dev' mode explicitly for development: $0 $PROJECT install dev"
+        else
+            MODE="dev"
+            warn "No experimance user found, defaulting to development mode"
+        fi
     fi
 fi
 
@@ -92,8 +243,15 @@ if [[ "$MODE" == "dev" ]]; then
     USE_SYSTEMD=false
     warn "Running in DEVELOPMENT mode with user: $RUNTIME_USER"
 elif [[ "$MODE" == "prod" ]]; then
-    # Production mode: use experimance user, system directories, systemd
-    RUNTIME_USER="experimance"
+    # Production mode: try deployment config first, fall back to experimance
+    DEPLOYMENT_USER=$(get_deployment_user "$PROJECT" 2>/dev/null || echo "")
+    if [[ -n "$DEPLOYMENT_USER" ]]; then
+        RUNTIME_USER="$DEPLOYMENT_USER"
+        log "Using deployment config user: $RUNTIME_USER"
+    else
+        RUNTIME_USER="experimance"
+        log "No deployment config user found, using default: $RUNTIME_USER"
+    fi
     USE_SYSTEMD=true
     log "Running in PRODUCTION mode with user: $RUNTIME_USER"
 else
@@ -103,20 +261,37 @@ else
         RUNTIME_USER="$(whoami)"
         USE_SYSTEMD=false
         warn "Running in development mode with user: $RUNTIME_USER"
-    elif id experimance &>/dev/null; then
-        MODE="prod"
-        RUNTIME_USER="experimance"
-        USE_SYSTEMD=true
-        log "Auto-detected production mode with experimance user"
     else
-        error "Cannot determine runtime mode. For install, specify 'dev' or 'prod' mode. For other actions, ensure experimance user exists or set EXPERIMANCE_ENV=development"
+        # Try deployment config for production mode detection
+        DEPLOYMENT_USER=$(get_deployment_user "$PROJECT" 2>/dev/null || echo "")
+        if [[ -n "$DEPLOYMENT_USER" ]] && id "$DEPLOYMENT_USER" &>/dev/null; then
+            MODE="prod"
+            RUNTIME_USER="$DEPLOYMENT_USER"
+            USE_SYSTEMD=true
+            log "Auto-detected production mode with deployment config user: $RUNTIME_USER"
+        elif id experimance &>/dev/null; then
+            MODE="prod"
+            RUNTIME_USER="experimance"
+            USE_SYSTEMD=true
+            log "Auto-detected production mode with experimance user"
+        else
+            error "Cannot determine runtime mode. For install, specify 'dev' or 'prod' mode. For other actions, ensure user exists or set EXPERIMANCE_ENV=development"
+        fi
     fi
 fi
 
 # Get services dynamically for the project
 get_project_services() {
     local project="$1"
-    local services_script="$SCRIPT_DIR/get_project_services.py"
+    local deployment_script="$SCRIPT_DIR/get_deployment_services.py"
+    local fallback_script="$SCRIPT_DIR/get_project_services.py"
+    
+    # Try deployment-aware script first (supports multi-machine)
+    local services_script="$deployment_script"
+    if [[ ! -f "$services_script" ]]; then
+        log "Deployment services script not found, using fallback: $fallback_script"
+        services_script="$fallback_script"
+    fi
     
     if [[ ! -f "$services_script" ]]; then
         error "Service detection script not found: $services_script"
@@ -150,7 +325,7 @@ get_project_services() {
             
             # Use uv run to execute the Python script in the proper environment
             cd '$REPO_DIR'
-            if ! \"\$uv_cmd\" run python '$services_script' '$project'; then
+            if ! \"\$uv_cmd\" run python '$services_script' '$project' '$HOSTNAME_OVERRIDE'; then
                 echo 'ERROR: Failed to detect services for project $project' >&2
                 exit 1
             fi
@@ -177,24 +352,39 @@ get_project_services() {
         
         # Use uv run to execute the Python script in the proper environment
         cd "$REPO_DIR"
-        if ! "$uv_cmd" run python "$services_script" "$project"; then
+        if ! "$uv_cmd" run python "$services_script" "$project" "$HOSTNAME_OVERRIDE"; then
             error "Failed to detect services for project '$project'. Check that the project exists and is properly configured."
         fi
     fi
 }
 
+# Portable alternative to readarray for zsh compatibility
+load_services_array() {
+    local project="$1"
+    SERVICES=()
+    while IFS= read -r line; do
+        SERVICES+=("$line")
+    done < <(get_project_services "$project")
+}
+
 # Services to manage (dynamically determined)
 # For install action, we'll populate this after installing dependencies
 if [[ "$ACTION" != "install" ]]; then
-    readarray -t SERVICES < <(get_project_services "$PROJECT")
+    load_services_array "$PROJECT"
 else
     # For install action, we'll detect services after dependencies are installed
     SERVICES=()
 fi
 
 check_root() {
-    if [[ "$USE_SYSTEMD" == true ]] && [[ $EUID -ne 0 ]]; then
+    # Only require root for Linux systemd operations
+    if [[ "$USE_SYSTEMD" == true ]] && [[ "$PLATFORM" != "macos" ]] && [[ $EUID -ne 0 ]]; then
         error "This script must be run as root for systemd operations in production mode"
+    fi
+    
+    # On macOS, LaunchAgents should NOT be run as root
+    if [[ "$PLATFORM" == "macos" ]] && [[ $EUID -eq 0 ]]; then
+        error "Do not run this script as root on macOS. LaunchAgents run as the current user."
     fi
 }
 
@@ -223,8 +413,60 @@ check_project() {
     done
 }
 
+# Update shell profiles to include pyenv and uv in PATH
+update_shell_profile() {
+    local bashrc="$HOME/.bashrc"
+    local pyenv_init_added=false
+    local uv_path_added=false
+    
+    # Check if pyenv is already configured in .bashrc
+    if [[ -f "$bashrc" ]] && grep -q "PYENV_ROOT" "$bashrc"; then
+        pyenv_init_added=true
+    fi
+    
+    # Check if uv path is already configured in .bashrc
+    if [[ -f "$bashrc" ]] && grep -q "\$HOME/\.local/bin" "$bashrc"; then
+        uv_path_added=true
+    fi
+    
+    # Add pyenv initialization to .bashrc if not present
+    if [[ "$pyenv_init_added" == false ]]; then
+        log "Adding pyenv initialization to ~/.bashrc..."
+        cat >> "$bashrc" << 'EOF'
+
+# Added by experimance deploy script - pyenv configuration
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+if command -v pyenv >/dev/null 2>&1; then
+    eval "$(pyenv init --path)"
+    eval "$(pyenv init -)"
+fi
+EOF
+    fi
+    
+    # Add uv path to .bashrc if not present
+    if [[ "$uv_path_added" == false ]]; then
+        log "Adding uv to PATH in ~/.bashrc..."
+        cat >> "$bashrc" << 'EOF'
+
+# Added by experimance deploy script - uv configuration
+export PATH="$HOME/.local/bin:$PATH"
+EOF
+    fi
+    
+    if [[ "$pyenv_init_added" == false ]] || [[ "$uv_path_added" == false ]]; then
+        log "Shell profile updated. Changes will take effect in new terminal sessions."
+        log "Run 'source ~/.bashrc' to use the new settings in this terminal."
+    fi
+}
+
 # Create symlink for standard installation directory
 create_symlink() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        log "Skipping symlink creation in development mode"
+        return
+    fi
+    
     local install_dir="$1"
     local symlink_target="/opt/experimance"
     
@@ -251,9 +493,72 @@ create_symlink() {
     log "Created symlink: $symlink_target -> $install_dir"
 }
 
+# Configure passwordless sudo for service management
+configure_sudo_permissions() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        log "Skipping sudo configuration in development mode"
+        return
+    fi
+    
+    if [[ "$PLATFORM" != "linux" ]]; then
+        log "Skipping sudo configuration (not Linux platform)"
+        return
+    fi
+    
+    log "Configuring passwordless sudo for service management..."
+    
+    local sudo_file="/etc/sudoers.d/experimance-${PROJECT}"
+    
+    # Create sudoers file for passwordless service control
+    cat > "$sudo_file" << EOF
+# Experimance ${PROJECT} project - Allow passwordless service control
+# Generated by deploy.sh on $(date)
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl start experimance@${PROJECT}.target
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop experimance@${PROJECT}.target
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart experimance@${PROJECT}.target
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl status experimance@${PROJECT}.target
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl start *@${PROJECT}.service
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop *@${PROJECT}.service
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *@${PROJECT}.service
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl status *@${PROJECT}.service
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/startup.sh
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/shutdown.sh
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/reset.sh
+${RUNTIME_USER} ALL=(ALL) NOPASSWD: /opt/experimance/infra/scripts/deploy.sh
+EOF
+    
+    # Set proper permissions for sudoers file
+    chmod 440 "$sudo_file"
+    
+    # Validate the sudoers file
+    if visudo -c -f "$sudo_file"; then
+        log "✓ Configured passwordless sudo for ${RUNTIME_USER} to control ${PROJECT} services"
+        log "  File: $sudo_file"
+    else
+        error "Invalid sudoers configuration created. Removing file."
+        rm -f "$sudo_file"
+        return 1
+    fi
+}
+
 install_reset_on_input() {
     if [[ "$USE_SYSTEMD" != true ]]; then
         log "Skipping reset on input installation in development mode"
+        return
+    fi
+    
+    # Check if reset-on-input is in the services list for this machine
+    local install_reset=false
+    for service in "${SERVICES[@]}"; do
+        if [[ "$service" == "reset-on-input"* ]] || [[ "$service" == *"reset-on-input" ]]; then
+            install_reset=true
+            break
+        fi
+    done
+    
+    if [[ "$install_reset" != true ]]; then
+        log "Skipping reset-on-input installation (not configured for this machine)"
         return
     fi
     
@@ -281,7 +586,104 @@ install_reset_on_input() {
     fi
 }
 
+update_health_config() {
+    log "Updating health service configuration for deployment..."
+    
+    local health_config_path="$REPO_DIR/projects/$PROJECT/health.toml"
+    
+    # Check if health.toml exists
+    if [[ ! -f "$health_config_path" ]]; then
+        log "No health.toml found at $health_config_path, skipping health config update"
+        return
+    fi
+    
+    # Get the service types (without @project suffix) for this machine, excluding health service
+    local service_types=()
+    for service in "${SERVICES[@]}"; do
+        # Extract service type from "service_type@project" format
+        local service_type="${service%@*}"
+        # Skip the health service - it shouldn't monitor itself
+        if [[ "$service_type" != "health" ]]; then
+            service_types+=("$service_type")
+        fi
+    done
+    
+    # Use service types directly (not module names) as expected_services
+    # The health service expects service types like "core", "display", not module names like "fire_core"
+    local expected_services=()
+    for service_type in "${service_types[@]}"; do
+        expected_services+=("$service_type")
+    done
+    
+    # Create the expected_services array string for TOML
+    local services_toml="expected_services = ["
+    for i in "${!expected_services[@]}"; do
+        services_toml+="\n    \"${expected_services[i]}\""
+        if [[ $i -lt $((${#expected_services[@]} - 1)) ]]; then
+            services_toml+=","
+        fi
+    done
+    services_toml+="\n]"
+    
+    # Create a backup of the original file
+    cp "$health_config_path" "$health_config_path.backup"
+    
+    # Update the expected_services in the health.toml file
+    # Use sed to replace the expected_services array
+    local temp_file="$health_config_path.tmp"
+    
+    # Use awk to replace the expected_services section
+    awk -v new_services="$services_toml" '
+    /^expected_services = \[/ {
+        print new_services
+        # Skip lines until we find the closing bracket
+        while (getline && !/^\]/ && !/^[a-zA-Z_]/) {
+            # Skip lines that are part of the array
+        }
+        # If we stopped on a line that is not a closing bracket, print it
+        if (!/^\]/) {
+            print
+        }
+        next
+    }
+    { print }
+    ' "$health_config_path" > "$temp_file"
+    
+    # Replace the original file
+    mv "$temp_file" "$health_config_path"
+    
+    # Set proper ownership for the health config file
+    if [[ "$USE_SYSTEMD" == true && "$RUNTIME_USER" == "experimance" ]]; then
+        chown experimance:$(get_chown_group) "$health_config_path"
+        chown experimance:$(get_chown_group) "$health_config_path.backup"
+        log "Set ownership of health config files to experimance user"
+    fi
+    
+    log "Updated health.toml expected_services:"
+    for service in "${expected_services[@]}"; do
+        log "  - $service"
+    done
+    
+    log "Health configuration updated successfully"
+    log "Original config backed up to: $health_config_path.backup"
+}
+
 install_systemd_files() {
+    case "$PLATFORM" in
+        linux)
+            install_systemd_files_linux
+            ;;
+        macos)
+            install_launchd_files_macos
+            ;;
+        *)
+            log "Skipping service installation on unsupported platform: $PLATFORM"
+            ;;
+    esac
+}
+
+# Linux systemd installation (renamed from original function)
+install_systemd_files_linux() {
     if [[ "$USE_SYSTEMD" != true ]]; then
         log "Skipping systemd installation in development mode"
         return
@@ -289,17 +691,109 @@ install_systemd_files() {
     
     log "Installing systemd service files..."
     
-    # Copy all template service files (e.g., core@.service, display@.service)
+    # Determine which service template files are needed for this machine
+    declare -A needed_service_types
+    declare -A service_modules
+    for service in "${SERVICES[@]}"; do
+        # service is in format "service_type@project", e.g., "core@experimance"
+        local service_type="${service%@*}"
+        needed_service_types["$service_type"]=1
+        
+        # Get the module name for this service using the helper script
+        local module_name
+        if [[ "$MODE" == "prod" && "$RUNTIME_USER" == "experimance" && "$EUID" -eq 0 ]]; then
+            # Running as root in production mode, delegate to experimance user
+            module_name=$(sudo -u experimance bash -c "
+                cd '$REPO_DIR'
+                export PATH=\"/home/experimance/.local/bin:\$PATH\"
+                uv run python infra/scripts/get_service_module.py '$PROJECT' '$service_type'
+            " 2>/dev/null || echo "experimance_$service_type")
+        else
+            # Development mode or already running as correct user
+            module_name=$(cd "$REPO_DIR" && uv run python infra/scripts/get_service_module.py "$PROJECT" "$service_type" 2>/dev/null || echo "experimance_$service_type")
+        fi
+        service_modules["$service_type"]="$module_name"
+        log "Service $service_type will use module: $module_name"
+    done
+    
+    # Copy only the needed template service files (e.g., core@.service, display@.service)
     # These are TEMPLATES that systemd uses to create instances like core@experimance.service
     local files_copied=0
     for service_file in "$SCRIPT_DIR"/../systemd/*.service; do
         if [[ -f "$service_file" ]]; then
             local basename_file=$(basename "$service_file")
-            if cp "$service_file" "$SYSTEMD_DIR/"; then
-                log "✓ Copied $basename_file"
-                files_copied=$((files_copied + 1))
+            
+            # Handle template services (contains @) and standalone services
+            if [[ "$basename_file" == *"@.service" ]]; then
+                # Template service - extract service type
+                local service_type="${basename_file%@*}"
+                if [[ "${needed_service_types[$service_type]:-}" == "1" ]]; then
+                    # Get the module name for this service type
+                    local module_name="${service_modules[$service_type]:-experimance_$service_type}"
+                    
+                    # Create a customized version of the template file
+                    local temp_file="/tmp/${basename_file}.$$"
+                    cp "$service_file" "$temp_file"
+                    
+                    # Replace the ExecStart line with the correct module name
+                    sed -i "s|ExecStart=/home/experimance/.local/bin/uv run -m experimance_${service_type}|ExecStart=/home/experimance/.local/bin/uv run -m ${module_name}|g" "$temp_file"
+                    
+                    # Get the actual UID of the runtime user and customize XDG_RUNTIME_DIR
+                    if [[ "$RUNTIME_USER" == "experimance" ]] && id "$RUNTIME_USER" &>/dev/null; then
+                        local runtime_uid=$(id -u "$RUNTIME_USER")
+                        log "Customizing systemd service for user $RUNTIME_USER (UID: $runtime_uid)"
+                        
+                        # Replace XDG_RUNTIME_DIR with correct UID
+                        sed -i "s|Environment=XDG_RUNTIME_DIR=/run/user/1000|Environment=XDG_RUNTIME_DIR=/run/user/${runtime_uid}|g" "$temp_file"
+                        
+                        # Update PULSE_SERVER if present (for audio service)
+                        sed -i "s|Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native|Environment=PULSE_SERVER=unix:/run/user/${runtime_uid}/pulse/native|g" "$temp_file"
+                        
+                        # Also update ReadWritePaths to include the correct runtime directory
+                        sed -i "s|ReadWritePaths=\([^[:space:]]*\) /run/user/1000|ReadWritePaths=\1 /run/user/${runtime_uid}|g" "$temp_file"
+                        
+                        # Ensure audio group is included in SupplementaryGroups (this may already be correct in template)
+                        if grep -q "SupplementaryGroups=.*video" "$temp_file" && ! grep -q "SupplementaryGroups=.*audio" "$temp_file"; then
+                            sed -i "s|SupplementaryGroups=video|SupplementaryGroups=audio video|g" "$temp_file"
+                        fi
+                    else
+                        warn "Could not determine UID for user $RUNTIME_USER, using template defaults"
+                    fi
+                    
+                    # Copy the customized file to systemd directory with correct name
+                    if cp "$temp_file" "$SYSTEMD_DIR/$basename_file"; then
+                        log "✓ Copied $basename_file (module: $module_name)"
+                        files_copied=$((files_copied + 1))
+                    else
+                        error "✗ Failed to copy $basename_file"
+                    fi
+                    
+                    # Clean up temp file
+                    rm -f "$temp_file"
+                else
+                    log "Skipping $basename_file (not needed for this machine)"
+                fi
             else
-                error "✗ Failed to copy $basename_file"
+                # Standalone service - check if it's in the services list
+                local service_name="${basename_file%.service}"
+                local found_service=false
+                for service in "${SERVICES[@]}"; do
+                    if [[ "$service" == "$service_name"* ]] || [[ "$service" == *"$service_name" ]]; then
+                        found_service=true
+                        break
+                    fi
+                done
+                
+                if [[ "$found_service" == true ]]; then
+                    if cp "$service_file" "$SYSTEMD_DIR/"; then
+                        log "✓ Copied $basename_file"
+                        files_copied=$((files_copied + 1))
+                    else
+                        error "✗ Failed to copy $basename_file"
+                    fi
+                else
+                    log "Skipping $basename_file (not needed for this machine)"
+                fi
             fi
         fi
     done
@@ -399,6 +893,246 @@ install_systemd_files() {
     log "Note: Instance services are now created and linked. Use 'sudo ./deploy.sh $PROJECT start' to start them"
 }
 
+# macOS launchd installation
+install_launchd_files_macos() {
+    log "Installing launchd service files for macOS..."
+    
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    mkdir -p "$launchd_dir"
+    
+    # Create log directory for LaunchAgent logs
+    mkdir -p "$HOME/Library/Logs/experimance"
+    
+    # Convert systemd templates to launchd plist files
+    local files_created=0
+    for service in "${SERVICES[@]}"; do
+        if create_launchd_plist "$service" "$launchd_dir"; then
+            files_created=$((files_created + 1))
+        fi
+    done
+    
+    log "launchd service files installed: $files_created services"
+    
+    # Show Full Disk Access instructions for LaunchAgents
+    if [[ "$MODE" != "prod" ]]; then
+        show_macos_full_disk_access_instructions
+    fi
+    
+    log "Note: Use './deploy.sh $PROJECT start' to load and start services"
+}
+
+create_launchd_plist() {
+    local service="$1"
+    local launchd_dir="$2"
+    
+    # On macOS, always use LaunchAgents, never LaunchDaemons
+    create_launchd_agent "$service" "$launchd_dir"
+}
+
+# Create LaunchDaemon plist (for production mode)
+create_launchd_daemon() {
+    local service="$1"
+    local launchd_dir="$2"
+    local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+    local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+    local service_type="$service_with_project"  # e.g., "agent"
+    local plist_file="$launchd_dir/com.experimance.$service.plist"
+    
+    # Get the correct module name from deployment config
+    local module_name
+    module_name=$(get_service_module_name "$project" "$service")
+    
+    # Determine the correct paths based on platform
+    local uv_path="/opt/homebrew/bin/uv"
+    if [[ ! -x "$uv_path" ]]; then
+        # Try Intel Mac path
+        uv_path="/usr/local/bin/uv"
+        if [[ ! -x "$uv_path" ]]; then
+            # Try user installation
+            uv_path="$HOME/.local/bin/uv"
+        fi
+    fi
+    
+    cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.experimance.$service</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>$uv_path</string>
+        <string>run</string>
+        <string>-m</string>
+        <string>$module_name</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>$REPO_DIR</string>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <key>StandardErrorPath</key>
+    <string>/var/log/experimance_$service.log</string>
+    
+    <key>StandardOutPath</key>
+    <string>/var/log/experimance_$service.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>EXPERIMANCE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:\$HOME/.local/bin:/usr/bin:/bin</string>
+    </dict>
+    
+    <key>UserName</key>
+    <string>$RUNTIME_USER</string>
+</dict>
+</plist>
+EOF
+
+    # Set proper ownership and permissions for LaunchDaemon
+    chown root:wheel "$plist_file"
+    chmod 644 "$plist_file"
+    
+    log "✓ Created LaunchDaemon service: $plist_file"
+    return 0
+}
+
+# Create LaunchAgent plist (for development mode)
+create_launchd_agent() {
+    local service="$1"
+    local launchd_dir="$2"
+    local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+    local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+    local service_type="$service_with_project"  # e.g., "agent"
+    local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+    
+    # Get the correct module name from deployment config
+    local module_name
+    module_name=$(get_service_module_name "$project" "$service")
+    
+    # Determine uv path - prefer Homebrew location if available
+    local uv_path
+    if [[ -x "/opt/homebrew/bin/uv" ]]; then
+        uv_path="/opt/homebrew/bin/uv"
+    elif [[ -x "$HOME/.local/bin/uv" ]]; then
+        uv_path="$HOME/.local/bin/uv"
+    elif command -v uv &> /dev/null; then
+        uv_path=$(command -v uv)
+    else
+        error "uv not found. Please install uv first."
+        return 1
+    fi
+    
+    cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.experimance.${service_type}.$project</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>$uv_path</string>
+        <string>run</string>
+        <string>-m</string>
+        <string>$module_name</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>$REPO_DIR</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PROJECT_ENV</key>
+        <string>$project</string>
+    </dict>
+    
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>StandardErrorPath</key>
+    <string>$HOME/Library/Logs/experimance/${project}_${service_type}_launchd_error.log</string>
+    
+    <key>StandardOutPath</key>
+    <string>$HOME/Library/Logs/experimance/${project}_${service_type}_launchd.log</string>
+    
+    <!-- LaunchAgent version - no UserName needed, runs as logged-in user -->
+    
+    <!-- Restart on failure after 10 seconds -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    
+    <!-- Start after a delay to ensure system is ready -->
+    <key>StartInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>
+EOF
+
+    # Set proper ownership and permissions for LaunchAgent
+    chmod 644 "$plist_file"
+    
+    log "✓ Created LaunchAgent service: $plist_file"
+    log "✓ Using uv path: $uv_path"
+    return 0
+}
+
+# Show Full Disk Access instructions for macOS LaunchAgents
+show_macos_full_disk_access_instructions() {
+    echo ""
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║                        macOS FULL DISK ACCESS REQUIRED                        ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${YELLOW}LaunchAgents require Full Disk Access for uv to execute Python modules.${NC}"
+    echo ""
+    echo -e "${BLUE}Manual steps required:${NC}"
+    echo -e "${GREEN}1.${NC} Open System Settings → Privacy & Security → Full Disk Access"
+    echo -e "${GREEN}2.${NC} Click the + button to add applications"
+    echo -e "${GREEN}3.${NC} Navigate to and add the uv binary:"
+    
+    # Determine uv path
+    local uv_path
+    if [[ -x "/opt/homebrew/bin/uv" ]]; then
+        uv_path="/opt/homebrew/bin/uv"
+    elif [[ -x "$HOME/.local/bin/uv" ]]; then
+        uv_path="$HOME/.local/bin/uv"
+    elif command -v uv &> /dev/null; then
+        uv_path=$(command -v uv)
+    else
+        uv_path="<uv_path_not_found>"
+    fi
+    
+    echo "   - $uv_path"
+    echo ""
+    echo -e "${GREEN}4.${NC} Toggle the switch to grant Full Disk Access to uv"
+    echo -e "${GREEN}5.${NC} After granting access, run: ${BLUE}./deploy.sh $PROJECT start${NC}"
+    echo ""
+    echo -e "${YELLOW}Note: This is only required once for the uv binary.${NC}"
+    echo -e "${YELLOW}Without Full Disk Access, LaunchAgents will fail with 'Operation not permitted'.${NC}"
+    echo ""
+    echo -e "${BLUE}To find uv location manually, run: ${GREEN}which uv${NC}"
+    echo ""
+}
+
 # Download file from Google Drive using uvx gdown
 download_google_drive_file() {
     local file_id="$1"
@@ -425,41 +1159,44 @@ download_google_drive_file() {
 setup_directories() {
     log "Setting up directories..."
     
+    # Get correct group for this platform
+    CHOWN_GROUP=$(get_chown_group)
+    
     # Create cache directory
     if [[ "$MODE" == "prod" ]]; then
         # Production: use /var/cache/experimance
         mkdir -p /var/cache/experimance
-        chown "$RUNTIME_USER:$RUNTIME_USER" /var/cache/experimance
+        chown "$RUNTIME_USER:$CHOWN_GROUP" /var/cache/experimance
         log "Created production cache directory: /var/cache/experimance"
         
         # Production: use /var/log/experimance
         mkdir -p /var/log/experimance
-        chown "$RUNTIME_USER:$RUNTIME_USER" /var/log/experimance
+        chown "$RUNTIME_USER:$CHOWN_GROUP" /var/log/experimance
         chmod 775 /var/log/experimance
         log "Created production log directory: /var/log/experimance"
     else
         # Development: use local cache directory
         mkdir -p "$REPO_DIR/cache"
-        chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/cache"
+        chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/cache"
         log "Created development cache directory: $REPO_DIR/cache"
     fi
     
     # Create log directory if it doesn't exist
     mkdir -p "$REPO_DIR/logs"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/logs"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/logs"
     
     # Create images directory if it doesn't exist
     mkdir -p "$REPO_DIR/media/images/generated"
     mkdir -p "$REPO_DIR/media/images/mocks"
     mkdir -p "$REPO_DIR/media/video"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/images"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/images/generated"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/images/mocks"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media/video"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/images"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/images/generated"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/images/mocks"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media/video"
     
     # create transcripts directory
     mkdir -p "$REPO_DIR/transcripts"
-    chown "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/transcripts"
+    chown "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/transcripts"
 
     # Download and extract media bundle from Google drive
     # https://drive.google.com/file/d/1JPf4biReYj1qwWXsb0R_ZVcVrzM94XeE/view?usp=drive_link
@@ -482,7 +1219,7 @@ setup_directories() {
                     log "Continuing installation without media files..."
                     return
                 fi
-                chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
+                chown "$RUNTIME_USER:$CHOWN_GROUP" "$ZIP_FILE"
             else
                 log "Media bundle zip already present at $ZIP_FILE"
                 
@@ -499,7 +1236,7 @@ setup_directories() {
                         log "Continuing installation without media files..."
                         return
                     fi
-                    chown "$RUNTIME_USER:$RUNTIME_USER" "$ZIP_FILE"
+                    chown "$RUNTIME_USER:$CHOWN_GROUP" "$ZIP_FILE"
                 fi
             fi
 
@@ -513,7 +1250,7 @@ setup_directories() {
                     log "Continuing installation without media files..."
                 else
                     log "Media bundle extracted successfully"
-                    chown -R "$RUNTIME_USER:$RUNTIME_USER" "$REPO_DIR/media"
+                    chown -R "$RUNTIME_USER:$CHOWN_GROUP" "$REPO_DIR/media"
                 fi
             else
                 warn "Cannot extract media bundle: 'unzip' not found"
@@ -530,6 +1267,23 @@ setup_directories() {
 
 # Define the complete list of required system packages
 get_required_packages() {
+    local package_type="${1:-default}"
+    
+    case "$PLATFORM" in
+        linux)
+            get_required_packages_linux "$package_type"
+            ;;
+        macos)
+            get_required_packages_macos "$package_type"
+            ;;
+        *)
+            error "Unsupported platform: $PLATFORM"
+            ;;
+    esac
+}
+
+# Linux package requirements
+get_required_packages_linux() {
     # Essential build tools that should be checked by command
     local build_tools=("make" "gcc")
     
@@ -582,6 +1336,55 @@ get_required_packages() {
     esac
 }
 
+# macOS package requirements
+get_required_packages_macos() {
+    # Essential build tools (checked differently on macOS)
+    local build_tools=("xcode-select")
+    
+    # Homebrew packages (equivalent to apt_packages)
+    local brew_packages=(
+        # Build tools (make is included in Xcode Command Line Tools)
+        # "build-essential" -> Xcode Command Line Tools
+        
+        # Development libraries
+        "openssl"           # libssl-dev
+        "zlib"              # zlib1g-dev  
+        "bzip2"             # libbz2-dev
+        "readline"          # libreadline-dev
+        "sqlite"            # libsqlite3-dev
+        "curl"              # curl (usually pre-installed)
+        "git"               # git (usually pre-installed via Xcode)
+        "xz"                # xz-utils
+        "tcl-tk"            # tk-dev (different name on macOS)
+        "libxml2"           # libxml2-dev
+        "xmlsec1"           # libxmlsec1-dev
+        "libffi"            # libffi-dev
+        "gdbm"              # libgdbm-dev
+        
+        # Audio/Video
+        "portaudio"         # portaudio19-dev
+        "ffmpeg"            # ffmpeg
+        
+        # Note: v4l-utils, libv4l-dev, uvcdynctrl, guvcview -> Not needed on macOS
+        # macOS uses AVFoundation framework instead
+        # evtest -> Not available on macOS (use different input monitoring)
+        # lm-sensors -> Not available on macOS (use built-in sensors)
+        # supercollider available via brew if needed
+    )
+    
+    case "${1:-brew}" in
+        "build_tools")
+            printf '%s\n' "${build_tools[@]}"
+            ;;
+        "brew")
+            printf '%s\n' "${brew_packages[@]}"
+            ;;
+        *)
+            printf '%s\n' "${brew_packages[@]}"
+            ;;
+    esac
+}
+
 # Check if system build dependencies are installed
 check_build_dependencies() {
     local missing_deps=()
@@ -590,7 +1393,18 @@ check_build_dependencies() {
     while IFS= read -r tool; do
         case "$tool" in
             "gcc")
-                if ! command -v gcc >/dev/null 2>&1; then missing_deps+=("build-essential"); fi
+                if ! command -v gcc >/dev/null 2>&1; then 
+                    if [[ "$PLATFORM" == "linux" ]]; then
+                        missing_deps+=("build-essential")
+                    elif [[ "$PLATFORM" == "macos" ]]; then
+                        missing_deps+=("xcode-command-line-tools")
+                    fi
+                fi
+                ;;
+            "xcode-select")
+                if ! xcode-select -p &>/dev/null; then
+                    missing_deps+=("xcode-command-line-tools")
+                fi
                 ;;
             *)
                 if ! command -v "$tool" >/dev/null 2>&1; then missing_deps+=("$tool"); fi
@@ -599,13 +1413,23 @@ check_build_dependencies() {
     done < <(get_required_packages "build_tools")
     
     # Check each package (skip build tools as they're handled above)
-    while IFS= read -r package; do
-        if [[ "$package" != "make" && "$package" != "build-essential" ]]; then
-            if ! dpkg -l "$package" 2>/dev/null | grep -q "^ii"; then
-                missing_deps+=("$package")
+    if [[ "$PLATFORM" == "linux" ]]; then
+        while IFS= read -r package; do
+            if [[ "$package" != "make" && "$package" != "build-essential" ]]; then
+                if ! dpkg -l "$package" 2>/dev/null | grep -q "^ii"; then
+                    missing_deps+=("$package")
+                fi
             fi
-        fi
-    done < <(get_required_packages "apt")
+        done < <(get_required_packages "apt")
+    elif [[ "$PLATFORM" == "macos" ]]; then
+        while IFS= read -r package; do
+            if [[ "$package" != "make" ]]; then  # make comes with Xcode tools
+                if ! brew list "$package" &>/dev/null; then
+                    missing_deps+=("$package")
+                fi
+            fi
+        done < <(get_required_packages "brew")
+    fi
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         warn "Missing system build dependencies required for Python compilation:"
@@ -613,8 +1437,26 @@ check_build_dependencies() {
             echo "  - $dep"
         done
         echo ""
-        echo "The following packages need to be installed:"
-        echo "  sudo apt install $(get_required_packages "apt" | tr '\n' ' ')"
+        
+        if [[ "$PLATFORM" == "linux" ]]; then
+            echo "The following packages need to be installed:"
+            echo "  sudo apt install $(get_required_packages "apt" | tr '\n' ' ')"
+        elif [[ "$PLATFORM" == "macos" ]]; then
+            if [[ " ${missing_deps[*]} " =~ " xcode-command-line-tools " ]]; then
+                echo "Xcode Command Line Tools need to be installed:"
+                echo "  xcode-select --install"
+            fi
+            local brew_deps=()
+            for dep in "${missing_deps[@]}"; do
+                if [[ "$dep" != "xcode-command-line-tools" ]]; then
+                    brew_deps+=("$dep")
+                fi
+            done
+            if [[ ${#brew_deps[@]} -gt 0 ]]; then
+                echo "The following Homebrew packages need to be installed:"
+                echo "  brew install ${brew_deps[*]}"
+            fi
+        fi
         echo ""
         
         if [[ "$MODE" == "prod" ]]; then
@@ -690,6 +1532,81 @@ install_system_dependencies() {
     fi
 }
 
+# macOS dependency installation
+install_system_dependencies_macos() {
+    log "Installing system dependencies for macOS..."
+    
+    # Determine the actual user (not root if using sudo)
+    local actual_user="$RUNTIME_USER"
+    if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+        actual_user="$SUDO_USER"
+        log "Running as root via sudo, will install Homebrew as user: $actual_user"
+    fi
+    
+    # Check for Xcode Command Line Tools
+    if ! xcode-select -p &>/dev/null; then
+        log "Installing Xcode Command Line Tools..."
+        xcode-select --install
+        log "Please complete the Xcode Command Line Tools installation and re-run this script"
+        exit 1
+    fi
+    
+    # Function to run commands as the actual user
+    run_as_user() {
+        if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+            # Running as root via sudo, delegate to actual user
+            sudo -u "$actual_user" -H bash -c "$1"
+        else
+            # Running as regular user
+            bash -c "$1"
+        fi
+    }
+    
+    # Check for Homebrew
+    if ! run_as_user "command -v brew &>/dev/null"; then
+        log "Installing Homebrew as user $actual_user..."
+        if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+            # Install Homebrew as the sudo user, not root
+            sudo -u "$actual_user" -H bash -c '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        else
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        
+        # Add Homebrew to PATH for current session
+        if [[ -x /opt/homebrew/bin/brew ]]; then
+            export PATH="/opt/homebrew/bin:$PATH"
+        elif [[ -x /usr/local/bin/brew ]]; then
+            export PATH="/usr/local/bin:$PATH"
+        fi
+    fi
+    
+    # Install packages as the actual user (Homebrew requirement)
+    local packages_to_install
+    packages_to_install=$(get_required_packages_macos "brew" | tr '\n' ' ')
+    
+    log "Installing Homebrew packages as user $actual_user: $packages_to_install"
+    
+    # Create the brew command with proper PATH
+    local brew_cmd='
+        if [[ -x /opt/homebrew/bin/brew ]]; then
+            export PATH="/opt/homebrew/bin:$PATH"
+            BREW_CMD="/opt/homebrew/bin/brew"
+        elif [[ -x /usr/local/bin/brew ]]; then
+            export PATH="/usr/local/bin:$PATH" 
+            BREW_CMD="/usr/local/bin/brew"
+        else
+            BREW_CMD="brew"
+        fi
+        $BREW_CMD install '"$packages_to_install"'
+    '
+    
+    if ! run_as_user "$brew_cmd"; then
+        error "Failed to install Homebrew packages. Some packages may have different names on macOS or may not be available."
+    fi
+    
+    log "System dependencies installed via Homebrew"
+}
+
 # Ask about Python optimization flags
 ask_python_optimization() {
     if [[ "$MODE" == "prod" ]]; then
@@ -722,13 +1639,23 @@ install_dependencies() {
     if check_build_dependencies; then
         log "System build dependencies already installed"
     else
-        install_system_dependencies
+        case "$PLATFORM" in
+            linux)
+                install_system_dependencies
+                ;;
+            macos)
+                install_system_dependencies_macos
+                ;;
+            *)
+                error "Unsupported platform: $PLATFORM"
+                ;;
+        esac
     fi
     
     if [[ "$MODE" == "prod" ]]; then
-        # Production mode: install uv and dependencies as the experimance user
-        log "Installing uv and Python 3.11 for experimance user..."
-        sudo -u experimance bash -c "
+        # Production mode: install uv and dependencies as the runtime user
+        log "Installing uv and Python 3.11 for $RUNTIME_USER user..."
+        sudo -u "$RUNTIME_USER" bash -c "
             # Install pyenv if not already installed
             if ! command -v pyenv >/dev/null 2>&1; then
                 # Check if pyenv directory exists but not in PATH
@@ -901,6 +1828,10 @@ else:
             if ! uv sync; then
                 error "Failed to install project dependencies"
             fi
+            
+            # Ensure shell profile is updated for persistent access
+            update_shell_profile
+            
             log "Dependencies installed for development with Python 3.11"
         else
             log "Installing pyenv and Python 3.11 for development..."
@@ -1022,6 +1953,9 @@ else:
                 error "uv installation failed or not found. Expected at: $HOME/.local/bin/uv"
             fi
             
+            # Update shell profile for persistent access
+            update_shell_profile
+            
             cd "$REPO_DIR"
             if ! uv sync; then
                 error "Failed to install project dependencies"
@@ -1033,11 +1967,25 @@ else:
 
 start_services() {
     if [[ "$USE_SYSTEMD" != true ]]; then
-        warn "Development mode: Services not started via systemd"
+        warn "Development mode: Services not started via system service manager"
         warn "Use './scripts/dev <service>' to run individual services in development"
         return
     fi
     
+    case "$PLATFORM" in
+        linux)
+            start_services_linux
+            ;;
+        macos)
+            start_services_macos
+            ;;
+        *)
+            error "Service management not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+start_services_linux() {
     log "Starting services for project $PROJECT..."
     
     # First, reload systemd configuration to pick up any changes
@@ -1137,12 +2085,73 @@ start_services() {
     log "Start operation complete"
 }
 
+start_services_macos() {
+    log "Starting services for project $PROJECT using launchd..."
+    
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    # Start individual services
+    for service in "${SERVICES[@]}"; do
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
+        
+        if [[ -f "$plist_file" ]]; then
+            log "Processing service: $service_label"
+            
+            # Check if already loaded
+            if launchctl list | grep -q "$service_label"; then
+                log "$service_label is already loaded"
+                # Try to start if not running
+                if ! launchctl start "$service_label" 2>/dev/null; then
+                    log "$service_label may already be running"
+                fi
+            else
+                log "Loading and starting $service_label..."
+                if launchctl bootstrap gui/$(id -u) "$plist_file"; then
+                    log "✓ Loaded $service_label"
+                    sleep 1
+                    # Verify it's running
+                    if launchctl list | grep -q "$service_label"; then
+                        log "✓ Confirmed $service_label is active"
+                    else
+                        warn "⚠ $service_label loaded but not found in active services"
+                    fi
+                else
+                    error "✗ Failed to load $service_label"
+                fi
+            fi
+        else
+            error "Service plist file not found: $plist_file"
+        fi
+    done
+    
+    log "Start operation complete"
+}
+
 stop_services() {
     if [[ "$USE_SYSTEMD" != true ]]; then
-        warn "Development mode: No systemd services to stop"
+        warn "Development mode: No system services to stop"
         return
     fi
     
+    case "$PLATFORM" in
+        linux)
+            stop_services_linux
+            ;;
+        macos)
+            stop_services_macos
+            ;;
+        *)
+            error "Service management not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+stop_services_linux() {
     log "Stopping services for project $PROJECT..."
     
     # Check if target exists and is loaded
@@ -1215,6 +2224,229 @@ stop_services() {
     log "Stop operation complete"
 }
 
+stop_services_macos() {
+    log "Stopping services for project $PROJECT using launchd..."
+    
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    # Stop individual services
+    for service in "${SERVICES[@]}"; do
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
+        
+        if [[ -f "$plist_file" ]]; then
+            log "Processing service: $service_label"
+            
+            # Check if loaded
+            if launchctl list | grep -q "$service_label"; then
+                log "Unloading $service_label..."
+                if launchctl bootout gui/$(id -u) "$plist_file"; then
+                    log "✓ Unloaded $service_label"
+                    
+                    # Wait and verify it's gone
+                    sleep 1
+                    if ! launchctl list | grep -q "$service_label"; then
+                        log "✓ Confirmed $service_label is stopped"
+                    else
+                        warn "⚠ $service_label may still be running"
+                    fi
+                else
+                    warn "Failed to unload $service_label"
+                fi
+            else
+                log "$service_label is not loaded"
+            fi
+        else
+            warn "Service plist file not found: $plist_file"
+        fi
+    done
+    
+    log "Stop operation complete"
+}
+
+uninstall_services() {
+    if [[ "$USE_SYSTEMD" != true ]]; then
+        warn "Development mode: No system services to uninstall"
+        return
+    fi
+    
+    case "$PLATFORM" in
+        linux)
+            uninstall_services_linux
+            ;;
+        macos)
+            uninstall_services_macos
+            ;;
+        *)
+            error "Service management not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+uninstall_services_linux() {
+    log "Uninstalling services for project $PROJECT..."
+    log "This will stop all services, disable them, and remove scheduling"
+    log "Files and logs will be preserved"
+    
+    # First, stop all services
+    log "Stopping all services..."
+    stop_services_linux
+    
+    # Disable the target
+    local target="experimance@${PROJECT}.target"
+    if systemctl list-units --all "$target" | grep -q "$target"; then
+        log "Disabling target $target..."
+        if systemctl disable "$target" 2>/dev/null; then
+            log "✓ Disabled $target"
+        else
+            warn "Could not disable $target (may not be enabled)"
+        fi
+    else
+        warn "Target $target not found"
+    fi
+    
+    # Disable individual services
+    log "Disabling individual services..."
+    for service in "${SERVICES[@]}"; do
+        local full_service_name="$service.service"
+        local service_type="${service%@*}"
+        
+        if systemctl is-enabled "$full_service_name" &>/dev/null; then
+            log "Disabling $full_service_name..."
+            if systemctl disable "$full_service_name" 2>/dev/null; then
+                log "✓ Disabled $full_service_name"
+            else
+                warn "Could not disable $full_service_name"
+            fi
+        else
+            log "$full_service_name is not enabled (skipping)"
+        fi
+    done
+    
+    # Disable reset-on-input service if it exists
+    if systemctl list-unit-files | grep -q "reset-on-input.service"; then
+        log "Disabling reset-on-input service..."
+        if systemctl is-enabled reset-on-input.service &>/dev/null; then
+            systemctl disable reset-on-input.service 2>/dev/null || true
+            log "✓ Disabled reset-on-input.service"
+        fi
+        if systemctl is-active reset-on-input.service &>/dev/null; then
+            systemctl stop reset-on-input.service 2>/dev/null || true
+            log "✓ Stopped reset-on-input.service"
+        fi
+    fi
+    
+    # Remove cron schedules
+    log "Removing cron schedules..."
+    if crontab -l 2>/dev/null | grep -q "experimance"; then
+        local temp_cron=$(mktemp)
+        crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
+        crontab "$temp_cron" 2>/dev/null || true
+        rm "$temp_cron"
+        log "✓ Removed experimance cron schedules"
+    else
+        log "No cron schedules found"
+    fi
+    
+    # Reload systemd daemon
+    log "Reloading systemd daemon..."
+    systemctl daemon-reload
+    
+    log ""
+    log "✓ Uninstall complete for project $PROJECT"
+    log ""
+    log "Services have been:"
+    log "  • Stopped"
+    log "  • Disabled (will not auto-start on boot)"
+    log "  • Removed from cron schedules"
+    log ""
+    log "The following have been PRESERVED:"
+    log "  • All files in $REPO_DIR"
+    log "  • All logs in $REPO_DIR/logs and /var/log/experimance"
+    log "  • All cache data"
+    log "  • Python environment and dependencies"
+    log "  • Systemd template files (can be used by other projects)"
+    log ""
+    log "To completely remove systemd template files (affects all projects):"
+    log "  sudo rm /etc/systemd/system/*@.service"
+    log "  sudo rm /etc/systemd/system/experimance@.target"
+    log "  sudo systemctl daemon-reload"
+    log ""
+    log "To restart services later:"
+    log "  sudo ./infra/scripts/deploy.sh $PROJECT start"
+}
+
+uninstall_services_macos() {
+    log "Uninstalling services for project $PROJECT on macOS..."
+    log "This will stop all services, unload them, and remove scheduling"
+    log "Files and logs will be preserved"
+    
+    # First, stop all services
+    log "Stopping all services..."
+    stop_services_macos
+    
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    # Unload individual services
+    log "Unloading individual services..."
+    for service in "${SERVICES[@]}"; do
+        local service_with_project="${service%@*}"
+        local project="${service#*@}"
+        local service_type="$service_with_project"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
+        
+        if [[ -f "$plist_file" ]]; then
+            if launchctl list | grep -q "$service_label"; then
+                log "Unloading $service_label..."
+                launchctl unload "$plist_file" 2>/dev/null || true
+                log "✓ Unloaded $service_label"
+            else
+                log "$service_label is not loaded (skipping)"
+            fi
+        else
+            log "Plist file not found: $plist_file (skipping)"
+        fi
+    done
+    
+    # Remove cron schedules
+    log "Removing cron schedules..."
+    if crontab -l 2>/dev/null | grep -q "experimance"; then
+        local temp_cron=$(mktemp)
+        crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
+        crontab "$temp_cron" 2>/dev/null || true
+        rm "$temp_cron"
+        log "✓ Removed experimance cron schedules"
+    else
+        log "No cron schedules found"
+    fi
+    
+    log ""
+    log "✓ Uninstall complete for project $PROJECT"
+    log ""
+    log "Services have been:"
+    log "  • Stopped"
+    log "  • Unloaded (will not auto-start on login)"
+    log "  • Removed from cron schedules"
+    log ""
+    log "The following have been PRESERVED:"
+    log "  • All files in $REPO_DIR"
+    log "  • All logs in $HOME/Library/Logs/experimance"
+    log "  • All cache data"
+    log "  • Python environment and dependencies"
+    log "  • LaunchAgent plist files (can be reloaded later)"
+    log ""
+    log "To completely remove LaunchAgent plist files:"
+    log "  rm $launchd_dir/com.experimance.${PROJECT}.*.plist"
+    log ""
+    log "To restart services later:"
+    log "  ./infra/scripts/deploy.sh $PROJECT start"
+}
+
 restart_services() {
     log "Restarting services for project $PROJECT..."
     stop_services
@@ -1225,6 +2457,20 @@ restart_services() {
 status_services() {
     log "Checking status of services for project $PROJECT..."
     
+    case "$PLATFORM" in
+        linux)
+            status_services_linux
+            ;;
+        macos)
+            status_services_macos
+            ;;
+        *)
+            warn "Service status checking not supported on platform: $PLATFORM"
+            ;;
+    esac
+}
+
+status_services_linux() {
     echo -e "\n${BLUE}=== Systemd Template Files Status ===${NC}"
     
     # Check if template files exist (these are the actual files we install)
@@ -1323,30 +2569,103 @@ status_services() {
     fi
 }
 
+status_services_macos() {
+    echo -e "\n${BLUE}=== Launchd Service Files Status ===${NC}"
+    
+    # On macOS, always use LaunchAgents (user-level), never LaunchDaemons
+    local launchd_dir="$HOME/Library/LaunchAgents"
+    
+    # Check if plist files exist
+    for service in "${SERVICES[@]}"; do
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local plist_file="$launchd_dir/com.experimance.${project}.${service_type}.plist"
+        local service_label="com.experimance.${service_type}.$project"
+        
+        if [[ -f "$plist_file" ]]; then
+            echo -e "${GREEN}✓${NC} Service plist exists: com.experimance.${project}.${service_type}.plist"
+        else
+            echo -e "${RED}✗${NC} Service plist missing: com.experimance.${project}.${service_type}.plist"
+        fi
+    done
+    
+    echo -e "\n${BLUE}=== Service Status ===${NC}"
+    for service in "${SERVICES[@]}"; do
+        local service_with_project="${service%@*}"  # e.g., "agent@fire" -> "agent"
+        local project="${service#*@}"                # e.g., "agent@fire" -> "fire"
+        local service_type="$service_with_project"  # e.g., "agent"
+        local service_label="com.experimance.${service_type}.$project"
+        
+        if launchctl list | grep -q "$service_label"; then
+            # Service is loaded, check its status
+            local pid=$(launchctl list | grep "$service_label" | awk '{print $1}')
+            local exit_code=$(launchctl list | grep "$service_label" | awk '{print $2}')
+            
+            if [[ "$pid" != "-" ]]; then
+                echo -e "${GREEN}✓${NC} $service_label: running (PID: $pid)"
+            elif [[ "$exit_code" == "0" ]]; then
+                echo -e "${YELLOW}○${NC} $service_label: loaded but not running (last exit: $exit_code)"
+            else
+                echo -e "${RED}✗${NC} $service_label: failed (exit code: $exit_code)"
+            fi
+        else
+            echo -e "${RED}?${NC} $service_label: not loaded"
+        fi
+    done
+    
+    echo -e "\n${BLUE}=== Recent Logs ===${NC}"
+    echo "Check LaunchAgent logs:"
+    echo "  tail -f ~/Library/Logs/experimance/${PROJECT}_*_launchd_error.log"
+    echo "  ls -la ~/Library/Logs/experimance/*launchd*.log"
+}
+
 # Scheduling functions
 setup_schedule() {
     local start_schedule="$1"
     local stop_schedule="$2"
+    local use_reset="${3:-false}"  # Optional third parameter for reset mode
+    local use_vastai="${4:-false}" # Optional fourth parameter for VastAI destroy
     
     log "Setting up schedule..."
     log "  Start: $start_schedule"
     log "  Stop: $stop_schedule"
+    log "  Reset mode: $use_reset"
+    log "  VastAI destroy: $use_vastai"
     
     # Create crontab entries
     local temp_cron=$(mktemp)
-    local startup_script="$SCRIPT_DIR/reset.sh"    # Use reset.sh for startup (includes audio reset)
+    local startup_script="$SCRIPT_DIR/startup.sh"
     local shutdown_script="$SCRIPT_DIR/shutdown.sh"
+    
+    # Determine startup flags
+    local startup_flags="--project '$PROJECT'"
+    if [[ "$use_reset" == "true" ]]; then
+        startup_flags="$startup_flags --reset"
+        log "  Using startup.sh with --reset (includes audio reset)"
+    else
+        log "  Using startup.sh for simple start"
+    fi
+    
+    # Determine shutdown flags
+    local shutdown_flags="--project '$PROJECT'"
+    if [[ "$use_vastai" == "true" ]]; then
+        shutdown_flags="$shutdown_flags --vastai"
+        log "  Using shutdown.sh with --vastai (destroys cloud instances)"
+    else
+        log "  Using shutdown.sh for simple stop"
+    fi
     
     # Get existing crontab (excluding our entries)
     crontab -l 2>/dev/null | grep -v "experimance" > "$temp_cron" || true
     
     # Add startup schedule
     echo "# experimance-start" >> "$temp_cron"
-    echo "$start_schedule cd '$REPO_DIR' && '$startup_script' --project '$PROJECT' >/dev/null 2>&1" >> "$temp_cron"
+    echo "$start_schedule cd '$REPO_DIR' && '$startup_script' $startup_flags >/dev/null 2>&1" >> "$temp_cron"
     
     # Add shutdown schedule  
     echo "# experimance-stop" >> "$temp_cron"
-    echo "$stop_schedule cd '$REPO_DIR' && '$shutdown_script' --project '$PROJECT' >/dev/null 2>&1" >> "$temp_cron"
+    echo "$stop_schedule cd '$REPO_DIR' && '$shutdown_script' $shutdown_flags >/dev/null 2>&1" >> "$temp_cron"
     
     # Install new crontab
     crontab "$temp_cron"
@@ -1383,12 +2702,14 @@ remove_schedule() {
 
 # Preset schedules for common use cases
 setup_gallery_schedule() {
-    # Gallery hours: Monday-Friday, 12PM-5PM
-    local start_schedule="50 11 * * 1-5"  # Start at 11:50 AM, Monday-Friday
-    local stop_schedule="10 17 * * 1-5"   # Stop at 5:10 PM, Monday-Friday
+    local use_reset="${1:-false}"  # Default to false (simple startup)
+    local use_vastai="${2:-false}" # Default to false (no VastAI destroy)
+    # Gallery hours: Tuesday-Saturday, 11AM-6PM
+    local start_schedule="55 10 * * 2-6"  # Start at 10:55 AM, Tues-Saturday
+    local stop_schedule="5 18 * * 2-6"    # Stop at 6:05 PM, Tues-Saturday
 
-    log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)..."
-    setup_schedule "$start_schedule" "$stop_schedule"
+    log "Setting up gallery schedule (Tuesday-Saturday, 11AM-6PM)..."
+    setup_schedule "$start_schedule" "$stop_schedule" "$use_reset" "$use_vastai"
 }
 
 main() {
@@ -1397,77 +2718,115 @@ main() {
             if [[ "$MODE" == "dev" ]]; then
                 log "=== DEVELOPMENT INSTALL ==="
                 log "This will set up the project for development testing only"
-                log "No systemd services will be installed"
+                log "No system services will be installed"
+                
+                # Warn if running dev mode with sudo
+                if [[ "$EUID" -eq 0 ]]; then
+                    warn "Development mode does not require root privileges!"
+                    if [[ -n "${SUDO_USER:-}" ]]; then
+                        warn "Consider running without sudo: ./infra/scripts/deploy.sh $PROJECT install dev"
+                        warn "Continuing with Homebrew running as user: $SUDO_USER"
+                    else
+                        warn "Running as root user. This may cause issues with Homebrew on macOS."
+                    fi
+                fi
             elif [[ "$MODE" == "prod" ]]; then
                 log "=== PRODUCTION INSTALL ==="
                 log "This will set up the project for production deployment"
-                log "Systemd services will be installed and can be managed"
-                check_root
+                if [[ "$PLATFORM" == "linux" ]]; then
+                    log "Systemd services will be installed and can be managed"
+                    check_root
+                elif [[ "$PLATFORM" == "macos" ]]; then
+                    log "Launchd services will be installed and can be managed"
+                    if [[ "$USE_SYSTEMD" == true ]] && [[ $EUID -ne 0 ]]; then
+                        error "Production mode on macOS requires root privileges for LaunchDaemons. Run with sudo."
+                    fi
+                fi
             fi
             
             check_user
             install_dependencies
             # Re-populate SERVICES array after dependencies are installed
-            readarray -t SERVICES < <(get_project_services "$PROJECT")
+            load_services_array "$PROJECT"
             check_project
+            update_health_config
             install_systemd_files
-            install_reset_on_input
-            create_symlink "$(pwd)"
+            if [[ "$PLATFORM" == "linux" ]]; then
+                install_reset_on_input
+            fi
+            if [[ "$PLATFORM" == "linux" ]]; then
+                create_symlink "$(pwd)"
+                configure_sudo_permissions
+            fi
             setup_directories
 
-            # add user to groups as needed
-            local group_added=false
-            # add user to video group if not already a member
-            if ! id -nG "$RUNTIME_USER" | grep -qw "video"; then
-                log "Adding $RUNTIME_USER to video group for webcam access"
-                if [[ "$MODE" == "prod" ]]; then
-                    usermod -aG video "$RUNTIME_USER"
+            # Group management for hardware access (Linux only)
+            if [[ "$PLATFORM" == "linux" ]]; then
+                # add user to groups as needed
+                local group_added=false
+                # add user to video group if not already a member
+                if ! id -nG "$RUNTIME_USER" | grep -qw "video"; then
+                    log "Adding $RUNTIME_USER to video group for webcam access"
+                    if [[ "$MODE" == "prod" ]]; then
+                        usermod -aG video "$RUNTIME_USER"
+                    else
+                        sudo usermod -aG video "$RUNTIME_USER"
+                    fi
+                    group_added=true
                 else
-                    sudo usermod -aG video "$RUNTIME_USER"
+                    log "$RUNTIME_USER is already a member of the video group"
                 fi
-                group_added=true
-            else
-                log "$RUNTIME_USER is already a member of the video group"
-            fi
-            
-            # add user to audio group if not already a member
-            if ! id -nG "$RUNTIME_USER" | grep -qw "audio"; then
-                log "Adding $RUNTIME_USER to audio group for audio device access"
-                if [[ "$MODE" == "prod" ]]; then
-                    usermod -aG audio "$RUNTIME_USER"
+                
+                # add user to audio group if not already a member
+                if ! id -nG "$RUNTIME_USER" | grep -qw "audio"; then
+                    log "Adding $RUNTIME_USER to audio group for audio device access"
+                    if [[ "$MODE" == "prod" ]]; then
+                        usermod -aG audio "$RUNTIME_USER"
+                    else
+                        sudo usermod -aG audio "$RUNTIME_USER"
+                    fi
+                    group_added=true
                 else
-                    sudo usermod -aG audio "$RUNTIME_USER"
+                    log "$RUNTIME_USER is already a member of the audio group"
                 fi
-                group_added=true
-            else
-                log "$RUNTIME_USER is already a member of the audio group"
-            fi
 
-            # add user to input group if not already a member
-            if ! id -nG "$RUNTIME_USER" | grep -qw "input"; then
-                log "Adding $RUNTIME_USER to input group for input device access"
-                if [[ "$MODE" == "prod" ]]; then
-                    usermod -aG input "$RUNTIME_USER"
+                # add user to input group if not already a member
+                if ! id -nG "$RUNTIME_USER" | grep -qw "input"; then
+                    log "Adding $RUNTIME_USER to input group for input device access"
+                    if [[ "$MODE" == "prod" ]]; then
+                        usermod -aG input "$RUNTIME_USER"
+                    else
+                        sudo usermod -aG input "$RUNTIME_USER"
+                    fi
+                    group_added=true
                 else
-                    sudo usermod -aG input "$RUNTIME_USER"
+                    log "$RUNTIME_USER is already a member of the input group"
                 fi
-                group_added=true
+                
+                # Inform user about group membership activation if groups were added
+                if [[ "$group_added" == true ]] && [[ "$MODE" == "dev" ]]; then
+                    echo ""
+                    warn "New group membership added. To activate group access:"
+                    warn "  Option 1: Log out and log back in (recommended)"
+                    warn "  Option 2: Run 'newgrp video', 'newgrp audio', and/or 'newgrp input' to start a new shell with groups active"
+                    warn "  Option 3: Restart your terminal session"
+                    echo ""
+                fi
             else
-                log "$RUNTIME_USER is already a member of the input group"
-            fi
-            
-            # Inform user about group membership activation if groups were added
-            if [[ "$group_added" == true ]] && [[ "$MODE" == "dev" ]]; then
-                echo ""
-                warn "New group membership added. To activate group access:"
-                warn "  Option 1: Log out and log back in (recommended)"
-                warn "  Option 2: Run 'newgrp video', 'newgrp audio', and/or 'newgrp input' to start a new shell with groups active"
-                warn "  Option 3: Restart your terminal session"
-                echo ""
+                log "Device access permissions are managed by macOS system settings"
             fi
             
             if [[ "$MODE" == "dev" ]]; then
                 log "Development installation complete!"
+                log ""
+                log "IMPORTANT: To use Python and uv in new terminal sessions, run:"
+                log "  source ~/.bashrc"
+                log "Or restart your terminal."
+                log ""
+                log "To verify installation:"
+                log "  python --version    # Should show Python 3.11.x"
+                log "  uv --version        # Should show uv version"
+                log ""
                 log "To test services: Use './scripts/dev <service>'"
                 log "To install for production: sudo ./deploy.sh $PROJECT install prod"
             else
@@ -1485,6 +2844,11 @@ main() {
             check_root
             check_project
             stop_services
+            ;;
+        uninstall)
+            check_root
+            check_project
+            uninstall_services
             ;;
         restart)
             check_root
@@ -1534,24 +2898,113 @@ main() {
             done
             ;;
         schedule-gallery)
-            log "Setting up gallery schedule (Monday-Friday, 12PM-5PM)"
-            setup_gallery_schedule
+            # Check for flags
+            local use_reset=false  # Default to false (simple startup)
+            local use_vastai=false # Default to false (no VastAI destroy)
+            
+            # Parse flags
+            local args=("$@")
+            for arg in "${args[@]}"; do
+                case "$arg" in
+                    --reset)
+                        use_reset=true
+                        ;;
+                    --no-reset)
+                        use_reset=false
+                        ;;
+                    --vastai)
+                        use_vastai=true
+                        ;;
+                    --no-vastai)
+                        use_vastai=false
+                        ;;
+                esac
+            done
+            
+            # Log what we're doing
+            if [[ "$use_reset" == true ]]; then
+                log "Setting up gallery schedule with reset on startup (Tuesday-Saturday, 11AM-6PM)"
+            else
+                log "Setting up gallery schedule with simple startup (Tuesday-Saturday, 11AM-6PM)"
+            fi
+            
+            if [[ "$use_vastai" == true ]]; then
+                log "VastAI instances will be destroyed on shutdown"
+            else
+                log "VastAI instances will be preserved on shutdown (use --vastai to destroy)"
+            fi
+            
+            setup_gallery_schedule "$use_reset" "$use_vastai"
             show_schedule
             ;;
         schedule-custom)
-            # Expect start and stop schedules as additional arguments
+            # Parse arguments: start_schedule, stop_schedule, and optional flags
             local start_schedule="${3:-}"
             local stop_schedule="${4:-}"
+            local use_reset=false  # Default to false (simple startup)
+            local use_vastai=false # Default to false (no VastAI destroy)
+            
+            # Check for flags in any position
+            local args=("$@")
+            for arg in "${args[@]}"; do
+                case "$arg" in
+                    --reset)
+                        use_reset=true
+                        ;;
+                    --no-reset)
+                        use_reset=false
+                        ;;
+                    --vastai)
+                        use_vastai=true
+                        ;;
+                    --no-vastai)
+                        use_vastai=false
+                        ;;
+                esac
+            done
+            
+            # Remove flags from schedule arguments
+            local filtered_args=()
+            local skip_next=false
+            for arg in "${@:3}"; do
+                if [[ "$skip_next" == true ]]; then
+                    skip_next=false
+                    continue
+                fi
+                case "$arg" in
+                    --reset|--no-reset|--vastai|--no-vastai)
+                        # Skip flag arguments
+                        ;;
+                    *)
+                        filtered_args+=("$arg")
+                        ;;
+                esac
+            done
+            
+            # Reassign schedule arguments
+            start_schedule="${filtered_args[0]:-}"
+            stop_schedule="${filtered_args[1]:-}"
             
             if [[ -z "$start_schedule" || -z "$stop_schedule" ]]; then
                 error "Custom schedule requires start and stop cron expressions"
-                error "Usage: $0 $PROJECT schedule-custom 'start-cron' 'stop-cron'"
-                error "Example: $0 $PROJECT schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'"
+                error "Usage: $0 $PROJECT schedule-custom 'start-cron' 'stop-cron' [--reset|--no-reset] [--vastai|--no-vastai]"
+                error "Example: $0 $PROJECT schedule-custom '0 8 * * 1-5' '0 20 * * 1-5' --reset --vastai"
                 exit 1
             fi
             
-            log "Setting up custom schedule"
-            setup_schedule "$start_schedule" "$stop_schedule"
+            if [[ "$use_reset" == true ]]; then
+                log "Setting up custom schedule with reset on startup"
+            else
+                log "Setting up custom schedule with simple startup"
+            fi
+            
+            if [[ "$use_vastai" == true ]]; then
+                log "VastAI instances will be destroyed on shutdown"
+            else
+                log "VastAI instances will be preserved on shutdown"
+            fi
+            
+            setup_schedule "$start_schedule" "$stop_schedule" "$use_reset" "$use_vastai"
             show_schedule
             ;;
         schedule-reset)
@@ -1754,7 +3207,7 @@ main() {
             fi
             ;;
         *)
-            error "Unknown action: $ACTION. Use: install, start, stop, restart, status, services, diagnose, schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-remove, schedule-show"
+            error "Unknown action: $ACTION. Use: install, start, stop, uninstall, restart, status, services, diagnose, schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
             ;;
     esac
 }
@@ -1763,9 +3216,9 @@ main() {
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 [project_name] [action] [mode]"
     echo "Projects: $(ls "$REPO_DIR/projects" 2>/dev/null | tr '\n' ' ')"
-    echo "Actions: install, start, stop, restart, status, services, diagnose"
+    echo "Actions: install, start, stop, uninstall, restart, status, services, diagnose"
     echo "USB Reset on Input: reset-on-input-start, reset-on-input-stop, reset-on-input-status, reset-on-input-logs, reset-on-input-test"
-    echo "Schedule Actions: schedule-gallery, schedule-demo, schedule-weekend, schedule-custom, schedule-shutdown, schedule-remove, schedule-show"
+    echo "Schedule Actions: schedule-gallery, schedule-custom, schedule-reset, schedule-shutdown, schedule-remove, schedule-show"
     echo "Modes: dev, prod (only for install action)"
     echo ""
     echo "Install Modes:"
@@ -1777,11 +3230,17 @@ if [[ $# -eq 0 ]]; then
     echo "  $0 experimance install dev           # Development setup (no sudo needed)"
     echo "  sudo $0 experimance install prod     # Production setup (sudo needed)"
     echo "  sudo $0 experimance start            # Start services in production (sudo needed)"
+    echo "  sudo $0 experimance stop             # Stop services (sudo needed)"
+    echo "  sudo $0 experimance uninstall        # Stop, disable services, remove schedules (preserves files)"
     echo ""
     echo "Schedule Examples:"
-    echo "  $0 experimance schedule-gallery      # Monday-Friday, 12PM-5PM"
+    echo "  $0 experimance schedule-gallery      # Tuesday-Saturday, 11AM-6PM (simple startup, preserve VastAI)"
+    echo "  $0 experimance schedule-gallery --reset    # Tuesday-Saturday, 11AM-6PM (with audio reset)"
+    echo "  $0 experimance schedule-gallery --vastai   # Tuesday-Saturday, 11AM-6PM (destroy VastAI on shutdown)"
+    echo "  $0 experimance schedule-gallery --reset --vastai # Tuesday-Saturday, 11AM-6PM (reset + destroy VastAI)"
     echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5'  # Custom: Weekdays 8AM-8PM"
-    echo "  $0 experimance schedule-reset '11:30'    # Call shutdown.sh at 11:30 today"
+    echo "  $0 experimance schedule-custom '0 8 * * 1-5' '0 20 * * 1-5' --reset --vastai  # Custom: with all options"
+    echo "  $0 experimance schedule-reset '11:30'    # Call startup.sh --reset at 11:30 today"
     echo "  $0 experimance schedule-shutdown '12:30' # Call shutdown.sh at 12:30 today"
     echo "  $0 experimance schedule-show         # Show current schedule"
     echo "  $0 experimance schedule-remove       # Remove schedule"

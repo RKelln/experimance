@@ -33,7 +33,7 @@ from tenacity import (
 )
 
 
-from image_server.generators.generator import ImageGenerator, mock_depth_map
+from image_server.generators.generator import ImageGenerator, GeneratorCapabilities, mock_depth_map
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
 from image_server.generators.vastai.vastai_manager import VastAIManager, InstanceEndpoint
 from image_server.generators.vastai.server.data_types import ControlNetGenerateData, LoraData, era_to_loras
@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 class VastAIGenerator(ImageGenerator):
     """VastAI-based image generator using remote ControlNet model server."""
     config : VastAIGeneratorConfig
+
+    # Declare generator capabilities - VastAI supports advanced features
+    supported_capabilities = {
+        GeneratorCapabilities.CONTROLNET,
+        GeneratorCapabilities.LORAS,
+        GeneratorCapabilities.NEGATIVE_PROMPTS,
+        GeneratorCapabilities.SEEDS
+    }
 
     def __init__(self, config: VastAIGeneratorConfig, output_dir: str = "/tmp", **kwargs):
         """Initialize VastAI generator with configuration."""
@@ -71,6 +79,9 @@ class VastAIGenerator(ImageGenerator):
     
     async def start(self):
         """Start the generator and optionally pre-warm."""
+        # Initialize the base class queue system first
+        await super().start()
+        
         # Set the first request time at startup to enable timeout detection
         # even if the first real user request fails
         self._first_request_time = time.time()
@@ -265,6 +276,12 @@ class VastAIGenerator(ImageGenerator):
             
         logger.warning(f"Starting non-blocking recovery for unhealthy instance {self.current_endpoint.instance_id}")
         
+        # Clear any pending requests to avoid processing them against bad instance
+        queue_stats = self.get_queue_stats()
+        if queue_stats["pending_requests"] > 0 or queue_stats["queue_size"] > 0:
+            logger.warning(f"Clearing {queue_stats['pending_requests']} pending requests and {queue_stats['queue_size']} queued items before recovery")
+            await self.clear_pending_requests("VastAI instance recovery in progress. Request cancelled.")
+        
         # Mark recovery as in progress and clear current state immediately
         self._recovery_in_progress = True
         old_endpoint = self.current_endpoint
@@ -320,6 +337,9 @@ class VastAIGenerator(ImageGenerator):
                                 self._successful_requests = 0
                                 self._last_success_time = None
                                 self._first_request_time = None
+                                
+                                # Restart queue processor for clean state
+                                await self.restart_queue_processor()
                                 
                                 logger.info(f"Background recovery: Successfully recovered existing instance {old_endpoint.instance_id}")
                                 return  # Success! No need to destroy/recreate
@@ -388,6 +408,9 @@ class VastAIGenerator(ImageGenerator):
                         self._successful_requests = 0
                         self._last_success_time = None
                         self._first_request_time = None
+                        
+                        # Restart queue processor for clean state
+                        await self.restart_queue_processor()
                     else:
                         logger.warning(f"Background recovery: New instance {new_endpoint.instance_id} is not healthy, will be retried on next failure")
                         # Don't set the endpoint - let the next request trigger recovery again
@@ -416,7 +439,7 @@ class VastAIGenerator(ImageGenerator):
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True
     )
-    async def generate_image(
+    async def _generate_image_impl(
         self,
         prompt: str,
         negative_prompt: Optional[str] = None,
@@ -450,6 +473,8 @@ class VastAIGenerator(ImageGenerator):
         # Check if we should destroy the current instance due to poor health
         if self._should_destroy_instance():
             logger.warning(f"Health check triggered recovery: {self._consecutive_failures} consecutive failures, {self._successful_requests} successful requests")
+            queue_stats = self.get_queue_stats()
+            logger.info(f"Queue stats before recovery: {queue_stats}")
             await self._destroy_and_recreate_instance()
         
         # If recovery is in progress, fail fast to trigger fallback
@@ -651,6 +676,9 @@ class VastAIGenerator(ImageGenerator):
                 await self._recovery_task
             except asyncio.CancelledError:
                 pass
+        
+        # Call parent stop to handle queue cleanup
+        await super().stop()
         
         self.cleanup()
         logger.info("VastAI generator stopped")

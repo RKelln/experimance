@@ -1,0 +1,729 @@
+#!/usr/bin/env python3
+"""
+Single Shader Renderer for the Display Service.
+
+A clean, single-responsibility renderer that loads and executes a single
+fragment shader from an external file. Designed to be used with the layer
+manager for compositing multiple shader effects.
+
+This renderer follows the single responsibility principle - each instance
+handles exactly one shader effect. Multiple effects are achieved by using
+multiple instances coordinated through the layer manager.
+"""
+
+import logging
+import time
+import traceback
+from pathlib import Path
+from typing import Optional, Tuple, Dict, Any
+
+import pyglet
+from pyglet.gl import *
+from pyglet.graphics.shader import Shader, ShaderProgram
+from pyglet.math import Mat4
+
+from experimance_display.config import DisplayServiceConfig
+from experimance_display.renderers.layer_manager import LayerRenderer
+
+logger = logging.getLogger(__name__)
+
+
+class ShaderRenderer(LayerRenderer):
+    """A renderer that loads and executes a single fragment shader.
+    
+    This renderer is designed for the single responsibility principle - each
+    instance handles exactly one shader effect. Multiple effects are achieved
+    by using multiple instances in the layer manager.
+    """
+    
+    def __init__(self, 
+                 config: DisplayServiceConfig,
+                 window: pyglet.window.BaseWindow,
+                 batch: pyglet.graphics.Batch,
+                 shader_path: str,
+                 order: int = 10,
+                 uniforms: Optional[Dict[str, Any]] = None,
+                 blend_mode: str = "alpha"):
+        """Initialize the single shader renderer.
+        
+        Args:
+            config: Display service configuration
+            window: Pyglet window instance
+            batch: Graphics batch for efficient rendering
+            shader_path: Path to the fragment shader file (.frag)
+            order: Render order (higher numbers render on top)
+            uniforms: Dictionary of uniform values to pass to shader
+            blend_mode: Blending mode - "alpha" (default) or "additive"
+        """
+        super().__init__(config, window, batch, order)
+        
+        self.shader_path = Path(shader_path)
+        self.uniforms = uniforms or {}
+        self.blend_mode = blend_mode
+        
+        # DEBUGGING: Track original uniform values from config (lightweight monitoring)
+        self.original_uniforms = self.uniforms.copy()
+        self.uniform_change_count = 0
+        self.critical_uniforms = ['vignette_strength', 'turbulence_amount', 'horizontal_compression', 'gradient_zone', 'speed']
+        
+        # Log initial state only once, concisely
+        critical_in_config = {u: self.original_uniforms[u] for u in self.critical_uniforms if u in self.original_uniforms}
+        if critical_in_config:
+            logger.info(f"Shader '{self.shader_path.name}' critical uniforms: {critical_in_config}")
+        
+        # Minimal tracking flags
+        self.debug_counter = 0
+        self.mismatch_logged = False
+        
+        # Validate blend mode
+        if self.blend_mode not in ["alpha", "additive"]:
+            logger.warning(f"Unknown blend mode '{self.blend_mode}', defaulting to 'alpha'")
+            self.blend_mode = "alpha"
+        
+        # Shader state
+        self._visible = True
+        self._opacity = 1.0
+        self.shader_program: Optional[ShaderProgram] = None
+        
+        # Scene texture for shaders that need it
+        self.scene_texture = None
+        
+        # Timing
+        self.start_time = time.time()
+        
+        # Full-screen quad for shader rendering
+        self.quad_vertex_list = None
+        
+        # Initialize OpenGL and load shader
+        self._init_opengl()
+        self._load_shader()
+        self._create_screen_quad()
+        self._load_scene_texture()
+        
+        logger.info(f"ShaderRenderer initialized with shader: {self.shader_path.name}")
+        
+        # DEBUGGING: Log final uniform state after initialization
+        self._debug_uniform_state("after_initialization")
+    
+    def _init_opengl(self):
+        """Initialize OpenGL settings for shader rendering."""
+        # Enable blending for transparency effects
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Check shader support with compatibility for different context types
+        try:
+            if hasattr(self.window.context, 'check_gl_extension'):
+                # Our mock context
+                shader_support = self.window.context.check_gl_extension('GL_ARB_shading_language_100')
+            elif hasattr(self.window.context, 'get_info'):
+                # Real pyglet context - check OpenGL version instead
+                gl_info = self.window.context.get_info()
+                # Assume shaders are supported if we can get GL info
+                shader_support = True
+                logger.debug(f"OpenGL context info available: {type(gl_info)}")
+            else:
+                # Fallback - try to import shader classes to test support
+                try:
+                    from pyglet.graphics.shader import Shader
+                    shader_support = True
+                    logger.debug("Shader support detected via Shader class import")
+                except ImportError:
+                    shader_support = False
+                    logger.warning("Shader support not detected - Shader class import failed")
+        except Exception as e:
+            logger.warning(f"Could not determine shader support: {e}")
+            # Assume shaders are supported and let shader compilation fail if they're not
+            shader_support = True
+        
+        if not shader_support:
+            logger.error("OpenGL shaders not supported")
+            self._visible = False
+            return
+        
+        logger.debug("OpenGL shader support confirmed")
+    
+    def _load_shader(self):
+        """Load the fragment shader from file."""
+        if not self.shader_path.exists():
+            logger.error(f"Shader file not found: {self.shader_path}")
+            self._visible = False
+            return
+        
+        try:
+            # Load fragment shader from file
+            with open(self.shader_path, 'r') as f:
+                fragment_source = f.read()
+            
+            # Standard vertex shader for full-screen quad
+            vertex_source = """#version 330 core
+in vec2 position;
+in vec2 tex_coords_in;
+out vec2 tex_coords;
+
+void main() {
+    gl_Position = vec4(position, 0.0, 1.0);
+    tex_coords = tex_coords_in;
+}
+"""
+            
+            # Create shader program
+            vertex_shader = Shader(vertex_source, 'vertex')
+            fragment_shader = Shader(fragment_source, 'fragment')
+            self.shader_program = ShaderProgram(vertex_shader, fragment_shader)
+            
+            # DEBUGGING: Log detected uniforms and check for missing critical ones
+            if hasattr(self.shader_program, 'uniforms'):
+                detected_uniforms = list(self.shader_program.uniforms.keys())
+                logger.info(f"Shader '{self.shader_path.name}' detected {len(detected_uniforms)} uniforms")
+                
+                # Check which of our critical uniforms are missing
+                missing_critical = [name for name in self.critical_uniforms if name in self.uniforms and name not in detected_uniforms]
+                if missing_critical:
+                    logger.warning(f"Shader '{self.shader_path.name}' missing critical uniforms: {missing_critical}")
+                    logger.info(f"Available uniforms: {detected_uniforms}")
+                else:
+                    critical_found = [name for name in self.critical_uniforms if name in detected_uniforms]
+                    if critical_found:
+                        logger.info(f"All critical uniforms found: {critical_found}")
+            else:
+                logger.warning(f"Shader program for '{self.shader_path.name}' has no uniforms attribute!")
+            
+            logger.info(f"Successfully loaded shader: {self.shader_path.name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load shader {self.shader_path}: {e}")
+            self._visible = False
+    
+    def _create_screen_quad(self):
+        """Create a full-screen quad for shader rendering using Pyglet's vertex list."""
+        if not self.shader_program:
+            return
+        
+        # Vertex data for a full-screen quad in NDC coordinates
+        position_data = [
+            -1.0, -1.0,  # Bottom-left
+             1.0, -1.0,  # Bottom-right  
+             1.0,  1.0,  # Top-right
+            -1.0,  1.0   # Top-left
+        ]
+        
+        texcoord_data = [
+            0.0, 0.0,  # Bottom-left
+            1.0, 0.0,  # Bottom-right
+            1.0, 1.0,  # Top-right
+            0.0, 1.0   # Top-left
+        ]
+        
+        # Indices for two triangles forming a quad
+        indices = [0, 1, 2, 2, 3, 0]
+        
+        # Create vertex list using the shader program (this is the correct Pyglet API)
+        try:
+            self.quad_vertex_list = self.shader_program.vertex_list_indexed(
+                4,  # 4 vertices
+                pyglet.gl.GL_TRIANGLES,
+                indices,
+                batch=self.batch,
+                group=self,
+                position=('f', position_data),
+                tex_coords_in=('f', texcoord_data)
+            )
+            logger.debug(f"Created vertex list for shader: {self.shader_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to create vertex list for shader {self.shader_path.name}: {e}")
+            self.quad_vertex_list = None
+        
+        logger.debug("Created full-screen quad vertex list for shader rendering")
+    
+    def update(self, dt: float):
+        """Update shader state.
+        
+        Args:
+            dt: Time elapsed since last update in seconds
+        """
+        if not self._visible or not self.shader_program:
+            return
+        
+        # Update timing-based uniforms automatically
+        current_time = time.time() - self.start_time
+        
+        # DEBUGGING: Only update time if it's not overriding a configured value
+        if 'time' not in self.original_uniforms:
+            self.uniforms['time'] = current_time
+        else:
+            logger.debug(f"Not auto-updating 'time' uniform as it was configured: {self.original_uniforms['time']}")
+    
+    def render(self):
+        """Render the shader effect using Pyglet's batch system.
+        
+        Since we're using the batch system with a Group, this method is primarily 
+        used for updating uniforms. The actual drawing is handled by the batch.
+        """
+        if not self._visible or not self.shader_program or not self.quad_vertex_list:
+            return
+
+        # DEBUGGING: Only check for mismatches occasionally and when they actually occur
+        self.debug_counter += 1
+        
+        # Only check every 10 seconds (600 frames at 60fps) and only if no mismatch has been logged yet
+        if not self.mismatch_logged and self.debug_counter % 600 == 0:
+            # Quick check if any critical uniforms have changed
+            for name in self.critical_uniforms:
+                if name in self.uniforms and name in self.original_uniforms:
+                    if abs(self.uniforms[name] - self.original_uniforms[name]) > 0.001:
+                        logger.error(f"UNIFORM DRIFT DETECTED: {name} = {self.uniforms[name]}, expected {self.original_uniforms[name]}")
+                        self.mismatch_logged = True  # Only log once
+                        break
+
+        # Update uniforms before batch rendering
+        try:
+            # Set common uniforms only if they exist in the shader
+            current_time = time.time() - self.start_time
+            if 'time' in self.shader_program.uniforms:
+                # DEBUGGING: Check if we're overriding a configured time value
+                if 'time' in self.original_uniforms:
+                    logger.warning(f"Using configured time value {self.uniforms.get('time')} instead of auto-generated {current_time}")
+                    self.shader_program['time'] = self.uniforms.get('time', current_time)
+                else:
+                    self.shader_program['time'] = current_time
+            
+            # Set resolution uniform only if declared in shader
+            if 'resolution' in self.shader_program.uniforms:
+                resolution = (float(self.window.width), float(self.window.height))
+                self.shader_program['resolution'] = resolution
+            
+            # Set custom uniforms
+            for uniform_name, value in self.uniforms.items():
+                # DEBUGGING: Check if uniform exists in shader program
+                try:
+                    if uniform_name in self.shader_program.uniforms:
+                        # DEBUGGING: Only log critical uniform changes (the real issue we're tracking)
+                        if uniform_name in self.original_uniforms:
+                            original_val = self.original_uniforms[uniform_name]
+                            if value != original_val and uniform_name != 'time':  # time is expected to change
+                                if uniform_name in self.critical_uniforms:
+                                    logger.error(f"CRITICAL UNIFORM CHANGED: {uniform_name} = {value}, expected {original_val}")
+                        
+                        self.shader_program[uniform_name] = value
+                    else:
+                        # DEBUGGING: Only warn once per shader about missing uniforms
+                        if not hasattr(self, 'warned_missing_uniforms'):
+                            self.warned_missing_uniforms = set()
+                        
+                        if uniform_name not in self.warned_missing_uniforms:
+                            available_uniforms = list(self.shader_program.uniforms.keys()) if hasattr(self.shader_program, 'uniforms') else "UNKNOWN"
+                            logger.warning(f"Uniform '{uniform_name}' not found in shader program for {self.shader_path.name}. Available uniforms: {available_uniforms}")
+                            self.warned_missing_uniforms.add(uniform_name)
+                        
+                        # Try to set it anyway - sometimes the uniforms dict is incomplete
+                        try:
+                            self.shader_program[uniform_name] = value
+                            if uniform_name not in getattr(self, 'warned_missing_uniforms', set()):
+                                logger.info(f"Force-set uniform '{uniform_name}' = {value} (not in uniforms dict but worked)")
+                        except Exception as force_error:
+                            if uniform_name not in getattr(self, 'force_failed_uniforms', set()):
+                                logger.warning(f"Cannot set uniform '{uniform_name}' (optimized out by OpenGL driver): {force_error}")
+                                if not hasattr(self, 'force_failed_uniforms'):
+                                    self.force_failed_uniforms = set()
+                                self.force_failed_uniforms.add(uniform_name)
+                            # This is not a fatal error - the uniform was probably optimized out because it's not used
+                            
+                except Exception as uniform_error:
+                    logger.error(f"Error checking/setting uniform '{uniform_name}': {uniform_error}")
+            
+        except Exception as e:
+            logger.error(f"Error setting uniforms for shader {self.shader_path.name}: {e}")
+            self._debug_uniform_state("error_during_render")
+    
+    def set_state(self):
+        """Set OpenGL state for rendering (called by batch system)."""
+        if not self._visible or not self.shader_program:
+            return
+        
+        # Set blending mode based on configuration
+        glEnable(GL_BLEND)
+        if self.blend_mode == "additive":
+            # Additive blending for glow effects (perfect for sparks)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        else:
+            # Standard alpha blending (default)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Use shader program
+        self.shader_program.use()
+        
+        # Handle scene_texture uniform if shader needs it
+        if 'scene_texture' in self.shader_program.uniforms:
+            # For now, use our test image as scene_texture
+            # TODO: In full implementation, this would capture the current framebuffer
+            self._bind_scene_texture()
+        
+        # Update uniforms
+        try:
+            current_time = time.time() - self.start_time
+            if 'time' in self.shader_program.uniforms:
+                # DEBUGGING: Check if we're overriding a configured time value
+                if 'time' in self.original_uniforms:
+                    time_value = self.uniforms.get('time', current_time)
+                    self.shader_program['time'] = time_value
+                else:
+                    self.shader_program['time'] = current_time
+            
+            if 'resolution' in self.shader_program.uniforms:
+                resolution = (float(self.window.width), float(self.window.height))
+                self.shader_program['resolution'] = resolution
+            
+            # Set custom uniforms with validation
+            for uniform_name, value in self.uniforms.items():
+                try:
+                    if uniform_name in self.shader_program.uniforms:
+                        # DEBUGGING: Only check critical uniforms for mismatches (minimal overhead)
+                        if uniform_name in self.critical_uniforms and uniform_name in self.original_uniforms:
+                            expected = self.original_uniforms[uniform_name]
+                            if abs(value - expected) > 0.001:
+                                logger.error(f"CRITICAL UNIFORM MISMATCH in set_state: {uniform_name} = {value}, expected {expected}")
+                        
+                        self.shader_program[uniform_name] = value
+                    else:
+                        # Only warn once per uniform about optimization
+                        if not hasattr(self, 'set_state_warned_missing'):
+                            self.set_state_warned_missing = set()
+                        
+                        if uniform_name not in self.set_state_warned_missing:
+                            if uniform_name in self.critical_uniforms:
+                                logger.warning(f"Critical uniform '{uniform_name}' optimized out by OpenGL driver")
+                            self.set_state_warned_missing.add(uniform_name)
+                        
+                        # Try to set anyway (silently)
+                        try:
+                            self.shader_program[uniform_name] = value
+                        except Exception:
+                            pass  # Expected for optimized-out uniforms
+                            
+                except Exception as uniform_error:
+                    logger.error(f"set_state: Error with uniform '{uniform_name}': {uniform_error}")
+                    
+        except Exception as e:
+            logger.error(f"Error setting uniforms for shader {self.shader_path.name}: {e}")
+            self._debug_uniform_state("error_during_set_state")
+    
+    def unset_state(self):
+        """Unset OpenGL state for rendering (called by batch system)."""
+        try:
+            ShaderProgram.unbind()
+            glDisable(GL_BLEND)
+        except Exception as e:
+            logger.error(f"Error unsetting state for shader {self.shader_path.name}: {e}")
+    
+    def set_uniform(self, name: str, value: Any):
+        """Set a uniform value for the shader.
+        
+        Args:
+            name: Name of the uniform
+            value: Value to set
+        """
+        # DEBUGGING: Track critical uniform changes only
+        old_value = self.uniforms.get(name)
+        if old_value != value and name in self.critical_uniforms:
+            self.uniform_change_count += 1
+            logger.warning(f"UNIFORM CHANGE #{self.uniform_change_count} in shader '{self.shader_path.name}': "
+                         f"{name} changed from {old_value} to {value}")
+        
+        self.uniforms[name] = value
+    
+    def _debug_uniform_state(self, context: str):
+        """Debug helper to log current uniform state."""
+        logger.info(f"=== UNIFORM STATE DEBUG ({context}) for shader '{self.shader_path.name}' ===")
+        logger.info(f"Original uniforms: {self.original_uniforms}")
+        logger.info(f"Current uniforms:  {self.uniforms}")
+        
+        # Check for differences
+        for key, original_val in self.original_uniforms.items():
+            current_val = self.uniforms.get(key)
+            if current_val != original_val:
+                logger.warning(f"  CHANGED: {key} = {current_val} (was {original_val})")
+        
+        # Check for new uniforms
+        for key, current_val in self.uniforms.items():
+            if key not in self.original_uniforms:
+                logger.info(f"  NEW: {key} = {current_val}")
+        
+        logger.info(f"Total uniform changes so far: {self.uniform_change_count}")
+        logger.info("=" * 60)
+    
+    def get_uniform(self, name: str) -> Any:
+        """Get a uniform value from the shader.
+        
+        Args:
+            name: Name of the uniform
+            
+        Returns:
+            The uniform value or None if not found
+        """
+        return self.uniforms.get(name)
+    
+    @property
+    def is_visible(self) -> bool:
+        """Check if the shader layer should be rendered."""
+        return self._visible and self.shader_program is not None
+    
+    @property
+    def opacity(self) -> float:
+        """Get the layer opacity."""
+        return self._opacity
+    
+    @opacity.setter
+    def opacity(self, value: float):
+        """Set the layer opacity.
+        
+        Args:
+            value: Opacity value (0.0 to 1.0)
+        """
+        self._opacity = max(0.0, min(1.0, value))
+    
+    @property
+    def visible(self) -> bool:
+        """Get the layer visibility."""
+        return self._visible
+    
+    @visible.setter
+    def visible(self, value: bool):
+        """Set the layer visibility.
+        
+        Args:
+            value: Whether the layer should be visible
+        """
+        self._visible = value
+    
+    def reload_shader(self):
+        """Reload the shader from file.
+        
+        Useful for development and hot-reloading of shader effects.
+        """
+        logger.info(f"Reloading shader: {self.shader_path.name}")
+        
+        # DEBUGGING: Log uniform state before reload
+        self._debug_uniform_state("before_reload")
+        
+        # Clean up existing shader and vertex list
+        if self.quad_vertex_list:
+            if hasattr(self.quad_vertex_list, 'delete'):
+                self.quad_vertex_list.delete()
+            self.quad_vertex_list = None
+        
+        if self.shader_program:
+            if hasattr(self.shader_program, 'delete'):
+                self.shader_program.delete()
+            self.shader_program = None
+        
+        # Reload shader
+        self._load_shader()
+        
+        if self.shader_program:
+            # Recreate vertex list with new shader program
+            self._create_screen_quad()
+            logger.info(f"Successfully reloaded shader: {self.shader_path.name}")
+            
+            # DEBUGGING: Log uniform state after reload
+            self._debug_uniform_state("after_reload")
+        else:
+            logger.error(f"Failed to reload shader: {self.shader_path.name}")
+    
+    def resize(self, new_size: Tuple[int, int]):
+        """Handle window resize.
+        
+        Args:
+            new_size: New (width, height) of the window
+        """
+        # DEBUGGING: Check if resolution was originally configured
+        old_resolution = self.uniforms.get('resolution')
+        new_resolution = (float(new_size[0]), float(new_size[1]))
+        
+        if 'resolution' in self.original_uniforms:
+            logger.warning(f"Window resize overriding configured resolution! "
+                         f"Original: {self.original_uniforms['resolution']}, "
+                         f"Old: {old_resolution}, New: {new_resolution}")
+        
+        # Update resolution uniform
+        self.uniforms['resolution'] = new_resolution
+        logger.debug(f"Shader {self.shader_path.name} resized to: {new_size}")
+    
+    async def cleanup(self):
+        """Clean up shader resources."""
+        if self.shader_program:
+            if hasattr(self.shader_program, 'delete'):
+                self.shader_program.delete()
+            self.shader_program = None
+        
+        if self.quad_vertex_list:
+            if hasattr(self.quad_vertex_list, 'delete'):
+                self.quad_vertex_list.delete()
+            self.quad_vertex_list = None
+        
+        logger.info(f"Cleaned up shader renderer: {self.shader_path.name}")
+    
+    def _load_scene_texture(self):
+        """Load a scene texture for shaders that need it."""
+        # TODO: In a proper implementation, this would capture the current framebuffer
+        # or load from a configured scene source. For now, no scene texture.
+        self.scene_texture = None
+        logger.debug("No scene texture configured - shaders will need to generate their own content")
+    
+    def _bind_scene_texture(self):
+        """Bind scene texture for shader if available."""
+        if (self.scene_texture and 
+            self.shader_program and 
+            'scene_texture' in self.shader_program.uniforms):
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, self.scene_texture.id)
+            self.shader_program['scene_texture'] = 0
+            logger.debug("Bound scene texture to shader")
+
+
+class MultiShaderRenderer:
+    """Manages multiple ShaderRenderer instances for complex effects.
+    
+    This class coordinates multiple shader renderers to create layered effects
+    while maintaining the single responsibility principle for individual shaders.
+    """
+    
+    def __init__(self, 
+                 config: DisplayServiceConfig,
+                 window: pyglet.window.BaseWindow,
+                 batch: pyglet.graphics.Batch):
+        """Initialize the multi-shader renderer.
+        
+        Args:
+            config: Display service configuration
+            window: Pyglet window instance
+            batch: Graphics batch for efficient rendering
+        """
+        self.config = config
+        self.window = window
+        self.batch = batch
+        
+        self.shader_renderers: Dict[str, ShaderRenderer] = {}
+        
+        logger.info("MultiShaderRenderer initialized")
+    
+    def add_shader(self, 
+                   name: str,
+                   shader_path: str,
+                   order: int = 10,
+                   uniforms: Optional[Dict[str, Any]] = None,
+                   blend_mode: str = "alpha") -> ShaderRenderer:
+        """Add a shader renderer.
+        
+        Args:
+            name: Unique name for the shader
+            shader_path: Path to the fragment shader file
+            order: Render order (higher numbers render on top)
+            uniforms: Initial uniform values
+            blend_mode: Blending mode - "alpha" or "additive"
+            
+        Returns:
+            The created ShaderRenderer instance
+        """
+        if name in self.shader_renderers:
+            logger.warning(f"Shader '{name}' already exists, replacing it")
+            # Clean up existing shader
+            old_shader = self.shader_renderers[name]
+            # Note: cleanup is async, but we'll call it sync here for simplicity
+            # In production, this should be handled properly with async/await
+        
+        shader_renderer = ShaderRenderer(
+            config=self.config,
+            window=self.window,
+            batch=self.batch,
+            shader_path=shader_path,
+            order=order,
+            uniforms=uniforms,
+            blend_mode=blend_mode
+        )
+        
+        self.shader_renderers[name] = shader_renderer
+        logger.info(f"Added shader '{name}' with order {order}")
+        
+        return shader_renderer
+    
+    def remove_shader(self, name: str):
+        """Remove a shader renderer.
+        
+        Args:
+            name: Name of the shader to remove
+        """
+        if name in self.shader_renderers:
+            shader = self.shader_renderers[name]
+            # Note: cleanup should be async
+            del self.shader_renderers[name]
+            logger.info(f"Removed shader '{name}'")
+        else:
+            logger.warning(f"Shader '{name}' not found for removal")
+    
+    def get_shader(self, name: str) -> Optional[ShaderRenderer]:
+        """Get a shader renderer by name.
+        
+        Args:
+            name: Name of the shader
+            
+        Returns:
+            The ShaderRenderer instance or None if not found
+        """
+        return self.shader_renderers.get(name)
+    
+    def update(self, dt: float):
+        """Update all shader renderers.
+        
+        Args:
+            dt: Time elapsed since last update in seconds
+        """
+        for shader in self.shader_renderers.values():
+            shader.update(dt)
+    
+    def render_all(self):
+        """Render all shader effects in order."""
+        # Sort by render order
+        sorted_shaders = sorted(
+            self.shader_renderers.values(),
+            key=lambda s: s.order
+        )
+        
+        for shader in sorted_shaders:
+            if shader.is_visible:
+                shader.render()
+    
+    def set_uniform_all(self, name: str, value: Any):
+        """Set a uniform value for all shaders.
+        
+        Args:
+            name: Name of the uniform
+            value: Value to set
+        """
+        for shader in self.shader_renderers.values():
+            shader.set_uniform(name, value)
+    
+    def reload_all_shaders(self):
+        """Reload all shaders from files."""
+        logger.info("Reloading all shaders")
+        for shader in self.shader_renderers.values():
+            shader.reload_shader()
+    
+    def resize(self, new_size: Tuple[int, int]):
+        """Handle window resize for all shaders.
+        
+        Args:
+            new_size: New (width, height) of the window
+        """
+        for shader in self.shader_renderers.values():
+            shader.resize(new_size)
+    
+    async def cleanup(self):
+        """Clean up all shader resources."""
+        logger.info("Cleaning up MultiShaderRenderer")
+        
+        for name, shader in self.shader_renderers.items():
+            await shader.cleanup()
+        
+        self.shader_renderers.clear()
+        logger.info("MultiShaderRenderer cleanup complete")

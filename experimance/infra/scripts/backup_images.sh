@@ -1,19 +1,29 @@
 #!/bin/bash
 
 # backup_images.sh: Script to use rsync to backup generated images from remote host to local machine
-# Usage: backup_images.sh <backup_folder>
+# Usage: backup_images.sh <remote_host> <backup_folder>
 
-# Check if backup folder parameter is provided
-if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <backup_folder>"
+# Check if both parameters are provided
+if [ "$#" -lt 2 ]; then
+    echo "Usage: $0 <remote_host> <backup_folder>"
+    echo "  remote_host: can be just hostname or hostname:path"
+    echo "  backup_folder: local directory to backup to"
     exit 1
 fi
 
-# Define remote source directory containing generated images
-REMOTE_SOURCE="gallery:/home/experimance/experimance/media/images/generated/"
+# Parse remote host parameter
+REMOTE_HOST="$1"
+# Check if remote host already includes a path
+if [[ "$REMOTE_HOST" == *":"* ]]; then
+    # Remote host includes path, use as-is
+    REMOTE_SOURCE="$REMOTE_HOST"
+else
+    # Remote host is just hostname, append default path
+    REMOTE_SOURCE="$REMOTE_HOST:/home/experimance/experimance/media/images/generated/"
+fi
 
-# Backup folder on local machine passed as parameter
-BACKUP_FOLDER="$1"
+# Backup folder on local machine passed as second parameter
+BACKUP_FOLDER="$2"
 
 # create backup folder if it doesnt exist
 mkdir -p "${BACKUP_FOLDER}"

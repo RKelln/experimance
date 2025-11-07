@@ -6,9 +6,6 @@ service_name = "agent"
 # Agent backend selection - use pipecat for local audio processing
 agent_backend = "pipecat"
 
-# Tool calling capabilities
-tool_calling_enabled = true
-biome_suggestions_enabled = true
 speech_detection_enabled = true
 
 # Conversation cooldown settings
@@ -54,6 +51,15 @@ audio_device_retry_delay = 1.0       # Delay between retries (seconds)
 
 # Voice Activity Detection
 vad_enabled = true
+
+# STT Mute Filter settings
+stt_mute_enabled = true  # Enable STT mute filter to prevent user speech during certain conditions
+stt_mute_strategies = ["function_call", "mute_until_first_bot_complete"]
+# Available strategies: "always", "first_speech", "function_call", "mute_until_first_bot_complete"
+# - "mute_until_first_bot_complete": Start muted and remain muted until the first bot utterance completes. Ensures the bot’s initial instructions are fully delivered.
+# - "function_call": Mute user input during function call execution
+# - "always": Always mute during bot speech (aggressive but prevents interruption)
+# - "first_speech": Mute only during the bot’s first speech utterance. Useful for introductions when you want the bot to complete its greeting before the user can speak.
 
 # LLM settings
 openai_model = "gpt-4o"  # For ensemble mode

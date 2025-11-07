@@ -1,0 +1,63 @@
+[display]
+fullscreen = true
+monitor = 1
+fps_limit = 30
+vsync = true
+debug_overlay = false
+resolution = [3840, 1080]  # Force specific resolution for testing
+#background_color = [0, 0, 255, 255]   # Background color (blue, RGBA) for debugging layer compositing
+
+[panorama]
+enabled = true
+rescale = "width"  # Changed to shortest so we can see the entire panorama
+output_width = 11520 # 5760,11520  # 6x 1920 for 6 projectors total (includes mirroring)
+output_height = 1080
+blur = true
+start_blur = 30.0
+end_blur = 0.0
+blur_duration = 20
+mirror = true
+disappear_duration = 120.0  # Duration until fade from sight (0 = disabled)
+
+[panorama.tiles]
+width = 1920  # Smaller tiles to see more of them
+height = 1080
+fade_duration = 3.0
+
+[zmq.subscriber]
+address = "tcp://localhost"
+port = 5555
+topics = ["DisplayMedia"]
+
+[title_screen]
+enabled = true 
+text = "Feed the Fires"           # Text to display
+duration = 10.0               # Duration in seconds
+fade_out_duration = 10.0      # Fade out duration in seconds
+
+[shader_effects]
+enabled = true
+auto_reload_shaders = false  # Set to true for development/hot-reload
+
+[shader_effects.effects.vignette]
+enabled = true  # Use the improved vignette shader
+shader_file = "turbulent_vignette_improved.frag"
+order = 10  # Lower order = renders first (background effect)
+
+[shader_effects.effects.vignette.uniforms]
+vignette_strength = 1.0   # Increase to maximum to make effect more visible
+turbulence_amount = 0.5  # Increase turbulence for more visible effect
+gradient_zone = 0.25    # Large gradient zone for smooth transition (configurable)
+speed = 0.5
+horizontal_compression = 6.0  # Compression factor for 6x horizontal stretching (6 projectors)
+
+[shader_effects.effects.sparks]
+enabled = true
+shader_file = "rising_sparks_improved.frag"
+order = 20  # Higher order = renders on top
+blend_mode = "additive"  # Additive blending for perfect glow effects
+
+[shader_effects.effects.sparks.uniforms]
+spark_intensity = 0.5  # 0.0-1.0, intensity of spark effects
+horizontal_compression = 6.0  # Compression factor for 6x horizontal stretching (6 projectors)
+spark_density = 4.0

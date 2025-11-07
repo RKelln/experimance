@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, Literal, List
 
-from image_server.generators.generator import ImageGenerator
+from image_server.generators.generator import ImageGenerator, GeneratorCapabilities
 from image_server.generators.config import BaseGeneratorConfig
 from .mock_generator_config import MockGeneratorConfig
 
@@ -21,6 +21,18 @@ class MockImageGenerator(ImageGenerator):
     Can either generate simple placeholder images with prompt text or 
     use existing images from a specified directory for more realistic testing.
     """
+    
+    # Mock generator supports most capabilities for testing purposes
+    supported_capabilities = {
+        GeneratorCapabilities.IMAGE_TO_IMAGE,
+        GeneratorCapabilities.CONTROLNET,
+        GeneratorCapabilities.LORAS,
+        GeneratorCapabilities.NEGATIVE_PROMPTS,
+        GeneratorCapabilities.SEEDS,
+        GeneratorCapabilities.INPAINTING,
+        GeneratorCapabilities.UPSCALING,
+        GeneratorCapabilities.BATCH_GENERATION
+    }
     
     def _configure(self, config:BaseGeneratorConfig, **kwargs):
         """Configure mock generator settings."""
@@ -51,7 +63,7 @@ class MockImageGenerator(ImageGenerator):
         if not self._existing_images:
             logger.warning("No existing images found - will fall back to generated placeholders")
     
-    async def generate_image(self, prompt: str, **kwargs) -> str:
+    async def _generate_image_impl(self, prompt: str, **kwargs) -> str:
         """Generate a mock image with the prompt text or copy an existing image."""
         self._validate_prompt(prompt)
         
@@ -60,7 +72,10 @@ class MockImageGenerator(ImageGenerator):
         immediate = kwargs.get('immediate', False)
         if not immediate:
             # Simulate some processing time
-            await asyncio.sleep(random.uniform(0.5, 2.5))
+            if self.config.delay > 0:
+                await asyncio.sleep(self.config.delay)
+            else:
+                await asyncio.sleep(random.uniform(0.5, 2.5))
         
         # If we have existing images and are configured to use them, pick one randomly
         if self.config.use_existing_images and self._existing_images:
@@ -149,7 +164,7 @@ class MockImageGenerator(ImageGenerator):
 
         # Save the image
         request_id = kwargs.get('request_id')
-        output_path = self._get_output_path("png", request_id=request_id)
+        output_path = self._get_output_path(self.config.image_file_type, request_id=request_id)
         image.save(output_path)
         
         logger.info(f"MockImageGenerator: Saved placeholder image to {output_path}")

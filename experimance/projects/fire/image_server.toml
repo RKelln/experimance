@@ -1,0 +1,66 @@
+## Image server configuration
+
+# General settings
+cache_dir = "media/images/generated"         # Directory to cache generated images
+max_cache_size_gb = 300      # Maximum size of image cache in GB
+audio_timeout = 120          # Audio generation timeout in seconds (longer to allow subprocess restart)
+
+# ZeroMQ configuration
+#[zmq]
+
+# Generator configuration
+[generator]
+strategy = "local_sdxl" 
+timeout = 120
+
+# Local SDXL generator (local_sdxl strategy)
+[local_sdxl]
+# Model source - can be URL, HuggingFace ID (org/name), or local filename
+model = "https://storage.googleapis.com/experimance_models/juggernautXL_juggXILightningByRD.safetensors"
+# Generation parameters
+steps = 6
+guidance_scale = 1.5
+strength = 0.25  # Image-to-image strength (0.0 = keep original, 1.0 = completely new)
+width = 1024
+height = 1024
+# Performance settings
+compile_unet = false          # Enable PyTorch compilation for max speed (slow startup)
+warmup_on_start = true       # Generate dummy image on startup to warm caches
+
+# Fake image generator
+[mock]
+use_existing_images = false
+existing_images_dir = "media/images/generated"
+
+[audio_generator]
+enabled = true
+strategy = "prompt2audio"
+
+[mock_audio]
+use_existing_audio = false
+placeholder_type = "tone"
+tone_frequency = 440.0
+generation_delay_s = 2.0
+duration_s = 10
+include_prompt_metadata = true
+
+[prompt2audio]
+duration_s = 25              
+steps = 30                    
+guidance_scale = 4.5
+candidates = 1               
+normalize_loudness = true
+target_lufs = -23.0
+true_peak_dbfs = -2.0
+enable_seamless_loop = true
+apply_highpass_filter = true
+highpass_cutoff_hz = 250.0 # High-pass filter cutoff frequency in Hz
+highpass_filter_order = 3 # High-pass filter order (higher = steeper rolloff)
+
+# Just add these two lines for GPU isolation:
+use_subprocess = true        # Enable subprocess execution
+cuda_visible_devices = "0"   # Audio will use GPU 0 (which has ~15GB free)
+
+# Optional: customize subprocess behavior
+subprocess_timeout_seconds = 300
+subprocess_max_retries = 3

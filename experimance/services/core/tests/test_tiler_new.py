@@ -15,8 +15,8 @@ from pathlib import Path
 # Add the source directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sohkepayin_core.tiler import PanoramaTiler, TileSpec, create_tiler_from_config
-from sohkepayin_core.config import TileConfig
+from fire_core.tiler import PanoramaTiler, TileSpec, create_tiler_from_config
+from fire_core.config import TileConfig
 
 
 class TestPanoramaTilerNew:

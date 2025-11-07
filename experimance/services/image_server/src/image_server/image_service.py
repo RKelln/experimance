@@ -22,7 +22,7 @@ from experimance_common.schemas import ImageReady, RenderRequest, MessageType
 from experimance_common.zmq.services import WorkerService
 from experimance_common.zmq.config import MessageDataType
 from experimance_common.constants import DEFAULT_PORTS, PROJECT_ROOT, GENERATED_IMAGES_DIR, GENERATED_IMAGES_DIR_ABS
-from experimance_common.logger import configure_external_loggers
+from experimance_common.config import resolve_path
 from image_server.generators.config import GENERATOR_NAMES
 from pydantic import ValidationError
 from typing import get_args
@@ -30,11 +30,17 @@ from typing import get_args
 from .config import ImageServerConfig
 from .generators.factory import GeneratorManager
 
-from experimance_common.logger import setup_logging
+# Audio generation imports
+# Fallback to trying common schemas (for backward compatibility)
+try:
+    from experimance_common.schemas import AudioRenderRequest, AudioReady  # type: ignore
+    AUDIO_SUPPORT = True
+except ImportError:
+    AUDIO_SUPPORT = False
 
 SERVICE_TYPE = "image_server"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
+logger = logging.getLogger(__name__)
 
 class ImageServerService(BaseService):
     """Main image server service that handles render requests and publishes generated images.
@@ -103,6 +109,52 @@ class ImageServerService(BaseService):
 
             # Start any generators that need to be pre-warmed
             await self.generator_manager.start()
+            
+            # Initialize audio generator if enabled
+            if (AUDIO_SUPPORT and 
+                hasattr(self.config, 'audio_generator') and 
+                getattr(self.config.audio_generator, 'enabled', False)):
+                logger.info("Initializing audio generator manager...")
+                # Initialize audio generator manager on startup if audio is enabled
+                try:
+                    from image_server.generators.audio.audio_factory import AudioGeneratorManager
+                    
+                    # Get audio strategy from config
+                    audio_strategy = getattr(self.config.audio_generator, 'strategy', 'mock_audio')
+                    
+                    # Get audio configuration from TOML config
+                    audio_configs = {}
+                    
+                    # Load mock_audio config if strategy is mock_audio
+                    if hasattr(self.config, 'mock_audio') and self.config.mock_audio:
+                        # Convert Pydantic model to dict
+                        if hasattr(self.config.mock_audio, 'model_dump'):
+                            audio_configs['mock_audio'] = self.config.mock_audio.model_dump()
+                        else:
+                            audio_configs['mock_audio'] = dict(self.config.mock_audio)
+                        
+                        logger.info(f"Loaded mock_audio config: {audio_configs['mock_audio']}")
+                    
+                    # Load prompt2audio config if strategy is prompt2audio
+                    if hasattr(self.config, 'prompt2audio') and self.config.prompt2audio:
+                        # Convert Pydantic model to dict
+                        if hasattr(self.config.prompt2audio, 'model_dump'):
+                            audio_configs['prompt2audio'] = self.config.prompt2audio.model_dump()
+                        else:
+                            audio_configs['prompt2audio'] = dict(self.config.prompt2audio)
+                        
+                        logger.info(f"Loaded prompt2audio config with subprocess: {audio_configs['prompt2audio'].get('use_subprocess', False)}")
+                    
+                    self.audio_generator_manager = AudioGeneratorManager(
+                        default_strategy=audio_strategy,
+                        output_dir=str(self.config.cache_dir / "audio"),
+                        timeout=getattr(self.config.audio_generator, 'timeout', 120),
+                        default_configs=audio_configs  # Pass the audio config from TOML FIXME: use self.config
+                    )
+                    logger.info("Audio generator manager initialized")
+                    
+                except Exception as e:
+                    logger.warning(f"Audio generator initialization failed: {e}")
 
             # Register periodic cache cleanup task (run every 10 minutes)
             self.add_task(self._periodic_cache_cleanup(600))
@@ -121,6 +173,10 @@ class ImageServerService(BaseService):
             # Stop all generators
             if hasattr(self, 'generator_manager'):
                 await self.generator_manager.stop_all_generators()
+            
+            # Stop audio generators if any
+            if hasattr(self, 'audio_generator_manager'):
+                await self.audio_generator_manager.stop_all()
             
             # Stop the ZMQ service
             if hasattr(self, 'zmq_service'):
@@ -155,34 +211,57 @@ class ImageServerService(BaseService):
         asyncio.create_task(self._handle_render_request(data_dict))
 
     async def _handle_render_request(self, message: MessageDataType):
-        """Handle incoming RenderRequest messages.
+        """Handle incoming RenderRequest and AudioRenderRequest messages.
         
         Args:
-            message: The RenderRequest message containing generation parameters
+            message: The RenderRequest or AudioRenderRequest message containing generation parameters
         """
         try:
-            logger.debug(f"Received RenderRequest message: {message}")
+            logger.debug(f"Received render request message: {message}")
 
-            # Ensure message is a RenderRequest object using schemas.py
-            try:
-                request: RenderRequest = RenderRequest.to_message_type(message)  # type: ignore
-            except ValidationError as e:
-                self.record_error(
-                    ValueError(f"Invalid RenderRequest message: {message}"),
-                    is_fatal=False,
-                    custom_message=f"Invalid RenderRequest message: {message}"
-                )
+            # Determine message type and convert to appropriate schema
+            message_type = None
+            if isinstance(message, dict):
+                message_type = message.get('type')
+            else:
+                message_type = getattr(message, 'type', None)
+
+            if message_type == MessageType.RENDER_REQUEST:
+                # Handle image generation request
+                try:
+                    request: RenderRequest = RenderRequest.to_message_type(message)  # type: ignore
+                except ValidationError as e:
+                    self.record_error(
+                        ValueError(f"Invalid RenderRequest message: {message}"),
+                        is_fatal=False,
+                        custom_message=f"Invalid RenderRequest message: {message}"
+                    )
+                    return
+
+                logger.info(f"Processing RenderRequest {request.request_id}")
+                self.add_task(self._process_render_request(request))
+                
+            elif message_type == "AudioRenderRequest" and AUDIO_SUPPORT:
+                # Handle audio generation request
+                try:
+                    request: AudioRenderRequest = AudioRenderRequest.to_message_type(message)  # type: ignore
+                except ValidationError as e:
+                    self.record_error(
+                        ValueError(f"Invalid AudioRenderRequest message: {message}"),
+                        is_fatal=False,
+                        custom_message=f"Invalid AudioRenderRequest message: {message}"
+                    )
+                    return
+
+                logger.info(f"Processing AudioRenderRequest {request.request_id}")
+                self.add_task(self._process_audio_request(request))
+                
+            else:
+                logger.warning(f"Unsupported message type: {message_type} (Audio support: {AUDIO_SUPPORT})")
                 return
 
-            logger.info(f"Processing RenderRequest {request.request_id}")
-
-            # Schedule the image generation task using the full RenderRequest object
-            logger.debug(f"Creating and scheduling task for request {request.request_id}")
-            self.add_task(self._process_render_request(request))
-            logger.debug(f"Task created and scheduled for request {request.request_id}")
-
         except Exception as e:
-            self.record_error(e, is_fatal=False, custom_message=f"Error handling RenderRequest: {e}")
+            self.record_error(e, is_fatal=False, custom_message=f"Error handling render request: {e}")
     
     def _validate_render_request(self, message: RenderRequest) -> bool:
         """Validate a RenderRequest message.
@@ -260,8 +339,10 @@ class ImageServerService(BaseService):
                 biome=str(biome) if biome else None,
                 seed=getattr(request, 'seed', None),
                 style=getattr(request, 'style', None),
+                strength=getattr(request, 'strength', None),
                 width=request.get('width', None),
                 height=request.get('height', None),
+                clear_queue=getattr(request, 'clear_queue', False),  # Pass clear_queue to generator
             )
             logger.debug(f"Generated image path: {image_path}")
 
@@ -314,6 +395,59 @@ class ImageServerService(BaseService):
             if request_id:
                 await self._publish_image_error(request_id, str(e))
     
+    async def _process_audio_request(self, request):
+        """Process an audio generation request.
+        
+        Args:
+            request: AudioRenderRequest object with generation parameters
+        """
+        try:
+            logger.debug(f"Starting _process_audio_request for {request.request_id}")
+
+            # Extract fields from AudioRenderRequest
+            request_id = request.request_id
+            prompt = request.prompt
+            duration_s = getattr(request, 'duration_s', None)
+            generator_strategy = getattr(request, 'generator', None)
+            
+            # Log the request details
+            strategy_info = f" using {generator_strategy}" if generator_strategy else ""
+            duration_info = f" ({duration_s}s)" if duration_s else ""
+            logger.info(f"Processing AudioRenderRequest {request_id}{strategy_info}{duration_info}")
+
+            # Generate the audio
+            logger.debug(f"Calling _generate_audio for {request_id}")
+            audio_path, generation_metadata = await self._generate_audio(
+                request_id=request_id,
+                prompt=prompt,
+                duration_s=duration_s,
+                strategy=generator_strategy,
+                seed=getattr(request, 'seed', None),
+                style=getattr(request, 'style', None),
+                metadata=getattr(request, 'metadata', None),
+                clear_queue=getattr(request, 'clear_queue', False),  # Pass clear_queue to generator
+            )
+            logger.debug(f"Generated audio path: {audio_path}")
+
+            # Publish AudioReady message
+            logger.debug(f"Publishing AudioReady for {request_id}")
+            await self._publish_audio_ready(
+                request_id=request_id,
+                audio_path=audio_path,
+                prompt=prompt,
+                generation_metadata=generation_metadata
+            )
+
+            logger.info(f"Successfully processed AudioRenderRequest {request_id}")
+
+        except Exception as e:
+            # Record error but don't stop service (non-fatal)
+            request_id = getattr(request, 'request_id', None)
+            self.record_error(e, is_fatal=False, custom_message=f"Error processing AudioRenderRequest {request_id}: {e}")
+            # Publish an error message to notify other services
+            if request_id:
+                await self._publish_audio_error(request_id, str(e))
+    
     async def _generate_image(
         self,
         prompt: str,
@@ -356,7 +490,6 @@ class ImageServerService(BaseService):
         elif reference_image_b64:
             logger.warning(f"Reference image provided but strategy {strategy} doesn't support image-to-image generation")
         
-        error_msg = False
         # Generate the image with timeout
         try:
             image_path = await asyncio.wait_for(
@@ -370,17 +503,17 @@ class ImageServerService(BaseService):
         except Exception as e:
             error_msg = f"Image generation failed: {e}"
             logger.warning(f"Image generation exception: {error_msg}")
-        finally:
-            if error_msg:
-                mock_generator = self.generator_manager.get_generator("mock")
-                if mock_generator:
-                    # Fallback to mock generator if available
-                    logger.warning(f"Timeout occurred, falling back to mock generator")
-                    generation_kwargs['immediate'] = True  # Use immediate mode for mock
-                    return await mock_generator.generate_image(prompt, **generation_kwargs)
-                else:
-                    logger.error("No mock generator available for fallback")
-                raise RuntimeError(error_msg)
+        
+        # If we get here, there was an error - try fallback
+        mock_generator = self.generator_manager.get_generator("mock")
+        if mock_generator:
+            # Fallback to mock generator if available
+            logger.warning(f"Error occurred, falling back to mock generator")
+            generation_kwargs['immediate'] = True  # Use immediate mode for mock
+            return await mock_generator.generate_image(prompt, **generation_kwargs)
+        else:
+            logger.error("No mock generator available for fallback")
+            raise RuntimeError(error_msg)
     
     async def _publish_image_ready(
         self, 
@@ -476,6 +609,208 @@ class ImageServerService(BaseService):
             # Just log this error since we're already in an error handling path
             logger.error(f"Error publishing error message for request {request_id}: {e}", exc_info=True)
     
+    async def _generate_audio(
+        self,
+        prompt: str,
+        request_id: Optional[str] = None,
+        duration_s: Optional[int] = None,
+        strategy: Optional[str] = None,
+        **kwargs
+    ) -> tuple[str, dict]:
+        """Generate audio using the specified or default audio strategy.
+        
+        Args:
+            prompt: Text prompt for audio generation
+            request_id: Request ID for filename generation
+            duration_s: Duration in seconds (overrides config)
+            strategy: Audio generator strategy to use (defaults to prompt2audio)
+            **kwargs: Additional parameters for the generator
+            
+        Returns:
+            Tuple of (path to the generated audio file, generation metadata dict)
+            
+        Raises:
+            RuntimeError: If audio generation fails or is not supported
+        """
+        if not AUDIO_SUPPORT:
+            raise RuntimeError("Audio generation not supported - missing audio schemas")
+        
+        if strategy is None:
+            # Use strategy from config instead of hardcoded default
+            strategy = getattr(self.config.audio_generator, 'strategy', 'mock_audio')
+            
+        # Ensure strategy is not None (should never happen but for type safety)
+        if strategy is None:
+            strategy = 'mock_audio'
+        
+        # Check if we have an audio generator manager
+        if not hasattr(self, 'audio_generator_manager'):
+            # Initialize audio generator manager on first use
+            from image_server.generators.audio.audio_factory import AudioGeneratorManager
+            
+            # Get audio configuration from TOML config
+            audio_configs = {}
+            
+            # Load mock_audio config if strategy is mock_audio
+            if hasattr(self.config, 'mock_audio') and self.config.mock_audio:
+                # Convert Pydantic model to dict
+                if hasattr(self.config.mock_audio, 'model_dump'):
+                    audio_configs['mock_audio'] = self.config.mock_audio.model_dump()
+                else:
+                    audio_configs['mock_audio'] = dict(self.config.mock_audio)
+                
+                logger.info(f"Loaded mock_audio config: {audio_configs['mock_audio']}")
+            
+            # Load prompt2audio config if strategy is prompt2audio
+            if hasattr(self.config, 'prompt2audio') and self.config.prompt2audio:
+                # Convert Pydantic model to dict
+                if hasattr(self.config.prompt2audio, 'model_dump'):
+                    audio_configs['prompt2audio'] = self.config.prompt2audio.model_dump()
+                else:
+                    audio_configs['prompt2audio'] = dict(self.config.prompt2audio)
+                
+                logger.info(f"Loaded prompt2audio config: {audio_configs['prompt2audio']}")
+            
+            self.audio_generator_manager = AudioGeneratorManager(
+                default_strategy=strategy,
+                output_dir=str(self.config.cache_dir / "audio"),
+                timeout=getattr(self.config.audio_generator, 'timeout', 120),
+                default_configs=audio_configs  # Pass the audio config from TOML
+            )
+        
+        # Prepare generation parameters
+        generation_kwargs = kwargs.copy()
+        if duration_s is not None:
+            generation_kwargs['duration_s'] = duration_s
+        
+        try:
+            # Generate the audio using the manager
+            audio_path = await asyncio.wait_for(
+                self.audio_generator_manager.generate_audio(prompt, strategy, **generation_kwargs),
+                timeout=getattr(self.config, 'audio_timeout', 120)
+            )
+            
+            # Try to get metadata from the generator
+            metadata = {}
+            if hasattr(self.audio_generator_manager, '_generators') and strategy in self.audio_generator_manager._generators:
+                generator = self.audio_generator_manager._generators[strategy]
+                try:
+                    metadata_method = getattr(generator, 'get_last_generation_metadata', None)
+                    if metadata_method:
+                        metadata = metadata_method()
+                        logger.debug(f"Retrieved generation metadata: {metadata}")
+                except Exception as e:
+                    logger.debug(f"Could not get generation metadata: {e}")
+            
+            logger.debug(f"Final audio generation metadata: {metadata}")
+            return audio_path, metadata
+        except asyncio.TimeoutError:
+            error_msg = f"Audio generation timed out after {getattr(self.config, 'audio_timeout', 120)} seconds"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            error_msg = f"Audio generation failed: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+    
+    async def _publish_audio_ready(
+        self, 
+        request_id: str, 
+        audio_path: str,
+        prompt: Optional[str] = None,
+        generation_metadata: Optional[dict] = None,
+        **kwargs
+    ):
+        """Publish an AudioReady message.
+        
+        Args:
+            request_id: The original request ID
+            audio_path: Path to the generated audio file
+            prompt: The prompt used for generation
+            **kwargs: Additional metadata
+            
+        Raises:
+            RuntimeError: If publishing the message fails
+        """
+        try:
+            # Convert path to URI format
+            audio_uri = f"file://{Path(audio_path).absolute()}"
+            
+            # Get audio duration
+            duration_s = None
+            try:
+                import soundfile as sf
+                with sf.SoundFile(audio_path) as f:
+                    duration_s = len(f) / f.samplerate
+            except ImportError:
+                logger.debug("soundfile not available for audio duration calculation")
+            except Exception as e:
+                logger.warning(f"Failed to get audio duration for {audio_path}: {e}")
+            
+            # Create AudioReady message
+            message_data = {
+                "request_id": request_id,
+                "uri": audio_uri,
+                "prompt": prompt,
+                "duration_s": duration_s,
+                "is_loop": True,  # Our audio is designed to be seamlessly loopable
+            }
+            
+            # Combine all metadata into a single metadata field
+            combined_metadata = {}
+            
+            # Add generation metadata if available
+            if generation_metadata:
+                logger.debug(f"Adding generation metadata to AudioReady: {generation_metadata}")
+                combined_metadata.update(generation_metadata)
+            
+            # Add any additional metadata from kwargs
+            if kwargs:
+                logger.debug(f"Adding kwargs metadata to AudioReady: {kwargs}")
+                combined_metadata.update(kwargs)
+            
+            # Only add metadata field if we have any metadata
+            if combined_metadata:
+                message_data["metadata"] = combined_metadata
+                logger.debug(f"Final AudioReady metadata: {combined_metadata}")
+            else:
+                logger.debug("No metadata to include in AudioReady message")
+            
+            message = AudioReady(**message_data)
+            
+            logger.debug(f"Publish AudioReady for request {request_id}")
+
+            # Publish the message using push socket
+            await self.zmq_service.send_response(message)            
+            logger.info(f"Published AudioReady message for request {request_id}")
+        except Exception as e:
+            error_msg = f"Error publishing AudioReady message for request {request_id}: {e}"
+            self.record_error(e, is_fatal=False, custom_message=error_msg)
+            raise RuntimeError(error_msg) from e
+    
+    async def _publish_audio_error(self, request_id: str, error_message: str):
+        """Publish an error message for a failed audio request.
+        
+        Args:
+            request_id: The original request ID
+            error_message: Description of the error
+        """
+        try:
+            # Create error message (using ALERT type)
+            message = {
+                "type": MessageType.ALERT,
+                "request_id": request_id,
+                "severity": "error",
+                "message": f"Audio generation failed: {error_message}"
+            }
+            
+            # Publish the message via the publisher component
+            await self.zmq_service.publish(message, str(MessageType.ALERT))            
+            logger.info(f"Published audio error message for request {request_id}")
+        except Exception as e:
+            # Just log this error since we're already in an error handling path
+            logger.error(f"Error publishing audio error message for request {request_id}: {e}", exc_info=True)
+    
     async def _cleanup_cache(self):
         """Clean up old cached images if cache size exceeds limit."""
         try:
@@ -488,18 +823,28 @@ class ImageServerService(BaseService):
                           f"({self.config.max_cache_size_gb} GB), cleaning up...")
                 
                 # Get all files sorted by modification time (oldest first)
+                resolved_path = resolve_path(self.config.cache_dir, hint=GENERATED_IMAGES_DIR_ABS)
                 files = sorted(
-                    [f for f in self.config.cache_dir.rglob('*') if f.is_file()],
+                    [f for f in resolved_path.rglob('*') if f.is_file()],
                     key=lambda x: x.stat().st_mtime
                 )
-                
+                logger.debug(f"Found {len(files)} files in cache directory for cleanup") 
                 # Remove files until we're under the limit
                 for file in files:
-                    file.unlink()
-                    total_size -= file.stat().st_size
-                    
-                    if total_size <= max_size_bytes * 0.8:  # Keep 20% buffer
-                        break
+                    try:
+                        file_size = file.stat().st_size
+                        file.unlink()
+                        total_size -= file_size
+                        
+                        if total_size <= max_size_bytes * 0.8:  # Keep 20% buffer
+                            break
+                    except FileNotFoundError:
+                        # File was already deleted, continue
+                        logger.debug(f"File {file} was already deleted during cleanup")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Failed to delete file {file}: {e}")
+                        continue
                 
                 logger.info(f"Cache cleanup completed, new size: {total_size / 1024 / 1024 / 1024:.2f} GB")
                 

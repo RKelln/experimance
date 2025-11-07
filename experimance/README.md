@@ -80,8 +80,8 @@ experimance/
 │   │   ├─ schemas.pyi      # type stubs for schemas
 │   │   ├─ core.toml        # configuration for the core service
 │   │   └─ <service>.toml   # configuration for the <service>
-│   └─ sohkepayin/          # overrides for Sohkepayin project
-│       └─ ...              # configuration files for Sohkepayin project  
+│   └─ fire/                # overrides for Feed the Fires project
+│       └─ ...              # configuration files for Feed the Fires project  
 │
 └── media/
     ├── images/
@@ -145,6 +145,9 @@ Experimance is currently comprised of a number of services:
   * Supports many flavours of TTS, STT and LLM
   * Integrated vision system to detect audience (CPU and VLM based)
   * [readme](services/agent/README.md)
+  * Multi-channel audio support with delay compensation for echo cancellation
+    * Useful for adding additional speakers for voice agent output for additional volume
+    * [Multi-channel audio documentation](docs/multi_channel_audio.md)
 * ## Display
   * Simple, `pyglet`-based display
   * Displays and transitions between images, displays video and text overlays
@@ -227,11 +230,40 @@ This codebase supports multiple art installation projects through a **dynamic lo
 ### How It Works
 - **Base schemas/constants** in `libs/common/src/experimance_common/*_base.py` define shared functionality
 - **Project-specific extensions** in `projects/{project_name}/` override or extend base definitions
-- **Dynamic loading** at runtime merges base + project-specific definitions based on `PROJECT_ENV`
+- **Automatic project detection** loads the correct project based on `projects/.project` file or environment variables
 
 ### Project Selection
-- Set `PROJECT_ENV=experimance` or `PROJECT_ENV=projectname` to switch projects
-- Each project can have different enums and message extensions
+
+**Simple Method (Recommended):**
+```bash
+# Set current project
+scripts/project fire
+
+# Check current project  
+scripts/project
+
+# Switch back to experimance
+scripts/project experimance
+
+# Alternative: use uv command
+uv run set-project fire
+```
+
+**Environment Override (when needed):**
+```bash
+# Override for current session
+export PROJECT_ENV=fire
+
+# Override for single command
+PROJECT_ENV=experimance uv run -m experimance_core
+```
+
+**How Detection Works:**
+1. **Environment Variable**: `PROJECT_ENV` (highest priority)
+2. **Project File**: `projects/.project` file content
+3. **Default**: "experimance" (fallback)
+
+Once set, all services automatically use the selected project configuration.
 
 
 ## Creating a New Project
@@ -255,7 +287,8 @@ You can create a new project either manually or using the interactive setup scri
 4. **Update static analysis paths:**
    - Add your project directory to `mypy_path` in `pyproject.toml` for type checking
 5. **Test your project:**
-   - Set `PROJECT_ENV={new_project}` and run services to verify correct loading
+   - Run `scripts/project {new_project}` to set the active project
+   - Run services to verify correct loading: `uv run -m experimance_core`
 
 ### Option 2: Using the Interactive Script
 
@@ -295,19 +328,28 @@ class RenderRequest(_BaseRenderRequest):
 - **Shared Infrastructure**: All projects use the same ZMQ communication, base services, and utilities
 - **Type Safety**: Each project gets proper type checking for its specific Era/Biome values
 - **Clean Separation**: Project-specific logic is isolated in `projects/` directory
-- **Easy Switching**: Change `PROJECT_ENV` to work on different projects
+- **Easy Switching**: Use `scripts/project {name}` to switch between projects
 - **Extensible**: New projects can add custom message types or extend existing ones
 
 ### Usage Examples
 ```bash
-# Work on Experimance project
-PROJECT_ENV=experimance uv run -m experimance_core
+# Set active project (persists across sessions)
+scripts/project fire
 
-# Work on Sohkepayin project  
-PROJECT_ENV=sohkepayin uv run -m experimance_core
+# All services now use fire project automatically
+uv run -m experimance_core
 
-# Import project-specific schemas
-from experimance_common.schemas import Era, Biome  # Loaded based on PROJECT_ENV
+# Check current project
+scripts/project
+
+# Switch back to experimance
+scripts/project experimance
+
+# Override with environment variable (temporary)
+PROJECT_ENV=fire uv run -m experimance_core
+
+# Import project-specific schemas (loaded automatically)
+from experimance_common.schemas import Era, Biome
 ```
 
 
@@ -385,3 +427,16 @@ uv run -m pytest -k "ImageServer"
 
 See [`utils/tests/README.md`](utils/tests/README.md) and [`utils/tests/README_ZMQ_TESTS.md](utils/tests/README_ZMQ_TESTS.md) for more details.
 
+## Advanced Features Documentation
+
+For detailed documentation on advanced system features:
+
+- **[Multi-GPU Configuration Guide](docs/multi_gpu_subprocess_guide.md)** - GPU isolation for concurrent image/audio generation with persistent subprocess workers and comprehensive metadata system
+- **[Generator System Guide](services/image_server/src/image_server/generators/README_GENERATORS.md)** - Complete guide to image and audio generation systems, including TangoFlux audio generation with semantic caching
+- **[Audio Cache Management](scripts/README_AUDIO_CACHE.md)** - Cache management tools for audio generation including statistics, cleanup, and maintenance
+- **[Multi-Channel Audio System](docs/multi_channel_audio.md)** - Complete guide to the multi-channel audio transport with delay compensation for echo cancellation
+- **[Multi-Channel Quick Reference](docs/multi_channel_quick_reference.md)** - Quick setup and configuration guide for multi-channel audio
+- **[Health System](docs/health_system.md)** - Service monitoring and health management
+- **[Image ZMQ Utilities](docs/image_zmq_utilities.md)** - Image processing and ZMQ integration
+- **[Logging System](docs/logging_system.md)** - Centralized logging and debugging
+- **[Transcript Display](docs/transcript_display_best_practices.md)** - Best practices for agent transcript display

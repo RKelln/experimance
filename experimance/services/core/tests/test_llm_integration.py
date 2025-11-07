@@ -15,11 +15,11 @@ from pathlib import Path
 # Add the source directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sohkepayin_core.llm_prompt_builder import LLMPromptBuilder
-from sohkepayin_core.llm import OpenAIProvider
-from sohkepayin_core.config import ImagePrompt
+from fire_core.llm_prompt_builder import LLMPromptBuilder
+from fire_core.llm import OpenAIProvider
+from fire_core.config import ImagePrompt
 
-system_prompt_file = Path(__file__).parent.parent / "src"/ "sohkepayin_core" / "system_prompt.md"
+system_prompt_file = Path(__file__).parent.parent / "src"/ "fire_core" / "system_prompt.md"
 test_stories_path = Path(__file__).parent / "test_stories.json"
 
 async def test_llm_with_real_api():
@@ -128,7 +128,7 @@ async def test_llm_mock_comparison():
     
     print("\n🔄 Comparing OpenAI LLM with Mock LLM...")
     
-    from sohkepayin_core.llm import MockLLMProvider
+    from fire_core.llm import MockLLMProvider
     
     # Test with mock LLM
     mock_llm = MockLLMProvider()

@@ -1,0 +1,174 @@
+# Experimance Agent Service Configuration
+# This configuration uses the Pipecat backend for local audio processing
+
+service_name = "agent"
+
+# Agent backend selection - use pipecat for local audio processing
+agent_backend = "pipecat"
+
+speech_detection_enabled = true
+
+# Conversation management
+cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves then returns
+conversation_cooldown_duration = 3.0  # seconds # After a conversation ends (e.g., saying goodbye), wait this long before starting a new one
+
+# TTS (Text-to-Speech) settings (ensemble mode only)
+elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
+cartesia_voice_id = "173250a9-6ea5-48a9-90cf-441535639140"
+# fire spirit cartesia: 15e68ffc-55ad-48e3-9e50-cc8c56281b9d
+# sophia: bf0a246a-8642-498a-9950-80c35e9276b5
+# kyle: 70eefb47-0d9c-45a4-9ffd-2e216b380895
+
+[backend_config]
+prompt_path="projects/fire/fire_spirit_prompt.md"
+
+[backend_config.pipecat]
+# Pipeline mode: "realtime" for OpenAI Realtime Beta or "ensemble" for separate STT/LLM/TTS
+mode = "ensemble"  # Change to "realtime" to use OpenAI Realtime Beta
+
+# LLM settings
+openai_model = "gpt-4o"  # For ensemble mode
+
+# OpenAI Realtime settings (realtime mode only)
+openai_realtime_model = "gpt-4o-realtime-preview-2025-06-03"
+openai_voice = "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+turn_detection_threshold = 0.5
+turn_detection_silence_ms = 800
+
+# Audio settings
+audio_in_enabled = true
+audio_out_enabled = true
+audio_in_sample_rate = 16000
+audio_out_sample_rate = 24000       # Standard sample rate compatible with Cartesia
+
+# Audio device selection (comment out to use default devices)
+# Use `uv run python scripts/audio_recovery.py list` to list available devices
+# Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
+# For better performance, you can also specify device indices directly:
+audio_input_device_name = "default"   # USB Conference microphone
+audio_output_device_name = "default"  # Use pipewire device for Virtual-Multi sink
+# Alternatively, use indices for faster startup (uncomment to use):
+# audio_input_device_index = 6   # Yealink device index
+# audio_output_device_index = 5  # Pipewire device index for Virtual-Multi sink
+
+# Audio error handling
+suppress_audio_errors = true         # Suppress ALSA/JACK error messages
+audio_device_retry_attempts = 3      # Retry attempts for device initialization
+audio_device_retry_delay = 1.0       # Delay between retries (seconds)
+
+# Timeout
+idle_timeout_secs = 60
+#idle_timeout_re_engagement_message
+#idle_timeout_goodbye_message
+
+# Voice Activity Detection
+vad_enabled = true
+
+# STT Mute Filter settings
+stt_mute_enabled = true  # Enable STT mute filter to prevent user speech during certain conditions
+stt_mute_strategies = ["first_speech"]
+# Available strategies: "always", "first_speech", "function_call", "mute_until_first_bot_complete"
+# - "mute_until_first_bot_complete": Start muted and remain muted until the first bot utterance completes. Ensures the bot’s initial instructions are fully delivered.
+# - "function_call": Mute user input during function call execution
+# - "always": Always mute during bot speech (aggressive but prevents interruption)
+# - "first_speech": Mute only during the bot’s first speech utterance. Useful for introductions when you want the bot to complete its greeting before the user can speak.
+
+# Background audio looping (fire crackle)
+# Audio must match output smaple rate and be mono:
+# ffmpeg -i media/audio/environment/bonfire.mp3 -ar 24000 -ac 1 media/audio/environment/bonfire_24k_mono.mp3 -y
+background_audio_enabled = false
+background_audio_file = "media/audio/environment/bonfire_24k_mono.mp3"  # Path relative to project root
+background_audio_volume = 1.0        # Volume level (0.0 to 1.0)
+background_audio_loop = true         # Loop the audio file
+
+# Multi-channel audio output (optional)
+# Enable this for dual speaker setup with echo cancellation delays
+multi_channel_output = false
+output_channels = 4                   # Total output channels
+
+# Per-channel delays (in seconds) for echo cancellation
+#[backend_config.pipecat.channel_delays]
+#0 = 0.120    # Laptop speakers
+#1 = 0.120    # Laptop speakers
+#2 = 0.000    # Bluetooth speakers
+#3 = 0.000    # Bluetooth speakers
+
+# Per-channel volumes (0.0 to 1.0)
+#[backend_config.pipecat.channel_volumes]
+#0 = 1.0    # Full volume USB
+#1 = 1.0    # Full volume USB
+#2 = 1.0    # Slightly lower volume for audio port to balance levels
+#3 = 1.0    # Slightly lower volume for audio port to balance levels
+
+# Ensemble mode provider settings
+[backend_config.pipecat.ensemble]
+stt = "assemblyai"  # Speech-to-text provider
+llm = "openai"      # Language model provider  
+tts = "cartesia"    # Text-to-speech provider
+
+[vision]
+audience_detection_enabled = true
+audience_detection_interval = 1.5       # Check camera every 1.5 seconds (slightly slower for stability)
+
+# Mock detector configuration (overrides reolink)
+[mock_detector]
+enabled = false                   # Enable mock detector
+control_method = "file"      # Use file-based control (recommended)
+control_dir = "/tmp/mock_detector"
+initial_state = false            # Start with no audience
+initial_count = 0
+
+[reolink]
+# Fire project specific Reolink Camera Settings with asymmetric hysteresis and YOLO11 detection
+enabled = true
+host = "172.166.0.148"                  # Your camera IP
+user = "admin"                          # Camera username (can override with REOLINK_USER env var)
+# reolink_password - NEVER set here! Use REOLINK_PASSWORD environment variable in .env file
+https = true                            # Use HTTPS (recommended)
+channel = 0                             # Camera channel (usually 0)
+timeout = 2                             # Timeout for checking for people
+
+# Asymmetric hysteresis - different thresholds for detecting vs losing audience
+# With YOLO11n detection, we can be much more responsive due to higher reliability
+hysteresis_present = 3                  # Quick to detect presence (YOLO11n is reliable)
+hysteresis_absent = 8                   # Slower to lose presence (12 seconds at 1.5s intervals)
+
+# Person detection method configuration
+detection_method = "hybrid"             # Detection method: "yolo11" (YOLO-only) or "hybrid" (camera AI trigger + YOLO)
+                                        # Note: Camera AI-only is not supported as it only provides alarm events, not presence state
+
+# YOLO11 detection settings nested properly
+[reolink.yolo]
+confidence_threshold = 0.35        # Minimum confidence for person detection (0.0-1.0) - optimized from testing
+edge_filter_percent = 0.15         # Filter detections near edges (0.0-0.5)
+min_person_width = 80              # Minimum person width in pixels - filters false positives
+min_person_height = 180            # Minimum person height in pixels - filters false positives
+max_detections = 6                 # Maximum detections to process per frame
+input_size = 640                   # YOLO input size (320=fast, 640=balanced, 1280=accurate)
+device = "cpu"                     # Device: "cpu", "cuda", "mps"
+model_name = "yolo11n.pt"          # Model: yolo11n.pt (nano), yolo11s.pt (small), etc.
+save_debug_frames = false          # Save annotated frames for debugging
+debug_frame_interval = 10          # Save every Nth frame when debugging
+
+[transcript]
+# Transcript management
+display_transcripts = false
+transcript_max_lines = 3
+transcript_line_duration = 10.0
+transcript_fade_duration = 1.0
+
+# Speaker names
+agent_speaker_name = "Experimance"
+human_speaker_name = "Visitor"
+
+# Transcript archival
+save_transcripts = true
+
+[osc]
+enabled = true
+host = "127.0.0.1"
+port = 5580
+address_prefix = "/fire/"
+presence_address = "presence/"
+person_speak_address = "speak/person/"
+bot_speak_address = "speak/bot"

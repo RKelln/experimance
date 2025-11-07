@@ -667,13 +667,13 @@ DEFAULT_CONFIG_PATH = get_project_config_path("core", CORE_SERVICE_DIR)
 ```
 
 **Behavior:**
-- When `PROJECT_ENV=experimance`, config path is `projects/experimance/core.toml`
-- When `PROJECT_ENV=sohkepayin`, config path is `projects/sohkepayin/core.toml`
+- When current project is "experimance", config path is `projects/experimance/core.toml`
+- When current project is "fire", config path is `projects/fire/core.toml`
 - If the project config does not exist, falls back to `services/core/config.toml`
-- If `PROJECT_ENV` is not set, uses legacy path only
+- Project is auto-detected from `projects/.project` file or `PROJECT_ENV` environment variable
 
 **Why?**
-- Supports multi-project architecture
+- Supports multi-project architecture with automatic project detection
 - Keeps project-specific configs isolated
 - Maintains backward compatibility
 - Works with the centralized config system and CLI

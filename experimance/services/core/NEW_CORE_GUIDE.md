@@ -1,7 +1,7 @@
 # New Core Service Development Guide
 
 This guide helps you create a new core service for the Experimance project ecosystem, 
-similar to the existing Experimance and Sohkepayin core services. 
+similar to the existing Experimance and Feed the Fires core services. 
 Follow these steps to build a robust, well-integrated service.
 
 ## Overview
@@ -483,7 +483,7 @@ PROJECT_ENV=your_project_name uv run -m your_project_core --log-level DEBUG
 
 ## Resources
 
-- **Existing Examples**: Study `experimance_core.py` and `sohkepayin_core.py` for patterns
+- **Existing Examples**: Study `experimance_core.py` and `fire_core.py` for patterns
 - **Common Library**: Reference `experimance_common` for available utilities
 - **ZMQ Documentation**: See `libs/common/README_ZMQ.md`
 - **Service Documentation**: See `libs/common/README_SERVICE.md`

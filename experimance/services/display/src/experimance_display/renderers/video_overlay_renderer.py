@@ -251,21 +251,6 @@ class VideoOverlayRenderer(LayerRenderer):
             except Exception as e:
                 logger.error(f"Error updating video: {e}", exc_info=True)
     
-    # def render(self):
-    #     """Render the masked video overlay."""
-    #     if not self.is_visible:
-    #         logger.debug(f"Video not visible: _visible={self._visible}, video_loaded={self.video_loaded}, alpha={self._current_alpha}")
-    #         return
-        
-    #     logger.debug(f"RENDERING VIDEO: alpha={self._current_alpha}, mask_loaded={self.mask_loaded}")
-        
-    #     try:
-    #         # Render with shader-based masking
-    #         self._render_simple_overlay()
-            
-    #     except Exception as e:
-    #         logger.error(f"Error rendering video overlay: {e}", exc_info=True)
-    
     def _update_fade_animation(self, dt: float):
         """Update fade animation state.
         

@@ -6,11 +6,11 @@
 #   - %i gets replaced with the instance identifier (project name)
 #   - To start: systemctl start core@experimance.service
 #   - systemd creates instance "core@experimance.service" from this template
-#   - Multiple projects can use same template: core@sohkepayin.service, etc.
+#   - Multiple projects can use same template: core@fire.service, etc.
 #
 # Instance Examples:
 #   - core@experimance.service  (for experimance project)
-#   - core@sohkepayin.service   (for sohkepayin project)
+#   - core@fire.service         (for fire project)
 #   - core@demo.service         (for demo project)
 
 [Unit]
@@ -44,10 +44,10 @@ NoNewPrivileges=true
 PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/opt/experimance /var/cache/experimance /var/log/experimance /home/experimance/.local /home/experimance/.pyenv /tmp
+ReadWritePaths=/opt/experimance /var/cache/experimance /var/log/experimance /home/experimance/.local /home/experimance/.pyenv /tmp /run/user/1000
 
-# Audio and video access for camera
-SupplementaryGroups=video
+# Audio and video access
+SupplementaryGroups=audio video
 
 [Install]
 WantedBy=experimance@.target

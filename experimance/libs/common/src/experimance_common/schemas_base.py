@@ -267,6 +267,7 @@ class RenderRequest(MessageBase):
     seed: Optional[int] = None
     reference_image: Optional[ImageSource] = None  # Optional reference image to guide generation
     depth_map: Optional[ImageSource] = None  # Optional depth map URI for depth-aware generation
+    clear_queue: bool = False  # Whether to clear the render queue before processing this request
 
 
 class PresenceStatus(MessageBase):
@@ -405,4 +406,6 @@ class DisplayMedia(MessageBase, ImageSource):
     fade_in: Optional[float] = None       # Fade in duration in seconds
     fade_out: Optional[float] = None      # Fade out duration in seconds
     position: Optional[tuple[int,int]|str] = None  # Position on screen (x, y) or anchor name ("top right")
+    size: Optional[tuple[int,int]] = None  # Size to scale the image for display (width, height)
+    final_tile: Optional[bool] = None     # Indicates this is the final tile in a sequence (accelerates blur transition)
     # Note: Context information (era, biome) added in project-specific extensions

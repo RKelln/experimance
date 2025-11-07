@@ -139,8 +139,8 @@ class TranscriptManager:
         
         # Message storage
         self._messages: List[TranscriptMessage] = []
-        self._display_callbacks: List[TranscriptDisplayCallback] = []
-        self._message_callbacks: List[Callable[[TranscriptMessage], None]] = []
+        self._async_callbacks: List[TranscriptDisplayCallback] = []
+        self._callbacks: List[Callable[[TranscriptMessage], None]] = []
         
         # File management
         self._file_path: Optional[Path] = None
@@ -294,13 +294,13 @@ class TranscriptManager:
             metadata={"tool_name": tool_name, "parameters": parameters, "result": result}
         )
     
-    def add_display_callback(self, callback: TranscriptDisplayCallback) -> None:
+    def register_async_callback(self, callback: TranscriptDisplayCallback) -> None:
         """Add a callback for real-time transcript display."""
-        self._display_callbacks.append(callback)
+        self._async_callbacks.append(callback)
     
-    def add_message_callback(self, callback: Callable[[TranscriptMessage], None]) -> None:
+    def register_callback(self, callback: Callable[[TranscriptMessage], None]) -> None:
         """Add a callback for new messages."""
-        self._message_callbacks.append(callback)
+        self._callbacks.append(callback)
     
     def get_messages(
         self,
@@ -355,14 +355,14 @@ class TranscriptManager:
     async def _notify_callbacks(self, message: TranscriptMessage) -> None:
         """Notify all registered callbacks about a new message."""
         # Display callbacks (async)
-        for callback in self._display_callbacks:
+        for callback in self._async_callbacks:
             try:
                 await callback(message)
             except Exception as e:
                 logger.error(f"Error in display callback: {e}")
         
         # Message callbacks (sync)
-        for callback in self._message_callbacks:
+        for callback in self._callbacks:
             try:
                 callback(message)
             except Exception as e:

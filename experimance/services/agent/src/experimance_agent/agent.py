@@ -8,13 +8,11 @@ controlling other services.
 
 import asyncio
 import gc
-import json
 import logging
 import os
 import random
 import threading
 import time
-import uuid
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -31,19 +29,16 @@ from experimance_common.schemas import (
     AudiencePresent, SpeechDetected,
     DisplayText, RemoveText, MessageType, Biome
 )
-from experimance_common.constants import TICK, DEFAULT_PORTS
 from experimance_common.zmq.config import MessageDataType
 
-from .config import AgentServiceConfig
-from .backends.base import AgentBackend, AgentBackendEvent, ConversationTurn, ToolCall
+from .config import ExperimanceAgentServiceConfig
+from agent.backends.base import AgentBackend, AgentBackendEvent, ConversationTurn
 from .deep_thoughts import DEEP_THOUGHTS
 
-from experimance_common.logger import setup_logging
 
 SERVICE_TYPE = "agent"
 
-logger = setup_logging(__name__, log_filename=f"{SERVICE_TYPE}.log")
-
+logger = logging.getLogger(__name__)
 
 class AgentService(BaseService):
     """
@@ -56,7 +51,7 @@ class AgentService(BaseService):
     - Tool calling for system control
     """
     
-    def __init__(self, config: AgentServiceConfig):
+    def __init__(self, config: ExperimanceAgentServiceConfig):
         super().__init__(service_type=SERVICE_TYPE, service_name=config.service_name)
 
         # Store immutable config
@@ -202,7 +197,7 @@ class AgentService(BaseService):
         # Call super().stop() LAST
         await super().stop() # always in STOPPING state after this
 
-        # Shutdown diagnostics and aggressive cleanup
+        # Shutdown diagnostics and aggressive cleanup (fixes for bugs in websocket shutdown in pipecat components)
         #await self._perform_shutdown_diagnostics()
         await self._perform_aggressive_cleanup()
 
@@ -340,7 +335,7 @@ class AgentService(BaseService):
 
         try:
             if backend_name == "pipecat":
-                from .backends.pipecat_backend import PipecatBackend
+                from agent.backends.pipecat.backend import PipecatBackend
                 # Pass self (agent service) to backend
                 self.current_backend = PipecatBackend(self.config, agent_service=self)
             else:
@@ -501,7 +496,7 @@ class AgentService(BaseService):
     async def _initialize_vision(self):
         """Initialize vision processing components."""
         try:
-            from .vision import WebcamManager, VLMProcessor, AudienceDetector, CPUAudienceDetector, load_profile
+            from agent.vision import WebcamManager, VLMProcessor, AudienceDetector, CPUAudienceDetector, load_profile
             
             # Load detector profile first to get camera settings
             detector_profile = None
@@ -572,7 +567,7 @@ class AgentService(BaseService):
             return
             
         # Register display callback with the backend's transcript manager
-        self.current_backend.transcript_manager.add_display_callback(
+        self.current_backend.transcript_manager.register_async_callback(
             self._display_transcript_callback
         )
         
@@ -759,17 +754,6 @@ class AgentService(BaseService):
     # =========================================================================
     # Event Handlers
     # =========================================================================
-    
-    # async def _on_conversation_started(self, event: AgentBackendEvent, data: Dict[str, Any]):
-    #     """Handle conversation started event."""
-    #     self.is_conversation_active = True
-    #     self._conversation_start_time = time.time()
-        
-    #     # Reset deep thoughts for this conversation - make a deep copy
-    #     import copy
-    #     self._available_deep_thoughts = copy.deepcopy(DEEP_THOUGHTS)
-        
-    #     logger.info("Conversation started with audience - deep thoughts reset")
 
     async def _on_conversation_ended(self, event: AgentBackendEvent, data: Dict[str, Any]):
         """Handle conversation ended event."""
@@ -1320,8 +1304,6 @@ class AgentService(BaseService):
                 "agent_backend": self.config.agent_backend,
                 "vision_enabled": self.config.vision.webcam_enabled,
                 "transcript_enabled": self.config.transcript.display_transcripts,
-                "tool_calling_enabled": self.config.tool_calling_enabled,
-                "biome_suggestions_enabled": self.config.biome_suggestions_enabled,
                 "conversation_cooldown_duration": self.config.conversation_cooldown_duration,
                 "cancel_cooldown_on_absence": self.config.cancel_cooldown_on_absence,
             }

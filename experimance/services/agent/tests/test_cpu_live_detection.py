@@ -12,12 +12,13 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Literal
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from experimance_agent.config import VisionConfig
-from experimance_agent.vision import WebcamManager, CPUAudienceDetector
+from agent.config import VisionConfig
+from agent.vision import WebcamManager, CPUAudienceDetector
 
 # ANSI color codes for terminal output
 class Colors:
@@ -137,7 +138,7 @@ async def run_live_detection(performance_mode: str = "accurate"):
         audience_detection_enabled=True,
         audience_detection_interval=0.5,  # Fast updates for live testing
         vlm_enabled=False,  # CPU only
-        cpu_performance_mode=performance_mode
+        cpu_performance_mode=performance_mode  # type: ignore
     )
     
     # Initialize components

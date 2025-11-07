@@ -84,7 +84,10 @@ class PublisherConfig(ZmqSocketConfig):
 class SubscriberConfig(ZmqSocketConfig):
     """Configuration for Subscriber component."""
     bind: bool = Field(default=False, description="Subscribers typically connect")
-    topics: List[str] = Field(default_factory=list, description="Topics to subscribe to")
+    topics: List[str] = Field(
+        default_factory=list, 
+        description="Topics to subscribe to. Use [''] (empty string) to subscribe to ALL topics."
+    )
     
 
 class PushConfig(ZmqSocketConfig):

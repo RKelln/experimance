@@ -26,11 +26,12 @@ from image_server.generators.config import GENERATOR_NAMES
 from image_server.generators.mock.mock_generator_config import MockGeneratorConfig
 from image_server.generators.fal.fal_comfy_config import FalComfyGeneratorConfig
 from image_server.generators.vastai.vastai_config import VastAIGeneratorConfig
+from image_server.generators.local.sdxl_generator import LocalSDXLConfig
 
-# For future use when other generators are implemented:
-#from image_server.generators.mock.mock_generator import MockGeneratorConfig
-#from image_server.generators.sdxl.sdxl_generator import SDXLGeneratorConfig
-#from image_server.generators.openai.openai_generator import OpenAIGeneratorConfig
+# Import audio generator configs
+from image_server.generators.audio.audio_config import Prompt2AudioConfig
+from image_server.generators.mock.mock_audio_generator_config import MockAudioGeneratorConfig
+
 
 DEFAULT_CONFIG_PATH = get_project_config_path("image_server", IMAGE_SERVER_SERVICE_DIR)
 
@@ -44,6 +45,22 @@ class GeneratorConfig(BaseModel):
     timeout: int = Field(
         default=60,
         description="Default timeout for image generation in seconds"
+    )
+
+
+class AudioGeneratorConfig(BaseModel):
+    """Configuration for audio generator selection and common settings."""
+    strategy: Literal["mock_audio", "prompt2audio"] = Field(
+        default="mock_audio",
+        description="Audio generation strategy to use."
+    )
+    timeout: int = Field(
+        default=120,
+        description="Default timeout for audio generation in seconds"
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Whether audio generation is enabled"
     )
 
 
@@ -62,6 +79,13 @@ class ImageServerConfig(BaseServiceConfig):
     max_cache_size_gb: float = Field(
         default=2.0,
         description="Maximum cache size in gigabytes",
+        gt=0
+    )
+    
+    # Audio generation timeout
+    audio_timeout: int = Field(
+        default=120,
+        description="Timeout for audio generation in seconds",
         gt=0
     )
     
@@ -96,15 +120,26 @@ class ImageServerConfig(BaseServiceConfig):
         description="Image generation settings"
     )
     
+    # Audio generator configuration
+    audio_generator: AudioGeneratorConfig = Field(
+        default_factory=AudioGeneratorConfig,
+        description="Audio generation settings"
+    )
+    
     # Strategy-specific configurations
     mock: MockGeneratorConfig = Field(
         default_factory=MockGeneratorConfig,
         description="Configuration for mock generator"
     )
     
+    local_sdxl: LocalSDXLConfig = Field(
+        default_factory=LocalSDXLConfig,
+        description="Configuration for local SDXL generator"
+    )
+    
     sdxl: Dict = Field(
         default_factory=dict,
-        description="Configuration for SDXL generator"
+        description="Configuration for SDXL generator (deprecated, use local_sdxl)"
     )
     
     fal_comfy: FalComfyGeneratorConfig = Field(
@@ -120,6 +155,17 @@ class ImageServerConfig(BaseServiceConfig):
     vastai: VastAIGeneratorConfig = Field(
         default_factory=VastAIGeneratorConfig,
         description="Configuration for VastAI generator"
+    )
+    
+    # Audio generator configurations
+    mock_audio: MockAudioGeneratorConfig = Field(
+        default_factory=MockAudioGeneratorConfig,
+        description="Configuration for mock audio generator"
+    )
+    
+    prompt2audio: Prompt2AudioConfig = Field(
+        default_factory=Prompt2AudioConfig,
+        description="Configuration for prompt-to-audio generator"
     )
     
     def get_generator_config(self, strategy: Optional[str] = None) -> Dict:

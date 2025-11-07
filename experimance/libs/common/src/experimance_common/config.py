@@ -143,26 +143,34 @@ def _normalize_to_service_type(name_or_type: str) -> Optional[str]:
 
 def resolve_path(
     path_or_string: Union[str, Path], 
-    hint: Optional[str] = None
+    hint: Optional[Union[str, Path]] = None
 ) -> Path:
-    """Resolve a path from configuration, with support for relative paths based on service hints.
+    """Resolve a path from configuration, with support for relative paths based on service and directory hints.
     
     This function helps resolve file paths from configuration strings, supporting:
     - Absolute paths (returned as-is)
-    - Relative paths (resolved relative to appropriate service directory based on hint)
-    - Project-specific paths (checks project directory first)
+    - Relative paths (resolved relative to appropriate directory based on hint)
+    - Smart path resolution when input already contains part of the hint directory structure
     
     Args:
         path_or_string: Path string or Path object to resolve
-        hint: Service type hint to determine base directory. Supported values:
-              - "core": Uses CORE_SERVICE_DIR
-              - "agent": Uses AGENT_SERVICE_DIR  
-              - "display": Uses DISPLAY_SERVICE_DIR
-              - "audio": Uses AUDIO_SERVICE_DIR
-              - "image_server": Uses IMAGE_SERVER_SERVICE_DIR
-              - "project": Uses current project directory
-              - "data": Uses DATA_DIR
-              - None: Uses PROJECT_ROOT
+        hint: Directory hint to determine base directory. Can be:
+              - A Path object (or string representing a path): Uses that path as base directory
+              - Service type strings:
+                - "core": Uses CORE_SERVICE_DIR
+                - "agent": Uses AGENT_SERVICE_DIR  
+                - "display": Uses DISPLAY_SERVICE_DIR
+                - "audio_service": Uses AUDIO_SERVICE_DIR
+                - "image_server": Uses IMAGE_SERVER_SERVICE_DIR
+              - Media directory constants:
+                - "audio_dir", "AUDIO_DIR": Uses AUDIO_DIR_ABS
+                - "images_dir", "IMAGES_DIR": Uses IMAGES_DIR_ABS
+                - "videos_dir", "VIDEOS_DIR": Uses VIDEOS_DIR_ABS
+                - "media_dir", "MEDIA_DIR": Uses MEDIA_DIR_ABS
+              - Other directories:
+                - "project": Uses current project directory
+                - "data": Uses DATA_DIR
+                - None: Uses PROJECT_ROOT
               
     Returns:
         Resolved Path object
@@ -171,24 +179,27 @@ def resolve_path(
         ConfigError: If the resolved path doesn't exist
         
     Examples:
-        # Absolute path - returned as-is
-        resolve_config_path("/etc/prompts/system.txt")
+        # Using AUDIO_DIR_ABS constant as hint
+        from experimance_common.constants import AUDIO_DIR_ABS
+        resolve_path("environment/bonfire.mp3", hint=AUDIO_DIR_ABS)
+        # -> PROJECT_ROOT/media/audio/environment/bonfire.mp3
         
-        # Relative path with service hint
-        resolve_config_path("prompts/system.txt", hint="core")
+        # Path already includes media structure - smart deduplication
+        resolve_path("media/audio/environment/bonfire.mp3", hint=AUDIO_DIR_ABS)
+        # -> PROJECT_ROOT/media/audio/environment/bonfire.mp3 (avoids double nesting)
+        
+        # Using string version of path
+        resolve_path("environment/bonfire.mp3", hint="media/audio")
+        # -> PROJECT_ROOT/media/audio/environment/bonfire.mp3
+        
+        # Service-relative path
+        resolve_path("prompts/system.txt", hint="core")
         # -> PROJECT_ROOT/services/core/prompts/system.txt
         
         # Project-specific path
-        resolve_config_path("system_prompt.txt", hint="project") 
-        # -> PROJECT_ROOT/projects/sohkepayin/system_prompt.txt
-        
-        # Data directory path
-        resolve_config_path("locations.json", hint="data")
-        # -> PROJECT_ROOT/data/locations.json
+        resolve_path("system_prompt.txt", hint="project") 
+        # -> PROJECT_ROOT/projects/fire/system_prompt.txt
     """
-    if not is_file(path_or_string):
-        raise ConfigError(f"Invalid path: {path_or_string}. Expected a file path.")
-
     path = Path(path_or_string)
 
     # If it's already absolute, return as-is (but validate existence)
@@ -201,42 +212,115 @@ def resolve_path(
     from experimance_common.constants import (
         PROJECT_ROOT, PROJECT_SPECIFIC_DIR,
         CORE_SERVICE_DIR, AGENT_SERVICE_DIR, DISPLAY_SERVICE_DIR,
-        AUDIO_SERVICE_DIR, IMAGE_SERVER_SERVICE_DIR, DATA_DIR
+        AUDIO_SERVICE_DIR, IMAGE_SERVER_SERVICE_DIR, DATA_DIR,
+        MEDIA_DIR_ABS, AUDIO_DIR_ABS, IMAGES_DIR_ABS, VIDEOS_DIR_ABS,
+        GENERATED_IMAGES_DIR_ABS, MOCK_IMAGES_DIR_ABS, GENERATED_AUDIO_DIR_ABS
     )
 
-    # Determine base directory based on hint
+    # Determine base directories based on hint
     base_dirs = []
-    hint = hint.lower() if hint else None
+    
+    # Check if hint is a Path object or a path-like string
+    if isinstance(hint, (Path, str)) and (isinstance(hint, Path) or ('/' in str(hint) or '\\' in str(hint))):
+        # Treat hint as a directory path
+        hint_path = Path(hint)
+        if hint_path.is_absolute():
+            base_dirs = [hint_path]
+        else:
+            # Relative path hint - resolve relative to PROJECT_ROOT
+            base_dirs = [PROJECT_ROOT / hint_path]
+    elif hint:
+        # Treat hint as a service/directory type string
+        hint_normalized = str(hint).lower()
 
-    if hint == "core":
-        base_dirs = [CORE_SERVICE_DIR]
-    elif hint == "agent":
-        base_dirs = [AGENT_SERVICE_DIR]
-    elif hint == "display":
-        base_dirs = [DISPLAY_SERVICE_DIR]
-    elif hint == "audio":
-        base_dirs = [AUDIO_SERVICE_DIR]
-    elif hint == "image_server" or hint == "image":
-        base_dirs = [IMAGE_SERVER_SERVICE_DIR]
-    elif hint == "project" or hint == "projects":
-        project_env = os.getenv("PROJECT_ENV", "experimance")
-        base_dirs = [PROJECT_SPECIFIC_DIR / project_env]
-    elif hint == "data":
-        base_dirs = [DATA_DIR]
+        # Service directories
+        if hint_normalized == "core":
+            base_dirs = [CORE_SERVICE_DIR]
+        elif hint_normalized == "agent":
+            base_dirs = [AGENT_SERVICE_DIR]
+        elif hint_normalized == "display":
+            base_dirs = [DISPLAY_SERVICE_DIR]
+        elif hint_normalized == "audio_service":
+            base_dirs = [AUDIO_SERVICE_DIR]
+        elif hint_normalized == "image_server" or hint_normalized == "image":
+            base_dirs = [IMAGE_SERVER_SERVICE_DIR]
+        # Media directories
+        elif hint_normalized in ("audio_dir", "audio_dir_abs"):
+            base_dirs = [AUDIO_DIR_ABS]
+        elif hint_normalized in ("images_dir", "images_dir_abs"):
+            base_dirs = [IMAGES_DIR_ABS]
+        elif hint_normalized in ("videos_dir", "videos_dir_abs"):
+            base_dirs = [VIDEOS_DIR_ABS]
+        elif hint_normalized in ("media_dir", "media_dir_abs"):
+            base_dirs = [MEDIA_DIR_ABS]
+        # Other directories
+        elif hint_normalized == "project" or hint_normalized == "projects":
+            project_env = os.getenv("PROJECT_ENV", "experimance")
+            base_dirs = [PROJECT_SPECIFIC_DIR / project_env]
+        elif hint_normalized == "data":
+            base_dirs = [DATA_DIR]
+        else:
+            # Default: try project directory first, then PROJECT_ROOT
+            project_env = os.getenv("PROJECT_ENV", "experimance")
+            base_dirs = [PROJECT_SPECIFIC_DIR / project_env, PROJECT_ROOT]
     else:
-        # Default: try project directory first, then PROJECT_ROOT
+        # No hint provided: try project directory first, then PROJECT_ROOT
         project_env = os.getenv("PROJECT_ENV", "experimance")
         base_dirs = [PROJECT_SPECIFIC_DIR / project_env, PROJECT_ROOT]
     
-    # Try each base directory in order
+    # Smart path resolution: handle cases where input path already contains
+    # part of the hint directory structure
+    candidates = []
     for base_dir in base_dirs:
-        resolved_path = base_dir / path
-        if resolved_path.exists():
-            return resolved_path
+        # Try direct concatenation first
+        direct_path = base_dir / path
+        candidates.append(direct_path)
+        
+        # Try smart deduplication for media directories
+        if base_dir in (MEDIA_DIR_ABS, AUDIO_DIR_ABS, IMAGES_DIR_ABS, VIDEOS_DIR_ABS, 
+                        GENERATED_IMAGES_DIR_ABS, MOCK_IMAGES_DIR_ABS, GENERATED_AUDIO_DIR_ABS) or base_dir.is_relative_to(MEDIA_DIR_ABS):
+            relative_base = base_dir.relative_to(PROJECT_ROOT)
+            path_parts = Path(path).parts
+            
+            # Check if path already starts with the relative base structure
+            if len(path_parts) >= len(relative_base.parts):
+                # See if the beginning of the path matches the relative base
+                if path_parts[:len(relative_base.parts)] == relative_base.parts:
+                    # Path already includes the base structure - check if it's exactly the same
+                    if path_parts == relative_base.parts:
+                        # Path is exactly the base directory, return the hint itself
+                        candidates.append(base_dir)
+                    else:
+                        # Path includes the base structure, resolve from PROJECT_ROOT
+                        deduplicated_path = PROJECT_ROOT / path
+                        candidates.append(deduplicated_path)
+                    
+                # Also try partial matches (e.g., path starts with "audio" when base is "media/audio")
+                elif len(relative_base.parts) > 1:
+                    for i in range(1, len(relative_base.parts)):
+                        partial_base = relative_base.parts[i:]
+                        if len(path_parts) >= len(partial_base) and path_parts[:len(partial_base)] == partial_base:
+                            # Path starts with partial base, prepend the missing parts
+                            missing_parts = relative_base.parts[:i]
+                            reconstructed_path = PROJECT_ROOT / Path(*missing_parts) / path
+                            candidates.append(reconstructed_path)
     
-    # If no existing path found, return the first candidate (for creating new files)
-    if base_dirs:
-        candidate_path = base_dirs[0] / path
+    # Try each candidate path in order
+    for candidate_path in candidates:
+        if candidate_path.exists():
+            return candidate_path
+    
+    # If no existing path found, return the best candidate (prefer direct paths)
+    if candidates:
+        # Prefer the first direct path from base_dirs
+        for base_dir in base_dirs:
+            direct_candidate = base_dir / path
+            if direct_candidate in candidates:
+                logger.warning(f"Path does not exist: {direct_candidate}. Returning candidate path.")
+                return direct_candidate
+        
+        # Fallback to first candidate
+        candidate_path = candidates[0]
         logger.warning(f"Path does not exist: {candidate_path}. Returning candidate path.")
         return candidate_path
     
@@ -304,7 +388,17 @@ def is_file(path_or_string: Union[str, Path]) -> bool:
         return True
     if s.endswith("/"): # directory
         return True
-    if s.endswith(".txt") or s.endswith(".md") or s.endswith(".json") or s.endswith(".toml"): # text file
+    # Text and config files
+    if s.endswith(".txt") or s.endswith(".md") or s.endswith(".json") or s.endswith(".toml"): 
+        return True
+    # Audio files
+    if s.endswith(".mp3") or s.endswith(".wav") or s.endswith(".flac") or s.endswith(".ogg") or s.endswith(".m4a"):
+        return True
+    # Image files
+    if s.endswith(".png") or s.endswith(".jpg") or s.endswith(".jpeg") or s.endswith(".gif") or s.endswith(".bmp"):
+        return True
+    # Video files
+    if s.endswith(".mp4") or s.endswith(".avi") or s.endswith(".mkv") or s.endswith(".mov"):
         return True
     return False
 
