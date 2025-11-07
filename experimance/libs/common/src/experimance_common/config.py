@@ -857,6 +857,73 @@ class BaseConfig(BaseModel):
             env_prefix=env_prefix
         )
 
+    @classmethod
+    def from_file(cls: Type[T],
+                  config_file: Union[str, Path],
+                  override_config: Optional[Dict[str, Any]] = None,
+                  env_prefix: Optional[str] = None) -> T:
+        """Create a Config instance from a TOML configuration file.
+        
+        This is a convenience method that makes it easy to load configuration
+        from a file with optional overrides and environment variable support.
+        
+        Args:
+            config_file: Path to TOML configuration file (required)
+            override_config: Optional dictionary with configuration overrides
+            env_prefix: Prefix for environment variables (auto-detected if None)
+            
+        Returns:
+            Config instance loaded from file with overrides applied
+            
+        Examples:
+            # Simple file loading
+            config = MyServiceConfig.from_file("config.toml")
+            
+            # With overrides
+            config = MyServiceConfig.from_file(
+                "config.toml",
+                override_config={"debug": True}
+            )
+            
+            # With environment variables
+            config = MyServiceConfig.from_file(
+                "config.toml",
+                env_prefix="EXPERIMANCE"
+            )
+        """
+        return cls.from_overrides(
+            config_file=config_file,
+            override_config=override_config,
+            env_prefix=env_prefix
+        )
+    
+    @classmethod
+    def load(cls: Type[T], 
+             config_file: Union[str, Path],
+             **kwargs) -> T:
+        """Alias for from_file() - intuitive method name for loading config.
+        
+        This is the most intuitive way to load a config file.
+        
+        Args:
+            config_file: Path to TOML configuration file
+            **kwargs: Additional arguments passed to from_file()
+            
+        Returns:
+            Config instance loaded from file
+            
+        Examples:
+            # Simple and intuitive
+            config = MyServiceConfig.load("config.toml")
+            
+            # With overrides
+            config = MyServiceConfig.load(
+                "config.toml",
+                override_config={"debug": True}
+            )
+        """
+        return cls.from_file(config_file, **kwargs)
+
     def __str__(self) -> str:
         """String representation of the configuration."""
         return f"{self.__class__.__name__}:\n{self.model_dump_json(indent=2)}"
