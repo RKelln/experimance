@@ -13,7 +13,7 @@ cancel_cooldown_on_absence = true       # Cancel cooldown if audience leaves the
 conversation_cooldown_duration = 3.0  # seconds # After a conversation ends (e.g., saying goodbye), wait this long before starting a new one
 
 # TTS (Text-to-Speech) settings (ensemble mode only)
-elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
+#elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 cartesia_voice_id = "173250a9-6ea5-48a9-90cf-441535639140"
 # fire spirit cartesia: 15e68ffc-55ad-48e3-9e50-cc8c56281b9d
 # sophia: bf0a246a-8642-498a-9950-80c35e9276b5
@@ -107,12 +107,12 @@ llm = "openai"      # Language model provider
 tts = "cartesia"    # Text-to-speech provider
 
 [vision]
-audience_detection_enabled = true
+audience_detection_enabled = false      # set to true to wait for audience before initiating conversation
 audience_detection_interval = 1.5       # Check camera every 1.5 seconds (slightly slower for stability)
 
 # Mock detector configuration (overrides reolink)
 [mock_detector]
-enabled = false                   # Enable mock detector
+enabled = true                   # Enable mock detector
 control_method = "file"      # Use file-based control (recommended)
 control_dir = "/tmp/mock_detector"
 initial_state = false            # Start with no audience
@@ -120,7 +120,7 @@ initial_count = 0
 
 [reolink]
 # Fire project specific Reolink Camera Settings with asymmetric hysteresis and YOLO11 detection
-enabled = true
+enabled = false
 host = "172.166.0.148"                  # Your camera IP
 user = "admin"                          # Camera username (can override with REOLINK_USER env var)
 # reolink_password - NEVER set here! Use REOLINK_PASSWORD environment variable in .env file
