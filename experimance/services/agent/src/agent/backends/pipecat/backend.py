@@ -1318,7 +1318,7 @@ class PipecatBackend(AgentBackend):
                 tts = CartesiaTTSService(
                     api_key=os.getenv("CARTESIA_API_KEY", "failed to load"),
                     voice_id=self.config.cartesia_voice_id,
-                    model="sonic-2",
+                    model="sonic-3",
                     sample_rate=output_sample_rate,  # Set TTS output to match device rate
                     params=CartesiaTTSService.InputParams(
                         language=Language.EN,
