@@ -38,11 +38,11 @@ audio_out_sample_rate = 16000
 # Use `uv run python scripts/audio_recovery.py list` to list available devices
 # Device names support partial matching (e.g., "Yealink" matches "Yealink SP92 Speaker")
 # For better performance, you can also specify device indices directly:
-audio_input_device_name = "Yealink"   # USB Conference microphone
-audio_output_device_name = "Yealink"  # USB Conference speaker
+audio_input_device_name = "default"   # USB Conference microphone
+audio_output_device_name = "default"  # USB Conference speaker
 # Alternatively, use indices for faster startup (uncomment to use):
-# audio_input_device_index = 6   # Yealink device index
-# audio_output_device_index = 6  # Yealink device index
+# audio_input_device_index = 6  
+# audio_output_device_index = 6
 
 # Audio error handling
 suppress_audio_errors = true         # Suppress ALSA/JACK error messages
@@ -76,14 +76,14 @@ cartesia_voice_id = "bf0a246a-8642-498a-9950-80c35e9276b5"
 
 [vision]
 # Vision processing configuration
-webcam_enabled = true
+webcam_enabled = false
 webcam_device_name = "eMeet"
 webcam_width = 640
 webcam_height = 480
 webcam_fps = 30
 
 # Audience detection
-audience_detection_enabled = true
+audience_detection_enabled = false
 audience_detection_interval = 1.0
 stable_readings_required = 3
 
