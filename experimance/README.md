@@ -1,8 +1,6 @@
 # Experimance
 
-Interactive sand-table art installation with AI-generated satellite imagery.
-
-Projected on to a 
+Interactive installation with audience presence detection and other interaction that drives AI-generated visuals and sounds, with dynamic music playback.
 
 
 ## Overview
@@ -132,7 +130,7 @@ uv sync
 Experimance is currently comprised of a number of services:
 
 * ## Core
-  * The many controller / coordinator
+  * The main controller / coordinator
   * Custom to each project
   * [readme](services/core/README.md)
   * [depth camera readme](services/core/README_DEPTH.md)
@@ -152,14 +150,21 @@ Experimance is currently comprised of a number of services:
   * Simple, `pyglet`-based display
   * Displays and transitions between images, displays video and text overlays
   * [readme](services/display/README.md)
+* ## Transition
+  * IN PROGRESS
+  * Advanced video transition generation between images
+  * Creates smooth, artistic transitions using gradient maps and posterization
+  * Used by display service for image transitions
 * ## Audio
   * Handles audio (effects, ambience and music)
   * [Supercollider](https://supercollider.github.io/) headless plays audio & music
   * [readme](services/audio/README.md)
 * ## Health
-  * Monitors other services
-  * Send notifications using ntfy.sh
-
+  * Monitors health status of all other services
+  * Detects stale or missing health data
+  * Sends notifications via ntfy.sh when services become unhealthy
+  * [readme](services/health/README.md)
+  * [health system documentation](docs/health_system.md)
 
 ## Running Services
 
@@ -222,6 +227,39 @@ uv run python scripts/update_pyi_stubs.py           # Update files directly
 
 This script automatically generates and updates the stub files based on the current base and project-specific schemas/constants. Use the `--diff` or `--dry-run` options for safety before overwriting.
 
+## CLI Tools
+
+The project includes several command-line utilities installed as console scripts:
+
+- **set-project** - Switch between installation projects (experimance, fire, etc.)
+- **transcripts** - View and follow agent conversation transcripts
+- **timeline** - Unified view of transcripts and prompts by timestamp, with distributed deployment support
+- **vastai** - Manage remote GPU instances for image generation
+
+All tools support `--help` for detailed usage:
+```bash
+uv run transcripts --help
+uv run timeline --help
+uv run vastai --help
+```
+
+**Quick Examples:**
+```bash
+# Switch projects (also: scripts/project fire)
+uv run set-project fire
+
+# Follow latest transcript
+uv run transcripts follow
+
+# Stream unified timeline
+uv run timeline stream
+
+# Manage GPU instances
+uv run vastai list
+uv run vastai provision
+```
+
+See [DISTRIBUTED_TIMELINE_GUIDE.md](DISTRIBUTED_TIMELINE_GUIDE.md) for distributed deployment features.
 
 ## Multi-Project Architecture
 
@@ -244,10 +282,9 @@ scripts/project
 
 # Switch back to experimance
 scripts/project experimance
-
-# Alternative: use uv command
-uv run set-project fire
 ```
+
+See the [CLI Tools](#cli-tools) section for more details on the `set-project` command.
 
 **Environment Override (when needed):**
 ```bash
