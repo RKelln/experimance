@@ -11,6 +11,7 @@ This service manages:
 import argparse
 import asyncio
 import logging
+import os
 from pathlib import Path
 import random
 import time
@@ -225,10 +226,15 @@ class ExperimanceCoreService(BaseService):
             # Get camera config from service config
             camera_config = self._create_camera_config()
             
+            # Check for mock depth environment variable
+            mock_path = self.config.depth_processing.mock_depth_images_path
+            if mock_path:
+                logger.info(f"🎭 Using mock depth camera with path: {mock_path}")
+            
             # Create depth processor using the factory
             self._depth_processor = create_depth_processor(
                 camera_config=camera_config,
-                mock_path=None  # Use real camera by default
+                mock_path=mock_path  # Will be None if env var not set
             )
             
             # Initialize visualizer if debug mode is enabled
@@ -268,10 +274,15 @@ class ExperimanceCoreService(BaseService):
                 # Get camera config from service config
                 camera_config = self._create_camera_config()
                 
+                # Check for mock depth images path from config
+                mock_path = self.config.depth_processing.mock_depth_images_path
+                if mock_path:
+                    logger.info(f"🎭 Using mock depth camera with path: {mock_path}")
+                
                 # Create depth processor using the factory
                 self._depth_processor = create_depth_processor(
                     camera_config=camera_config,
-                    mock_path=None  # Use real camera by default
+                    mock_path=mock_path  # Will be None if not set in config
                 )
                 
                 # Initialize the processor

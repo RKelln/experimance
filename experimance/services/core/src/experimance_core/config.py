@@ -454,6 +454,11 @@ class DepthProcessingConfig(BaseModel):
         description="Processed output size (legacy - use camera.output_resolution instead)"
     )
 
+    mock_depth_images_path: Optional[str] = Field(
+        default=None,
+        description="Path to mock depth images for testing (if set, uses mock depth processor)"
+    )
+
 class CameraState(Enum):
     """Camera operational states."""
     DISCONNECTED = "disconnected"
