@@ -20,14 +20,14 @@ Experimance is an interactive art installation that responds to human presence a
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────────────────────────────┐
-│   Depth Camera  │───▶│            Core Service                  │
-│   (RealSense)   │    │  ┌─────────────────────────────────────┐ │
-└─────────────────┘    │  │      ControllerService              │ │
-                       │  │  ┌─────────────┬─────────────────┐  │ │
-                       │  │  │ Publisher   │  Subscriber     │  │ │
-                       │  │  │ (events)    │  (coordination) │  │ │
-                       │  │  └─────────────┴─────────────────┘  │ │
+┌─────────────────┐    ┌────────────────────────────────────────────┐
+│   Depth Camera  │───▶│            Core Service                    │
+│   (RealSense)   │    │  ┌───────────────────────────────────────┐ │
+└─────────────────┘    │  │      ControllerService                │ │
+                       │  │  ┌─────────────┬─────────────────┐    │ │
+                       │  │  │ Publisher   │  Subscriber     │    │ │
+                       │  │  │ (events)    │  (coordination) │    │ │
+                       │  │  └─────────────┴─────────────────┘    │ │
                        │  │  ┌─────────────────────────────────┐  │ │
                        │  │  │         Workers                 │  │ │
                        │  │  │  ┌─────────┬─────────┬───────┐  │  │ │
@@ -37,14 +37,14 @@ Experimance is an interactive art installation that responds to human presence a
                        │  │  │  │         │         │Pull   │  │  │ │
                        │  │  │  └─────────┴─────────┴───────┘  │  │ │
                        │  │  └─────────────────────────────────┘  │ │
-                       │  └─────────────────────────────────────┘ │
-                       └──────────────────────────────────────────┘
+                       │  └───────────────────────────────────────┘ │
+                       └────────────────────────────────────────────┘
                                           │
                                           ▼
                       ┌───────────────────────────────────────────────┐
                       │             ZMQ Communication                 │
                       │   ┌─────────────┬─────────────┬─────────────┐ │
-                      │   │PubSub Events│Push/Pull    │Worker Results│ │
+                      │   │PubSub Events│Push/Pull    │Worker Result│ │
                       │   │(tcp://5555) │Work Distrib │(tcp://556x) │ │
                       │   │             │(tcp://556x) │             │ │
                       │   └─────────────┴─────────────┴─────────────┘ │
@@ -61,7 +61,7 @@ Experimance is an interactive art installation that responds to human presence a
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11 (max if RealSense is used, until Intel updates to later Python)
 - Intel RealSense camera (D415, D435, D455, etc.)
 - `uv` package manager
 
@@ -78,31 +78,42 @@ uv sync
 ### Running the Service
 
 ```bash
-# Start the core service
+# Set the active project (do this once)
+uv run set-project experimance
+
+# Start the core service (from project root)
 uv run -m experimance_core
 
-# Or run with specific config
-uv run -m experimance_core --config config.toml
+# With mock depth camera for testing without hardware
+uv run -m experimance_core \
+  --depth-processing-mock-depth-images-path media/images/mocks/depth
 
-# Run in development mode (more verbose logging)
-uv run -m experimance_core --dev
+# Force presence always-present for testing
+uv run -m experimance_core \
+  --presence-always-present
+
+# Combine mock depth and always-present
+uv run -m experimance_core \
+  --presence-always-present \
+  --depth-processing-mock-depth-images-path media/images/mocks/depth
+
+# Enable visualization for debugging
+uv run -m experimance_core --visualize
+
+# See all command line options
+uv run -m experimance_core --help
 ```
 
-### Testing Camera Setup
+### Command Line Arguments
 
-```bash
-# Test camera connection and basic functionality
-uv run python tests/test_camera.py --info
+The service automatically generates CLI arguments from the configuration schema. All nested config fields can be overridden via `--section-name-field-name` format:
 
-# Test with real camera (press Ctrl+C to stop)
-uv run python tests/test_camera.py --real
-
-# Test with mock camera (no hardware required)
-uv run python tests/test_camera.py --mock
-
-# Visual debugging with real-time processing display
-uv run python tests/test_camera.py --visualize
-```
+- `--visualize`: Enable depth camera visualization window
+- `--presence-always-present`: Keep presence active (for testing)
+- `--depth-processing-mock-depth-images-path PATH`: Use mock depth images from directory
+- `--camera-debug-depth`: Send debug depth maps to display service
+- `--state-machine-era-min-duration SECONDS`: Minimum era duration
+- And many more... (use `--help` to see all options)
 
 ## Era System
 
@@ -170,102 +181,84 @@ For detailed camera setup and troubleshooting, see [README_DEPTH.md](README_DEPT
 
 ## Configuration
 
-### Main Configuration (`config.toml`)
+Configuration is managed through project-specific TOML files in `projects/experimance/core.toml`.
+
+### Main Configuration
 
 ```toml
+# Debugging and visualization options
+visualize = false            # enable visual debugging - display depth image and processing flags
+
 [experimance_core]
 name = "experimance_core"
+change_smoothing_queue_size = 4   # size of change score queue for smoothing (reduces hand artifacts)
+render_request_cooldown = 2.0     # minimum interval between render requests in seconds (throttling)
+#seed = 1                          # start seed for image and prompt generation
 
-[state_machine] 
-idle_timeout = 45.0           # Seconds before idle drift starts
-wilderness_reset = 300.0      # Seconds to full reset to wilderness
-interaction_threshold = 0.3   # Minimum score for era advancement
-era_min_duration = 10.0       # Minimum time in era before advancement
+[state_machine]
+entire_surface_intensity = 0.7 
+interaction_threshold = 0.9  # threshold for user interaction detection (1.0 = the entire surface area once)
+interaction_modifier = 0.1   # added to each interaction
+era_min_duration = 0         # minimum time in seconds before era can change
+era_max_duration = 180       # maximum time in seconds before era will change
 
-[zmq]
-name = "experimance-core"     # ZMQ service name
-log_level = "INFO"            # ZMQ logging level
-timeout = 5.0                 # Operation timeout in seconds
+[presence]
+# Hysteresis/debouncing thresholds for presence detection
+presence_threshold = 0.5     # seconds of presence detection before considering audience present
+absence_threshold = 20.0     # seconds of no presence detection before considering audience gone
+idle_threshold = 45.0        # seconds of no presence detection before considering audience gone
+presence_publish_interval = 20.0  # interval in seconds to publish presence status updates
+conversation_timeout = 7.0   # time after a agent or human speaker finishes that conversation is considered complete
+always_present=false         # for debugging, to keep presence alive
 
-[zmq.publisher]
-address = "tcp://*"           # Publisher bind address
-port = 5555                   # ZMQ event publishing port
-default_topic = "core.events" # Default publishing topic
+[camera]
+# Core camera settings
+resolution = [1280, 720]     # depth camera resolution (width, height)
+fps = 30                     # camera frames per second 
+# for sand a range of about 7 cm works well
+min_depth = 0.49             # minimum depth value in meters
+max_depth = 0.56             # maximum depth value in meters
+align_frames = true          # use color frames to help align the depth frames
+colorizer_scheme = 2         # white to black
 
-[zmq.subscriber]
-address = "tcp://localhost"   # Subscriber connect address
-port = 5555                   # ZMQ event subscription port
-topics = ["status", "AudioStatus", "AgentControlEvent"]
+# Depth map settings
+flip_horizontal = true
+flip_vertical = true
+circular_crop = true
+blur_depth = true
 
-[zmq.workers.image_server]
-name = "image_server"
-[zmq.workers.image_server.push_config]
-address = "tcp://*"
-port = 5564                   # Send work to image server
-[zmq.workers.image_server.pull_config]
-address = "tcp://localhost"
-port = 5565                   # Receive results from image server
-
-[zmq.workers.audio]
-name = "audio"
-[zmq.workers.audio.push_config]
-address = "tcp://*"
-port = 5566                   # Send work to audio service
-[zmq.workers.audio.pull_config] 
-address = "tcp://localhost"
-port = 5567                   # Receive results from audio service
-
-[zmq.workers.display]
-name = "display"
-[zmq.workers.display.push_config]
-address = "tcp://*"
-port = 5568                   # Send work to display service
-[zmq.workers.display.pull_config]
-address = "tcp://localhost"
-port = 5569                   # Receive results from display service
+# Processing parameters
+output_resolution = [1024, 1024]      # processed output size (width, height)
+change_threshold = 10                 # threshold for depth differences per pixel
+significant_change_threshold = 0.006  # threshold for depth change detection per image
+detect_hands = true          # enable hand detection
+crop_to_content = true       # crop output to content area
+lightweight_mode = false     # skip some processing for higher FPS
+verbose_performance = false  # show detailed performance timing
+debug_mode = false           # include intermediate images for visualization
 
 [depth_processing]
-camera_config_path = ""       # Optional RealSense advanced config JSON
-resolution = [640, 480]       # Camera resolution (validated working)
-fps = 30                      # Target frame rate
-change_threshold = 50         # Motion detection sensitivity
-min_depth = 0.49             # Minimum depth range (meters)
-max_depth = 0.56             # Maximum depth range (meters)
-output_size = [1024, 1024]   # Processed output resolution
-
-[audio]
-interaction_sound_duration = 2.0  # Duration for interaction sounds
-
-[prompting]
-data_path = "data/"           # Location and development data
-locations_file = "locations.json"
-developments_file = "anthropocene.json"
+# Mock depth camera for testing without hardware
+mock_depth_images_path = ""  # path to directory with mock depth images (empty = use real camera)
 ```
 
-### Camera-Specific Configuration
+### ZMQ Configuration
 
-The camera system supports extensive configuration for different scenarios:
+ZMQ ports and addresses are configured in `libs/common/src/experimance_common/constants.py`:
 
 ```python
-# Production configuration (recommended)
-production_config = CameraConfig(
-    resolution=(640, 480),      # Validated working resolution
-    fps=30,                     # Smooth operation
-    max_retries=5,              # Robust error recovery
-    detect_hands=True,          # Enable interaction detection
-    crop_to_content=True,       # Optimize processing
-    verbose_performance=False   # Minimal logging overhead
-)
-
-# Development configuration
-dev_config = CameraConfig(
-    resolution=(320, 240),      # Faster processing
-    fps=15,                     # Lower CPU usage
-    max_retries=2,              # Fail fast for debugging
-    lightweight_mode=True,      # Skip expensive operations
-    verbose_performance=True    # Detailed performance logs
-)
+DEFAULT_PORTS = {
+    "events": 5555,           # Unified pub/sub channel
+    "image_server_push": 5564,  # Core -> Image Server work
+    "image_server_pull": 5565,  # Image Server -> Core results
+    "audio_push": 5566,         # Core -> Audio work
+    "audio_pull": 5567,         # Audio -> Core results
+    "display_push": 5568,       # Core -> Display work
+    "display_pull": 5569,       # Display -> Core results
+}
 ```
+
+The Core Service automatically configures these ports through the `ControllerService` composition pattern.
 
 ## Event System
 
@@ -280,121 +273,128 @@ The Core Service communicates with other services through a modern ZMQ architect
 
 ### Worker Communication Patterns
 
-#### Image Server Worker
+The Core Service uses push/pull sockets to distribute work to worker services and receive results.
+
+#### Sending Work to Workers
+
 ```python
-# Send render request to image server
+# Send render request to image server worker
 await self.zmq_service.send_work_to_worker("image_server", render_request)
 
-# Receive image ready response via pull socket
-# Handled automatically by worker response handler
+# The render_request is a RenderRequest Pydantic model that gets serialized
 ```
 
-#### Audio Service Worker
+#### Receiving Worker Responses
+
+Worker responses are handled via the registered response handler:
+
 ```python
-# Send audio command to audio service  
-await self.zmq_service.send_work_to_worker("audio", audio_command)
-
-# Receive audio status via pull socket
-# Handled automatically by worker response handler
+async def _handle_worker_response(self, worker_name: str, response_data: MessageDataType):
+    """Handle responses from worker services."""
+    if worker_name == "image_server":
+        # Handle ImageReady message
+        await self._handle_image_ready(response_data)
 ```
 
-#### Display Service Worker
-```python
-# Send display media to display service
-await self.zmq_service.send_work_to_worker("display", display_media)
-
-# Receive display confirmation via pull socket
-# Handled automatically by worker response handler
-```
+The service automatically routes responses based on their message type and worker name.
 
 ### Published Events
 
-#### EraChanged
-Notifies all services when the experience transitions between eras:
-```json
-{
-  "event_type": "EraChanged",
-  "transition_reason": "user_interaction"
-}
-```
+The Core Service publishes events via ZMQ pub/sub on the unified events channel (port 5555).
 
 #### PresenceStatus
 Publishes comprehensive audience detection state for service coordination:
 ```json
 {
-  "event_type": "PresenceStatus",
+  "type": "PresenceStatus",
   "idle": false,
   "present": true,
   "hand": true,
   "voice": false,
   "touch": false,
   "conversation": true,
-  "person_count": 1
+  "person_count": 1,
+  "presence_duration": 45.3,
+  "hand_duration": 12.5,
+  "voice_duration": 3.2,
+  "touch_duration": 0.0,
+  "timestamp": "2025-11-10T12:30:00.123456"
+}
+```
+
+#### SpaceTimeUpdate
+Notifies all services when era/biome changes (replaces old EraChanged event):
+```json
+{
+  "type": "SpaceTimeUpdate",
+  "era": "modern",
+  "biome": "urban",
+  "tags": ["urban", "traffic", "city"],
+  "timestamp": "2025-11-10T12:30:00Z"
 }
 ```
 
 #### RenderRequest
-Triggers AI image generation based on current state:
+Sent to image_server worker via push/pull to trigger AI image generation:
 ```json
 {
-  "event_type": "RenderRequest",
-  "timestamp": "2025-06-15T10:30:00Z",
+  "type": "RenderRequest",
   "request_id": "uuid-string",
+  "era": "modern",
+  "biome": "urban",
   "prompt": "A bustling modern cityscape with glass towers...",
-  "era": "modern",
-  "biome": "urban",
-  "seed": 12345
+  "negative_prompt": "blurry, low quality",
+  "seed": 12345,
+  "width": 1024,
+  "height": 1024,
+  "depth_map": {
+    "image_data": "base64-encoded-png",
+    "uri": null
+  }
 }
 ```
 
-#### AudioCommand
-Controls environmental audio and interaction sounds:
+#### CHANGE_MAP (MessageType.CHANGE_MAP)
+Provides real-time interaction visualization to display service:
 ```json
 {
-  "event_type": "AudioCommand",
-  "timestamp": "2025-06-15T10:30:00Z",
-  "command_type": "spacetime",
-  "era": "modern",
-  "biome": "urban",
-  "tags_to_include": ["urban", "traffic", "city"],
-  "tags_to_exclude": ["birds", "forest", "wind"]
-}
-```
-
-#### VideoMask
-Provides real-time interaction visualization:
-```json
-{
-  "event_type": "VideoMask",
-  "timestamp": "2025-06-15T10:30:00Z", 
-  "mask_type": "depth_difference",
-  "interaction_score": 0.8,
-  "depth_map_base64": "base64-encoded-data"
+  "type": "CHANGE_MAP",
+  "change_score": 0.8,
+  "has_change_map": true,
+  "image_data": "base64-encoded-binary-mask",
+  "timestamp": "2025-11-10T12:30:00Z",
+  "mask_id": "change_map_1699632000123"
 }
 ```
 
 #### DisplayMedia
-Sends coordinated display content with intelligent transitions:
+Sends coordinated display content to display service:
 ```json
 {
-  "event_type": "DisplayMedia",
+  "type": "DisplayMedia",
   "content_type": "image",
-  "image_data": "<transport_optimized_data>",
-  "fade_in": 0.5,
-  "fade_out": 0.3,
+  "request_id": "uuid-string",
+  "uri": "file:///path/to/image.png",
   "era": "modern",
   "biome": "urban",
-  "source_request_id": "uuid-string"
+  "fade_in": 0.5,
+  "fade_out": 0.3
 }
 ```
 
 ### Subscribed Events
 
-The service listens for coordination events from other services:
+The service listens for these message types via ZMQ subscriber on port 5555:
 
-- **ImageReady**: Confirms image generation completion, triggers DisplayMedia publishing
-- **AgentControl**: AI agent presence detection and biome suggestions  
-- **AudioStatus**: Audio system status and coordination
+- **REQUEST_BIOME** (`RequestBiome`): Agent service requests specific biome change
+- **AUDIENCE_PRESENT** (`AudiencePresent`): Vision system reports people count
+- **SPEECH_DETECTED** (`SpeechDetected`): Audio system reports human or agent speech
+
+### Worker Responses
+
+The service receives responses via pull sockets from worker services:
+
+- **ImageReady**: From image_server worker when image generation completes (port 5565)
 
 ## Development
 
@@ -429,47 +429,61 @@ services/core/
 ### Running Tests
 
 ```bash
-# Test camera functionality
-uv run python tests/test_camera.py --mock --duration 10
-
-# Test service integration
-uv run -m pytest tests/test_integration.py
-
-# Test depth processing
-uv run -m pytest tests/test_depth_integration.py
-
-# Run all tests
+# Run all core service tests
+cd services/core
 uv run -m pytest
+
+# Run specific test file
+uv run -m pytest tests/test_presence_manager.py
+
+# Run tests with verbose output
+uv run -m pytest -v
+
+# Run tests matching a pattern
+uv run -m pytest -k "presence"
 ```
+
+### Available Test Files
+
+The core service includes comprehensive test coverage:
+
+- `test_config.py`: Configuration loading and validation
+- `test_core_service.py`: Core service functionality
+- `test_presence_manager.py`: Presence detection and hysteresis logic
+- `test_experimance_core_state_management.py`: Era progression and state machine
+- `test_core_image_ready_handling.py`: Image ready message handling
+- `test_depth_integration.py`: Depth processing integration
+- `test_queue_smoothing.py`: Change score smoothing algorithms
 
 ### Development Workflow
 
-1. **Start with Mock Camera**: Use `--mock` mode for initial development
-2. **Test Camera Setup**: Use visualization mode to verify camera configuration
-3. **Integration Testing**: Test with other services using ZMQ events
-4. **Performance Validation**: Monitor FPS and processing times
-5. **Error Recovery Testing**: Simulate camera disconnections and failures
+1. **Start with Mock Depth Camera**: Use `--depth-processing-mock-depth-images-path` for development without hardware
+2. **Enable Visualization**: Use `--visualize` flag to see depth processing in real-time
+3. **Use Always-Present Mode**: Add `--presence-always-present` to bypass presence detection during testing
+4. **Integration Testing**: Test with other services using the unified events channel (port 5555)
+5. **Monitor Logs**: Watch for state transitions, render requests, and worker responses
+6. **Test State Machine**: Interact with the depth camera or use mock data to test era progression
 
 ### Mock Mode Development
 
-For development without hardware, use the mock camera system:
+For development without hardware, use the mock depth camera system:
 
-```python
-from experimance_core.mock_depth_processor import MockDepthProcessor
-from experimance_core.config import CameraConfig
+```bash
+# Set the active project (if not already set)
+uv run set-project experimance
 
-# Create mock processor
-config = CameraConfig(fps=10)  # Faster for testing
-processor = MockDepthProcessor(config)
+# Create a directory with mock depth images (grayscale PNG files)
+mkdir -p media/images/mocks/depth
 
-await processor.initialize()
-
-# Process mock frames with realistic interaction patterns
-async for frame in processor.stream_frames():
-    # Your processing logic here
-    if frame.has_interaction:
-        print(f"Mock interaction detected: {frame.change_score}")
+# Start core with mock depth camera
+uv run -m experimance_core \
+  --depth-processing-mock-depth-images-path media/images/mocks/depth \
+  --presence-always-present
 ```
+
+The mock depth processor will cycle through images in the specified directory, simulating camera input.
+
+**Note**: The active project is stored in `projects/.project` file. You can also manually edit this file or use the `set-project` CLI tool to switch between projects (e.g., `experimance`, `fire`, `sohkepayin`).
 
 ## Service Integration
 

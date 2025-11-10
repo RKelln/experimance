@@ -31,6 +31,9 @@ uv sync
 ### Running the Service
 
 ```bash
+# Set the active project (do this once)
+uv run set-project experimance
+
 # From project root - windowed mode for development
 uv run -m experimance_display --windowed
 
@@ -50,7 +53,7 @@ uv run -m experimance_display --help
 
 ### Command Line Options
 
-- `--config, -c`: Path to configuration file (default: `services/display/config.toml`)
+- `--config, -c`: Path to configuration file (default: project-specific config at `projects/<project>/display.toml`)
 - `--name, -n`: Service instance name (default: `display-service`)
 - `--log-level, -l`: Log level (DEBUG, INFO, WARNING, ERROR)
 - `--windowed, -w`: Run in windowed mode (overrides config fullscreen setting)

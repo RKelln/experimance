@@ -8,7 +8,7 @@ The Experimance Audio Service integrates SuperCollider with the main Experimance
 
 ## Features
 
-- ZeroMQ subscription to system events (`EraChanged`, `IdleStatus`, agent interactions)
+- ZeroMQ subscription to system events (`SpaceTimeUpdate`, `PresenceStatus`, `SpeechDetected`, `ChangeMap`)
 - OSC communication with SuperCollider for audio control
 - Tag-based audio layer management
 - JSON configuration for audio layers, triggers, and music loops
@@ -45,6 +45,9 @@ uv add -e .
 ### Running the Audio Service
 
 ```bash
+# Set the active project (do this once)
+uv run set-project experimance
+
 # Basic usage
 uv run -m experimance_audio
 
@@ -67,7 +70,7 @@ sudo systemctl erstart audio@experimance.service
 
 ### Command Line Arguments
 
-- `--config-dir`: Directory containing audio configuration files
+- `--config-dir`: Directory containing audio configuration files (default: project-specific config at `projects/<project>/audio.toml`)
 - `--osc-host`: SuperCollider host address (default: localhost)
 - `--osc-port`: SuperCollider OSC port (default: 57120)
 - `--debug`: Enable debug logging
