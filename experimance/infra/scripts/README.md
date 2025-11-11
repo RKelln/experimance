@@ -46,12 +46,11 @@ See [`README_TOUCHDESIGNER.md`](README_TOUCHDESIGNER.md) for detailed documentat
 - `./launchd_scheduler.sh fire manual-stop`
 - `./launchd_scheduler.sh fire show-schedule`
 
-**Recent improvements (Sept 2025)**: Fixed self-referencing scheduler services and XML encoding issues that prevented proper loading.
-
 See [`README_LAUNCHD_SCHEDULER.md`](README_LAUNCHD_SCHEDULER.md) for detailed documentation.
 
 ### `ia_gallery.py`
-**Multi-machine gallery control** - Controls Fire project services across Ubuntu (ia360) and macOS (iamini) machines via SSH. Designed for IA Gallery installations.
+**Multi-machine gallery control** - Controls Fire project services across Ubuntu (ia360) and macOS (iamini) machines via SSH. 
+Designed for InterAccess "Feed the Fires" gallery installation, but can be used as an example for other installations.
 
 ```bash
 python infra/scripts/ia_gallery.py                  # Interactive menu

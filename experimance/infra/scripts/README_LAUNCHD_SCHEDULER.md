@@ -20,7 +20,7 @@ This script enhances existing LaunchAgent services with time-based scheduling wh
 ## Quick Start
 
 ```bash
-# Current working directory: /Users/fireproject/Documents/experimance/experimance
+# From the experimance project root directory
 
 # Setup gallery hours (Tuesday-Saturday, 11AM-6PM)
 ./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
@@ -295,13 +295,13 @@ For detailed teardown procedures, see [Installation Teardown Guide](../docs/inst
 
 ## Comparison with Linux cron
 
-| Feature | Linux cron | macOS cron | macOS LaunchAgent Scheduler |
-|---------|------------|------------|----------------------------|
-| Runs without login | ✅ | ❌ | ✅ |
-| GUI app support | ❌ | ❌ | ✅ |
-| Automatic restart | ❌ | ❌ | ✅ |
-| Manual override | ❌ | ❌ | ✅ |
-| Precise timing | ✅ | ✅ | ✅ |
-| Apple recommended | N/A | ❌ | ✅ |
+| Feature            | Linux cron | macOS cron | macOS LaunchAgent Scheduler |
+| ------------------ | ---------- | ---------- | --------------------------- |
+| Runs without login | ✅          | ❌          | ✅                           |
+| GUI app support    | ❌          | ❌          | ✅                           |
+| Automatic restart  | ❌          | ❌          | ✅                           |
+| Manual override    | ❌          | ❌          | ✅                           |
+| Precise timing     | ✅          | ✅          | ✅                           |
+| Apple recommended  | N/A        | ❌          | ✅                           |
 
 The LaunchAgent scheduler provides the most reliable solution for gallery automation on macOS.

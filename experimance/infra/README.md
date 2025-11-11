@@ -64,21 +64,34 @@ infra/
 ├── launchd/                   # macOS service definitions (launchd .plist files)
 │   └── README.md              # macOS launchd setup and management guide
 ├── scripts/                   # Management automation
+│   ├── backup_images.sh      # Backup image files
 │   ├── deploy.sh              # Main deployment script (install, start, stop, setup schedules)
 │   ├── deployment_utils.py    # Multi-machine deployment utilities
 │   ├── get_deployment_services.py # Consolidated service detection with hostname override
 │   ├── get_project_services.py # Dynamic service detection (single-machine fallback)
+│   ├── get_service_module.py  # Service module detection utilities
 │   ├── healthcheck.py         # Health monitoring script
+│   ├── ia_gallery.py          # Gallery automation utilities (specific to Feed the Fires @ InterAccess)
 │   ├── kiosk_mode.sh          # Enable/disable kiosk mode for art installation
+│   ├── launchd_scheduler.sh   # macOS LaunchAgent scheduling
+│   ├── matter_scheduler.py    # Matter protocol scheduling
+│   ├── matter_scheduler.sh    # Matter protocol scheduling (shell wrapper)
 │   ├── preventive_maintenance.sh # Automated maintenance to prevent SSH lockouts
 │   ├── remote_access_monitor.sh # Monitor SSH/Tailscale connectivity with auto-recovery
 │   ├── reset.sh               # System/service reset functionality
 │   ├── reset_on_input.py      # Interactive reset trigger script
+│   ├── secure_ssh.sh          # SSH security configuration
+│   ├── setup_display_env.sh   # Display environment setup
 │   ├── shutdown.sh            # Graceful system shutdown
 │   ├── startup.sh             # System startup script (for cron/systemd)
 │   ├── status.sh              # Service status checking
 │   ├── system_diagnostic.sh   # Diagnose SSH lockout causes and system issues
-│   └── update.sh              # Safe update script with rollback capability
+│   ├── touchdesigner_agent.sh # TouchDesigner integration
+│   ├── update.sh              # Safe update script with rollback capability
+│   ├── wait_for_display.sh    # Wait for display to be ready
+│   ├── README_LAUNCHD_SCHEDULER.md # LaunchAgent scheduling documentation
+│   ├── README_TOUCHDESIGNER.md # TouchDesigner integration guide
+│   └── README.md              # Scripts documentation
 ├── docs/                      # Documentation
 │   ├── deployment.md          # Detailed deployment instructions
 │   ├── installation_teardown.md # How to disable or remove installations
@@ -179,111 +192,39 @@ This is especially useful for:
 - **Debugging**: Troubleshoot service assignment issues
 - **CI/CD**: Automated testing of deployment configurations
 
-## Quick Start Commands
+## Quick Start
 
-### Production (Full Deployment)
-Installs functional systemd system services (that wait for the user session to start).
+For detailed deployment instructions, see [`infra/docs/deployment.md`](docs/deployment.md).
 
+### Development Setup
 ```bash
-# One-time setup (creates experimance user and system services)
+# Quick development setup (no sudo needed)
+./infra/scripts/deploy.sh experimance install dev
+./scripts/dev core     # Start core service
+./scripts/dev display  # Start display service
+./scripts/dev          # Show available services
+```
+
+### Production Setup
+```bash
+# Full production deployment
 sudo useradd -m -s /bin/bash experimance
 sudo ./infra/scripts/deploy.sh experimance install prod
 sudo ./infra/scripts/deploy.sh experimance start
 
-# Install remote access monitoring (RECOMMENDED for exhibitions)
-sudo ./infra/scripts/remote_access_monitor.sh install
-sudo systemctl start remote-access-monitor.service
-
-# View available services
-sudo ./infra/scripts/deploy.sh experimance services
-
-# Group service management (the goal!)
-sudo systemctl start experimance@experimance.target    # Starts all services
-sudo systemctl stop experimance@experimance.target     # Stops all services
-sudo systemctl restart experimance@experimance.target  # Restarts all services
-
-# Script-based management (still works)
-sudo ./infra/scripts/deploy.sh experimance start
-sudo ./infra/scripts/deploy.sh experimance stop
-sudo ./infra/scripts/deploy.sh experimance restart
-
-# Status checking
-sudo ./infra/scripts/deploy.sh experimance status
-sudo ./infra/scripts/deploy.sh experimance diagnose
-sudo systemctl list-units "*@experimance*" --no-pager
-
-# Individual service control (new format: service_type@project)
-sudo systemctl status core@experimance
-
-# Individual service management:
-# - If target is active: starting/stopping individual services works as expected
-# - If target is inactive: starting any service will activate the target (starting all services)
-sudo systemctl start display@experimance    # Starts display (and target if inactive)
-sudo systemctl stop display@experimance     # Stops just display service
-sudo systemctl restart agent@experimance    # Restarts just agent service
-
-# To start individual services when target is inactive, start target first:
-sudo systemctl start experimance@experimance.target  # Start target (all services)
-sudo systemctl stop agent@experimance                # Then stop individual services
-sudo systemctl start agent@experimance               # Now starts just agent
-
-# follow logs
-sudo journalctl -u image_server@experimance.service -f
-
-# logs since last started target service (all services at once!)
-sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" -o cat  # clean, human-readable
-
-# other output formats
-sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" --no-hostname              # with timestamps
-sudo journalctl --since "2025-07-22 11:13:39" -u "*@experimance.*" --no-hostname -o short-precise  # precise timestamps
-
-# get timestamp of last target start (for --since)  
-sudo journalctl -u experimance@experimance.target --no-pager -n 20
-
-# follow all service logs live (clean format)
-sudo journalctl -f -u "*@experimance.*" -o cat
+# Service management
+sudo systemctl start experimance@experimance.target    # Start all services
+sudo systemctl stop experimance@experimance.target     # Stop all services
+sudo ./infra/scripts/deploy.sh experimance status      # Check status
 ```
 
-## Scheduled tasks
+## Advanced Features
 
-```bash
-# Manual execution
-sudo ./infra/scripts/reset.sh --project experimance
-sudo ./infra/scripts/shutdown.sh --project experimance
+### Scheduled Tasks
+Services can be automatically started/stopped on schedules. See [`infra/docs/deployment.md`](docs/deployment.md) for scheduling setup.
 
-# Schedule via deploy script
-sudo ./infra/scripts/deploy.sh experimance schedule-reset '12:30'
-sudo ./infra/scripts/deploy.sh experimance schedule-shutdown '17:00'
-
-# Check logs
-sudo tail -f /var/log/experimance/daily-reset.log
-sudo tail -f /var/log/experimance/shutdown.log
-```
-
-## Kiosk Mode Management
-
-```bash
-# Enable kiosk mode for gallery installation (production)
-sudo ./infra/scripts/kiosk_mode.sh enable
-
-# Disable kiosk mode (restore normal desktop)
-sudo ./infra/scripts/kiosk_mode.sh disable
-
-# Check kiosk mode status and current settings
-sudo ./infra/scripts/kiosk_mode.sh status
-
-# Create backup of current settings (automatic with enable/disable)
-sudo ./infra/scripts/kiosk_mode.sh backup
-
-# Restore from a specific backup
-sudo ./infra/scripts/kiosk_mode.sh restore /var/backups/experimance/kiosk-settings/backup_file.json
-
-# List available backups
-sudo ./infra/scripts/kiosk_mode.sh list-backups
-
-# Get help
-sudo ./infra/scripts/kiosk_mode.sh --help
-```
+### Kiosk Mode
+Safe, reversible kiosk mode for gallery installations. See [`infra/docs/deployment.md`](docs/deployment.md) for kiosk mode management.
 
 
 ## Systemd Templates vs Instances (Important!)
@@ -628,92 +569,6 @@ Based on analysis of your system, here are common issues that can prevent SSH ac
 
 The monitoring tools will detect and automatically recover from many of these issues.
 
-## Multi-Machine Deployment Example: Fire Project
-
-Here's a real-world example of deploying the "fire" project across two machines:
-
-### Project Structure
-```
-projects/fire/
-├── deployment.toml     # Multi-machine configuration
-├── config.toml         # Fire project settings
-├── core.toml           # Core service configuration
-├── agent.toml          # Agent service configuration
-└── (other service configs)
-```
-
-### Fire Project deployment.toml
-```toml
-[machines.ubuntu]
-hostname = "fire-ubuntu.local"
-services = ["core", "display", "image_server", "health"]
-user = "experimance"
-
-[machines.macos] 
-hostname = "fire-macos.local"
-services = ["agent", "health"]
-user = "FireProject"
-
-[services]
-core.module_name = "fire_core"
-agent.module_name = "fire_agent"
-display.module_name = "fire_display"
-image_server.module_name = "fire_image_server"
-health.module_name = "fire_health"
-```
-
-### Deployment Workflow
-
-1. **Test configuration** (from any machine):
-```bash
-# Verify Ubuntu machine services
-uv run python infra/scripts/get_deployment_services.py fire fire-ubuntu.local
-# → core@fire, display@fire, image_server@fire, health@fire
-
-# Verify macOS machine services  
-uv run python infra/scripts/get_deployment_services.py fire fire-macos.local
-# → agent@fire, health@fire
-```
-
-2. **Deploy on Ubuntu machine** (fire-ubuntu.local):
-```bash
-# Create user and deploy services
-sudo useradd -m -s /bin/bash experimance
-sudo ./infra/scripts/deploy.sh fire install prod
-sudo ./infra/scripts/deploy.sh fire start
-
-# Verify services
-sudo systemctl status "*@fire"
-```
-
-3. **Deploy on macOS machine** (fire-macos.local):
-```bash
-# Create user and deploy services (uses launchd instead of systemd)
-sudo ./infra/scripts/deploy.sh fire install prod  
-sudo ./infra/scripts/deploy.sh fire start
-
-# Verify services (macOS uses launchctl)
-sudo launchctl list | grep fire
-
-# Optional: Add gallery hour scheduling (Tuesday-Saturday, 11AM-6PM)
-./infra/scripts/launchd_scheduler.sh fire setup-schedule gallery
-
-# Gallery staff manual controls
-./infra/scripts/launchd_scheduler.sh fire manual-stop   # Emergency stop
-./infra/scripts/launchd_scheduler.sh fire manual-start  # Emergency start  
-./infra/scripts/launchd_scheduler.sh fire show-schedule # Check status
-```
-
-### Network Communication
-
-Services communicate across machines using ZeroMQ:
-- **Ubuntu machine** (fire-ubuntu.local): Runs core service that coordinates state
-- **macOS machine** (fire-macos.local): Runs agent service that connects to core
-- **Both machines**: Run health services for monitoring
-- **ZeroMQ networking**: Handles cross-machine communication automatically
-
-The deployment system ensures each machine only runs its assigned services while maintaining network connectivity for the distributed installation.
-
 ---
 
 ## Remote access with Tailscale
@@ -765,8 +620,25 @@ ssh experimance@experimance-pc
 
 ### 1) Keep OpenSSH locked down (recommended)
 
-Your existing sshd continues to listen on port 22 locally, but it’s only reachable over Tailscale. 
-Keep key‑only auth and disable passwords:
+Your existing sshd continues to listen on port 22 locally, but it's only reachable over Tailscale. 
+Keep key-only auth and disable passwords:
+
+**Safe automated method (recommended):**
+```bash
+# Check current SSH configuration
+sudo ./infra/scripts/secure_ssh.sh status
+
+# Verify SSH keys are properly set up first
+sudo ./infra/scripts/secure_ssh.sh test-keys
+
+# Safely apply SSH hardening (creates backup, tests config, uses reload not restart)
+sudo ./infra/scripts/secure_ssh.sh secure
+
+# If needed, restore from backup
+sudo ./infra/scripts/secure_ssh.sh restore /var/backups/experimance/ssh/sshd_config_TIMESTAMP.backup
+```
+
+**Manual method (advanced users only):**
 ```bash
 # /etc/ssh/sshd_config (essentials)
 PasswordAuthentication no
@@ -776,6 +648,13 @@ PubkeyAuthentication yes
 
 sudo systemctl restart ssh
 ```
+
+The `secure_ssh.sh` script safely hardens SSH by:
+- Creating backups before changes
+- Testing configuration syntax
+- Testing on alternate port first (if connected remotely)
+- Using `systemctl reload` instead of `restart` for safer application
+- Adding security limits (MaxAuthTries, LoginGraceTime, MaxSessions)
 
 ### 5) (Optional) Restrict tailnet access to just you and just SSH
 
