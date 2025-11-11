@@ -879,9 +879,9 @@ def main_menu():
         # Ultra-compact menu for very small screens (less than 15 rows)
         if rows < 15:
             print("🔥 IA GALLERY Control")
-            print("1=Start 2=Stop 3=Restart 4=Status")
-            print("5=SmartStart 6=SmartStop 7=PwrON 8=PwrOFF")
-            print("9=SchedStart 10=SchedStop 11=SchedStat 0=Test")
+            print("A=Start B=Stop C=Restart D=Status")
+            print("E=SmartStart F=SmartStop G=PwrON H=PwrOFF")
+            print("I=SchedStart J=SchedStop K=SchedStat L=Test")
             print("-" * max_length)
         else:
             
@@ -889,66 +889,66 @@ def main_menu():
             print("🔥 IA GALLERY - Feed the Fires Control")
             print(f"Mode: {mode_info[:max_length]}")  # Adjust to screen width
             print("="*max_length)
-            print("SERVICES: 1=Start  2=Stop  3=Restart     4=Status")
+            print("SERVICES: A=Start  B=Stop  C=Restart     D=Status")
             print()
-            print("SERV+PWR: 5=Start All      6=Stop All")
+            print("SERV+PWR: E=Start All      F=Stop All")
             print()
-            print("POWER:    7=Power ON       8=Power OFF")
+            print("POWER:    G=Power ON       H=Power OFF")
             print()
-            print("SCHEDULE: 9=Start Auto     10=Stop Auto  11=Status")
+            print("SCHEDULE: I=Start Auto     J=Stop Auto  K=Status")
             print()
-            print("TEST:     0=Test Connections")
+            print("TEST:     L=Test Connections")
             print("-"*max_length)
         
         try:
             choice = input("Choice: ").strip()
             print()  # Add space before output
             
-            if choice == "1":
+            if choice.upper() == "A":
                 clear_screen()
                 start_services()
                 wait_for_user()
-            elif choice == "2":
+            elif choice.upper() == "B":
                 clear_screen()
                 stop_services()
                 wait_for_user()
-            elif choice == "3":
+            elif choice.upper() == "C":
                 clear_screen()
                 restart_services()
                 wait_for_user()
-            elif choice == "4":
+            elif choice.upper() == "D":
                 clear_screen()
                 show_status()
                 wait_for_user()
-            elif choice == "5":
+            elif choice.upper() == "E":
                 clear_screen()
                 smart_startup()
                 wait_for_user()
-            elif choice == "6":
+            elif choice.upper() == "F":
                 clear_screen()
                 smart_shutdown()
                 wait_for_user()
-            elif choice == "7":
+            elif choice.upper() == "G":
                 clear_screen()
                 matter_control("on")
                 wait_for_user()
-            elif choice == "8":
+            elif choice.upper() == "H":
                 clear_screen()
                 matter_control("off")
                 wait_for_user()
-            elif choice == "9":
+            elif choice.upper() == "I":
                 clear_screen()
                 matter_scheduler_control("start")
                 wait_for_user()
-            elif choice == "10":
+            elif choice.upper() == "J":
                 clear_screen()
                 matter_scheduler_control("stop")
                 wait_for_user()
-            elif choice == "11":
+            elif choice.upper() == "K":
                 clear_screen()
                 matter_scheduler_control("status")
                 wait_for_user()
-            elif choice == "0":
+            elif choice.upper() == "L":
                 clear_screen()
                 test_connections()
                 wait_for_user()
