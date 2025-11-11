@@ -28,8 +28,8 @@ from experimance_common.constants import (
     DEFAULT_PORTS, TICK, IMAGE_TRANSPORT_MODES, DEFAULT_IMAGE_TRANSPORT_MODE
 )
 from experimance_common.schemas import (
-    Era, Biome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, PresenceStatus,
-    RequestBiome, AudiencePresent, SpeechDetected
+    Era, Biome, RequestBiome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, PresenceStatus, # type: ignore
+    AudiencePresent, SpeechDetected 
 )
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
@@ -511,7 +511,7 @@ class ExperimanceCoreService(BaseService):
                 image_data=processed_change_map,
                 target_address=f"tcp://localhost:{DEFAULT_PORTS['events']}",
                 transport_mode=IMAGE_TRANSPORT_MODES["FILE_URI"],
-                type=MessageType.CHANGE_MAP.value,
+                type=MessageType.CHANGE_MAP,
                 change_score=change_score,
                 has_change_map=True,
                 timestamp=datetime.now().isoformat(),
@@ -599,7 +599,7 @@ class ExperimanceCoreService(BaseService):
     def _register_message_handlers(self):
         """Register handlers for different message types."""
         # Register PubSub message handlers
-        self.zmq_service.add_message_handler(MessageType.REQUEST_BIOME, self._handle_request_biome)
+        self.zmq_service.add_message_handler(MessageType.REQUEST_BIOME, self._handle_request_biome) # type: ignore
         self.zmq_service.add_message_handler(MessageType.AUDIENCE_PRESENT, self._handle_audience_present)
         self.zmq_service.add_message_handler(MessageType.SPEECH_DETECTED, self._handle_speech_detected)
         
@@ -746,10 +746,10 @@ class ExperimanceCoreService(BaseService):
     def load_state(self, state_data: Dict[str, Any]):
         """Load state from dictionary."""
         # Handle enum values from string data
-        era_str = state_data.get("current_era", Era.WILDERNESS.value)
+        era_str = state_data.get("current_era", Era.WILDERNESS.value) # type: ignore
         era = Era(era_str) if isinstance(era_str, str) else era_str
         
-        biome_str = state_data.get("current_biome", Biome.TEMPERATE_FOREST.value)
+        biome_str = state_data.get("current_biome", Biome.TEMPERATE_FOREST.value) # type: ignore
         biome = Biome(biome_str) if isinstance(biome_str, str) else biome_str
         
         self.switch_biome(biome)
@@ -816,8 +816,8 @@ class ExperimanceCoreService(BaseService):
     async def _publish_space_time_update_event(self):
         """Publish SPACE_TIME_UPDATE event with tags extracted from prompt."""
         message = SpaceTimeUpdate(
-            era=self.current_era,
-            biome=self.current_biome,
+            era=self.current_era, # type: ignore
+            biome=self.current_biome, # type: ignore
             timestamp=datetime.now().isoformat()
         )
         if self.prompt_manager:
@@ -853,8 +853,8 @@ class ExperimanceCoreService(BaseService):
             
             # TODO: check the era and biome of ready image versus current state
             # if they don't match we should discard the image?
-            if image_ready.era != self.current_era or image_ready.biome != self.current_biome:
-                logger.warning(f"ImageReady era/biome mismatch: {image_ready.era}/{image_ready.biome} vs {self.current_era}/{self.current_biome}")
+            if image_ready.era != self.current_era or image_ready.biome != self.current_biome: # type: ignore
+                logger.warning(f"ImageReady era/biome mismatch: {image_ready.era}/{image_ready.biome} vs {self.current_era}/{self.current_biome}") # type: ignore
                 return
 
             # TODO: generate transition then send that to display service
@@ -1091,7 +1091,7 @@ class ExperimanceCoreService(BaseService):
     def _create_display_media(self, content_type: ContentType, **kwargs) -> Dict[str, Any]:
         """Create a DISPLAY_MEDIA message with the given content type and parameters."""
         display_media = {
-            "type": MessageType.DISPLAY_MEDIA.value,
+            "type": str(MessageType.DISPLAY_MEDIA),
             "content_type": content_type.value,
             "timestamp": datetime.now().isoformat()
         }
@@ -1184,8 +1184,8 @@ class ExperimanceCoreService(BaseService):
 
             request = RenderRequest(
                 request_id=request_id,
-                era=self.current_era,
-                biome=self.current_biome,
+                era=self.current_era, # type: ignore
+                biome=self.current_biome, # type: ignore
                 prompt=positive_prompt,
                 negative_prompt=negative_prompt,
                 seed=self.seed,
@@ -1194,7 +1194,7 @@ class ExperimanceCoreService(BaseService):
         else:
             request = message
         
-        logger.info(f"Render request id: {request.request_id}, era: {request.era}, biome: {request.biome}")
+        logger.info(f"Render request id: {request.request_id}, era: {request.era}, biome: {request.biome}") # type: ignore
         
         try:
             # Send the task to the image server worker via PUSH socket with timeout
@@ -1202,7 +1202,7 @@ class ExperimanceCoreService(BaseService):
                 self.zmq_service.send_work_to_worker("image_server", request),
                 timeout=1.0  # 1 second timeout
             )
-            logger.debug(f"Sent render request {request.request_id} for {request.era}/{request.biome}")
+            logger.debug(f"Sent render request {request.request_id} for {request.era}/{request.biome}") # type: ignore
             
             # Update throttling state
             self.last_render_request_time = current_time
