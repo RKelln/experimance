@@ -16,16 +16,16 @@ The service is configured via the main config file under the `health_service` se
 
 ```toml
 [health_service]
-service_name = "experimance_health"
+service_name = "health"
 health_dir = "/var/cache/experimance/health"
 check_interval = 30  # seconds
 service_timeout = 120  # seconds
 notification_cooldown = 300  # seconds
 expected_services = [
-    "experimance_core",
-    "experimance_display", 
-    "experimance_agent",
-    "experimance_audio",
+    "core",
+    "display", 
+    "agent",
+    "audio",
     "image_server"
 ]
 ```
@@ -36,13 +36,13 @@ The health service is designed to run as a systemd service:
 
 ```bash
 # Start the health service
-systemctl start experimance-health@experimance
+systemctl start health@experimance
 
 # Check status
-systemctl status experimance-health@experimance
+systemctl status health@experimance
 
 # View logs
-journalctl -u experimance-health@experimance -f
+journalctl -u health@experimance -f
 ```
 
 ## Health File Format
@@ -51,29 +51,29 @@ Services write their health status to JSON files in the health directory:
 
 ```json
 {
-    "service_name": "experimance_core",
-    "overall_status": "HEALTHY",
-    "message": "Service is running normally",
-    "last_check": "2025-07-18T14:30:00.000000",
-    "uptime": 1234.5,
-    "error_count": 0,
-    "restart_count": 0,
+    "service_name": "core",
+    "overall_status": "healthy",
     "checks": [
         {
             "name": "periodic_check",
-            "status": "HEALTHY",
+            "status": "healthy",
             "message": "Service is responsive",
-            "timestamp": "2025-07-18T14:30:00.000000"
+            "timestamp": "2025-11-18T14:30:00.123456",
+            "metadata": {}
         }
-    ]
+    ],
+    "last_updated": "2025-11-18T14:30:00.123456",
+    "uptime": 1234.5,
+    "restart_count": 0,
+    "error_count": 0
 }
 ```
 
 ## Notifications
 
 The health service sends notifications when:
-- Services become unhealthy (ERROR, FATAL)
-- Services go missing (UNKNOWN)
+- Services become unhealthy (error, fatal)
+- Services go missing (unknown)
 - Services show warnings (with cooldown)
 
 Notifications are sent via the same system as other services (ntfy, logs, etc.).
