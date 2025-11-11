@@ -15,7 +15,8 @@
 /home/experimance/experimance/infra/scripts/status.sh
 
 # Detailed service status
-sudo systemctl status experimance-core@experimance
+# Check service status
+sudo systemctl status core@experimance
 ```
 
 ### Restart Everything
@@ -24,13 +25,13 @@ sudo systemctl status experimance-core@experimance
 sudo /home/experimance/experimance/infra/scripts/deploy.sh experimance restart
 
 # Or individual service
-sudo systemctl restart experimance-core@experimance
+sudo systemctl restart core@experimance
 ```
 
 ### View Logs
 ```bash
 # Core service logs
-sudo journalctl -u experimance-core@experimance -f
+sudo journalctl -u core@experimance -f
 
 # All recent errors
 sudo journalctl --since "1 hour ago" --grep "ERROR|CRITICAL"
@@ -48,9 +49,9 @@ sudo pkill -f experimance
 ## 🆘 Common Issues
 
 ### "Services Won't Start"
-1. Check logs: `sudo journalctl -u experimance-core@experimance -n 50`
+1. Check logs: `sudo journalctl -u core@experimance -n 50`
 2. Check permissions: `ls -la /var/cache/experimance`
-3. Reset: `sudo systemctl reset-failed && sudo systemctl start experimance-core@experimance`
+3. Reset: `sudo systemctl reset-failed && sudo systemctl start core@experimance`
 
 ### "No Image Generation"
 1. Check image server: `sudo systemctl status image-server@experimance`
@@ -60,7 +61,7 @@ sudo pkill -f experimance
 ### "Display Issues"
 1. Check X11: `echo $DISPLAY` (should be `:0`)
 2. Check permissions: `xauth list`
-3. Restart display: `sudo systemctl restart experimance-display@experimance`
+3. Restart display: `sudo systemctl restart display@experimance`
 
 ### "High Resource Usage"
 1. Check: `htop` or `nvidia-smi`

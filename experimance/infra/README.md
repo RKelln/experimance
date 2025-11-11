@@ -4,7 +4,7 @@
 
 A comprehensive infrastructure solution for remote monitoring and management of the Experimance installation, designed for minimal maintenance during month-long exhibitions.
 
-## Key Features ✅
+## Key Features
 
 ### 1. **Easy Service Management**
 - **Development setup**: `./infra/scripts/deploy.sh experimance install dev` (no sudo needed)
@@ -14,52 +14,38 @@ A comprehensive infrastructure solution for remote monitoring and management of 
 - **Explicit modes**: Clear separation between development and production environments
 
 ### 2. **Auto-Recovery**
-- **systemd integration**: Native Ubuntu service management with automatic restart
+- **systemd integration**: Native Ubuntu/MacOS service management with automatic restart
 - **Failure detection**: Services automatically restart on crashes
 - **Resource limits**: Prevent runaway processes from consuming all resources
 
 ### 3. **Remote Monitoring & Access**
 - **Push notifications**: Simple, reliable ntfy.sh notifications to your phone
-- **Email alerts**: Configurable SMTP notifications as fallback
-- **Web dashboard**: Mobile-friendly interface at `http://installation-ip:8080`
-- **Health checks**: Automated monitoring every 5 minutes
-- **SSH access**: Secure remote access for troubleshooting
-- **Remote access monitoring**: Automated SSH/Tailscale connectivity monitoring with recovery ✅
-- **Tailscale integration**: Secure remote access over private WireGuard network
+- **Health checks**: Automated monitoring of service health
 
-### 4. **Safe Updates**
-- **Rollback capability**: Automatic rollback on failed updates
-- **Backup system**: Configuration and state backups before changes
-- **Git integration**: Simple `git pull` workflow with safety checks
+### 4. **Safe Updates** (TODO)
+- **Git integration**: Simple `git pull` workflow
 
 ### 5. **Kiosk Mode & Display Support**
 - **Kiosk mode management**: Safe, reversible kiosk mode for Ubuntu 24.04 installations
-- **Settings-based approach**: No package installation, uses only GNOME settings changes
-- **Automatic backups**: Creates backups before any changes with easy restore functionality
 - **Gallery-ready features**: Disables screen lock, notifications, unattended upgrades, and sleep
 - **Wayland compatibility**: Automatic detection and configuration for Ubuntu 24.04+ Wayland sessions
-- **Desktop session dependency**: Uses systemd's `graphical-session.target` for clean desktop readiness
 - **Independent service control**: Services can restart individually without affecting others
 - **No cascade failures**: Fixed systemd configuration prevents one service failure from stopping all services
-- **Xwayland integration**: Seamless fallback to X11 applications on Wayland
-- **Auto-recovery**: Display service automatically adapts to desktop environment changes
 
-### 6. **Multi-Machine Deployment** ✅
+### 6. **Multi-Machine Deployment**
 - **Distributed deployments**: Deploy services across multiple machines (Ubuntu + macOS, etc.)
 - **TOML configuration**: Simple `deployment.toml` files define machine assignments and service distribution
 - **Hostname override testing**: Test deployment configurations from any machine without being on the target
+- **Cross-platform support**: Works with both systemd (Linux) and launchd (macOS) service management
 
-### 7. **Gallery Hour Automation** ✅ (macOS)
+### 7. **Gallery Hour Automation**
 - **Automatic scheduling**: Services start/stop during gallery hours (Tuesday-Saturday, 11AM-6PM)
 - **Manual override**: Gallery staff can immediately start/stop services for special events
 - **Preserves auto-restart**: Services still auto-start after reboot and restart on failure
 - **LaunchAgent integration**: Native macOS scheduling using `StartCalendarInterval`
 - **Multiple schedules**: Gallery hours, daily schedule, or custom timing
 - **TouchDesigner support**: Works with both Python services and TouchDesigner applications
-- **Per-machine user configuration**: Different users on different machines (e.g., "experimance" vs "FireProject")
-- **Service module name mapping**: Custom module names per service (e.g., `fire_core`, `fire_agent`)
-- **Consolidated service detection**: Automatic fallback to single-machine configurations for compatibility
-- **Cross-platform support**: Works with both systemd (Linux) and launchd (macOS) service management
+
 
 ## Files
 
@@ -73,26 +59,24 @@ infra/
 │   ├── agent@.service         # Agent service
 │   ├── audio@.service         # Audio service
 │   ├── image_server@.service  # Image generation service
-│   └── experimance@.target    # Service group target
+│   ├── experimance@.target    # Service group target
+│   └── reset-on-input.service # Reset on input service
 ├── launchd/                   # macOS service definitions (launchd .plist files)
-│   ├── com.experimance.agent.fire.plist  # Fire Agent service for macOS
-│   ├── com.experimance.health.fire.plist # Health monitoring service for macOS
 │   └── README.md              # macOS launchd setup and management guide
 ├── scripts/                   # Management automation
 │   ├── deploy.sh              # Main deployment script (install, start, stop, setup schedules)
-│   ├── deployment_utils.py    # Multi-machine deployment utilities ✅
-│   ├── get_deployment_services.py # Consolidated service detection with hostname override ✅
+│   ├── deployment_utils.py    # Multi-machine deployment utilities
+│   ├── get_deployment_services.py # Consolidated service detection with hostname override
 │   ├── get_project_services.py # Dynamic service detection (single-machine fallback)
 │   ├── healthcheck.py         # Health monitoring script
 │   ├── kiosk_mode.sh          # Enable/disable kiosk mode for art installation
 │   ├── preventive_maintenance.sh # Automated maintenance to prevent SSH lockouts
-│   ├── remote_access_monitor.sh # Monitor SSH/Tailscale connectivity with auto-recovery ✅
+│   ├── remote_access_monitor.sh # Monitor SSH/Tailscale connectivity with auto-recovery
 │   ├── reset.sh               # System/service reset functionality
 │   ├── reset_on_input.py      # Interactive reset trigger script
 │   ├── shutdown.sh            # Graceful system shutdown
 │   ├── startup.sh             # System startup script (for cron/systemd)
 │   ├── status.sh              # Service status checking
-│   ├── switch-project.sh      # Switch between different project configurations
 │   ├── system_diagnostic.sh   # Diagnose SSH lockout causes and system issues
 │   └── update.sh              # Safe update script with rollback capability
 ├── docs/                      # Documentation
@@ -574,7 +558,7 @@ The deploy script now fails explicitly instead of making assumptions:
 
 To prevent and diagnose SSH lockout issues, we've added comprehensive monitoring and diagnostic tools:
 
-### Remote Access Monitor ✅
+### Remote Access Monitor
 Monitors SSH, Tailscale, and system health with automatic recovery every 60 seconds:
 ```bash
 # Run one-time health check

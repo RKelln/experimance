@@ -77,7 +77,7 @@ sudo -u experimance nano projects/experimance/.env
 
 ```bash
 # Install systemd services (creates directories, installs uv, sets up services)
-sudo ./infra/scripts/deploy.sh experimance install
+sudo ./infra/scripts/deploy.sh experimance install prod
 
 # This automatically:
 # - Copies systemd service files configured for uv
@@ -145,20 +145,6 @@ sudo -u experimance nano projects/experimance/health.toml
 # Test notifications will be sent automatically
 ```
 
-#### Alternative: Email Alerts
-
-```bash
-# Configure email in health.toml
-# [[notifications.handlers]]
-# type = "email"
-# enabled = true
-# smtp_server = "smtp.gmail.com"
-# smtp_port = 587
-# username = "your-email@gmail.com" 
-# password = "your-app-password"
-# to_email = "your-email@gmail.com"
-```
-
 ### Step 6: Configure SSH Access (15 minutes)
 
 ```bash
@@ -184,14 +170,14 @@ sudo ./infra/scripts/deploy.sh experimance status
 
 # Health service will automatically start monitoring and sending notifications
 # Check health service logs
-sudo journalctl -u experimance-health@experimance -f
+sudo journalctl -u health@experimance -f
 
 # Test service restart
 sudo ./infra/scripts/deploy.sh experimance restart
 
 # View health status files
 ls -la /var/cache/experimance/health/
-cat /var/cache/experimance/health/experimance-core.json
+cat /var/cache/experimance/health/core.json
 ```
 
 ## macOS Production Setup with LaunchAgents (45 minutes)
@@ -310,7 +296,7 @@ ls -la logs/*launchd*.log
 sudo ./infra/scripts/deploy.sh experimance status
 
 # View specific service
-sudo systemctl status experimance-core@experimance
+sudo systemctl status core@experimance
 
 # List all detected services
 ./infra/scripts/deploy.sh experimance services
@@ -342,9 +328,9 @@ sudo ./infra/scripts/deploy.sh experimance restart
 sudo ./infra/scripts/deploy.sh experimance status
 
 # Individual service management
-sudo systemctl start experimance-core@experimance
-sudo systemctl stop experimance-display@experimance
-sudo systemctl restart experimance-health@experimance
+sudo systemctl start core@experimance
+sudo systemctl stop display@experimance
+sudo systemctl restart health@experimance
 ```
 
 ### Restart Services
@@ -353,7 +339,7 @@ sudo systemctl restart experimance-health@experimance
 sudo ./infra/scripts/deploy.sh experimance restart
 
 # Restart specific service
-sudo systemctl restart experimance-core@experimance
+sudo systemctl restart core@experimance
 
 # Development: just stop and restart the ./scripts/dev command
 ```
@@ -363,16 +349,16 @@ sudo systemctl restart experimance-core@experimance
 #### Service Logs (systemd - Production)
 ```bash
 # View all logs for a service
-sudo journalctl -u experimance-core@experimance -f
+sudo journalctl -u core@experimance -f
 
 # View recent logs
-sudo journalctl -u experimance-display@experimance -n 50
+sudo journalctl -u display@experimance -n 50
 
 # View all services for a project
-sudo journalctl -u "experimance-*@experimance" -f
+sudo journalctl -u "*@experimance" -f
 
 # Health service logs (includes notification activity)
-sudo journalctl -u experimance-health@experimance -f
+sudo journalctl -u health@experimance -f
 ```
 
 #### Development Logs
@@ -394,7 +380,7 @@ ls -la /var/cache/experimance/health/  # Production
 ls -la cache/health/                   # Development
 
 # View specific service health
-cat /var/cache/experimance/health/experimance-core.json
+cat /var/cache/experimance/health/core.json
 ```
 
 ### Updates
@@ -503,13 +489,13 @@ cat /var/cache/experimance/health/experimance-core.json
 
 # Development  
 ls -la cache/health/
-cat cache/health/experimance-core.json
+cat cache/health/core.json
 ```
 
 Each file contains:
 ```json
 {
-  "service_name": "experimance-core",
+  "service_name": "core",
   "status": "healthy",
   "timestamp": "2025-07-18T22:45:00Z",
   "checks": {
@@ -525,10 +511,10 @@ Each file contains:
 
 ```bash
 # Check service status
-sudo systemctl status experimance-core@experimance
+sudo systemctl status core@experimance
 
 # Check logs
-sudo journalctl -u experimance-core@experimance -n 50
+sudo journalctl -u core@experimance -n 50
 
 # Check permissions
 ls -la /var/cache/experimance
@@ -571,7 +557,7 @@ nvidia-smi
 df -h
 
 # Check service memory usage
-sudo systemctl status experimance-core@experimance
+sudo systemctl status core@experimance
 ```
 
 ### Update Issues
@@ -605,7 +591,7 @@ git reset --hard origin/main
 git clean -fd
 
 # Reinstall
-sudo /home/experimance/experimance/infra/scripts/deploy.sh experimance install
+sudo /home/experimance/experimance/infra/scripts/deploy.sh experimance install prod
 sudo /home/experimance/experimance/infra/scripts/deploy.sh experimance start
 ```
 
@@ -642,7 +628,7 @@ Keep these handy for emergencies:
 
 ```bash
 # Increase systemd service limits
-sudo systemctl edit experimance-core@experimance
+sudo systemctl edit core@experimance
 # Add:
 # [Service]
 # LimitNOFILE=65536
