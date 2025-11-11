@@ -2,6 +2,42 @@
 
 This directory contains utility scripts for managing the Experimance project.
 
+## Table of Contents
+
+- [Scripts Directory](#scripts-directory)
+  - [Table of Contents](#table-of-contents)
+  - [Available Scripts](#available-scripts)
+    - [`audio_cache_manager.py`](#audio_cache_managerpy)
+    - [`audio_recovery.py`](#audio_recoverypy)
+    - [`generate_environmental_sound_json.py`](#generate_environmental_sound_jsonpy)
+    - [`git_identity_remote`](#git_identity_remote)
+    - [`image_watch.sh`](#image_watchsh)
+    - [`images_to_video.py`](#images_to_videopy)
+    - [`list_anthropocene_elements.py`](#list_anthropocene_elementspy)
+    - [`list_audio_devices.py`](#list_audio_devicespy)
+    - [`list_webcams.py`](#list_webcamspy)
+    - [`mock_control.py`](#mock_controlpy)
+    - [`normalize_audio.sh`](#normalize_audiosh)
+    - [`pipewire_multi_sink.py`](#pipewire_multi_sinkpy)
+    - [`project`](#project)
+    - [`set_project.py`](#set_projectpy)
+    - [`test_osc.py`](#test_oscpy)
+    - [`tune_detector.py`](#tune_detectorpy)
+    - [`test_multi_channel_audio.py`](#test_multi_channel_audiopy)
+      - [ALSA permission issues](#alsa-permission-issues)
+      - [PulseAudio compatibility / quick checks](#pulseaudio-compatibility--quick-checks)
+      - [PipeWire \& pw tools (useful when running PipeWire)](#pipewire--pw-tools-useful-when-running-pipewire)
+      - [Device not found / USB device issues](#device-not-found--usb-device-issues)
+    - [`tune_detector.py`](#tune_detectorpy-1)
+    - [`create_new_project.py`](#create_new_projectpy)
+    - [`update_pyi_stubs.py`](#update_pyi_stubspy)
+    - [`validate_schemas.py`](#validate_schemaspy)
+    - [`vastai_cli.py`](#vastai_clipy)
+    - [`view_images.py`](#view_imagespy)
+    - [`zip_media.sh`](#zip_mediash)
+  - [Adding New Scripts](#adding-new-scripts)
+  - [Project Structure Integration](#project-structure-integration)
+
 ## Available Scripts
 
 ### `audio_cache_manager.py`
@@ -39,44 +75,244 @@ uv run python scripts/audio_cache_manager.py clear --confirm
 
 See [README_AUDIO_CACHE.md](README_AUDIO_CACHE.md) for detailed documentation.
 
-### `list_cameras.py`
-
-Comprehensive Reolink camera discovery tool using intelligent progressive detection.
+### `audio_recovery.py`
+Audio diagnostic and recovery script for troubleshooting audio device issues.
 
 **Usage:**
 ```bash
-# Comprehensive discovery (default - smartest)
-uv run python scripts/list_cameras.py
+# Diagnose audio issues
+uv run python scripts/audio_recovery.py diagnose
 
-# Fast port scan only (shows all HTTPS devices)
-uv run python scripts/list_cameras.py --fast
+# Reset specific audio device
+uv run python scripts/audio_recovery.py reset-device "Device Name"
 
-# Signature-based detection (precise Reolink identification)  
-uv run python scripts/list_cameras.py --signature
+# Force full audio system reset
+uv run python scripts/audio_recovery.py force-reset
 
-# Test specific IP first (fastest for known cameras)
-uv run python scripts/list_cameras.py --known-ip 192.168.2.229
-
-# Test credentials on discovered cameras
-uv run python scripts/list_cameras.py --test-creds admin your_password
-
-# Verbose output for debugging
-uv run python scripts/list_cameras.py --verbose
+# Clean up audio resources
+uv run python scripts/audio_recovery.py cleanup
 ```
 
-**Discovery Methods:**
-- **Comprehensive (Default)**: Smart progressive discovery - tests known IP first, falls back to network scan, then signature verification
-- **Fast**: Ultra-fast port scanning for HTTPS devices (seconds)
-- **Signature**: Credential-free detection using Reolink API signatures
-- **Known IP**: Direct testing of specific IP address
+**Features:**
+- **Device Diagnosis**: Identifies audio device problems
+- **Device Reset**: Resets problematic audio devices
+- **System Reset**: Forces complete audio system restart
+- **Resource Cleanup**: Cleans up stuck audio resources
+
+### `generate_environmental_sound_json.py`
+Generates environmental sound prompts for different Anthropocene eras and biomes.
+
+**Usage:**
+```bash
+uv run python scripts/generate_environmental_sound_json.py
+```
+
+**What it does:**
+- Reads Anthropocene data and location configurations
+- Generates sound prompts for different eras, sectors, and biomes
+- Creates JSON output for audio generation systems
+
+### `git_identity_remote`
+Sets up git identity for remote work sessions in VS Code terminals.
+
+**Usage:**
+```bash
+source scripts/git_identity_remote
+```
+
+**What it does:**
+- Configures git author name and email for the current session
+- Only affects the current terminal session
+- Automatically detects VS Code environment
+
+### `image_watch.sh`
+Monitors remote gallery for new images and displays them locally.
+
+**Usage:**
+```bash
+./scripts/image_watch.sh --host gallery --viewer auto
+./scripts/image_watch.sh --host gallery --viewer feh
+./scripts/image_watch.sh --host gallery --viewer eog
+```
 
 **Features:**
-- **No Credential Broadcast**: Never sends passwords during network discovery
-- **Progressive Fallback**: Intelligently escalates from fastest to most thorough methods
-- **Security Conscious**: Uses port scanning and signature detection before credentials
-- **Comprehensive Output**: Shows camera details and provides configuration guidance
+- **Remote Monitoring**: Watches remote gallery via SSH
+- **Auto-Update**: Automatically displays new images
+- **Multiple Viewers**: Supports feh, eog, and auto-selection
+- **Real-time**: Uses inotify for live updates when available
 
-### `test_reolink_camera.py`
+### `images_to_video.py`
+Converts timestamped images into videos with crossfade transitions.
+
+**Usage:**
+```bash
+# Basic usage
+uv run scripts/images_to_video.py images/ -o output.mp4
+
+# With time range and custom settings
+uv run scripts/images_to_video.py images/ -o output.mp4 \
+    --start-time "2025-07-27 20:00:00" \
+    --end-time "2025-07-27 22:00:00" \
+    --frames-per-image 5 --blend-frames 2 --fps 30
+
+# List images without creating video
+uv run scripts/images_to_video.py images/ --list-only
+```
+
+**Features:**
+- **Timestamp Sorting**: Processes images by filename timestamps
+- **Crossfade Transitions**: Smooth transitions between images
+- **Time Filtering**: Filter images by date/time range
+- **Customizable**: Adjustable frame rates and transition settings
+
+### `list_anthropocene_elements.py`
+Extracts and lists unique elements from Anthropocene data.
+
+**Usage:**
+```bash
+uv run python scripts/list_anthropocene_elements.py
+```
+
+**What it does:**
+- Parses the anthropocene.json data file
+- Extracts all unique elements across eras, sectors, and biomes
+- Outputs a sorted list of elements for reference
+
+### `list_audio_devices.py`
+Lists all available PyAudio input and output devices for configuration.
+
+**Usage:**
+```bash
+uv run python scripts/list_audio_devices.py
+```
+
+**What it does:**
+- Enumerates all audio devices with their indices
+- Shows device names, sample rates, and channel counts
+- Helps configure audio device settings in services
+
+### `list_webcams.py`
+Lists available webcam devices and tests their capabilities.
+
+**Usage:**
+```bash
+uv run python scripts/list_webcams.py
+```
+
+**What it does:**
+- Scans for webcam devices (indices 0-9)
+- Tests camera functionality by capturing frames
+- Reports camera names and basic capabilities
+- Helps identify working cameras for the agent service
+
+### `mock_control.py`
+Control script for the mock audience detector used in testing.
+
+**Usage:**
+```bash
+# Signal presence/absence
+uv run python scripts/mock_control.py present
+uv run python scripts/mock_control.py absent
+
+# Set person count
+uv run python scripts/mock_control.py count 3
+
+# Interactive mode
+uv run python scripts/mock_control.py --interactive
+
+# Show status
+uv run python scripts/mock_control.py status
+```
+
+**Features:**
+- **Presence Control**: Manually trigger presence/absence signals
+- **Count Setting**: Set specific person counts for testing
+- **Interactive Mode**: Keyboard controls for real-time testing
+- **Status Display**: Show current detector state
+
+### `normalize_audio.sh`
+Normalizes audio files referenced in layers.json using ffmpeg-normalize.
+
+**Usage:**
+```bash
+./scripts/normalize_audio.sh
+```
+
+**What it does:**
+- Processes audio files in the environment directory
+- Applies EBU R128 loudness normalization (-23 LUFS)
+- Creates normalized versions in a separate directory
+- Updates configuration to reference normalized files
+
+### `pipewire_multi_sink.py`
+Creates multi-channel virtual audio sinks for PipeWire systems.
+
+**Usage:**
+```bash
+# Interactive mode
+uv run python scripts/pipewire_multi_sink.py
+
+# Non-interactive with specific sinks
+uv run python scripts/pipewire_multi_sink.py --name "Virtual-4ch" \
+    --select "0,1" --non-interactive --make-default
+```
+
+**Features:**
+- **Multi-Channel Routing**: Routes different channels to different devices
+- **Interactive Selection**: Lists available sinks and prompts for selection
+- **Default Setting**: Can set created sink as system default
+- **Conflict Prevention**: Handles duplicate sink names
+
+### `project`
+Quick project switcher script for the Experimance system.
+
+**Usage:**
+```bash
+# Show current project
+./scripts/project
+
+# Switch to different project
+./scripts/project fire
+./scripts/project experimance
+```
+
+**What it does:**
+- Displays current active project
+- Lists available projects
+- Switches project by calling set_project.py
+
+### `set_project.py`
+Sets the current project for the Experimance system.
+
+**Usage:**
+```bash
+uv run python scripts/set_project.py fire
+uv run python scripts/set_project.py experimance
+```
+
+**What it does:**
+- Updates the .project file to specify active project
+- Tells services which project configuration to use
+- Manages project-specific settings automatically
+
+### `test_osc.py`
+Tests OSC (Open Sound Control) communication with SuperCollider.
+
+**Usage:**
+```bash
+# Test OSC communication
+uv run python scripts/test_osc.py
+
+# Send custom OSC message
+uv run python scripts/test_osc.py --message "/test" --args "hello" 123
+```
+
+**Features:**
+- **OSC Testing**: Verifies OSC communication with audio services
+- **Custom Messages**: Send test messages to SuperCollider
+- **Port Configuration**: Uses standard Experimance OSC ports
+
+### `tune_detector.py`
 
 Comprehensive Reolink camera testing and control tool for debugging and exploration.
 
@@ -416,6 +652,67 @@ uv run python scripts/update_pyi_stubs.py --dry-run # Preview only
 - Regenerates `libs/common/src/experimance_common/schemas.pyi`
 - Regenerates `libs/common/src/experimance_common/constants.pyi`
 - Ensures proper type checking for dynamically loaded project-specific modules
+
+### `validate_schemas.py`
+Validates that Python schemas match corresponding JSON configuration files.
+
+**Usage:**
+```bash
+uv run python scripts/validate_schemas.py
+```
+
+**What it does:**
+- Checks that Era and Biome schemas match the JSON config files
+- Validates schema consistency across the project
+- Reports any mismatches or validation errors
+
+### `vastai_cli.py`
+**DEPRECATED** - CLI tool for managing Vast.ai instances for image generation.
+
+**Usage:**
+```bash
+# DEPRECATED: Use 'uv run vastai' instead
+uv run python scripts/vastai_cli.py list           # List instances
+uv run python scripts/vastai_cli.py provision      # Create instance
+uv run python scripts/vastai_cli.py destroy        # Destroy instance
+```
+
+**Note:** This script has been replaced by the packaged `vastai` command. Use `uv run vastai` instead.
+
+### `view_images.py`
+Simple image viewer for browsing generated images with filtering and navigation.
+
+**Usage:**
+```bash
+# View all images
+uv run scripts/view_images.py
+
+# View specific era/biome with custom delay
+uv run scripts/view_images.py media/images/generated --era modern --biome tundra --delay 2.5
+```
+
+**Controls:**
+- **Right/n/Space**: Next image (Space toggles autoplay)
+- **Left/p**: Previous image
+- **a**: Toggle autoplay
+- **d**: Delete current image
+- **q/Escape**: Quit
+- **+/-**: Change autoplay delay
+- **f**: Toggle fullscreen
+
+### `zip_media.sh`
+Packages the media directory into a zip file for uploading.
+
+**Usage:**
+```bash
+./scripts/zip_media.sh                           # Default name
+./scripts/zip_media.sh custom_name.zip           # Custom name
+```
+
+**What it does:**
+- Creates a zip archive of the media directory
+- Excludes generated images and hidden files
+- Useful for bundling media assets for deployment
 
 ## Adding New Scripts
 
