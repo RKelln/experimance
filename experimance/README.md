@@ -135,8 +135,8 @@ Experimance is currently comprised of a number of services:
   * [readme](services/core/README.md)
   * [depth camera readme](services/core/README_DEPTH.md)
 * ## Image Server
-  * Image generation using multiple plugin generators
-  * Receives `RenderRequest`s, replies with `ImageReady`
+  * Image and audio generation using multiple plugin generators
+  * Receives `RenderRequest`s, replies with `ImageReady` or `AudioReady`
   * [readme](services/image_server/README.md)
 * ## Agent
   * Voice agent powered by `pipecat` and `pipecat-flows`
@@ -165,6 +165,28 @@ Experimance is currently comprised of a number of services:
   * Sends notifications via ntfy.sh when services become unhealthy
   * [readme](services/health/README.md)
   * [health system documentation](docs/health_system.md)
+
+
+## Projects using Experimance
+
+A couple of completed projects use this codebase.
+
+### Experimance #5
+
+[![Experimance video](https://img.youtube.com/vi/smPN-c-78cE/maxresdefault.jpg)](https://youtu.be/smPN-c-78cE)
+
+- [Experimance by Ryan Kelln](https://www.ryankelln.com/project/experimance/)
+  - The original installation: an interactive sand-table experience combining audience-presence detection, AI-generated satellite imagery, and generative soundscapes.
+  - [Video documentation](https://youtu.be/smPN-c-78cE)
+
+### Feed the Fires
+
+[![Experimance video](https://img.youtube.com/vi/W0TVMIROnqc/maxresdefault.jpg)](https://youtu.be/W0TVMIROnqc)
+
+- [Feed the Fires by Ryan Kelln, Kyle Duffield and Mike Dunn](https://www.ryankelln.com/project/feed-the-fires/)
+  - A site-specific adaptation that focuses on community and environmental themes, using the same Experimance architecture to drive visuals and audio in response to participants stories told to a "fire spirit".
+  - [Video documentation](https://youtu.be/W0TVMIROnqc)
+
 
 ## Running Services
 
@@ -217,7 +239,7 @@ This structure makes development cleaner by:
 
 ### Type Stub Automation
 
-To keep type stubs (`schemas.pyi` and `constants.pyi`) up to date for static analysis and IDE support, use the provided script:
+To keep type stubs (`schemas.pyi` and `constants.pyi`) up to date for static analysis and IDE support, edit the `.pyi` files or update the provided script and then run it:
 
 ```bash
 uv run python scripts/update_pyi_stubs.py --diff   # Show diffs and confirm before overwriting
