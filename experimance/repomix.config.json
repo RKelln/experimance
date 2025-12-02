@@ -27,6 +27,7 @@
             "**/DESIGN.md",
             "**/README_*.md",
             "**/*_README.md",
+            "**/CODE_REVIEW.md",
             "infra/",
             "patches/",
             "**/tests/",
