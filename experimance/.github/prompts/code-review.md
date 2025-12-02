@@ -1,0 +1,3 @@
+Using #repomix-service-core.xml which summarizes the entire core service module please verifiy that the documentation (READMEs, etc) are up to date with code and update the docs as needed. Please note that is is a single service that is part of the Experimance software, see #README.md for general information and instructions.
+
+At the same time as verifying documentation, note any code smells, areas of improvement, missing tests, and other feedback that will be used to improve the codebase. Be thorough and thoughtful. This feedback should be placed in #CODE_REVIEW.md inside the service folder (please read that first for any existing notes and update as you see fit).
