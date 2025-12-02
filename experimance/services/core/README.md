@@ -179,6 +179,20 @@ The service uses the `realsense_camera.py` module for reliable depth processing:
 
 For detailed camera setup and troubleshooting, see [README_DEPTH.md](README_DEPTH.md).
 
+### Camera Error & Recovery Behavior
+
+The core camera wrapper (`realsense_camera.py`) performs automatic error handling and recovery:
+
+- On failure (e.g., USB disconnect, no frames), the camera pipeline will attempt reinitialization with exponential backoff.
+- Config fields that influence behavior:
+  - `camera.max_retries` (int): Number of attempts before giving up
+  - `camera.retry_delay` (float): Initial delay in seconds between retries
+  - `camera.max_retry_delay` (float): Max delay between retries under exponential backoff
+  - `camera.aggressive_reset` (bool): If True, use more aggressive hardware reset procedures (USB reset)
+  - `camera.skip_advanced_config` (bool): Skip loading advanced JSON camera settings on reinitialization
+
+In general, the system will set `CameraState.ERROR` after the maximum retries fail; ensure appropriate monitoring for the camera state in production. See `services/core/src/experimance_core/realsense_camera.py` for more details and logging points.
+
 ## Configuration
 
 Configuration is managed through project-specific TOML files in `projects/experimance/core.toml`.
@@ -494,9 +508,11 @@ The core service includes comprehensive test coverage:
 5. **Monitor Logs**: Watch for state transitions, render requests, and worker responses
 6. **Test State Machine**: Interact with the depth camera or use mock data to test era progression
 
-### Mock Mode Development
+### Mock Mode Development (Full Mock Mode and CI-friendly)
 
-For development without hardware, use the mock depth camera system:
+For development and CI where hardware and other services aren't available, the following options provide a deterministic, fully mocked run for the core service:
+
+1) Local-only Mock Mode (mock depth + always present):
 
 ```bash
 # Set the active project (if not already set)
@@ -505,13 +521,24 @@ uv run set-project experimance
 # Create a directory with mock depth images (grayscale PNG files)
 mkdir -p media/images/mocks/depth
 
-# Start core with mock depth camera
+# Start the core service with mock depth and forced presence
 uv run -m experimance_core \
   --depth-processing-mock-depth-images-path media/images/mocks/depth \
   --presence-always-present
 ```
 
-The mock depth processor will cycle through images in the specified directory, simulating camera input.
+This uses the `MockDepthProcessor` to read 8-bit grayscale images from `media/images/mocks/depth` and simulates hand detection. The mock processor resizes input images to your configured `camera.output_resolution`, so any grayscale images will work (PNG, JPG). Prefer 8-bit PNGs to avoid format variations.
+
+2) Full Mock Mode (mock depth + mock ZMQ):
+
+If you want to isolate the core service from other ZMQ workers and services in CI or local tests, use a mocked ZMQ service via the testing utilities or by monkeypatching the `zmq_service` in tests. The `libs/common` package provides utilities to create a mock ZMQ service:
+
+```python
+from experimance_common.zmq.mocks import create_mock_zmq_service
+service.zmq_service = create_mock_zmq_service()
+```
+
+Use the `MockPubSubService` and `create_mock_zmq_service()` in unit/integration tests to avoid network or worker dependencies. For CI, run a pytest session that uses `create_mock_service(mock_zmq=True)` so that tests can run deterministically.
 
 **Note**: The active project is stored in `projects/.project` file. You can also manually edit this file or use the `set-project` CLI tool to switch between projects (e.g., `experimance`, `fire`, `sohkepayin`).
 
@@ -646,27 +673,6 @@ uv run python tests/test_camera.py --mock --duration 30 --verbose
    journalctl -u experimance-core -f
    ```
 
-### Docker Deployment
-
-```dockerfile
-FROM python:3.11
-
-# Install RealSense libraries
-RUN apt-get update && apt-get install -y \
-    librealsense2-dev \
-    librealsense2-utils
-
-# Install uv and dependencies
-COPY pyproject.toml uv.lock ./
-RUN pip install uv && uv sync
-
-# Copy service code
-COPY src/ src/
-COPY config.toml data/ ./
-
-# Run service
-CMD ["uv", "run", "-m", "experimance_core"]
-```
 
 ## Performance Characteristics
 
@@ -699,12 +705,7 @@ CMD ["uv", "run", "-m", "experimance_core"]
    uv sync --dev
    ```
 
-2. **Pre-commit Hooks**:
-   ```bash
-   pre-commit install
-   ```
-
-3. **Testing**:
+2. **Testing**:
    ```bash
    uv run -m pytest
    uv run python tests/test_camera.py --mock

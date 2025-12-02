@@ -190,6 +190,8 @@ async for frame in mock_processor.stream_frames():
 mock_processor.stop()
 ```
 
+Note: The `MockDepthProcessor` reads standard 8-bit grayscale images (PNG/JPG) from the provided directory and resizes them to the configured `camera.output_resolution`. Brighter pixels are treated as closer depth values. For deterministic behavior in tests, prefer providing a fixed set of images and/or use `MockDepthProcessor.set_frame_sequence()` or `MockDepthProcessor.set_hand_detection_rate()` to control hand detection for reproducible tests.
+
 ## Data Structures
 
 ### DepthFrame
