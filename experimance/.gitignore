@@ -63,6 +63,7 @@ media/
 transcripts/
 models/
 .project
+repomix-outputs/
 
 # Rust code and artifacts
 *.rs.bk

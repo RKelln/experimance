@@ -1,0 +1,50 @@
+{
+    "$schema": "https://repomix.com/schemas/latest/schema.json",
+    "output": {
+        "filePath": "repomix-output.xml",
+        "style": "xml",
+        "removeComments": true,
+        "removeEmptyLines": true,
+        "compress": true
+    },
+    "ignore": {
+        "useGitignore": true,
+        "useDefaultPatterns": true,
+        "customPatterns": [
+            ".clinerules/",
+            ".github/",
+            "*.code-workspace",
+            "**/.gitignore",
+            "**/.repomixignore",
+            "data/",
+            "docs/",
+            "*.txt",
+            "**/TODO.md",
+            "**/NOTES.md",
+            "**/PROGRESS.md",
+            "**/CHANGELOG.md",
+            "**/CONTRIBUTING.md",
+            "**/DESIGN.md",
+            "**/README_*.md",
+            "**/*_README.md",
+            "infra/",
+            "patches/",
+            "**/tests/",
+            "**/test_*.py",
+            "**/prototype/",
+            "utils/examples/",
+            "scripts/",
+            "repomix-output.*",
+            "repomix.config.json",
+            "**/*.json",
+            "**/*.toml",
+            "**/*.ini",
+            "**/*.yml",
+            "**/*.yaml",
+            "**/*.pyi",
+            "**/*.lock",
+            "**/surround_sound.scd",
+            "**/*_prototype.*"
+        ]
+    }
+}
