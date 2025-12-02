@@ -402,29 +402,59 @@ The service receives responses via pull sockets from worker services:
 
 ```
 services/core/
+├── .env.example                 # Minimal env variables for local runs (copy to .env)
 ├── README.md                    # This file
-├── DESIGN.md                    # Detailed architecture documentation  
+├── DESIGN.md                    # Detailed architecture documentation
 ├── README_DEPTH.md              # Camera setup and troubleshooting
-├── config.toml                  # Service configuration
-├── pyproject.toml              # Python dependencies and scripts
+├── config.toml                  # Example service configuration (project override in projects/)
+├── pyproject.toml               # Python package/dependency manifest
+├── pytest.ini                   # Pytest config for service tests
+├── scripts/                     # Helper & test scripts for development
 ├── src/
-│   └── experimance_core/
-│       ├── __init__.py
-│       ├── experimance_core.py  # Main service class with ControllerService composition
-│       ├── config.py           # Configuration classes using ControllerServiceConfig
-│       ├── depth_processor.py   # Modern camera interface
-│       ├── depth_visualizer.py  # Camera visualization and debugging
-│       ├── depth_factory.py     # Camera factory function
-│       └── prompter.py         # Text prompt generation
-├── tests/
-│   ├── test_camera.py          # Camera testing and visualization
-│   ├── test_integration.py     # Service integration tests
-│   └── test_depth_integration.py  # Depth processing tests
-├── data/
-│   ├── locations.json          # Geographic location data
-│   └── anthropocene.json      # Era development data
-└── saved_data/                 # State persistence
+│   ├── experimance_core/        # Source for experimance project core
+│   └── fire_core/               # Source for feed-the-fires core
+├── tests/                       # Unit and integration tests for the service
+├── typings/                     # Type stubs (pyi) and helper definitions
 ```
+
+### Module Map
+
+#### Experimance project
+
+This quick table maps the major modules in `src/experimance_core` to their responsibilities:
+
+| Module                              | Responsibility                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| `realsense_camera.py`               | Low-level RealSense camera wrapper & recovery logic                     |
+| `depth_processor.py`                | High-level depth processing and interaction detection (DepthProcessor)  |
+| `mock_depth_processor.py`           | Mock depth frame generator for development and CI                       |
+| `depth_visualizer.py`               | Visualization helpers for debugging and inspection                      |
+| `depth_utils.py`                    | Utility functions for depth analysis and mask creation                  |
+| `presence.py`                       | Audience presence detection and hysteresis/state management             |
+| `prompt_generator.py`/`prompter.py` | Prompt generation (LLM prompts, templating)                             |
+| `experimance_core.py`               | Main service runner / state machine orchestration                       |
+| `depth_factory.py`                  | Factory helpers to construct the correct depth processor implementation |
+
+> Tip: Use `--help` on `uv run -m experimance_core` to see all configuration options (including mock flags)
+
+## Fire project
+
+This quick table maps the major modules in `src/fire_core` to their responsibilities:
+
+| Module                  | Responsibility                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| `__main__.py`           | Service entrypoint and CLI runner                                                            |
+| `cli.py`                | CLI testing utilities for conversations, prompts, and debug scenarios                        |
+| `config.py`             | Pydantic config models and validation for `fire` project settings                            |
+| `fire_core.py`          | Main service class: request queue, LLM orchestration, state monitor, and worker coordination |
+| `llm_prompt_builder.py` | Prompt composition, template substitution, and LLM prompt building logic                     |
+| `llm.py`                | LLM provider interface and provider implementations (OpenAI, mock, etc.)                     |
+| `audio_manager.py`      | Audio-related logic (audio generation or playback orchestration)                             |
+| `tiler.py`              | Tile generation/calc strategy (split base image into tiles for display)                      |
+| `prompt_logger.py`      | Structured logging for prompts, LLM inputs/outputs, and debugging trace                      |
+
+> Tip: Use `uv run -m fire_core.cli --help` or `uv run -m fire_core --help` to see options and run the service with mock providers for development
+
 
 ### Running Tests
 

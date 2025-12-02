@@ -429,7 +429,6 @@ The table defines a **star topology**: `experimance` sits at the center (`events
 idle_timeout = 45           # seconds
 wilderness_reset = 300      # seconds to full reset
 sensor_gain = 1.8           # tweak for vibe sensors
-initial_state_path = "saved_data/default_state.json"  # Path to initial state JSON
 ```
 
 *State Management*:

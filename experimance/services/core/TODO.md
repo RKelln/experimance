@@ -158,7 +158,6 @@
 ## Configuration Files to Create
 - [ ] `config.toml` - Main service configuration
 - [ ] `depth_proc.toml` - Depth processing parameters  
-- [ ] `saved_data/default_state.json` - Initial state
 - [ ] `config/audio_tags.json` - Known audio tags for extraction
 - [ ] `prompts/` directory structure with Jinja2 templates
 - [ ] `data/locations.json` - Geographic location data

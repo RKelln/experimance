@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Experimance Core Service uses Intel RealSense depth cameras for real-time user interaction detection. The `robust_camera.py` module provides a modern, async/await-based interface that replaces the legacy `depth_finder.py` implementation with robust error handling, retry logic, and comprehensive testing support.
+The Experimance Core Service uses Intel RealSense depth cameras for real-time user interaction detection. The `realsense_camera.py` hardware wrapper together with the `depth_processor.py` module provide a modern, async/await-based interface that replaces the legacy `depth_finder.py` implementation with robust error handling, retry logic, and comprehensive testing support.
 
 ## Architecture
 
 ### Core Components
 
-1. **`robust_camera.py`** - Modern camera interface with:
+1. **`realsense_camera.py`** - RealSense hardware wrapper; **`depth_processor.py`** - high-level processing pipeline with:
    - Async/await support for seamless service integration
    - Comprehensive error handling with automatic retry and hardware reset
    - Mock support for development and testing
@@ -21,7 +21,7 @@ The Experimance Core Service uses Intel RealSense depth cameras for real-time us
 ### Data Flow
 
 ```
-RealSense Camera → robust_camera.py → DepthProcessor → Core Service →
+RealSense Camera → realsense_camera.py → depth_processor.py (DepthProcessor) → Core Service →
   ↓
 Interaction Detection → State Updates → Era Progression → 
   ↓
@@ -32,7 +32,7 @@ ZMQ Events → Audio/Display/Image Services
 
 ### 🚀 Modern Design
 - **Type hints** throughout for better IDE support and code clarity
-- **Dataclasses** for clean configuration and data structures  
+- **Pydantic models** for configuration validation and data structures
 - **Async/await** for seamless integration with the core service
 - **Enum-based state management** for clear operational states
 
@@ -53,8 +53,8 @@ ZMQ Events → Audio/Display/Image Services
 ### Camera Settings
 
 ```python
-@dataclass
-class CameraConfig:
+from pydantic import BaseModel
+class CameraConfig(BaseModel):
     # Camera hardware settings
     resolution: Tuple[int, int] = (640, 480)
     fps: int = 30
@@ -97,7 +97,8 @@ output_size = [1024, 1024] # Processed output size
 
 ```python
 import asyncio
-from experimance_core.robust_camera import CameraConfig, DepthProcessor
+from experimance_core.config import CameraConfig
+from experimance_core.depth_processor import DepthProcessor
 
 async def main():
     # Create configuration
@@ -170,7 +171,8 @@ class ExperimanceCoreService:
 ### Using Mock Camera for Development
 
 ```python
-from experimance_core.robust_camera import MockDepthProcessor
+from experimance_core.config import CameraConfig
+from experimance_core.mock_depth_processor import MockDepthProcessor
 
 # Create mock processor for testing
 config = CameraConfig(fps=10)  # Faster for testing
@@ -282,7 +284,8 @@ uv run python tests/test_camera.py --mock --duration 5
 # Test camera import and basic functionality
 python -c "
 import asyncio
-from experimance_core.robust_camera import CameraConfig, DepthProcessor
+from experimance_core.config import CameraConfig
+from experimance_core.depth_processor import DepthProcessor
 
 async def test():
     config = CameraConfig(resolution=(640, 480))
@@ -420,7 +423,7 @@ dev_config = CameraConfig(
 ```python
 # Enable detailed logging
 import logging
-logging.getLogger('robust_camera').setLevel(logging.DEBUG)
+logging.getLogger('experimance_core.depth_processor').setLevel(logging.DEBUG)
 
 # Use debug configuration
 debug_config = CameraConfig(
@@ -475,7 +478,8 @@ self.depth_generator = self._async_depth_wrapper(depth_factory())
 
 **New Code:**
 ```python
-from experimance_core.robust_camera import DepthProcessor, CameraConfig
+from experimance_core.depth_processor import DepthProcessor
+from experimance_core.config import CameraConfig
 
 self.camera_config = CameraConfig(
     json_config_path=config.camera_config_path,
@@ -560,7 +564,8 @@ This robust camera system provides reliable depth sensing for the Experimance in
 
 ```python
 import asyncio
-from experimance_core.robust_camera import CameraConfig, DepthProcessor
+from experimance_core.config import CameraConfig
+from experimance_core.depth_processor import DepthProcessor
 
 async def main():
     # Create configuration
@@ -599,7 +604,8 @@ asyncio.run(main())
 ### Mock Mode for Development
 
 ```python
-from experimance_core.robust_camera import MockDepthProcessor
+from experimance_core.config import CameraConfig
+from experimance_core.mock_depth_processor import MockDepthProcessor
 
 async def test_without_camera():
     config = CameraConfig(fps=10)  # Faster for testing
@@ -869,11 +875,11 @@ class DepthFrame:
 
 ### CameraConfig
 
-Comprehensive configuration with type safety:
+Comprehensive configuration with type safety (Pydantic model):
 
 ```python
-@dataclass
-class CameraConfig:
+from pydantic import BaseModel
+class CameraConfig(BaseModel):
     # Camera settings
     resolution: Tuple[int, int] = (640, 480)
     fps: int = 30
@@ -964,7 +970,7 @@ async for frame in processor.stream_frames():
 ```python
 # Enable debug logging
 import logging
-logging.getLogger('robust_camera').setLevel(logging.DEBUG)
+logging.getLogger('experimance_core.depth_processor').setLevel(logging.DEBUG)
 
 # Use test configuration
 config = CameraConfig(
@@ -982,20 +988,22 @@ config = CameraConfig(
 The robust camera module provides a compatibility function for easy migration:
 
 ```python
-# Old code
+# Old code 
 from experimance_core.depth_finder import depth_generator
 async for depth_image, hand_detected in depth_generator(...):
     process_frame(depth_image, hand_detected)
 
-# New code - compatibility mode
-from experimance_core.robust_camera import robust_depth_generator
-async for depth_image, hand_detected in robust_depth_generator(...):
-    process_frame(depth_image, hand_detected)
+# Migration compatibility (if you had a wrapper function for streaming images):
+# Replace `depth_generator` with an adapter that yields the same tuple (depth_image, hand_detected)
+# or switch to the modern API below for more reliability.
 
 # New code - modern interface (recommended)
-from experimance_core.robust_camera import DepthProcessor, CameraConfig
-processor = DepthProcessor(CameraConfig(...))
+from experimance_core.config import CameraConfig
+from experimance_core.depth_processor import DepthProcessor
+config = CameraConfig()
+processor = DepthProcessor(config)
 async for frame in processor.stream_frames():
+    # `frame` is a `DepthFrame` with attributes: frame.depth_image, frame.hand_detected, frame.change_score, etc.
     process_frame(frame)
 ```
 

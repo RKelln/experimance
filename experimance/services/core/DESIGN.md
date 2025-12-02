@@ -212,23 +212,6 @@ data_path = "data/"
 locations_file = "locations.json"
 developments_file = "anthropocene.json"
 random_strategy = "shuffle"  # or "choice" or null
-
-[persistence]
-initial_state_path = "saved_data/default_state.json"
-save_state_interval = 30.0   # seconds between state saves
-```
-
-### Initial State File (`saved_data/default_state.json`)
-```json
-{
-  "era": "wilderness",
-  "biome": "forest", 
-  "user_interaction_score": 0.0,
-  "idle_timer": 0.0,
-  "audience_present": false,
-  "era_progression_timer": 0.0,
-  "session_start_time": "2025-06-13T10:00:00Z"
-}
 ```
 
 ## Service Implementation Pattern
