@@ -62,7 +62,7 @@ class TestMockPubSubService:
                 def handler(topic, message):
                     received_messages.append((topic, message))
                 
-                service.set_message_handler(handler)
+                service.set_default_handler(handler)
                 
                 # Simulate external messages
                 await mock_message_bus.publish("events", {"event": "started"}, "external")
@@ -101,7 +101,7 @@ class TestMockPubSubService:
                 def command_handler(topic, message):
                     received_commands.append(message)
                 
-                service.set_message_handler(command_handler)
+                service.set_default_handler(command_handler)
                 
                 # Simulate receiving a command
                 await mock_message_bus.publish("commands", {"action": "start"}, "external")
@@ -178,7 +178,7 @@ class TestMockWorkerService:
                 def work_handler(message):
                     pulled_work.append(message)
                 
-                service.set_message_handler(task_handler)
+                service.set_default_handler(task_handler)
                 service.set_work_handler(work_handler)
                 
                 # Test pub/sub functionality
@@ -245,7 +245,7 @@ class TestMockControllerService:
                 def text_handler(message):
                     text_work.append(message)
                 
-                controller.set_message_handler(status_handler)
+                controller.set_default_handler(status_handler)
                 controller.set_worker_handler("image_worker", image_handler)
                 controller.set_worker_handler("text_worker", text_handler)
                 
@@ -339,7 +339,7 @@ class TestMessageBusIntegration:
                     def notification_handler(topic, message):
                         received_notifications.append(message)
                     
-                    subscriber.set_message_handler(notification_handler)
+                    subscriber.set_default_handler(notification_handler)
                     
                     # Publisher sends notification
                     await publisher.publish({"alert": "system ready"}, "notifications")
@@ -424,7 +424,7 @@ class TestErrorHandling:
                 def failing_handler(topic, message):
                     raise ValueError("Handler error!")
                 
-                service.set_message_handler(failing_handler)
+                service.set_default_handler(failing_handler)
                 
                 # Send message - should not crash service
                 await mock_message_bus.publish("test", {"should": "survive"}, "external")

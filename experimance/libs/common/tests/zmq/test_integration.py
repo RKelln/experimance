@@ -109,8 +109,8 @@ class TestCommunicationPatterns:
                         def alerts_handler(topic, message):
                             alerts_received.append((topic, message))
                         
-                        events_sub.set_message_handler(events_handler)
-                        alerts_sub.set_message_handler(alerts_handler)
+                        events_sub.set_default_handler(events_handler)
+                        alerts_sub.set_default_handler(alerts_handler)
                         
                         # Publish various messages
                         await publisher.publish({"action": "login"}, "events.user")
@@ -154,7 +154,7 @@ class TestCommunicationPatterns:
                 def handler(topic, message):
                     received_messages.append((topic, message))
                 
-                service.set_message_handler(handler)
+                service.set_default_handler(handler)
                 
                 # Publish using enum values
                 await service.publish({"image_id": "img_001"}, MessageType.IMAGE_READY)
@@ -164,8 +164,8 @@ class TestCommunicationPatterns:
                 
                 # Verify enum values work correctly
                 assert len(received_messages) == 2
-                assert received_messages[1][0] == "ImageReady"
-                assert received_messages[2][0] == "EraChanged"
+                assert received_messages[0][0] == "ImageReady"
+                assert received_messages[1][0] == "SpaceTimeUpdate"
 
 
 class TestRealWorldScenarios:
@@ -216,7 +216,7 @@ class TestRealWorldScenarios:
                 def transition_handler(message):
                     transition_tasks.append(message)
                 
-                controller.set_message_handler(request_handler)
+                controller.set_default_handler(request_handler)
                 controller.set_worker_handler("image_generator", image_handler)
                 controller.set_worker_handler("transition_creator", transition_handler)
                 
@@ -349,7 +349,7 @@ class TestErrorRecoveryAndResilience:
                         raise RuntimeError(f"Handler error #{handler_call_count}")
                     # Succeeds on third call
                 
-                service.set_message_handler(unreliable_handler)
+                service.set_default_handler(unreliable_handler)
                 
                 # Send multiple messages
                 from experimance_common.zmq.mocks import mock_message_bus

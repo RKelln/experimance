@@ -258,7 +258,7 @@ class TestMessageTypes:
     def test_message_type_values(self):
         """Test that MessageType enum has expected values."""
         assert MessageType.IMAGE_READY == "ImageReady"
-        assert MessageType.SPACE_TIME_UPDATE == "EraChanged"
+        assert MessageType.SPACE_TIME_UPDATE == "SpaceTimeUpdate"
         
         # Test string conversion
         assert str(MessageType.IMAGE_READY) == "ImageReady"

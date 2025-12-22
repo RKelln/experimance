@@ -257,9 +257,10 @@ class MockPubSubService:
         
         logger.debug(f"MockPubSubService '{self.name}' published to {resolved_topic}: {message}")
     
-    def set_message_handler(self, handler: Callable):
-        """Set message handler for received messages."""
-        self.message_handlers.append(handler)
+    def set_default_handler(self, handler: Callable[[str, "MessageDataType"], Union[None, Awaitable[None]]]) -> None:
+        """Set default handler for unmatched topics (matching real PubSubService interface)."""
+        self._default_handler = handler
+        logger.debug(f"MockPubSubService '{self.name}' set default message handler")
     
     def add_message_handler(self, topic: "TopicType", handler: Callable[["MessageDataType"], Union[None, Awaitable[None]]]) -> None:
         """Add a message handler for a specific topic (matching real PubSubService interface)."""
@@ -291,17 +292,17 @@ class MockPubSubService:
             except Exception as e:
                 self.error_count += 1
                 logger.error(f"Error in MockPubSubService '{self.name}' topic handler for '{topic}': {e}")
-        
-        # Call general handlers (legacy behavior)
-        for handler in self.message_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    await handler(topic, message)
-                else:
-                    handler(topic, message)
-            except Exception as e:
-                self.error_count += 1
-                logger.error(f"Error in MockPubSubService '{self.name}' handler: {e}")
+        else:
+            # Call default handler for unmatched topics (matching real PubSubService behavior)
+            if hasattr(self, '_default_handler') and self._default_handler:
+                try:
+                    if asyncio.iscoroutinefunction(self._default_handler):
+                        await self._default_handler(topic, message)  # Default handler gets topic and message
+                    else:
+                        self._default_handler(topic, message)  # Default handler gets topic and message
+                except Exception as e:
+                    self.error_count += 1
+                    logger.error(f"Error in MockPubSubService '{self.name}' default handler: {e}")
     
     def get_published_messages(self, topic: Optional[str] = None) -> List[MockMessage]:
         """Get published messages, optionally filtered by topic."""
@@ -443,9 +444,9 @@ class MockWorkerService:
         
         logger.debug(f"MockWorkerService '{self.name}' pushed work: {message}")
     
-    def set_message_handler(self, handler: Callable):
-        """Set message handler for received messages."""
-        self.message_handlers.append(handler)
+    def set_default_handler(self, handler: Callable[[str, "MessageDataType"], None]) -> None:
+        """Set default handler for unmatched topics (matching real WorkerService interface)."""
+        self._default_handler = handler
     
     def add_message_handler(self, topic: "TopicType", handler: Callable[[str, "MessageDataType"], None]) -> None:
         """Add a message handler for a specific topic (matching real WorkerService interface)."""
@@ -479,6 +480,17 @@ class MockWorkerService:
             except Exception as e:
                 self.error_count += 1
                 logger.error(f"Error in MockWorkerService '{self.name}' message handler: {e}")
+        
+        # Call default handler if set and no specific handlers matched
+        if hasattr(self, '_default_handler') and self._default_handler and not self.message_handlers:
+            try:
+                if asyncio.iscoroutinefunction(self._default_handler):
+                    await self._default_handler(topic, message)
+                else:
+                    self._default_handler(topic, message)
+            except Exception as e:
+                self.error_count += 1
+                logger.error(f"Error in MockWorkerService '{self.name}' default handler: {e}")
     
     async def _handle_work(self, message: Dict[str, Any]):
         """Handle incoming work."""
@@ -643,10 +655,6 @@ class MockControllerService:
         """Push message to specific worker (legacy method name for compatibility)."""
         await self.send_work_to_worker(worker_name, message)
     
-    def set_message_handler(self, handler: Callable):
-        """Set message handler for received messages."""
-        self.message_handlers.append(handler)
-    
     def add_message_handler(self, topic: "TopicType", handler: Callable[[str, "MessageDataType"], None]) -> None:
         """Add a message handler for a specific topic (matching real ControllerService interface)."""
         # For mocks, we'll add to the general handlers but with topic filtering
@@ -673,7 +681,6 @@ class MockControllerService:
         """Set default handler for unmatched subscriber topics (matching real ControllerService interface)."""
         self._default_handler = handler
         logger.debug(f"MockControllerService '{self.name}' set default message handler")
-    
     async def _handle_message(self, topic: str, message: Dict[str, Any]):
         """Handle incoming message."""
         if not self.running:
@@ -694,6 +701,17 @@ class MockControllerService:
             except Exception as e:
                 self.error_count += 1
                 logger.error(f"Error in MockControllerService '{self.name}' message handler: {e}")
+        
+        # Call default handler if set and no specific handlers matched
+        if hasattr(self, '_default_handler') and self._default_handler and not self.message_handlers:
+            try:
+                if asyncio.iscoroutinefunction(self._default_handler):
+                    await self._default_handler(topic, message)
+                else:
+                    self._default_handler(topic, message)
+            except Exception as e:
+                self.error_count += 1
+                logger.error(f"Error in MockControllerService '{self.name}' default handler: {e}")
     
     def _create_worker_handler(self, worker_name: str):
         """Create a worker handler for the given worker name."""
