@@ -12,6 +12,7 @@ Controls when running:
   Left / p: previous image
   Hold Right/Left/n/p: after 0.5s delay, auto-advance at 10fps
   a: toggle autoplay
+  s: save current image to --save-to folder (if specified)
   d: delete current image file (moves to trash/deletes permanently)
   q / Escape: quit
   + / - : increase / decrease delay (when autoplay)
@@ -91,7 +92,7 @@ def find_images(root: Path, era: str | None, biome: str | None) -> List[Path]:
 
 
 class ImageViewer(window.Window):
-    def __init__(self, image_paths: List[Path], delay: float = 3.0):
+    def __init__(self, image_paths: List[Path], delay: float = 3.0, show_date: bool = False, save_to_folder: Optional[Path] = None):
         if not image_paths:
             raise ValueError('No images to display.')
 
@@ -99,6 +100,8 @@ class ImageViewer(window.Window):
         self.delay = max(0.1, float(delay))
         self.index = 0
         self.paused = True
+        self.show_date = show_date
+        self.save_to_folder = save_to_folder
         self.current_sprite: Optional[pyglet.sprite.Sprite] = None
         self.status_label: Optional[text.Label] = None
 
@@ -167,8 +170,13 @@ class ImageViewer(window.Window):
             self.next_image()
         elif symbol == key.LEFT or symbol == key.P:
             self.prev_image()
-        elif symbol == key.SPACE or symbol == key.A:
+        elif symbol == key.SPACE:
             self.toggle_play()
+        elif symbol == key.A:
+            self.toggle_play()
+        elif symbol == key.S:
+            if self.save_to_folder:
+                self.save_current_image()
         elif symbol == key.Q or symbol == key.ESCAPE:
             self.close()
         elif symbol == key.PLUS or symbol == key.EQUAL or symbol == key.COMMA:
@@ -229,7 +237,20 @@ class ImageViewer(window.Window):
     def _update_status(self):
         if self.status_label:
             path = self.paths[self.index]
-            status_text = f'[{self.index+1}/{len(self.paths)}] {path.name} | delay={self.delay:.1f}s | paused={self.paused}'
+            status_text = f'[{self.index+1}/{len(self.paths)}] {path.name}'
+            
+            if self.show_date:
+                try:
+                    # Get file modification time
+                    mtime = path.stat().st_mtime
+                    from datetime import datetime
+                    dt = datetime.fromtimestamp(mtime)
+                    date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    status_text += f' | {date_str}'
+                except Exception:
+                    pass
+            
+            status_text += f' | delay={self.delay:.1f}s | paused={self.paused}'
             self.status_label.text = status_text
 
     def next_image(self):
@@ -293,6 +314,35 @@ class ImageViewer(window.Window):
             print(f"Failed to delete {current_path.name}: {e}")
             self._update_status()
 
+    def save_current_image(self):
+        """Save/copy the current image to the save_to_folder."""
+        if not self.save_to_folder or not self.paths:
+            return
+            
+        current_path = self.paths[self.index]
+        try:
+            # Create destination folder if it doesn't exist
+            self.save_to_folder.mkdir(parents=True, exist_ok=True)
+            
+            # Copy file to destination
+            import shutil
+            dest_path = self.save_to_folder / current_path.name
+            
+            # Handle duplicate names by adding a counter
+            if dest_path.exists():
+                counter = 1
+                stem = current_path.stem
+                suffix = current_path.suffix
+                while dest_path.exists():
+                    dest_path = self.save_to_folder / f"{stem}_{counter}{suffix}"
+                    counter += 1
+            
+            shutil.copy2(current_path, dest_path)
+            print(f"Saved: {current_path.name} -> {dest_path}")
+            
+        except Exception as e:
+            print(f"Failed to save {current_path.name}: {e}")
+
     def _update(self, dt):
         current_time = time.time()
         
@@ -325,6 +375,8 @@ def parse_args():
     p.add_argument('--biome', '-b', help='Filter by biome substring (case-insensitive)')
     p.add_argument('--delay', '-d', type=float, default=3.0, help='Autoplay delay in seconds (default 3.0)')
     p.add_argument('--autoplay', action='store_true', help='Start in autoplay mode')
+    p.add_argument('--show-date', action='store_true', help='Display image creation date and time in status')
+    p.add_argument('--save-to', type=str, help='Folder to save images to when pressing s key')
     return p.parse_args()
 
 
@@ -337,8 +389,10 @@ def main():
         print(f'No images found under {root} with filters era={args.era} biome={args.biome}')
         sys.exit(2)
 
+    save_to = Path(args.save_to) if args.save_to else None
+    
     try:
-        viewer = ImageViewer(images, delay=args.delay)
+        viewer = ImageViewer(images, delay=args.delay, show_date=args.show_date, save_to_folder=save_to)
     except Exception as e:
         print(str(e), file=sys.stderr)
         print('\nPlease ensure you have pyglet installed. Run:')
