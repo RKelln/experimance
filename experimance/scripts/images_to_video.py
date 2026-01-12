@@ -80,7 +80,7 @@ def collect_images(
     image_dir: Path,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    extensions: Tuple[str, ...] = ('.jpg', '.jpeg', '.png')
+    extensions: Tuple[str, ...] = ('.jpg', '.jpeg', '.png', '.webp')
 ) -> List[Tuple[Path, datetime]]:
     """
     Collect and sort images by timestamp, recursively searching subdirectories.
