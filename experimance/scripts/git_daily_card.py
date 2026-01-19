@@ -47,6 +47,48 @@ class GitDailyCard:
     def __init__(self, repo_path: str = ".", bg_color: tuple = None):
         self.repo_path = Path(repo_path).resolve()
         self.bg_color = bg_color or (30, 30, 40, 255)  # Default with alpha
+        self._markdown_cache = {}  # Cache for parsed markdown content per date
+    
+    def _load_markdown_cache(self, markdown_path: str):
+        """Load and parse entire markdown file into cache once."""
+        md_path = Path(markdown_path)
+        if not md_path.exists():
+            return
+        
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse all date sections
+            import re
+            sections = content.split('# Experimance work summary:')
+            
+            for section in sections[1:]:  # Skip first empty section
+                # Extract date from first line
+                lines = section.strip().split('\n', 1)
+                if not lines:
+                    continue
+                
+                date = lines[0].strip()
+                
+                # Skip "no commits" entries - don't cache them
+                if "No commits on this day" in section:
+                    continue
+                
+                # Extract commit hashes from hidden comment
+                match = re.search(r'<!-- commits: ([a-f0-9,]+) -->', section)
+                if match:
+                    hashes = match.group(1).split(',')
+                    self._markdown_cache[date] = hashes
+            
+            print(f"Loaded {len(self._markdown_cache)} entries from markdown cache")
+        except Exception as e:
+            print(f"Warning: Could not load markdown cache: {e}")
+    
+    def _get_existing_commits_from_markdown(self, markdown_path: str, date: str) -> Optional[List[str]]:
+        """Get commit hashes for a specific date from cache."""
+        # Return cached result if available
+        return self._markdown_cache.get(date)
     
     def _wrap_text_to_width(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> List[str]:
         """Wrap text to fit within max_width pixels using actual font metrics."""
@@ -175,22 +217,36 @@ Focus on high level outcomes, don't just rephrase the commit messages. Avoid tec
         ]
     
     def get_commits_for_date(self, date: str) -> List[Dict[str, Any]]:
-        """Get all commits for a specific date."""
-        # Format: YYYY-MM-DD
-        since = f"{date} 00:00:00"
-        until = f"{date} 23:59:59"
-        
-        # Get commit hashes
+        """Get all commits for a specific date using author date (timezone-agnostic)."""
+        # Get all commit hashes with author dates
+        # Note: --since/--until filter by commit date, not author date
+        # So we get all commits and filter by author date manually
         cmd = [
             "git", "-C", str(self.repo_path),
             "log",
-            f"--since={since}",
-            f"--until={until}",
-            "--pretty=format:%H",
+            "--all",  # Search all branches
+            "--pretty=format:%H %ai",  # Hash and author date (ISO format: YYYY-MM-DD HH:MM:SS +ZZZZ)
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True)
-        commit_hashes = result.stdout.strip().split("\n")
+        
+        # Filter commits by author date (using date as-is, ignoring timezone)
+        commit_hashes = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split(" ", 1)
+            if len(parts) != 2:
+                continue
+            commit_hash, author_date_str = parts
+            # Author date format: 2025-06-18 13:28:25 -0400
+            # Extract just the date part (first 10 chars: YYYY-MM-DD)
+            try:
+                commit_date = author_date_str.split()[0]  # Get "2025-06-18" part
+                if commit_date == date:
+                    commit_hashes.append(commit_hash)
+            except (IndexError, ValueError):
+                continue
         
         if not commit_hashes or commit_hashes[0] == "":
             return []
@@ -348,8 +404,22 @@ Focus on high level outcomes, don't just rephrase the commit messages. Avoid tec
         else:
             commits = self.get_commits_for_date(date)
         
+        # Check if already processed (if markdown export is specified)
+        if markdown_export and not test_mode:
+            existing_hashes = self._get_existing_commits_from_markdown(markdown_export, date)
+            if existing_hashes is not None:
+                current_hashes = [c['hash'] for c in commits]
+                if existing_hashes == current_hashes:
+                    print(f"Skipping {date} - already processed with same commits")
+                    return None
+                elif len(existing_hashes) > 0:
+                    print(f"Regenerating {date} - commits have changed")
+        
         if not commits:
             print(f"No commits found for {date}")
+            # Add entry to markdown for days with no commits
+            if markdown_export:
+                self._export_no_commits_to_markdown(date, markdown_export)
             return None
         
         # Generate AI summary if requested
@@ -390,6 +460,35 @@ Focus on high level outcomes, don't just rephrase the commit messages. Avoid tec
     
     def _export_to_markdown(self, date: str, commits: List[Dict], summary: Optional[str], output_path: str):
         """Export card content to markdown file."""
+        md_path = Path(output_path)
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Remove existing entry for this date if it exists
+        if md_path.exists():
+            with open(md_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Remove old entry for this date
+            date_marker = f"# Experimance work summary: {date}"
+            if date_marker in content:
+                sections = content.split('# Experimance work summary:')
+                new_sections = []
+                for section in sections:
+                    # Keep sections that don't match this date
+                    if not section.strip().startswith(date):
+                        new_sections.append(section)
+                
+                # Reconstruct without the old entry
+                if len(new_sections) > 1:
+                    content = '# Experimance work summary:'.join(new_sections)
+                else:
+                    content = new_sections[0] if new_sections else ""
+                
+                # Write back
+                with open(md_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+        
+        # Now append the new entry
         md_lines = []
         md_lines.append(f"# Experimance work summary: {date}\n")
         
@@ -400,6 +499,10 @@ Focus on high level outcomes, don't just rephrase the commit messages. Avoid tec
         
         md_lines.append(f"**{len(commits)} commit{'s' if len(commits) != 1 else ''} • "
                        f"{total_files} files • +{total_insertions} -{total_deletions}**\n")
+        
+        # Add commit hashes for verification (hidden comment)
+        commit_hashes = ",".join([c['hash'] for c in commits])
+        md_lines.append(f"<!-- commits: {commit_hashes} -->\n")
         
         # AI Summary
         if summary:
@@ -447,6 +550,19 @@ Focus on high level outcomes, don't just rephrase the commit messages. Avoid tec
             f.writelines(md_lines)
         
         print(f"Markdown exported: {md_path}")
+    
+    def _export_no_commits_to_markdown(self, date: str, output_path: str):
+        """Add entry for date with no commits."""
+        md_lines = []
+        md_lines.append(f"# Experimance work summary: {date}\n")
+        md_lines.append("\n*No commits on this day*\n")
+        md_lines.append("\n---\n\n")
+        
+        md_path = Path(output_path)
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(md_path, 'a', encoding='utf-8') as f:
+            f.writelines(md_lines)
     
     def _calculate_card_height(self, commits: List[Dict], summary: Optional[str] = None) -> int:
         """Calculate required card height based on content."""
@@ -704,6 +820,10 @@ def main():
     
     generator = GitDailyCard(args.repo, bg_color=bg_color)
     
+    # Load markdown cache once if export-md is specified
+    if args.export_md:
+        generator._load_markdown_cache(args.export_md)
+    
     # Determine dates to process
     dates = []
     
@@ -732,7 +852,7 @@ def main():
     # Generate cards
     for date in dates:
         output = args.output
-        if len(dates) > 1 and output:
+        if output:
             # Handle output as directory or file
             output_path = Path(output)
             
@@ -741,8 +861,8 @@ def main():
                 # Treat as directory
                 output_path.mkdir(parents=True, exist_ok=True)
                 output = str(output_path / f"git_summary_{date}.png")
-            else:
-                # Treat as file, add date to filename
+            elif len(dates) > 1:
+                # Multiple dates with file output: add date to filename
                 output = str(output_path.parent / f"{output_path.stem}_{date}{output_path.suffix}")
         
         generator.generate_card(date, output, summarize=args.summarize, test_mode=args.test, markdown_export=args.export_md)
