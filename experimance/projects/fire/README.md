@@ -1,8 +1,79 @@
-# Feed the Fires – Project Overview
-
-## What is Feed the Fires?
+# Feed the Fires
 
 *Feed the Fires* is an immersive 360‑projection artwork in which audience stories are transformed, in real‑time, into dream‑like panoramas that wrap an entire rectangular room.
+
+Presented by the Sôhkêpayin Collective, *Feed the Fires* is a transformative exhibition resulting from a unique collaboration during a trip to Japan, organized by the Ainu. Five Indigenous creatives from the Five Directions came together in the East to explore the intersection of artificial intelligence and environmental stewardship. Through sharing knowledge and traditions related to fire, the participants sparked discussions on how technology can deepen our connection with nature.
+
+A 4’x4’ square firepit with mystic logs and glowing smoke beckons the audience. The spirit of the fire—played by a large language model (LLM)—speaks to them, guiding them to share a story that the spirit will transport to the spirit world. The firepit contains a projector that projects on the top surface of frosted acrylic, while LED lights, a water vapour machine, and fans create billowing "smoke" and flickering "coals". Four wooden benches surround the fire as an invitation to sit.
+
+As the audience tells their story, the AI fire spirit interprets the narrative and imagines its location, asking questions when it needs more details. The dark walls of the room begin to color, at first blurry and gradually forming clearer imaginings of where the audience’s story took place, transporting them back in time and memory. The central fire reacts dynamically with movement and color according to the interaction, providing an abstract reflection of the soul of the story.
+
+This partnership project emphasizes “more-than-human” collaborations, aiming to foster new understandings of interdependence within our ecosystems. It challenges us to envision a future where both sentient beings—natural and digital—collaborate respectfully to shape sustainable outcomes for our environment.
+
+# Credits
+
+Presented by the Sôhkêpayin Collective  
+Indigenous Ainu Host: Mayunkiki (Mai Hachiya)
+
+**Indigenous Led Contributors:**  
+Susan Blight  
+Rheanne Chartrand  
+Dr. Desiree Hernandez Ibinarriaga  
+Dr. James Oliver  
+Howard Munroe  
+Jason Baerg
+
+**Allied Contributors:**  
+Fran Rawlings  
+Calla Lee  
+Ziyan Hossain
+
+**Japanese Contributors:**  
+Kanoko Tamura  
+Tomoko Momiyama
+
+**Technical and Creative Contributors:**  
+Ryan Kelln  
+Kyle Duffield  
+Mike Dunn
+
+Support received from Canada Council for the Arts, SSHRC, OCADU, InterAccess Art Gallery.
+
+
+# Keywords
+
+interactive installation, generative media, storytelling, AI ethics
+
+# Use of AI
+
+The Fire Spirit is played by OpenAI ChatGPT-4o, with speech-to-text provided by Assembly AI and text-to-speech voice generation by Cartesia. The chat agent is powered by Pipecat by Daily. Chat transcripts are converted into image and audio prompts by OpenAI ChatGPT-4o. These image prompts are used to generate panorama images using the Juggernaut XI Lightning model by RunDiffusion (a custom SDXL model). Audio prompts are synthesized into dynamic environment audio by TangoFlux. AI coding assistance from Anthropic Claude and OpenAI GPT has supported the development process.
+
+
+# Software
+
+Custom Python and Supercollider scripts by Ryan Kelln and AI. TouchDesigner by Kyle Duffield.
+
+
+# Hardware
+
+Compute:
+* Linux desktop: Dual A100 Nvidia GPUs for real-time AI image and audio generation. Supplied by venue or equivalent AI cloud service.
+* Mac mini: Running voice agent, TouchDesigner fire projection control, and audio processing. Supplied by artist.
+
+Vision & Projection:
+* Projectors: 4× 1920×1080 projectors creating 360° wall projection. Supplied by venue.
+* Camera: Reolink camera for presence detection. Supplied by artist.
+
+Audio:
+* Microphone/Speaker: Yealink SP92 conference speaker/microphone with echo cancellation and/or wireless handheld microphone. Supplied by artist.
+
+Physical Interface & Networking:
+* Firepit: Custom 4'×4' firepit with integrated projector, frosted acrylic surface, LED lighting, and water vapor effects. Supplied by artist.
+* Seating: 4 wooden benches arranged in storytelling circle. Supplied by venue.
+* Networking: PoE ethernet switch connecting systems and camera. Supplied by artist.
+
+
+## Architecture
 
 The codebase extends the *Experimance* architecture. Four micro‑services cooperate via a ZeroMQ event bus, distributed across two machines:
 
