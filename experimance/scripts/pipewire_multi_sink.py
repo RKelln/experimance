@@ -1,83 +1,25 @@
 #!/usr/bin/env python3
 """Combine multiple PipeWire sinks into one multi-channel virtual sink.
 
-This script creates a PipeWire virtual sink that routes different channels to different
-physical audio devices. For example, you can create a 4-channel virtual sink where:
-- Channels 0,1 (FL,FR) go to your laptop speakers
-- Channels 2,3 (RL,RR) go to a Bluetooth speaker
+Creates a virtual sink routing different stereo pairs to different physical
+audio devices (e.g. laptop speakers on channels 0,1 and Bluetooth on 2,3).
 
-This enables multi-speaker setups for audio applications, installations, and testing.
+Usage:
+    # Interactive
+    uv run python scripts/pipewire_multi_sink.py
 
-FEATURES:
-- Reliable sink discovery using pw-dump JSON output
-- Interactive or non-interactive operation
-- Proper channel mapping with standard audio channel labels
-- Duplicate name detection and conflict prevention
-- Destroy sinks by name or ID (handles duplicates)
-- Unlink existing connections to prevent audio doubling
-- Set created virtual sink as default output device
-
-REQUIREMENTS:
-- PipeWire audio system with tools: pw-dump, pw-cli, pw-link, wpctl
-- Python 3.7+ with json, subprocess modules (standard library)
-
-BASIC USAGE:
-    # Interactive mode - lists sinks and prompts for selection
-    python scripts/pipewire_multi_sink.py
-    
-    # Non-interactive - combine sinks 0,1 into "Virtual-4ch" and set as default
-    python scripts/pipewire_multi_sink.py --name "Virtual-4ch" \\
+    # Non-interactive
+    uv run python scripts/pipewire_multi_sink.py --name "Virtual-4ch" \
         --select "0,1" --non-interactive --make-default
 
-ADVANCED EXAMPLES:
-    # Create 6-channel setup (laptop + bluetooth + USB speakers)
-    python scripts/pipewire_multi_sink.py --name "Virtual-6ch" \\
-        --select "0,1,2" --make-default --unlink-existing
-    
-    # Remove existing virtual sinks
-    python scripts/pipewire_multi_sink.py --destroy "Virtual-4ch"
-    python scripts/pipewire_multi_sink.py --destroy "123"  # by ID
-    
-    # List available sinks without creating anything
-    python scripts/pipewire_multi_sink.py --name "dummy" --destroy "nonexistent"
+    # Remove existing sink
+    uv run python scripts/pipewire_multi_sink.py --destroy "Virtual-4ch"
 
-CHANNEL MAPPING:
-The script creates virtual sinks with standard channel positions:
-- 1ch: MONO
-- 2ch: FL, FR (Front Left, Front Right)  
-- 4ch: FL, FR, RL, RR (Front + Rear Left/Right)
-- 6ch: FL, FR, RL, RR, SL, SR (Front + Rear + Side Left/Right)
-- 8ch: FL, FR, FC, LFE, RL, RR, SL, SR (surround with center/subwoofer)
+Requires: PipeWire with pw-dump, pw-cli, pw-link, wpctl.
 
-Selected hardware sinks contribute their channels in order:
-- Sink 0 (2ch) → Virtual channels 0,1
-- Sink 1 (2ch) → Virtual channels 2,3
-- Sink 2 (2ch) → Virtual channels 4,5
-- etc.
-
-INTEGRATION WITH TEST SCRIPTS:
-After creating a virtual sink, test it with:
-    python scripts/test_multi_channel_audio.py -v
-    
-In the test interface:
-- 't 0' plays test tone on first hardware sink
-- 't 2' plays test tone on second hardware sink
-- 'i 0,1,2,3' enters interactive delay calibration mode
-
-TROUBLESHOOTING:
-- If audio doubles: use --unlink-existing to remove conflicting connections
-- If sink creation fails: check that the name doesn't already exist
-- If no sinks found: ensure PipeWire is running and pw-dump works
-- If test script doesn't use virtual sink: verify it's set as default with wpctl
-
-TECHNICAL DETAILS:
-1. Uses pw-dump for reliable JSON-based sink discovery
-2. Creates null-audio-sink via pw-cli with proper channel mapping
-3. Links virtual sink monitor ports to hardware sink playback ports
-4. Handles PipeWire's asynchronous node creation with retries
-5. Parses pw-link output to manage existing connections
-
-See also: scripts/test_multi_channel_audio.py for testing and calibration."""
+See docs/pipewire_multi_sink.md for full channel mapping reference,
+advanced examples, and troubleshooting.
+"""
 
 from __future__ import annotations
 
@@ -93,13 +35,16 @@ from typing import Dict, List, Optional, Tuple
 
 # ----------------------------- Utilities ----------------------------------
 
+
 def _require(cmd: str) -> None:
     if shutil.which(cmd) is None:
         print(f"Error: '{cmd}' not found in PATH. Install PipeWire tools.")
         sys.exit(1)
 
 
-def run(cmd: List[str], check: bool = True, capture: bool = True, text: bool = True) -> subprocess.CompletedProcess:
+def run(
+    cmd: List[str], check: bool = True, capture: bool = True, text: bool = True
+) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check, capture_output=capture, text=text)
 
 
@@ -112,6 +57,7 @@ def pw_dump() -> List[dict]:
 
 
 # ---------------------------- Data models ----------------------------------
+
 
 @dataclass
 class Sink:
@@ -127,6 +73,7 @@ class Sink:
 
 
 # ----------------------------- Discovery -----------------------------------
+
 
 def discover_sinks(exclude_names: Optional[List[str]] = None) -> List[Sink]:
     exclude_names = exclude_names or []
@@ -144,7 +91,11 @@ def discover_sinks(exclude_names: Optional[List[str]] = None) -> List[Sink]:
                 nodes[obj["id"]] = obj
         elif obj.get("type") == "PipeWire:Interface:Port":
             # Try multiple ways to get node_id
-            node_id = obj.get("info", {}).get("props", {}).get("node.id") or obj.get("props", {}).get("node.id") or obj.get("node.id")
+            node_id = (
+                obj.get("info", {}).get("props", {}).get("node.id")
+                or obj.get("props", {}).get("node.id")
+                or obj.get("node.id")
+            )
             if node_id is not None:
                 try:
                     ports_by_node.setdefault(int(node_id), []).append(obj)
@@ -168,26 +119,42 @@ def discover_sinks(exclude_names: Optional[List[str]] = None) -> List[Sink]:
             port_direction = port_props.get("port.direction") or p.get("port.direction")
             format_dsp = port_props.get("format.dsp") or p.get("format.dsp", "")
             port_name = port_props.get("port.name") or p.get("port.name", "")
-            
+
             if str(port_direction) == "in" and "audio" in str(format_dsp):
                 if str(port_name).startswith("playback_"):
                     # Add more properties for sorting
                     audio_channel = port_props.get("audio.channel") or p.get("audio.channel", "")
                     port_alias = port_props.get("port.alias") or p.get("port.alias")
-                    
-                    pports.append({
-                        "port.name": port_name,
-                        "audio.channel": audio_channel,
-                        "port.alias": port_alias,
-                        "port.direction": port_direction,
-                        "format.dsp": format_dsp
-                    })
+
+                    pports.append(
+                        {
+                            "port.name": port_name,
+                            "audio.channel": audio_channel,
+                            "port.alias": port_alias,
+                            "port.direction": port_direction,
+                            "format.dsp": format_dsp,
+                        }
+                    )
 
         # Sort ports by a stable channel order
         def ch_key(port: dict) -> Tuple[int, str]:
             order = [
-                "FL","FR","FC","LFE","RL","RR","SL","SR",
-                "FLC","FRC","RLC","RRC","TFL","TFR","TRL","TRR",
+                "FL",
+                "FR",
+                "FC",
+                "LFE",
+                "RL",
+                "RR",
+                "SL",
+                "SR",
+                "FLC",
+                "FRC",
+                "RLC",
+                "RRC",
+                "TFL",
+                "TFR",
+                "TRL",
+                "TRR",
             ]
             ch = port.get("audio.channel", "")
             try:
@@ -197,21 +164,24 @@ def discover_sinks(exclude_names: Optional[List[str]] = None) -> List[Sink]:
             return (idx, ch)
 
         pports.sort(key=ch_key)
-        sinks.append(Sink(id=int(node_id), name=name, description=desc, alias=alias, playback_ports=pports))
+        sinks.append(
+            Sink(id=int(node_id), name=name, description=desc, alias=alias, playback_ports=pports)
+        )
 
     return [s for s in sinks if s.channels > 0]
 
 
 # ----------------------------- Creation ------------------------------------
 
+
 def channel_labels(n: int) -> List[str]:
     # Provide common sensible labels; fallback to AUXi
     presets = {
         1: ["MONO"],
-        2: ["FL","FR"],
-        4: ["FL","FR","RL","RR"],
-        6: ["FL","FR","RL","RR","SL","SR"],
-        8: ["FL","FR","FC","LFE","RL","RR","SL","SR"],
+        2: ["FL", "FR"],
+        4: ["FL", "FR", "RL", "RR"],
+        6: ["FL", "FR", "RL", "RR", "SL", "SR"],
+        8: ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"],
     }
     if n in presets:
         return presets[n]
@@ -222,7 +192,7 @@ def create_virtual_sink(name: str, total_channels: int, rate: int) -> int:
     positions = " ".join(channel_labels(total_channels))
     props = (
         "{ factory.name=support.null-audio-sink "
-        f"node.name=\"{name}\" node.description=\"{name}\" "
+        f'node.name="{name}" node.description="{name}" '
         "media.class=Audio/Sink object.linger=true "
         f"audio.channels={total_channels} audio.position=[ {positions} ] audio.rate={rate} }}"
     )
@@ -293,7 +263,7 @@ def destroy_virtual_by_name_or_id(name_or_id: str) -> int:
     """Destroy virtual sink by name or ID. Returns count of destroyed sinks."""
     sinks = discover_sinks()
     destroyed = 0
-    
+
     # Try as ID first
     try:
         target_id = int(name_or_id)
@@ -309,7 +279,7 @@ def destroy_virtual_by_name_or_id(name_or_id: str) -> int:
             return destroyed
     except ValueError:
         pass
-    
+
     # Try as name - destroy ALL matching names
     for s in sinks:
         if s.name == name_or_id or s.description == name_or_id:
@@ -319,11 +289,12 @@ def destroy_virtual_by_name_or_id(name_or_id: str) -> int:
                 print(f"Destroyed sink ID {s.id}: {s.description}")
             except subprocess.CalledProcessError:
                 pass
-    
+
     return destroyed
 
 
 # ------------------------------- CLI ---------------------------------------
+
 
 def main() -> None:
     _require("pw-dump")
@@ -331,13 +302,27 @@ def main() -> None:
     _require("pw-link")
     _require("wpctl")
 
-    ap = argparse.ArgumentParser(description="Combine PipeWire sinks into a multi-channel virtual sink")
+    ap = argparse.ArgumentParser(
+        description="Combine PipeWire sinks into a multi-channel virtual sink"
+    )
     ap.add_argument("--name", default="Virtual-Multi", help="Name for the virtual sink")
     ap.add_argument("--rate", type=int, default=48000, help="Sample rate for the virtual sink")
-    ap.add_argument("--make-default", action="store_true", help="Set the virtual sink as default output")
-    ap.add_argument("--unlink-existing", action="store_true", help="Unlink any existing connections to selected sinks' playback ports before wiring")
-    ap.add_argument("--destroy", metavar="NAME_OR_ID", help="Destroy virtual sink(s) by name or ID and exit. Destroys ALL sinks with matching name.")
-    ap.add_argument("--non-interactive", action="store_true", help="Do not prompt; use --select indices")
+    ap.add_argument(
+        "--make-default", action="store_true", help="Set the virtual sink as default output"
+    )
+    ap.add_argument(
+        "--unlink-existing",
+        action="store_true",
+        help="Unlink any existing connections to selected sinks' playback ports before wiring",
+    )
+    ap.add_argument(
+        "--destroy",
+        metavar="NAME_OR_ID",
+        help="Destroy virtual sink(s) by name or ID and exit. Destroys ALL sinks with matching name.",
+    )
+    ap.add_argument(
+        "--non-interactive", action="store_true", help="Do not prompt; use --select indices"
+    )
     ap.add_argument("--select", help="Comma-separated sink indices to combine, in order")
     args = ap.parse_args()
 
@@ -381,7 +366,9 @@ def main() -> None:
             return
 
     total_channels = sum(s.channels for s in selected)
-    print(f"Creating virtual sink '{args.name}' with {total_channels} channels at {args.rate} Hz ...")
+    print(
+        f"Creating virtual sink '{args.name}' with {total_channels} channels at {args.rate} Hz ..."
+    )
     node_id = create_virtual_sink(args.name, total_channels, args.rate)
     print(f"Created virtual sink id={node_id}")
 
@@ -389,7 +376,7 @@ def main() -> None:
     cursor = 0
     for s in selected:
         chs = s.channels
-        print(f"  Virtual [{cursor}..{cursor+chs-1}] -> {s.description} ({chs} ch)")
+        print(f"  Virtual [{cursor}..{cursor + chs - 1}] -> {s.description} ({chs} ch)")
         cursor += chs
     if args.unlink_existing:
         print("Unlinking existing connections to selected sinks...")
