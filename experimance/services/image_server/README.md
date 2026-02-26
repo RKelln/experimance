@@ -1,15 +1,14 @@
 # Image Server Service
 
-The Image Server generates images in response to RenderRequest messages. It supports multiple generation strategies including Mock (uses existing images), VastAI/Comfy, local SDXL, and others. It started as purely an image generation service but now supports audio and can be extended to video as well.
-
 ## Overview
 
-The service:
+The Image Server consumes render requests over ZMQ, generates images (and optional audio), and publishes results back to the core service.
 
-- Pulls `RenderRequest` work items from the worker queue (push/pull)
-- Generates images based on prompts, era/biome and optional depth maps
-- Pushes `ImageReady` results back to the core service
-- Optionally subscribes to the unified events channel for coordination messages
+Environment assumptions:
+
+- Linux or macOS host with Python 3.11
+- `uv` installed
+- ZMQ ports available (defaults in `experimance_common.constants.DEFAULT_PORTS`)
 
 ## Quick Start
 
@@ -26,7 +25,7 @@ uv run -m image_server
 # strategy = "mock"
 # timeout = 12
 
-# Or switch back to VastAI/Comfy by setting:
+# Or switch to VastAI by setting:
 # strategy = "vastai"
 ```
 
@@ -38,25 +37,17 @@ use_existing_images = true
 existing_images_dir = "media/images/generated"
 ```
 
-## Architecture
+## Configuration
 
-Image Server follows the same ControllerService + worker pattern as other services:
+- Project config: `projects/<project>/image_server.toml`
+- Defaults for this service: `services/image_server/config.toml`
 
-- Worker pull: receives `RenderRequest` on port 5564
-- Worker push: sends `ImageReady` on port 5565
-- Unified events pub/sub: 5555 (for coordination/status if needed)
+## Usage
 
-Ports are defined in `experimance_common.constants.DEFAULT_PORTS`.
+- Start the service: `uv run -m image_server`
+- CLI for test requests: `uv run -m image_server.cli -i`
 
-## ZMQ Communication
-
-### Addresses and Ports
-
-- Worker Pull (Core -> Image Server work): `tcp://localhost:5564`
-- Worker Push (Image Server -> Core results): `tcp://*:5565`
-- Events (Unified Pub/Sub): `tcp://*:5555` (publish), `tcp://localhost:5555` (subscribe)
-
-### Message Types (Schemas)
+## Message Types (Schemas)
 
 - RenderRequest (work item)
   ```json
@@ -123,59 +114,15 @@ Ports are defined in `experimance_common.constants.DEFAULT_PORTS`.
   }
   ```
 
-## CLI Tool
+## Additional Docs
 
-Use the built-in CLI to send test requests and test generation:
-
-```bash
-# Interactive image mode
-uv run -m image_server.cli -i
-
-# Direct command
-uv run -m image_server.cli --prompt "A forest scene" --era wilderness --biome forest
-
-# Audio test mode (Fire project only)
-uv run -m image_server.cli --audio -i
-uv run -m image_server.cli --audio --audio-prompt "gentle rain"
-uv run -m image_server.cli --list-audio-prompts
-```
-
-## Testing
-
-The service includes ZeroMQ test utilities and pytest suites:
-
-```bash
-# Run all tests
-uv run -m pytest services/image_server/tests
-
-# Run test runner script
-services/image_server/tests/run_zmq_tests.py
-
-# Validate ZMQ addresses
-services/image_server/tests/validate_zmq_addresses.py
-```
-
-Individual tests:
-
-- `tests/test_zmq_messaging.py`
-- `tests/test_zmq_render_request.py`
-- `tests/test_image_server_service.py`
-- `tests/test_local_sdxl.py`
-- `tests/test_audio_direct.py`
-
-## Troubleshooting
-
-If you encounter communication issues:
-
-1. Ensure the service is running and bound to the expected ports
-2. Validate addresses with `services/image_server/tests/validate_zmq_addresses.py`
-3. Confirm no port conflicts (5555 events, 5564/5565 worker)
-4. Check logs for ZMQ connection or generator initialization errors
-5. Run the test suite to isolate messaging problems
-
-Common pitfalls:
-
-- Mixing up bind/connect semantics (`tcp://*:` for bind, `tcp://localhost:` for connect)
-- ZMQ slow joiner: add a short delay after socket creation
-- Mismatched message schemas (ensure depth_map object, not raw PNG string)
-
+- `services/image_server/docs/service_overview.md` - Service architecture, CLI usage, and integration points.
+- `services/image_server/docs/dynamic_generators.md` - Per-request generator routing and image-to-image handling.
+- `services/image_server/docs/generators.md` - Generator capabilities, configuration, and extension points.
+- `services/image_server/docs/fal_lightning_i2i.md` - FAL Lightning I2I configuration and CLI usage.
+- `services/image_server/docs/vastai.md` - VastAI generator setup, provisioning, and CLI management.
+- `services/image_server/docs/vastai_model_server.md` - Model server API, parameters, and health endpoints.
+- `services/image_server/docs/testing.md` - Test suites, ZMQ utilities, and audio direct testing.
+- `services/image_server/docs/audio_generation.md` - Audio setup, schemas, and usage notes.
+- `services/image_server/docs/zmq_messaging.md` - Port mappings and message flow.
+- `services/image_server/docs/roadmap.md` - Near-term documentation goals and known gaps.

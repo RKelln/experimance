@@ -31,11 +31,12 @@ Each service has its own detailed documentation:
   - [Depth Camera Setup](../services/core/README_DEPTH.md) - Camera configuration and troubleshooting
 - **[Display Service](../services/display/README.md)** - Visual output and rendering
 - **[Image Server](../services/image_server/README.md)** - AI image generation
-  - [Generator System Guide](../services/image_server/src/image_server/generators/README_GENERATORS.md) - Complete guide to image generation
+  - [Generator System Guide](../services/image_server/docs/generators.md) - Complete guide to image and audio generation
 - **[Agent Service](../services/agent/README.md)** - Conversational AI and vision
   - [Vision System](../services/agent/README_VISION.md) - Camera and detection configuration
 - **[Audio Service](../services/audio/README.md)** - Spatial audio and sound design
-  - [Surround Sound Setup](../services/audio/README_SURROUND_SOUND.md) - Multi-channel audio configuration
+  - [Surround Sound Setup](../services/audio/docs/surround_sound.md) - Multi-channel audio configuration
+  - [Audio Docs Index](../services/audio/docs/index.md) - Index of audio service documentation
 
 ### Support Services
 - **[Health Monitor](../services/health/README.md)** - System monitoring and alerts

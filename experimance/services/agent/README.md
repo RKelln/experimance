@@ -105,7 +105,7 @@ audio_output_device_name = "Torch Streaming Microphone"
 conversation_cooldown_duration = 12.0  # Wait between conversations
 cancel_cooldown_on_absence = true      # End cooldown if audience changes
 
-# Vision processing (see README_VISION.md)
+# Vision processing (see docs/vision.md)
 [vision]
 webcam_enabled = false           # Set to true for vision features
 audience_detection_enabled = false
@@ -162,7 +162,7 @@ The agent can call tools to:
 
 ## Vision Integration
 
-For vision processing capabilities, see [README_VISION.md](README_VISION.md).
+For vision processing capabilities, see `services/agent/docs/vision.md`.
 
 Key vision features:
 - Webcam capture and preprocessing
@@ -267,10 +267,17 @@ The agent integrates with other Experimance services via ZMQ:
 - Ensure webcam permissions and availability
 - Check lighting conditions and camera positioning
 - Use interactive tuner: `uv run python scripts/tune_detector.py`
-- For detailed vision troubleshooting, see [README_VISION.md](README_VISION.md).
+- For detailed vision troubleshooting, see `services/agent/docs/vision.md`.
+
+## Additional Docs
+
+- `services/agent/docs/vision.md` - Vision system setup, tuning, and testing
+- `services/agent/docs/reolink.md` - Reolink camera integration and discovery
+- `services/agent/docs/pipecat-backend.md` - Pipecat backend configuration and usage
+- `services/agent/docs/pipecat-multi-channel.md` - Multi-channel audio transport
+- `services/agent/docs/audio-crash-prevention.md` - Audio crash recovery steps
 
 **Backend startup fails:**
 - Verify OpenAI API key and model access
 - Check audio device availability
 - Review flow file syntax
-

@@ -18,7 +18,7 @@ mask="circle"
 
 # Transitions
 [transitions]
-crossfade_duration = 1.0      # Duration of crossfade in seconds
+default_crossfade_duration = 1.0  # Duration of crossfade in seconds
 preload_frames = true         # Whether to preload transition frames
 max_preload_mb = 500          # Maximum memory to use for preloading in MB
 
@@ -32,7 +32,7 @@ max_preload_mb = 500          # Maximum memory to use for preloading in MB
 enabled = true                # Whether to show title screen on startup
 text = "Experimance"          # Text to display
 duration = 10.0                # Duration in seconds
-fade_out_duration = 10.0      # Fade out duration in seconds
+fade_duration = 10.0          # Fade duration in seconds (float or [fade_in, fade_out])
 
 # Video overlay with masking
 [video_overlay]

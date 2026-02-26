@@ -13,201 +13,159 @@ from pydantic import BaseModel, Field
 
 from experimance_common.config import BaseConfig, BaseServiceConfig
 from experimance_common.constants import (
-    DEFAULT_PORTS, DISPLAY_SERVICE_DIR, ZMQ_TCP_CONNECT_PREFIX,
-    get_project_config_path
+    DEFAULT_PORTS,
+    DISPLAY_SERVICE_DIR,
+    ZMQ_TCP_CONNECT_PREFIX,
+    get_project_config_path,
 )
-from experimance_common.zmq.config import (
-    PubSubServiceConfig, SubscriberConfig, MessageType
-)
+from experimance_common.zmq.config import PubSubServiceConfig, SubscriberConfig, MessageType
 
 DEFAULT_CONFIG_PATH = get_project_config_path("display", DISPLAY_SERVICE_DIR)
 
 
-
 class DisplayConfig(BaseModel):
     """Main display configuration."""
-    
-    fullscreen: bool = Field(
-        default=True,
-        description="Whether to run in fullscreen mode"
-    )
-    
-    monitor: int = Field(
-        default=0,
-        description="Monitor to display on (0 = primary)"
-    )
-    
+
+    fullscreen: bool = Field(default=True, description="Whether to run in fullscreen mode")
+
+    monitor: int = Field(default=0, description="Monitor to display on (0 = primary)")
+
     resolution: Tuple[int, int] = Field(
-        default=(1920, 1080),
-        description="Resolution to use if not fullscreen"
+        default=(1920, 1080), description="Resolution to use if not fullscreen"
     )
-    
-    fps_limit: int = Field(
-        default=60,
-        description="Frame rate limit"
-    )
-    
-    vsync: bool = Field(
-        default=True,
-        description="Whether to use vertical sync"
-    )
-    
-    debug_overlay: bool = Field(
-        default=False,
-        description="Whether to show debug overlay"
-    )
-    
+
+    fps_limit: int = Field(default=60, description="Frame rate limit")
+
+    vsync: bool = Field(default=True, description="Whether to use vertical sync")
+
+    debug_overlay: bool = Field(default=False, description="Whether to show debug overlay")
+
     debug_text: bool = Field(
-        default=False,
-        description="Whether to show debug text in all positions"
+        default=False, description="Whether to show debug text in all positions"
     )
 
     debug_image: Optional[Path] = Field(
-        default=None, # "media/images/projector_alignment.png"
-        description="Path to debug image to display in debug overlay"
+        default=None,  # "media/images/projector_alignment.png"
+        description="Path to debug image to display in debug overlay",
     )
 
     background_color: tuple[int, int, int, int] = Field(
         default=(0, 0, 0, 255),
-        description="Background color as RGBA tuple for the display window (for debugging layer compositing)"
+        description="Background color as RGBA tuple for the display window (for debugging layer compositing)",
     )
 
     profile: bool = Field(
-        default=False,
-        description="Whether to enable profiling for performance analysis"
+        default=False, description="Whether to enable profiling for performance analysis"
     )
-    
+
     headless: bool = Field(
-        default=False,
-        description="Whether to run in headless mode (no window creation)"
+        default=False, description="Whether to run in headless mode (no window creation)"
     )
 
     mask: Optional[str] = Field(
         default=None,
-        description="Mask overlay configuration. Can be 'circle', 'file_path' (path to mask image), or None to disable mask."
+        description="Mask overlay configuration. Can be 'circle', 'file_path' (path to mask image), or None to disable mask.",
     )
 
 
 class RenderingConfig(BaseModel):
     """Rendering system configuration."""
-    
-    max_texture_cache_mb: int = Field(
-        default=512,
-        description="Maximum texture cache size in MB"
-    )
-    
+
+    max_texture_cache_mb: int = Field(default=512, description="Maximum texture cache size in MB")
+
     shader_path: Path = Field(
-        default=Path("services/display/shaders/"),
-        description="Path to shader files"
+        default=Path("services/display/shaders/"), description="Path to shader files"
     )
-    
-    font_path: Path = Field(
-        default=Path("fonts/"),
-        description="Path to font files"
-    )
-    
+
+    font_path: Path = Field(default=Path("fonts/"), description="Path to font files")
+
     preload_common_resources: bool = Field(
-        default=True,
-        description="Whether to preload commonly used resources"
+        default=True, description="Whether to preload commonly used resources"
     )
-    
-    backend: Literal["opengl"] = Field(
-        default="opengl",
-        description="Rendering backend to use"
-    )
+
+    backend: Literal["opengl"] = Field(default="opengl", description="Rendering backend to use")
 
 
 class TransitionsConfig(BaseModel):
     """Configuration for image and video transitions."""
-    
+
     default_crossfade_duration: float = Field(
-        default=1.0,
-        description="Duration of default crossfade in seconds"
+        default=1.0, description="Duration of default crossfade in seconds"
     )
-    
+
     video_fade_in_duration: float = Field(
-        default=0.2,
-        description="Duration of video overlay fade in"
+        default=0.2, description="Duration of video overlay fade in"
     )
-    
+
     video_fade_out_duration: float = Field(
-        default=1.0,
-        description="Duration of video overlay fade out"
+        default=1.0, description="Duration of video overlay fade out"
     )
-    
-    text_fade_duration: float = Field(
-        default=0.3,
-        description="Duration of text fade in/out"
-    )
-    
-    preload_frames: bool = Field(
-        default=True,
-        description="Whether to preload transition frames"
-    )
-    
+
+    text_fade_duration: float = Field(default=0.3, description="Duration of text fade in/out")
+
+    preload_frames: bool = Field(default=True, description="Whether to preload transition frames")
+
     max_preload_mb: int = Field(
-        default=500,
-        description="Maximum memory to use for preloading in MB"
+        default=500, description="Maximum memory to use for preloading in MB"
     )
 
 
 class TextStyleConfig(BaseModel):
     """Configuration for text rendering styles."""
-    
-    font_size: int = Field(
-        default=28,
-        description="Font size in pixels"
-    )
-    
+
+    font_size: int = Field(default=28, description="Font size in pixels")
+
     color: Tuple[int, int, int, int] = Field(
-        default=(255, 255, 255, 255),
-        description="Text color as RGBA tuple"
-    )
-    
-    anchor: Literal["top_left", "top_center", "top_right", 
-                     "center_left", "center", "center_right",
-                     "bottom_left", "bottom_center", "bottom_right",
-                     "baseline_left", "baseline_center", "baseline_right"] = Field(
-        default="baseline_center",
-        description="Text anchor position"
+        default=(255, 255, 255, 255), description="Text color as RGBA tuple"
     )
 
-    position: Literal["top_left", "top_center", "top_right", 
-                     "center_left", "center", "center_right",
-                     "bottom_left", "bottom_center", "bottom_right"] = Field(
-        default="bottom_center",
-        description="Text position on screen"
-    )
-    
-    background: bool = Field(
-        default=True,
-        description="Whether to show background behind text"
-    )
-    
+    anchor: Literal[
+        "top_left",
+        "top_center",
+        "top_right",
+        "center_left",
+        "center",
+        "center_right",
+        "bottom_left",
+        "bottom_center",
+        "bottom_right",
+        "baseline_left",
+        "baseline_center",
+        "baseline_right",
+    ] = Field(default="baseline_center", description="Text anchor position")
+
+    position: Literal[
+        "top_left",
+        "top_center",
+        "top_right",
+        "center_left",
+        "center",
+        "center_right",
+        "bottom_left",
+        "bottom_center",
+        "bottom_right",
+    ] = Field(default="bottom_center", description="Text position on screen")
+
+    background: bool = Field(default=True, description="Whether to show background behind text")
+
     background_color: Tuple[int, int, int, int] = Field(
-        default=(0, 0, 0, 128),
-        description="Background color as RGBA tuple"
+        default=(0, 0, 0, 128), description="Background color as RGBA tuple"
     )
-    
-    padding: int = Field(
-        default=10,
-        description="Padding around text in pixels"
-    )
-    
+
+    padding: int = Field(default=10, description="Padding around text in pixels")
+
     max_width: Optional[int] = Field(
-        default=None,
-        description="Maximum text width before wrapping (None = no limit)"
+        default=None, description="Maximum text width before wrapping (None = no limit)"
     )
-    
+
     align: Literal["left", "center", "right"] = Field(
-        default="left",
-        description="Text alignment within the label ('left', 'center', 'right')"
+        default="left", description="Text alignment within the label ('left', 'center', 'right')"
     )
 
 
 class TextStylesConfig(BaseModel):
     """Text styles for different speakers."""
-    
+
     agent: TextStyleConfig = Field(
         default_factory=lambda: TextStyleConfig(
             font_size=28,
@@ -215,274 +173,210 @@ class TextStylesConfig(BaseModel):
             anchor="baseline_center",
             position="bottom_center",
             background=True,
-            background_color=(0, 0, 0, 128)
+            background_color=(0, 0, 0, 128),
         ),
-        description="Style for agent text"
+        description="Style for agent text",
     )
-    
+
     system: TextStyleConfig = Field(
         default_factory=lambda: TextStyleConfig(
             font_size=24,
             color=(200, 200, 200, 255),
             anchor="baseline_center",
             position="top_right",
-            background=False
+            background=False,
         ),
-        description="Style for system text"
+        description="Style for system text",
     )
-    
+
     debug: TextStyleConfig = Field(
         default_factory=lambda: TextStyleConfig(
             font_size=16,
             color=(255, 255, 0, 255),
             anchor="baseline_center",
             position="top_center",
-            background=False
+            background=False,
         ),
-        description="Style for debug text"
+        description="Style for debug text",
     )
-    
+
     title: TextStyleConfig = Field(
         default_factory=lambda: TextStyleConfig(
             font_size=72,
             color=(255, 255, 255, 255),
             anchor="baseline_center",
             position="center",
-            background=False
+            background=False,
         ),
-        description="Style for title screen text"
+        description="Style for title screen text",
     )
+
 
 FadeDurationType: TypeAlias = float | tuple[float, float]
 
+
 class TitleScreenConfig(BaseModel):
     """Configuration for the startup title screen."""
-    
-    enabled: bool = Field(
-        default=True,
-        description="Whether to show the title screen on startup"
-    )
-    
-    text: str = Field(
-        default="Experimance",
-        description="Text to display on the title screen"
-    )
-    
-    duration: float = Field(
-        default=3.0,
-        description="Duration to show title screen in seconds"
-    )
+
+    enabled: bool = Field(default=True, description="Whether to show the title screen on startup")
+
+    text: str = Field(default="Experimance", description="Text to display on the title screen")
+
+    duration: float = Field(default=3.0, description="Duration to show title screen in seconds")
 
     fade_duration: FadeDurationType = Field(
-        default=(2.0, 5.0),
-        description="Duration of fade in animation in seconds"
+        default=(2.0, 5.0), description="Duration of fade in animation in seconds"
     )
 
 
 class VideoOverlayConfig(BaseModel):
     """Configuration for video overlay with masking."""
-    
-    enabled: bool = Field(
-        default=False,
-        description="Whether video overlay is enabled"
-    )
-    
+
+    enabled: bool = Field(default=False, description="Whether video overlay is enabled")
+
     default_video_path: Optional[str] = Field(
-        default=None,
-        description="Path to default video file (relative to VIDEOS_DIR or absolute)"
+        default=None, description="Path to default video file (relative to VIDEOS_DIR or absolute)"
     )
-    
-    loop_video: bool = Field(
-        default=True,
-        description="Whether to loop the video playback"
-    )
-    
+
+    loop_video: bool = Field(default=True, description="Whether to loop the video playback")
+
     fallback_mask_enabled: bool = Field(
-        default=True,
-        description="Whether to create fallback mask if none provided"
+        default=True, description="Whether to create fallback mask if none provided"
     )
 
     start_mask_path: Optional[str] = Field(
-        default=None,
-        description="Path to mask file to load on startup"
+        default=None, description="Path to mask file to load on startup"
     )
 
     size: Tuple[int, int] = Field(
-        default=(1024, 1024),
-        description="Size of the video overlay in pixels"
+        default=(1024, 1024), description="Size of the video overlay in pixels"
     )
 
 
 class PanoramaTilesConfig(BaseModel):
     """Configuration for panorama tiles."""
-    
-    width: int = Field(
-        default=1920,
-        description="Target width for individual tiles"
-    )
-    
-    height: int = Field(
-        default=1080,
-        description="Target height for individual tiles"
-    )
-    
+
+    width: int = Field(default=1920, description="Target width for individual tiles")
+
+    height: int = Field(default=1080, description="Target height for individual tiles")
+
     fade_duration: float = Field(
-        default=3.0,
-        description="Duration for tile fade-in animation in seconds"
+        default=3.0, description="Duration for tile fade-in animation in seconds"
     )
-    
+
     rescale: Optional[Literal["width", "height", "shortest"]] = Field(
         default="width",
-        description="Override rescaling mode for tiles (inherits from panorama if None)"
+        description="Override rescaling mode for tiles (inherits from panorama if None)",
     )
 
 
 class PanoramaConfig(BaseModel):
     """Configuration for panoramic display mode."""
-    
-    enabled: bool = Field(
-        default=False,
-        description="Whether panorama mode is enabled"
-    )
-    
+
+    enabled: bool = Field(default=False, description="Whether panorama mode is enabled")
+
     rescale: Literal["width", "height", "shortest"] = Field(
-        default="width",
-        description="How to rescale images to fit panorama dimensions"
-    )
-    
-    output_width: int = Field(
-        default=1920,
-        description="Final width of panorama after any mirroring"
-    )
-    
-    output_height: int = Field(
-        default=1080,
-        description="Final height of panorama"
+        default="width", description="How to rescale images to fit panorama dimensions"
     )
 
-    blur : bool = Field(
+    output_width: int = Field(
+        default=1920, description="Final width of panorama after any mirroring"
+    )
+
+    output_height: int = Field(default=1080, description="Final height of panorama")
+
+    blur: bool = Field(
         default=True,
         description="Whether to apply blur effect when new panorama is loaded",
     )
-    
-    start_blur: float = Field(
-        default=5.0,
-        description="Initial blur sigma for base image"
-    )
-    
-    end_blur: float = Field(
-        default=0.0,
-        description="Final blur sigma for base image"
-    )
-    
-    blur_duration: float = Field(
-        default=10.0,
-        description="Duration of blur transition in seconds"
-    )
-    
-    mirror: bool = Field(
-        default=True,
-        description="Whether to mirror image horizontally"
-    )
-    
+
+    start_blur: float = Field(default=5.0, description="Initial blur sigma for base image")
+
+    end_blur: float = Field(default=0.0, description="Final blur sigma for base image")
+
+    blur_duration: float = Field(default=10.0, description="Duration of blur transition in seconds")
+
+    mirror: bool = Field(default=True, description="Whether to mirror image horizontally")
+
     tiles: PanoramaTilesConfig = Field(
-        default_factory=PanoramaTilesConfig,
-        description="Configuration for panorama tiles"
+        default_factory=PanoramaTilesConfig, description="Configuration for panorama tiles"
     )
 
     disappear_duration: float = Field(
         default=0,
-        description="Duration for panorama-wide fade to transparency in seconds (0 = disabled, starts after final tile)"
+        description="Duration for panorama-wide fade to transparency in seconds (0 = disabled, starts after final tile)",
     )
 
 
 class ShaderEffectConfig(BaseModel):
     """Configuration for a single shader effect."""
-    
-    enabled: bool = Field(
-        default=True,
-        description="Whether this shader effect is enabled"
-    )
-    
-    shader_file: str = Field(
-        description="Path to the fragment shader file (.frag)"
-    )
-    
-    order: int = Field(
-        default=10,
-        description="Render order (higher numbers render on top)"
-    )
-    
+
+    enabled: bool = Field(default=True, description="Whether this shader effect is enabled")
+
+    shader_file: str = Field(description="Path to the fragment shader file (.frag)")
+
+    order: int = Field(default=10, description="Render order (higher numbers render on top)")
+
     blend_mode: str = Field(
         default="alpha",
-        description="Blending mode: 'alpha' for standard transparency, 'additive' for glow effects"
+        description="Blending mode: 'alpha' for standard transparency, 'additive' for glow effects",
     )
-    
+
     uniforms: Dict[str, float] = Field(
-        default_factory=dict,
-        description="Uniform values to pass to the shader"
+        default_factory=dict, description="Uniform values to pass to the shader"
     )
 
 
 class ShaderEffectsConfig(BaseModel):
     """Configuration for shader effects system."""
-    
-    enabled: bool = Field(
-        default=False,
-        description="Whether to enable shader effects"
-    )
-    
+
+    enabled: bool = Field(default=False, description="Whether to enable shader effects")
+
     effects: Dict[str, ShaderEffectConfig] = Field(
         default_factory=lambda: {
             "turbulent_vignette": ShaderEffectConfig(
-                shader_file="services/display/shaders/turbulent_vignette.frag",
+                shader_file="services/display/shaders/turbulent_vignette_improved.frag",
                 order=10,
-                uniforms={
-                    "vignette_strength": 0.7,
-                    "turbulence_amount": 0.25
-                }
+                uniforms={"vignette_strength": 0.7, "turbulence_amount": 0.25},
             ),
             "rising_sparks": ShaderEffectConfig(
-                shader_file="services/display/shaders/rising_sparks.frag",
+                shader_file="services/display/shaders/rising_sparks_improved.frag",
                 order=20,
-                uniforms={
-                    "spark_intensity": 0.5
-                }
-            )
+                uniforms={"spark_intensity": 0.5},
+            ),
         },
-        description="Configuration for individual shader effects"
+        description="Configuration for individual shader effects",
     )
-    
+
     auto_reload_shaders: bool = Field(
-        default=False,
-        description="Whether to automatically reload shaders when files change"
+        default=False, description="Whether to automatically reload shaders when files change"
     )
 
 
 class DisplayServiceConfig(BaseServiceConfig):
     """Complete configuration schema for the Display Service."""
-    
+
     # Override service name with default for display service
     service_name: str = "display-service"
-    
+
     # ZeroMQ configuration using new PubSubServiceConfig pattern
     zmq: PubSubServiceConfig = Field(
         default_factory=lambda: PubSubServiceConfig(
             name="display-service",
             subscriber=SubscriberConfig(
                 address=ZMQ_TCP_CONNECT_PREFIX,
-                port=DEFAULT_PORTS['events'],
+                port=DEFAULT_PORTS["events"],
                 topics=[
                     str(MessageType.DISPLAY_MEDIA),
                     str(MessageType.DISPLAY_TEXT),
                     str(MessageType.REMOVE_TEXT),
-                    str(MessageType.CHANGE_MAP)
-                ]
-            )
+                    str(MessageType.CHANGE_MAP),
+                ],
+            ),
         ),
-        description="ZeroMQ communication settings using subscriber pattern"
+        description="ZeroMQ communication settings using subscriber pattern",
     )
-    
+
     # Main configuration sections
     display: DisplayConfig = Field(default_factory=DisplayConfig)
     rendering: RenderingConfig = Field(default_factory=RenderingConfig)
@@ -492,15 +386,15 @@ class DisplayServiceConfig(BaseServiceConfig):
     video_overlay: VideoOverlayConfig = Field(default_factory=VideoOverlayConfig)
     panorama: PanoramaConfig = Field(default_factory=PanoramaConfig)
     shader_effects: ShaderEffectsConfig = Field(default_factory=ShaderEffectsConfig)
-    
+
 
 def create_test_display_config(**overrides) -> DisplayServiceConfig:
     """
     Create a DisplayServiceConfig suitable for testing.
-    
+
     Args:
         **overrides: Configuration overrides
-        
+
     Returns:
         DisplayServiceConfig instance with test-friendly defaults
     """
@@ -509,9 +403,9 @@ def create_test_display_config(**overrides) -> DisplayServiceConfig:
         "display": {
             "headless": True,  # No window creation in tests
             "debug_overlay": False,
-            "fps_limit": 30
+            "fps_limit": 30,
         },
-        **overrides
+        **overrides,
     }
-    
+
     return DisplayServiceConfig.from_overrides(default_config=test_config)

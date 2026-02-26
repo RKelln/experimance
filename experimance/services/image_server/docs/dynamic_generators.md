@@ -1,17 +1,49 @@
-# Dynamic Generator Selection and Image-to-Image Support
+# Dynamic Generator Selection and Image-to-Image
 
-This document describes the new dynamic generator functionality added to the Experimance Image Server, which allows for flexible generator selection at request time and improved support for image-to-image generation.
+This document describes dynamic generator selection and image-to-image support in the Image Server.
 
 ## Overview
 
-The image server now supports:
+The image server supports:
 
 1. **Dynamic Generator Selection**: Choose different generators per request using the `RenderRequest.generator` field
 2. **Generator Manager**: Efficient caching and management of multiple generator instances
-3. **Enhanced Image-to-Image**: Better support for reference images in generation requests
+3. **Image-to-Image**: Support for reference images in generation requests
 4. **Concurrent Processing**: Multiple generators can run simultaneously
 
-## Key Components
+Environment assumptions:
+
+- Python 3.11 with `uv`
+- ZMQ connectivity to the image server
+
+When to use:
+
+- You want to route different requests to different generator backends
+- You need image-to-image transforms with a reference image
+
+When not to use:
+
+- You only need a single generator configured at startup
+
+Files touched:
+
+- `services/image_server/src/image_server/generators/factory.py`
+- `services/image_server/src/image_server/image_service.py`
+- `libs/common/src/experimance_common/schemas_base.py`
+
+## Setup
+
+Install the base package:
+
+```bash
+uv sync --package image-server
+```
+
+## Configuration
+
+Configure generators in `projects/<project>/image_server.toml`. See `services/image_server/docs/generators.md` for a list of strategies and common options.
+
+## Usage
 
 ### GeneratorManager
 
@@ -22,18 +54,18 @@ from image_server.generators.factory import GeneratorManager
 
 # Initialize with default configuration
 manager = GeneratorManager(
-    default_strategy="falai",
+    default_strategy="fal_comfy",
     cache_dir="/tmp/images",
     timeout=60,
     default_configs={
         "mock": {"strategy": "mock"},
-        "falai": {"strategy": "falai", "endpoint": "fal-ai/fast-lightning-sdxl"},
-        "falai_lightning_i2i": {"strategy": "falai_lightning_i2i", "strength": 0.7}
-    }
+        "fal_comfy": {"strategy": "fal_comfy", "endpoint": "comfy/RKelln/experimancexilightningdepth"},
+        "falai_lightning_i2i": {"strategy": "falai_lightning_i2i", "strength": 0.7},
+    },
 )
 
 # Get generator (creates if needed, uses cache if available)
-generator = manager.get_generator("falai")
+generator = manager.get_generator("fal_comfy")
 
 # Check capabilities
 is_i2i = manager.is_image_to_image_generator("falai_lightning_i2i")  # True
@@ -54,7 +86,7 @@ request = RenderRequest(
     request_id="unique_id",
     generator="falai_lightning_i2i",  # Dynamic selection!
     prompt="A beautiful landscape",
-    reference_image=reference_image_source
+    reference_image=reference_image_source,
 )
 
 # Use default generator (omit generator field)
@@ -87,7 +119,7 @@ request = RenderRequest(
 )
 ```
 
-## Configuration Changes
+## Implementation Details
 
 ### Image Server Service
 
@@ -99,11 +131,8 @@ self.generator_manager = GeneratorManager(
     default_strategy=config.generator.strategy,
     cache_dir=config.cache_dir,
     timeout=config.generator.timeout,
-    default_configs=strategy_configs
+    default_configs=strategy_configs,
 )
-
-# Legacy single generator still available
-self.generator = create_generator_from_config(...)
 ```
 
 ### Generator Strategy Configuration
@@ -112,13 +141,13 @@ Configure multiple strategies in your service config:
 
 ```toml
 [generator]
-strategy = "falai"  # Default strategy
+strategy = "fal_comfy"  # Default strategy
 timeout = 120
 
 # Strategy-specific configurations
-[falai]
-endpoint = "fal-ai/fast-lightning-sdxl"
-num_inference_steps = 4
+[fal_comfy]
+endpoint = "comfy/RKelln/experimancexilightningdepth"
+timeout = 120
 
 [falai_lightning_i2i]
 endpoint = "fal-ai/fast-lightning-sdxl/image-to-image"
@@ -127,7 +156,7 @@ num_inference_steps = 4
 
 [mock]
 use_existing_images = true
-existing_images_dir = "/path/to/images"
+existing_images_dir = "media/images/generated"
 ```
 
 ## Request Processing Flow
@@ -139,30 +168,21 @@ existing_images_dir = "/path/to/images"
 5. **Generation**: Call appropriate generator with processed parameters
 6. **Response**: Publish `ImageReady` message with result
 
-## Implementation Details
-
 ### Reference Image Handling
 
-The service automatically converts reference images for generators:
+The service normalizes reference images with `extract_image_as_base64` before passing them to generators:
 
 ```python
 # In _process_render_request()
-reference_image = None
-if hasattr(request, 'reference_image') and request.reference_image:
-    if request.reference_image.uri:
-        reference_image = request.reference_image.uri
-    elif request.reference_image.image_data:
-        # Convert base64 to proper data URI
-        if not request.reference_image.image_data.startswith('data:'):
-            reference_image = f"data:image/png;base64,{request.reference_image.image_data}"
-        else:
-            reference_image = request.reference_image.image_data
+reference_image_b64 = None
+if hasattr(request, 'reference_image') and request.reference_image is not None:
+    reference_image_b64 = extract_image_as_base64(request.reference_image, "reference_image")
 
 # Pass to generator
 await generator.generate_image(
     prompt=prompt,
-    image_url=reference_image,  # For I2I generators
-    **other_params
+    image_b64=reference_image_b64,  # For I2I generators
+    **other_params,
 )
 ```
 
@@ -187,9 +207,8 @@ if cache_key in self._generators:
 ### Text-to-Image Generators
 
 - **mock**: Testing and development
-- **falai**: FAL.AI SDXL for production text-to-image
-- **openai**: OpenAI DALL-E (when enabled)
-- **local**: Local SDXL pipeline (when configured)
+- **fal_comfy**: FAL.AI ComfyUI workflow for production text-to-image
+- **local_sdxl**: Local SDXL pipeline (when configured)
 
 ### Image-to-Image Generators
 
@@ -204,11 +223,11 @@ if cache_key in self._generators:
 requests = [
     RenderRequest(
         request_id="landscape_1",
-        generator="falai",
-        prompt="Mountain landscape at sunset"
+        generator="fal_comfy",
+        prompt="Mountain landscape at sunset",
     ),
     RenderRequest(
-        request_id="portrait_1", 
+        request_id="portrait_1",
         generator="mock",
         prompt="Portrait of a wise elder"
     )
@@ -221,7 +240,7 @@ requests = [
 # 1. Generate base image
 base_request = RenderRequest(
     request_id="base_image",
-    generator="falai",
+    generator="fal_comfy",
     prompt="A simple house in a field"
 )
 
@@ -239,10 +258,24 @@ transform_request = RenderRequest(
 ```python
 # Generator manager allows runtime config overrides
 generator = manager.get_generator(
-    "falai", 
+    "fal_comfy",
     config_overrides={"num_inference_steps": 8, "strength": 0.9}
 )
 ```
+
+## Testing
+
+See `services/image_server/docs/testing.md`.
+
+## Troubleshooting
+
+- Unknown generator strategy: check `projects/<project>/image_server.toml` and `services/image_server/docs/generators.md`.
+- Reference image not used: ensure the chosen generator supports `IMAGE_TO_IMAGE`.
+
+## Integrations
+
+- Generator system: `services/image_server/docs/generators.md`
+- ZMQ flow: `services/image_server/docs/zmq_messaging.md`
 
 ## Error Handling
 

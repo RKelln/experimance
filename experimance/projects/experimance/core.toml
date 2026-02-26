@@ -30,7 +30,7 @@ always_present=false          # for debugging, to keep presence alive
 resolution = [1280, 720]     # depth camera resolution (width, height)
 fps = 30                    # camera frames per second 
 # for sand a range of about 7 cm works well
-min_depth = 0.49            # minimum depth value in meters
+min_depth = 0.51            # minimum depth value in meters
 max_depth = 0.56            # maximum depth value in meters
 align_frames = true         # use color frames to help align the depth frames
 colorizer_scheme = 2        # white to black

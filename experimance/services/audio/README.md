@@ -1,191 +1,116 @@
 # Experimance Audio Service
 
-The Experimance Audio Service integrates SuperCollider with the main Experimance installation system, providing:
+## Overview
+
+### What this service does
+
+The Experimance Audio Service integrates SuperCollider with the installation to provide:
+
 - Environmental audio layers based on the current biome and era
-- Sound effects for transitions and interactions 
+- Sound effects for transitions and interactions
 - Background music tailored to each era
 - 6-channel surround sound support via jackdbus
 
-## Features
+### Environment assumptions
 
-- ZeroMQ subscription to system events (`SpaceTimeUpdate`, `PresenceStatus`, `SpeechDetected`, `ChangeMap`)
-- OSC communication with SuperCollider for audio control
-- Tag-based audio layer management
-- JSON configuration for audio layers, triggers, and music loops
-- Complete SuperCollider lifecycle management:
-  - Automatic startup with configurable script path
-  - Graceful shutdown when service stops
-  - Clean process termination
-- **JACK Audio Integration**:
-  - Pure jackdbus architecture with automatic configuration
-  - 6-channel surround sound support for environmental audio and music
-  - USB audio device detection and configuration
-  - Real-time parameter verification and reconfiguration
-- Placeholder music generation for missing audio files:
-  - Era-specific musical keys (circle of fifths progression)
-  - Unique synthesizer timbres for each era
-  - Different musical patterns by slot (drones, arpeggios, melodies)
+- OS: Linux (production) with JACK available
+- Python: 3.11+
+- SuperCollider: 3.12+ (with sc3-plugins)
+- Audio hardware: USB audio interface for 5.1 output
+- Required services: core service publishing events on the unified ZMQ channel
 
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11+
-- SuperCollider 3.12+ (with sc3-plugins)
-- Standard Experimance common libraries
-
-### Installation
-
-```bash
-# From the experimance directory
-cd services/audio
-uv add -e .
-```
-
-### Running the Audio Service
+## Quick start
 
 ```bash
 # Set the active project (do this once)
 uv run set-project experimance
 
-# Basic usage
+# Start the service
 uv run -m experimance_audio
-
-# With custom configuration directory
-uv run  -m experimance_audio --config /path/to/config
-
-# SuperCollider control options
-uv run  -m experimance_audio --supercollider-script-path /path/to/custom_script.scd  # Use custom script
 ```
 
-Use the dev script:
+For local development:
+
 ```bash
-scripts/dev audio
+./scripts/dev audio
 ```
 
-In production:
+## Setup
+
 ```bash
-sudo systemctl erstart audio@experimance.service
+# From the repo root
+cd services/audio
+uv add -e .
 ```
 
-### Command Line Arguments
+If your user needs audio device access:
 
-- `--config-dir`: Directory containing audio configuration files (default: project-specific config at `projects/<project>/audio.toml`)
-- `--osc-host`: SuperCollider host address (default: localhost)
-- `--osc-port`: SuperCollider OSC port (default: 57120)
-- `--debug`: Enable debug logging
-- `--no-sc`: Don't automatically start SuperCollider
-- `--sc-script`: Path to SuperCollider script (defaults to experimance_audio.scd in sc_scripts dir)
-- `--sclang-path`: Path to SuperCollider language interpreter executable (defaults to 'sclang' in PATH)
-
-## Audio Configuration
-
-Audio configuration is loaded from JSON files in the `config` directory:
-
-- `layers.json`: Environmental audio layers
-- `triggers.json`: Sound effect triggers
-- `music_loops.json`: Era-based music loops
-
-See the technical design document for configuration schema details.
-
-## JACK Audio Architecture
-
-The audio service uses a pure jackdbus architecture:
-
-- **Automatic Configuration**: Service configures jackdbus parameters on startup
-- **6-Channel Surround**: Environmental audio and music routed to front/rear speaker pairs
-- **USB Device Support**: Automatic detection and configuration of USB audio interfaces
-- **SuperCollider Integration**: Connects to existing JACK server with `device = nil`
-- **No Manual JACK Management**: All JACK operations handled via `jack_control` commands
-
-### Audio Routing
-- **Environmental Audio**: Front channels (0,1) - Left/Right Front
-- **Music**: Rear channels (4,5) - Left/Right Rear  
-- **Center/LFE**: Channels 2,3 - Available for special effects
-- **AI Agent Voice**: Separate USB speakerphone device (not routed through JACK)
-
-## Architecture
-
-The audio service consists of:
-
-1. **ZMQ Subscriber Service**: Listens for system events via the star topology
-2. **OSC Bridge**: Communicates with SuperCollider
-3. **Config Loader**: Manages audio configuration files
-4. **SuperCollider Script**: Handles audio playback and mixing
-
-### ZeroMQ Architecture
-
-The audio service follows a simplified star topology with the core service as the central hub:
-
-```
-                      ┌─────────────┐
-                      │             │
-                      │    Core     │      PUSH/PULL
-                      │  Publisher  │<─────────────┐
-                      │             │              │
-                      └──────┬──────┘              │
-                             │                     │
-                          PUB/SUB                  │
-                             │                     │
-           ┌─────────────────┼─────────────────┐   │ 
-           │                 │                 │   │
-           ▼                 ▼                 ▼   │
-    ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-    │   Display   │   │    Audio    │   │   Agent     │
-    │   Service   │   │   Service   │   │   Service   │
-    └─────────────┘   └─────────────┘   └─────────────┘
-                           │  ^              
-                           │  │              
-                      OSC  │  │              
-                           │  │              
-                           ▼  │              
-                      ┌─────────────┐        
-                      │             │        
-                      │SuperCollider│
-                      │             │
-                      └─────────────┘
+```bash
+sudo usermod -a -G audio $USER
 ```
 
-All events, including agent events, are relayed through the core service, eliminating the need for multiple ZMQ connections and simplifying shutdown procedures.
+## Configuration
 
-## Development and Testing
+Configuration is loaded from the project TOML file and JSON audio configs.
 
-For development and manual testing, use the CLI tool:
+- Project config: `projects/<project>/audio.toml`
+- Audio configs: `services/audio/config/*.json`
+
+See `services/audio/docs/configuration.md` for configuration details, schema notes, and file locations.
+
+## Usage
+
+```bash
+# With a specific config file
+uv run -m experimance_audio --config projects/experimance/audio.toml
+
+# Override config fields via CLI (auto-generated from config models)
+uv run -m experimance_audio --supercollider-script-path "services/audio/sc_scripts/experimance_audio.scd"
+```
+
+Interactive CLI for manual testing:
 
 ```bash
 uv run -m experimance_audio.cli
 ```
 
-You will need your user to be part of the audio group (done in deploy script)
-```bash
-sudo usermod -a -G audio $USER
-```
-
-This provides an interactive interface for sending OSC commands to SuperCollider.
-
-### Testing OSC Communication
-
-To test OSC communication between Python and SuperCollider:
+## Testing
 
 ```bash
-# Run the test script with help to see all options
-./scripts/test_osc.sh help
+# Test OSC messaging (see options)
+./services/audio/scripts/test_osc.sh help
 
-# Send single test messages (manual mode)
-./scripts/test_osc.sh manual --message /spacetime --args forest ancient
-./scripts/test_osc.sh manual --message /listening --args true
+# Manual OSC test
+./services/audio/scripts/test_osc.sh manual --message /spacetime --args forest ancient
 
-# Run integrated testing with SuperCollider
-./scripts/test_osc.sh integrated
+# Integrated OSC test (SuperCollider + test messages)
+./services/audio/scripts/test_osc.sh integrated
 
-# Run automated unit tests
-./scripts/test_osc.sh unittest
+# Unit tests
+./services/audio/scripts/test_osc.sh unittest
 ```
 
-This testing framework verifies that:
-1. OSC messages are properly formatted and sent from Python
-2. Messages can be received by OSC clients (verified with oscdump)
-3. SuperCollider can receive and respond to the messages
-4. Resources are properly cleaned up when processes terminate
+See `services/audio/docs/testing.md` for test details and troubleshooting tips.
 
-See the [test documentation](tests/README.md) for more details.
+## Troubleshooting
+
+- If SuperCollider fails to start, verify `sclang` is in PATH and `services/audio/sc_scripts/experimance_audio.scd` exists.
+- If OSC messages do not arrive, confirm port 5570 is open and SuperCollider is listening (see `services/audio/docs/supercollider.md`).
+- If JACK does not start, check `jack_control status` and audio device access; see `services/audio/docs/surround_sound.md`.
+
+## Integrations
+
+- **Core service** publishes `SpaceTimeUpdate`, `PresenceStatus`, `SpeechDetected`, and `ChangeMap` events over ZMQ.
+- **SuperCollider** receives OSC commands (default port 5570) and plays audio based on JSON config files.
+
+## Additional Docs
+
+- `services/audio/docs/index.md` - Index of audio service documentation.
+- `services/audio/docs/architecture.md` - Service architecture, ZMQ flow, and OSC responsibilities.
+- `services/audio/docs/configuration.md` - Config files, schema, and config loading behavior.
+- `services/audio/docs/supercollider.md` - SuperCollider scripts, OSC commands, and GUI workflow.
+- `services/audio/docs/musician_guide.md` - GUI instructions and creative testing tips.
+- `services/audio/docs/surround_sound.md` - Multi-channel routing and JACK/jackdbus setup.
+- `services/audio/docs/testing.md` - OSC tests, scripts, and verification steps.
+- `services/audio/docs/technical_design.md` - Technical design summary and OSC patterns.
+- `services/audio/docs/credits.md` - Audio asset credits and licensing notes.
