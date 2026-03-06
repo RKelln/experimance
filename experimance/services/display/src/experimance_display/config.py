@@ -113,6 +113,8 @@ class TransitionsConfig(BaseModel):
 class TextStyleConfig(BaseModel):
     """Configuration for text rendering styles."""
 
+    font_name: str = Field(default="Arial", description="Font family name")
+
     font_size: int = Field(default=28, description="Font size in pixels")
 
     color: Tuple[int, int, int, int] = Field(
@@ -163,6 +165,82 @@ class TextStyleConfig(BaseModel):
     )
 
 
+class MarqueeStyleConfig(BaseModel):
+    """Configuration for circular-path marquee text rendering."""
+
+    font_name: str = Field(default="Arial", description="Font family name")
+
+    font_size: int = Field(default=28, description="Font size in pixels")
+
+    color: Tuple[int, int, int, int] = Field(
+        default=(255, 255, 255, 255), description="Text colour as RGBA tuple"
+    )
+
+    write_speed: float = Field(default=8.0, description="Characters written per second")
+
+    loop: bool = Field(
+        default=True,
+        description="Whether to loop text continuously around the circle until removed",
+    )
+
+    gap_slots: int = Field(
+        default=6,
+        description=(
+            "Number of character-slots ahead of the write head kept clear/invisible, "
+            "creating visible space in front of the current writing position"
+        ),
+    )
+
+    char_fade_in_duration: float = Field(
+        default=0.05, description="Seconds for a new character to fade in"
+    )
+
+    gap_fade_out_duration: float = Field(
+        default=0.15,
+        description="Seconds for a character to fade out when the write head enters its gap zone",
+    )
+
+    item_fade_out_duration: float = Field(
+        default=1.0,
+        description="Seconds for all characters to fade out when the whole item expires",
+    )
+
+    radius_scale: float = Field(
+        default=0.97,
+        description=(
+            "Multiplier applied to the mask-circle radius to position the text path. "
+            "Values slightly below 1.0 keep characters inside the mask edge "
+            "(e.g. 0.97 insets by ~1.5× font_size from the edge)."
+        ),
+    )
+
+    char_spacing: float = Field(
+        default=1.0,
+        description=(
+            "Multiplier on the estimated character width used to compute angular slot spacing. "
+            "Values > 1.0 spread characters further apart; < 1.0 packs them tighter."
+        ),
+    )
+
+    start_angle: float = Field(
+        default=0.0,
+        description=(
+            "Starting position in degrees, clockwise from 12 o'clock. "
+            "0 = top, 90 = right, 180 = bottom, 270 = left. "
+            "Ignored when follow=True and a previous item exists."
+        ),
+    )
+
+    follow: bool = Field(
+        default=True,
+        description=(
+            "When True and no explicit start_angle is given, new items begin "
+            "from where the previous item's write head stopped, so text "
+            "streams continuously around the circle."
+        ),
+    )
+
+
 class TextStylesConfig(BaseModel):
     """Text styles for different speakers."""
 
@@ -209,6 +287,11 @@ class TextStylesConfig(BaseModel):
             background=False,
         ),
         description="Style for title screen text",
+    )
+
+    marquee: MarqueeStyleConfig = Field(
+        default_factory=MarqueeStyleConfig,
+        description="Style for circular-path marquee text",
     )
 
 
