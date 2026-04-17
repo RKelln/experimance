@@ -1,0 +1,35 @@
+# Audio service configuration — demo mode
+# Environmental audio only (no music), stereo output.
+# Use for noisy-environment demos where surround and music are not practical.
+#
+# Run with: uv run -m experimance_audio --config projects/experimance/audio_demo.toml
+
+[supercollider]
+auto_start = true
+sclang_path = "sclang"
+script_path = "experimance_audio.scd"
+startup_timeout = 10.0
+output_channels = 2            # Stereo for demo setup
+input_channels = 2
+# device not set — uses system default audio output
+# Set SUPERCOLLIDER_DEVICE=hw:X,Y or specify below for a specific interface
+
+# JACK configuration
+auto_start_jack = false        # Don't require JACK for simple demo setups
+jack_sample_rate = 48000
+jack_buffer_size = 1024
+jack_periods = 2
+jack_output_channels = 2
+
+enable_surround = false
+environment_channels = [0, 1]
+sfx_channels = [0, 1]
+music_channels = [0, 1]        # Irrelevant — music is disabled below
+
+# Audio playback settings
+[audio]
+master_volume = 0.5            # Higher for noisy demo environments
+environment_volume = 0.8       # Prominent environment audio
+music_volume = 0.0             # Music disabled
+sfx_volume = 0.7
+config_dir = "services/audio/config"

@@ -122,13 +122,16 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 def get_project_config_path(service_name: str, fallback_dir: Path | None = None) -> Path:
     """
-    Get the configuration path for a service, with project-aware defaults.
+    Get the configuration path for a service, with project-aware defaults and variant support.
     
     This function implements the following priority:
-    1. If PROJECT_ENV is set and projects/{PROJECT_ENV}/{service_name}.toml exists, use that
-    2. If fallback_dir is provided and fallback_dir/config.toml exists, use that
-    3. Default to projects/{PROJECT_ENV}/{service_name}.toml (may not exist)
-    4. If PROJECT_ENV is not set, default to fallback_dir/config.toml
+    1. If PROJECT_ENV includes a variant (e.g., "experimance/nochat_demo"):
+       a. Try projects/{base_project}/{variant}/{service_name}.toml
+       b. Fall back to projects/{base_project}/{service_name}.toml
+    2. If PROJECT_ENV is set (no variant) and projects/{PROJECT_ENV}/{service_name}.toml exists, use that
+    3. If fallback_dir is provided and fallback_dir/config.toml exists, use that
+    4. Default to projects/{PROJECT_ENV}/{service_name}.toml (may not exist)
+    5. If PROJECT_ENV is not set, default to fallback_dir/config.toml
     
     Args:
         service_name: Name of the service (e.g., "core", "display", "audio")
@@ -140,23 +143,50 @@ def get_project_config_path(service_name: str, fallback_dir: Path | None = None)
     Examples:
         get_project_config_path("core", CORE_SERVICE_DIR)
         get_project_config_path("display", DISPLAY_SERVICE_DIR)
+        # With PROJECT_ENV="experimance/nochat_demo":
+        get_project_config_path("audio", AUDIO_SERVICE_DIR)
+        # → tries projects/experimance/nochat_demo/audio.toml first, then projects/experimance/audio.toml
     """
     import os
     
     project_env = os.getenv("PROJECT_ENV")
     
     if project_env and project_env != "":
-        # Try project-specific config first
-        project_config = PROJECT_SPECIFIC_DIR / project_env / f"{service_name}.toml"
-        if project_config.exists():
-            return project_config
-        
-        # If fallback_dir is provided and its config exists, use it
-        if fallback_dir and (fallback_dir / "config.toml").exists():
-            return fallback_dir / "config.toml"
+        # Check if PROJECT_ENV includes a variant (e.g., "experimance/nochat_demo")
+        if "/" in project_env:
+            # Extract base project and variant
+            parts = project_env.split("/", 1)
+            base_project = parts[0]
+            variant = parts[1]
             
-        # Default to project-specific path (even if it doesn't exist yet)
-        return project_config
+            # Try variant-specific config first
+            variant_config = PROJECT_SPECIFIC_DIR / base_project / variant / f"{service_name}.toml"
+            if variant_config.exists():
+                return variant_config
+            
+            # Fall back to base project config
+            base_config = PROJECT_SPECIFIC_DIR / base_project / f"{service_name}.toml"
+            if base_config.exists():
+                return base_config
+            
+            # Try fallback if provided
+            if fallback_dir and (fallback_dir / "config.toml").exists():
+                return fallback_dir / "config.toml"
+            
+            # Default to variant path (even if it doesn't exist yet)
+            return variant_config
+        else:
+            # No variant, use standard project-specific logic
+            project_config = PROJECT_SPECIFIC_DIR / project_env / f"{service_name}.toml"
+            if project_config.exists():
+                return project_config
+            
+            # If fallback_dir is provided and its config exists, use it
+            if fallback_dir and (fallback_dir / "config.toml").exists():
+                return fallback_dir / "config.toml"
+                
+            # Default to project-specific path (even if it doesn't exist yet)
+            return project_config
     else:
         # No PROJECT_ENV set, use fallback or raise error
         if fallback_dir:
