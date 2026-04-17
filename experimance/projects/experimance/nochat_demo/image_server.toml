@@ -3,7 +3,7 @@
 # Run with: uv run -m image_server --config projects/experimance/image_server_demo.toml
 
 cache_dir = "media/images/generated"
-max_cache_size_gb = 2.0
+max_cache_size_gb = 200.0
 
 [generator]
 strategy = "vastai"
