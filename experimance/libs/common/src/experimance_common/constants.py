@@ -9,13 +9,9 @@ from dotenv import load_dotenv
 # First, set a reasonable default
 os.environ.setdefault("PROJECT_ENV", "experimance")
 
-# Then load project-specific .env file which can override the default
-from experimance_common.constants_base import PROJECT_ROOT
-proj_env = PROJECT_ROOT / f"projects/{os.environ['PROJECT_ENV']}/.env"
-if proj_env.exists():
-    load_dotenv(proj_env, override=True)
-else:
-    pass  # No project-specific .env file found
+# Load project (and variant) .env — PROJECT_ENV is preserved across all loads
+from experimance_common.project_utils import load_project_dotenv, get_base_project_name
+load_project_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +24,7 @@ for _name in dir(_base_constants):
     if not _name.startswith('_'):
         globals()[_name] = getattr(_base_constants, _name)
 
-PROJECT = os.getenv("PROJECT_ENV", "experimance")
+PROJECT = get_base_project_name(os.getenv("PROJECT_ENV", "experimance"))
 override_file = PROJECT_SPECIFIC_DIR / PROJECT / "constants.py"
 
 if override_file.exists():     

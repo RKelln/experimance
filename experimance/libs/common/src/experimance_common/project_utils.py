@@ -120,6 +120,36 @@ def ensure_project_env_set(projects_dir: Optional[Path] = None) -> str:
         return os.environ["PROJECT_ENV"]
 
 
+def load_project_dotenv(override: bool = True) -> None:
+    """Load project .env file(s) without clobbering PROJECT_ENV.
+
+    Loads base project .env first, then variant .env on top (if active).
+    PROJECT_ENV is always restored after loading so .env files can never
+    override the variant spec set by .project / set_project.py.
+
+    Call this instead of manually save/restore-ing PROJECT_ENV around
+    load_dotenv() calls in constants.py, schemas.py, and __init__.py.
+    """
+    from dotenv import load_dotenv
+    from experimance_common.constants_base import PROJECT_ROOT
+
+    project_spec = os.environ.get("PROJECT_ENV", "experimance")
+    base_project = get_base_project_name(project_spec)
+    variant = detect_variant_name(project_spec)
+    saved = project_spec  # always restore after loading
+
+    base_env = PROJECT_ROOT / f"projects/{base_project}/.env"
+    if base_env.exists():
+        load_dotenv(base_env, override=override)
+
+    if variant:
+        variant_env = PROJECT_ROOT / f"projects/{base_project}/{variant}/.env"
+        if variant_env.exists():
+            load_dotenv(variant_env, override=override)
+
+    os.environ["PROJECT_ENV"] = saved
+
+
 def cli_main() -> None:
     """Command-line interface for setting the current project.
     
