@@ -16,10 +16,12 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 from .osc_bridge import OscBridge
 from .config_loader import AudioConfigLoader
+from .config import load_audio_service_config, resolve_supercollider_script_path
 
 from experimance_common.constants import DEFAULT_PORTS
 
@@ -489,22 +491,54 @@ class AudioCli(cmd.Cmd):
 if __name__ == "__main__":
     # uv run -m experimance_audio.cli
     parser = argparse.ArgumentParser(description="Experimance Audio CLI")
-    parser.add_argument("--osc-host", type=str, default="localhost", help="SuperCollider host address")
-    parser.add_argument("--osc-port", type=int, default=DEFAULT_PORTS['audio_osc_send_port'], help="SuperCollider OSC port")
+    parser.add_argument("--config", type=str, help="Path to audio service TOML config (default: active project audio config)")
+    parser.add_argument("--osc-host", type=str, help="SuperCollider host address (default: active config value)")
+    parser.add_argument("--osc-port", type=int, help="SuperCollider OSC port (default: active config value)")
     parser.add_argument("--config-dir", type=str, help="Directory containing audio configuration files")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--sc-script", type=str, help="Path to SuperCollider script to execute")
-    parser.add_argument("--sclang-path", type=str, default="sclang", help="Path to SuperCollider language interpreter executable")
+    parser.add_argument("--sclang-path", type=str, help="Path to SuperCollider language interpreter executable (default: active config value)")
 
     args = parser.parse_args()
     
     # Set log level
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    loaded_config = None
+    resolved_config_path = None
+    try:
+        loaded_config, resolved_config_path = load_audio_service_config(args.config)
+    except Exception as exc:
+        logger.warning(f"Could not load audio config for CLI defaults: {exc}")
+
+    if loaded_config is not None:
+        if args.osc_host is None:
+            args.osc_host = loaded_config.osc.host
+        if args.osc_port is None:
+            args.osc_port = loaded_config.osc.send_port
+        if args.config_dir is None and loaded_config.audio.config_dir is not None:
+            args.config_dir = str(loaded_config.audio.config_dir)
+        if args.sc_script is None:
+            resolved_script = resolve_supercollider_script_path(loaded_config.supercollider.script_path)
+            if resolved_script is not None:
+                args.sc_script = str(resolved_script)
+        if args.sclang_path is None:
+            args.sclang_path = loaded_config.supercollider.sclang_path
+
+    if args.osc_host is None:
+        args.osc_host = "localhost"
+    if args.osc_port is None:
+        args.osc_port = DEFAULT_PORTS['audio_osc_send_port']
+    if args.sclang_path is None:
+        args.sclang_path = "sclang"
     
     if args.config_dir and not os.path.isdir(args.config_dir):
         print(f"Config directory does not exist: {args.config_dir}")
         sys.exit(1)
+
+    if resolved_config_path is not None:
+        logger.info(f"Using audio config defaults from {resolved_config_path}")
 
     try:
         cli = AudioCli(

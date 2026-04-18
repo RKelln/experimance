@@ -11,6 +11,8 @@ MESSAGE="/spacetime"
 ARGS=("temperate_forest" "wilderness")
 SC_SCRIPT=""
 WAIT_TIME=3
+CONFIG_PATH=""
+USE_OSCDUMP=false
 
 # Color definitions
 RED='\033[0;31m'
@@ -31,22 +33,28 @@ show_help() {
   echo "  unittest   - Run automated unit tests"
   echo ""
   echo -e "${YELLOW}Options for manual mode:${NC}"
-  echo "  --port PORT    - OSC port to use (default: $PORT)"
+  echo "  --config PATH  - Audio service TOML config to read defaults from"
+  echo "  --port PORT    - OSC port to use (default: active config OSC send port)"
   echo "  --message MSG  - OSC message to send (default: $MESSAGE)"
   echo "  --args A B C   - Arguments for the message"
   echo "  --wait SECS    - Time to wait for responses (default: $WAIT_TIME)"
-  echo "  --no-oscdump   - Don't use oscdump to verify message reception"
+  echo "  --oscdump      - Verify reception with oscdump (opt-in)"
+  echo "  --send-only    - Force send-only mode (default)"
+  echo "  --no-oscdump   - Legacy alias for --send-only"
   echo "  --debug        - Show debug information"
   echo ""
   echo -e "${YELLOW}Options for integrated mode:${NC}"
-  echo "  --port PORT    - OSC port to use (default: $PORT)"
-  echo "  --script PATH  - Path to SuperCollider script (default: auto-detect)"
+  echo "  --config PATH  - Audio service TOML config to read defaults from"
+  echo "  --port PORT    - OSC port to use (default: active config OSC send port)"
+  echo "  --script PATH  - Path to SuperCollider script (default: sc_scripts/experimance_audio.scd if present)"
   echo "  --sclang PATH  - Path to sclang executable (default: sclang)"
   echo ""
   echo -e "${YELLOW}Examples:${NC}"
   echo "  $0 manual --message /listening --args true"
-  echo "  $0 manual --message /spacetime --args desert ancient --port 5567"
-  echo "  $0 integrated --script path/to/test_osc.scd"
+  echo "  $0 manual --oscdump --message /spacetime --args desert ancient"
+  echo "  $0 manual --message /spacetime --args desert ancient"
+  echo "  $0 manual --config projects/experimance/nochat_demo/audio.toml --message /reload"
+  echo "  $0 integrated --script sc_scripts/experimance_audio.scd"
   echo "  $0 unittest"
 }
 
@@ -58,9 +66,14 @@ fi
 
 case "$MODE" in
   manual)
-    CMD="python -m tests.test_osc_bridge --manual"
+    CMD="uv run tests/test_osc_bridge.py --manual"
     while [ $# -gt 0 ]; do
       case "$1" in
+        --config)
+          CONFIG_PATH="$2"
+          CMD="$CMD --config=$CONFIG_PATH"
+          shift 2
+          ;;
         --port)
           PORT="$2"
           CMD="$CMD --port=$PORT"
@@ -86,7 +99,15 @@ case "$MODE" in
           shift 2
           ;;
         --no-oscdump)
-          CMD="$CMD --no-oscdump"
+          USE_OSCDUMP=false
+          shift
+          ;;
+        --send-only)
+          USE_OSCDUMP=false
+          shift
+          ;;
+        --oscdump)
+          USE_OSCDUMP=true
           shift
           ;;
         --debug)
@@ -100,12 +121,22 @@ case "$MODE" in
           ;;
       esac
     done
+
+    # Default manual mode to send-only so it works cleanly against a live service.
+    if [[ "$USE_OSCDUMP" == false ]]; then
+      CMD="$CMD --send-only"
+    fi
     ;;
 
   integrated)
-    CMD="python -m tests.test_osc_bridge --integrated"
+    CMD="uv run tests/test_osc_bridge.py --integrated"
     while [ $# -gt 0 ]; do
       case "$1" in
+        --config)
+          CONFIG_PATH="$2"
+          CMD="$CMD --config=$CONFIG_PATH"
+          shift 2
+          ;;
         --port)
           PORT="$2"
           CMD="$CMD --port=$PORT"
@@ -132,10 +163,19 @@ case "$MODE" in
           ;;
       esac
     done
+
+    # test_osc_bridge.py auto-detects test_osc.scd, but this repo primarily uses
+    # experimance_audio.scd. Provide a robust default when --script is omitted.
+    if [[ "$CMD" != *"--script="* ]]; then
+      DEFAULT_SC_SCRIPT="sc_scripts/experimance_audio.scd"
+      if [ -f "$DEFAULT_SC_SCRIPT" ]; then
+        CMD="$CMD --script=$DEFAULT_SC_SCRIPT"
+      fi
+    fi
     ;;
 
   unittest)
-    CMD="python -m tests.test_osc_bridge"
+    CMD="uv run tests/test_osc_bridge.py"
     ;;
 
   help)
@@ -151,12 +191,12 @@ case "$MODE" in
 esac
 
 # Check if oscdump is available for manual testing
-if [ "$MODE" = "manual" ] && [[ "$CMD" != *"--no-oscdump"* ]]; then
+if [ "$MODE" = "manual" ] && [[ "$USE_OSCDUMP" == true ]]; then
   if ! command -v oscdump &> /dev/null; then
     echo -e "${YELLOW}WARNING: oscdump command not found${NC}"
     echo -e "Install with: ${GREEN}sudo apt install liblo-tools${NC}"
     echo -e "Continuing without OSC reception verification...\n"
-    CMD="$CMD --no-oscdump"
+    CMD="$CMD --send-only"
   fi
 fi
 
