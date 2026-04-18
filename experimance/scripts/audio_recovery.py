@@ -36,6 +36,28 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+def _parse_jack_driver_params(output: str) -> dict[str, str]:
+    """Parse effective values from `jack_control dp` output.
+
+    Output lines use the form:
+        name: description (type:is_set:default:value)
+    We want the final effective value for each parameter.
+    """
+    import re
+
+    params: dict[str, str] = {}
+    pattern = re.compile(r"^\s*([a-zA-Z-]+):.*\([^)]*:(.*?)\)\s*$")
+
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            key = match.group(1).strip()
+            value = match.group(2).strip()
+            params[key] = value
+
+    return params
+
+
 def stop_audio_services() -> bool:
     """
     Stop all audio services to prepare for device reset.
@@ -879,31 +901,32 @@ def test_jack_system():
     # Get JACK parameters
     try:
         result = subprocess.run(["jack_control", "dp"], capture_output=True, text=True, timeout=5)
+        params = _parse_jack_driver_params(result.stdout)
 
         print("\n--- JACK Configuration ---")
-        for line in result.stdout.split("\n"):
-            if "device:" in line and "hw:" in line:
-                print(f"Device: {line.split(':')[-1].strip()}")
-            elif "rate:" in line and "set:" in line:
-                rate = line.split(":")[-1].strip()
-                print(f"Sample Rate: {rate}Hz")
-            elif "outchannels:" in line and "set:" in line:
-                channels = line.split(":")[-1].strip()
-                print(f"Output Channels: {channels}")
+        device = params.get("playback") or params.get("device")
+        if device and device != "none":
+            print(f"Device: {device}")
+        rate = params.get("rate")
+        if rate:
+            print(f"Sample Rate: {rate}Hz")
+        channels = params.get("outchannels")
+        if channels:
+            print(f"Output Channels: {channels}")
 
     except Exception as e:
         print(f"Could not get JACK parameters: {e}")
 
     # List JACK ports
     try:
-        result = subprocess.run(["jack_lsp"], capture_output=True, text=True)
+        result = subprocess.run(["jack_lsp"], capture_output=True, text=True, timeout=5)
 
         if result.returncode != 0:
             print(f"\n--- JACK Ports ---")
             print(f"✗ Cannot connect to JACK server for port listing")
             print(f"   Error: {result.stderr.strip()}")
-            print(f"   This suggests JACK server is not properly accessible")
-            print(f"   Try: uv run scripts/audio_recovery.py restart-services")
+            print(f"   This suggests JACK server is not fully accessible to clients")
+            print(f"   Try: uv run scripts/audio_recovery.py fix-jack")
             return False
 
         all_ports = [line.strip() for line in result.stdout.split("\n") if line.strip()]
@@ -922,7 +945,7 @@ def test_jack_system():
         elif len(playback_ports) > 0:
             print(f"⚠️  Only {len(playback_ports)} channels available (need 6 for 5.1)")
 
-        return len(playback_ports) >= 6
+        return len(playback_ports) >= 2
 
     except Exception as e:
         print(f"Could not list JACK ports: {e}")

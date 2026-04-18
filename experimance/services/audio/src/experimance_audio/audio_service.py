@@ -495,20 +495,21 @@ class AudioService(BaseService):
             expected_sample_rate = self.config.supercollider.jack_sample_rate
             expected_buffer_size = self.config.supercollider.jack_buffer_size
             
-            # Check device
-            device_match = re.search(r'device:.*?:([^)]+)', config_output)
-            current_device = device_match.group(1) if device_match else None
-            
-            # Check output channels
-            outchannels_match = re.search(r'outchannels:.*?:(\d+)', config_output)
+            # Parse the effective values shown in `jack_control dp`.
+            # The output format is:
+            #   name: description (type:is_set:default:value)
+            # Some values contain colons (e.g. hw:1,0), so we anchor to the
+            # end of each line rather than taking the first colon-delimited field.
+            playback_match = re.search(r'^\s*playback:.*:(hw:[^)]*)\)\s*$', config_output, re.MULTILINE)
+            current_device = playback_match.group(1) if playback_match else None
+
+            outchannels_match = re.search(r'^\s*outchannels:.*:(\d+)\)\s*$', config_output, re.MULTILINE)
             current_output_channels = int(outchannels_match.group(1)) if outchannels_match else None
-            
-            # Check sample rate
-            rate_match = re.search(r'rate:.*?:(\d+)', config_output)
+
+            rate_match = re.search(r'^\s*rate:.*:(\d+)\)\s*$', config_output, re.MULTILINE)
             current_sample_rate = int(rate_match.group(1)) if rate_match else None
-            
-            # Check buffer size (period)
-            period_match = re.search(r'period:.*?:(\d+)', config_output)
+
+            period_match = re.search(r'^\s*period:.*:(\d+)\)\s*$', config_output, re.MULTILINE)
             current_buffer_size = int(period_match.group(1)) if period_match else None
             
             # Log current vs expected configuration
