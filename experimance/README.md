@@ -13,6 +13,9 @@ This project consists of multiple services that communicate via ZeroMQ:
 - Audio service (`experimance_audio`) - Provides audio feedback and soundscapes
 - Agent service (`experimance_agent`) - AI agents with vision capabilities that interact with the installation
 
+## IMPORTANT
+- always use `uv` to run the Python in this project
+
 ## Project Structure
 
 The project uses a modern Python package structure with src layout:
