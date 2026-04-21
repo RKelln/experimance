@@ -1310,7 +1310,7 @@ def main():
     p_search = subparsers.add_parser('search', help='Search for GPU offers')
     p_search.add_argument('--min-gpu-ram', type=int, default=16, help='Minimum GPU RAM (GB)')
     p_search.add_argument('--max-price', type=float, default=0.5, help='Max price ($/hr)')
-    p_search.add_argument('--dlperf', type=float, default=32.0, help='Minimum DLPerf score')
+    p_search.add_argument('--dlperf', '--dl-perf', dest='dlperf', type=float, default=32.0, help='Minimum DLPerf score')
 
     # provision
     p_prov = subparsers.add_parser('provision', help='Find or create an instance (always provisions)')
@@ -1320,7 +1320,7 @@ def main():
     p_prov.add_argument('--provision-script', type=str, metavar='URL', help='Custom provisioning script URL to use')
     p_prov.add_argument('--min-gpu-ram', type=int, default=16, help='Minimum GPU RAM (GB)')
     p_prov.add_argument('--max-price', type=float, default=0.5, help='Max price ($/hr)')
-    p_prov.add_argument('--dlperf', type=float, default=32.0, help='Minimum DLPerf score')
+    p_prov.add_argument('--dlperf', '--dl-perf', dest='dlperf', type=float, default=32.0, help='Minimum DLPerf score')
 
     # fix
     p_fix = subparsers.add_parser('fix', help='Fix an instance using SCP provisioning')
