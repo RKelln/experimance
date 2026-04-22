@@ -259,7 +259,7 @@ def update_instance(manager: VastAIManager, args: argparse.Namespace):
         endpoint = manager.get_model_server_endpoint(instance_id)
         if endpoint:
             print(f"🌐 Model server should be available at: {endpoint.url}")
-            print("💡 You can check health with: python scripts/vastai_cli.py health")
+            print("💡 You can check health with: uv run vastai healthcheck")
         else:
             print("⚠️  Could not get model server endpoint, but update completed")
     else:
