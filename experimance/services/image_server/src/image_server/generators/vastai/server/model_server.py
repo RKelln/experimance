@@ -902,7 +902,13 @@ def preload_known_loras(pipe: StableDiffusionXLControlNetPipeline, model_cache_k
     if adapter_names:
         pipe.set_adapters(adapter_names, adapter_weights=[0.0] * len(adapter_names))
         logger.info(f"All {len(adapter_names)} known LoRAs preloaded and disabled")
-    
+
+    # LoRA weights are loaded in float32 by default; cast unet back to float16
+    # to avoid "Input type (c10::Half) and bias type (float) should be the same" at inference.
+    if torch.cuda.is_available():
+        pipe.unet.to(dtype=torch.float16)
+        logger.info("Recast unet to float16 after LoRA preloading")
+
     # Track that all known LoRAs are loaded for this model
     loaded_loras[model_cache_key] = []  # Empty list means no active LoRAs
 
@@ -1177,10 +1183,6 @@ async def generate_image(request: ControlNetGenerateData) -> Dict[str, Any]:
         
         # Generate the image
         logger.info(f"Generating image with prompt: {data.prompt[:50]}...")
-        
-        # Clear any cached memory before generation
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         
         # Get model cache key for DeepCache management
         model_cache_key = f"{data.model}_{data.controlnet}"
