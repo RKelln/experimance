@@ -1,0 +1,29 @@
+# Health service configuration — demo mode
+# Monitors only the services that run in the demo setup (no agent).
+
+service_name = "health"
+check_interval = 30.0
+startup_grace_period = 10.0
+service_timeout = 120.0
+notification_cooldown = 300.0
+
+expected_services = [
+    "core",
+    "display",
+    "audio",
+    "image_server"
+]
+
+enable_notifications = true
+notification_level = "warning"
+notification_on_startup = true
+notification_on_shutdown = true
+
+notify_on_healthy = false
+notify_on_unknown = true
+
+buffer_time = 10.0
+enable_buffering = true
+
+max_health_file_age = 86400.0
+cleanup_interval = 3600.0

@@ -98,9 +98,79 @@ uv run python services/image_server/src/image_server/generators/vastai/test_vast
 
 ## Troubleshooting
 
-- Slow generation: use `lightning` model and lower step counts.
-- Out of memory: reduce resolution or disable extra features.
-- Connection issues: ensure the model server is running and port 8000 is exposed on the instance.
+### Service management (Supervisor)
+
+The model server runs under Supervisor on VastAI instances. Common commands:
+
+```bash
+# Check service status
+supervisorctl status experimance-image-server
+
+# Restart service
+supervisorctl restart experimance-image-server
+
+# View service logs
+tail -f /var/log/portal/experimance-image-server.log
+
+# View supervisor main log (if service won't start)
+tail -f /var/log/supervisor/supervisord.log
+```
+
+### Model download on startup
+
+On first startup, the model server downloads the model (~6.8GB for juggernaut-xl-lightning). This is normal and a one-time cost:
+
+```bash
+tail -f /var/log/portal/experimance-image-server.log | grep -i "downloading"
+```
+
+Once download completes and service is ready, test with:
+
+```bash
+curl http://localhost:8000/healthcheck
+```
+
+### Service won't start
+
+1. Check supervisor logs:
+   ```bash
+   tail -20 /var/log/supervisor/supervisord.log
+   ```
+
+2. Check if log directory exists (if not, create it):
+   ```bash
+   sudo mkdir -p /var/log/portal
+   sudo chmod 755 /var/log/portal
+   supervisorctl restart experimance-image-server
+   ```
+
+3. Verify GPU is available:
+   ```bash
+   nvidia-smi
+   ```
+
+### Slow or failed generation
+
+- **Slow generation**: Use `lightning` model and lower step counts (default auto-adjust should help).
+- **VRAM issues**: Check available VRAM with `nvidia-smi --query-gpu=memory.free --format=csv`. If low, restart service or reduce resolution.
+- **Model load errors**: Check logs for CUDA/PyTorch compatibility issues. Sometimes requires model redownload.
+
+### Connection issues
+
+- Ensure model server is actually running: `supervisorctl status experimance-image-server`
+- Check port 8000 is open: `netstat -tlnp | grep 8000` or `curl http://localhost:8000/healthcheck`
+- Verify no permission issues in `/var/log/portal/`
+
+### Disk space issues
+
+Models cache in `/workspace/models/`. Check available space:
+
+```bash
+df -h /workspace
+du -sh /workspace/models
+```
+
+If low, remove old model files (safe to delete—they'll re-download).
 
 ## Integrations
 

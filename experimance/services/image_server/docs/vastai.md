@@ -91,6 +91,16 @@ uv run python services/image_server/src/image_server/generators/vastai/test_vast
 
 ## Troubleshooting
 
+### Connecting to an instance
+
+To SSH into a running VastAI instance:
+
+```bash
+uv run vastai ssh
+```
+
+This outputs the SSH command to run. Copy and paste it to connect to the instance. Once connected, you can debug the model server using the commands in `services/image_server/docs/vastai_model_server.md#troubleshooting`.
+
 ### Exclusion list
 
 The generator maintains an exclusion list for failed offers and instances.

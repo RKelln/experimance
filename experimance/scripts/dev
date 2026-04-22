@@ -29,9 +29,37 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Determine project environment (default to experimance)
-PROJECT_ENV="${PROJECT_ENV:-experimance}"
-echo -e "${BLUE}Using project environment: ${PROJECT_ENV}${NC}"
+# Determine project environment from precedence:
+# 1. PROJECT_ENV env var (explicit override)
+# 2. projects/.project file (set by scripts/set_project.py)
+# 3. default: experimance
+PROJECT_FILE="$REPO_DIR/projects/.project"
+if [ -n "${PROJECT_ENV:-}" ]; then
+    PROJECT_ENV="$PROJECT_ENV"
+elif [ -f "$PROJECT_FILE" ]; then
+    PROJECT_ENV="$(tr -d '[:space:]' < "$PROJECT_FILE")"
+    if [ -z "$PROJECT_ENV" ]; then
+        PROJECT_ENV="experimance"
+    fi
+else
+    PROJECT_ENV="experimance"
+fi
+
+# Keep both full project spec and base project name available
+# Examples:
+#   PROJECT_ENV=experimance/nochat_demo -> PROJECT_BASE=experimance
+#   PROJECT_ENV=fire -> PROJECT_BASE=fire
+PROJECT_BASE="${PROJECT_ENV%%/*}"
+PROJECT_VARIANT=""
+if [[ "$PROJECT_ENV" == */* ]]; then
+    PROJECT_VARIANT="${PROJECT_ENV#*/}"
+fi
+
+if [ -n "$PROJECT_VARIANT" ]; then
+    echo -e "${BLUE}Using project environment: ${PROJECT_ENV} (base: ${PROJECT_BASE}, variant: ${PROJECT_VARIANT})${NC}"
+else
+    echo -e "${BLUE}Using project environment: ${PROJECT_ENV}${NC}"
+fi
 
 # Simple warn function
 warn() {
@@ -138,11 +166,11 @@ cleanup_existing_services() {
 # Map service names to module paths
 get_module_name() {
     local service="$1"
-    local project_env="${PROJECT_ENV:-experimance}"
+    local project_base="${PROJECT_BASE:-${PROJECT_ENV%%/*}}"
     
     case "$service" in
         "core")
-            if [ "$project_env" = "fire" ]; then
+            if [ "$project_base" = "fire" ]; then
                 echo "fire_core"
             else
                 echo "experimance_core"
@@ -152,7 +180,7 @@ get_module_name() {
             echo "experimance_display"
             ;;
         "agent")
-            if [ "$project_env" = "fire" ]; then
+            if [ "$project_base" = "fire" ]; then
                 echo "fire_agent"
             else
                 echo "experimance_agent"
@@ -173,7 +201,7 @@ get_module_name() {
         *)
             # Try to find the service directory and guess module name
             if [ -d "$REPO_DIR/services/$service" ]; then
-                if [ "$project_env" = "fire" ] && [[ "$service" == "core" || "$service" == "agent" ]]; then
+                if [ "$project_base" = "fire" ] && [[ "$service" == "core" || "$service" == "agent" ]]; then
                     echo "fire_${service}"
                 else
                     echo "experimance_${service}"

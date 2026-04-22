@@ -1,0 +1,35 @@
+# Audio service configuration — canonical NoChat demo mode
+# Environmental audio only (no music), stereo output, JACK-enabled.
+# This is the default demo profile for this machine because it can release the
+# analog device from PipeWire/WirePlumber and start SuperCollider reliably.
+#
+# Run with: uv run -m experimance_audio --config projects/experimance/nochat_demo/audio.toml
+
+[supercollider]
+auto_start = true
+sclang_path = "sclang"
+script_path = "experimance_audio.scd"
+startup_timeout = 10.0
+output_channels = 2            # Stereo for demo setup
+input_channels = 2
+device = "hw:1,0"             # Analog output device used for bowl speakers on this machine
+
+# JACK configuration
+auto_start_jack = true         # Required on this machine to release device from PipeWire/WirePlumber
+jack_sample_rate = 48000
+jack_buffer_size = 1024
+jack_periods = 2
+jack_output_channels = 2
+
+enable_surround = false
+environment_channels = [0, 1]
+sfx_channels = [0, 1]
+music_channels = [0, 1]        # Irrelevant — music is disabled below
+
+# Audio playback settings
+[audio]
+master_volume = 0.2            # Higher for noisy demo environments
+environment_volume = 0.3       # Prominent environment audio
+music_volume = 0.0             # Music disabled
+sfx_volume = 0.6               
+config_dir = "services/audio/config"

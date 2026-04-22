@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration schema for the Experimance Audio Service.
+Configuration schema and helpers for the Experimance Audio Service.
 
 This module defines Pydantic models for validating and accessing
 audio service configuration in a type-safe way.
@@ -242,3 +242,52 @@ class AudioServiceConfig(BaseServiceConfig):
         default_factory=AudioConfig,
         description="Audio playback configuration"
     )
+
+
+def load_audio_service_config(config_file: Optional[str | Path] = None) -> tuple[AudioServiceConfig, Path]:
+    """Load the active audio service config and return the resolved path.
+
+    Args:
+        config_file: Optional explicit config file path. If omitted, uses the
+            active project's audio config.
+
+    Returns:
+        Tuple of validated config object and resolved config path.
+    """
+    resolved_path = Path(config_file) if config_file else Path(DEFAULT_CONFIG_PATH)
+    return AudioServiceConfig.from_file(resolved_path), resolved_path
+
+
+def resolve_supercollider_script_path(script_path: Optional[str | Path]) -> Optional[Path]:
+    """Resolve a SuperCollider script path using standard service locations.
+
+    Args:
+        script_path: Explicit or configured script path.
+
+    Returns:
+        Resolved path if the script exists, otherwise None.
+    """
+    if not script_path:
+        return None
+
+    candidate = Path(script_path)
+    service_dir = Path(__file__).resolve().parents[2]
+
+    search_paths = []
+    if candidate.is_absolute():
+        search_paths.append(candidate)
+    else:
+        search_paths.extend(
+            [
+                Path.cwd() / candidate,
+                service_dir / "sc_scripts" / candidate.name,
+                service_dir / candidate,
+                candidate,
+            ]
+        )
+
+    for path in search_paths:
+        if path.exists():
+            return path.resolve()
+
+    return None

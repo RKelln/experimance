@@ -37,6 +37,18 @@ Located in `services/audio/config/`:
 `services/audio/config/audio_schema.json` documents expected fields, ranges,
 OSC command patterns, and naming recommendations.
 
+## SuperCollider runtime notes
+
+- `supercollider.device` can be `hw:X,Y`, `plughw:X,Y`, or a partial name.
+- The service resolves device names to hardware addresses before generating the
+  temporary `.scd` launch script.
+- If `auto_start_jack = false`, SuperCollider may still try JACK depending on
+  script/runtime defaults, so explicit device pinning is recommended when
+  debugging startup issues.
+- `output_channels` and `input_channels` are injected into the runtime script.
+- If JACK is already running with the correct parameters, the audio service
+  should reuse it rather than stopping and reconfiguring it.
+
 ## General project configuration
 
 `data/experimance_config.json` defines shared lists used by audio configuration
@@ -100,7 +112,20 @@ Files are loaded by `AudioConfigLoader`:
 
 ## Validation
 
-- Run `uv run python scripts/validate_schemas.py` from the repo root to check schema compatibility.
+- Run `uv run scripts/validate_schemas.py` from the repo root to check schema compatibility.
+
+## Device selection quick reference
+
+List ALSA devices:
+
+```bash
+aplay -l
+arecord -l
+```
+
+If startup fails with `Cannot open PCM device` or JACK errors, set an explicit
+`device` in your project TOML and re-test using manual OSC commands against the
+running audio service.
 
 ## Files touched
 

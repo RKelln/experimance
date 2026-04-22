@@ -1,0 +1,46 @@
+# Demo Deployment Configuration
+#
+# Simplified single-machine deployment: core, image_server, display, audio.
+# No agent (chatbot) service — intended for noisy-environment demos.
+#
+# Setup:
+#   uv run scripts/set_project.py experimance/nochat_demo
+#
+# Then all services automatically use nochat_demo configs:
+#   uv run -m experimance_audio
+#   uv run -m image_server
+#   uv run -m experimance_health
+#   uv run -m experimance_core
+#   uv run -m experimance_display
+
+[deployment]
+project = "experimance"
+version = "1.0.0"
+
+[machines]
+[machines.ubuntu]
+hostname = "experimance"
+services = ["core", "image_server", "display", "audio", "health"]
+platform = "linux"
+mode = "prod"
+user = "experimance"
+ssh_hostname = "experimance"
+
+[services]
+[services.core]
+module_name = "experimance_core"
+
+[services.image_server]
+module_name = "image_server"
+config = "projects/experimance/nochat_demo/image_server.toml"
+
+[services.display]
+module_name = "experimance_display"
+
+[services.audio]
+module_name = "experimance_audio"
+config = "projects/experimance/nochat_demo/audio.toml"
+
+[services.health]
+module_name = "experimance_health"
+config = "projects/experimance/nochat_demo/health.toml"

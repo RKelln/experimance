@@ -1,0 +1,31 @@
+## Image server configuration — demo mode
+# Uses Vast.ai for live image generation.
+# Run with: uv run -m image_server --config projects/experimance/image_server_demo.toml
+
+cache_dir = "media/images/generated"
+max_cache_size_gb = 200.0
+
+[generator]
+strategy = "vastai"
+timeout = 12
+
+# FAL.AI configuration
+[fal_comfy]
+endpoint = "comfy/RKelln/experimancexilightningdepth"
+model_url = "https://civitai.com/api/download/models/471120?type=Model&format=SafeTensor&size=full&fp=fp16"
+lora_url = "https://civitai.com/api/download/models/152309?type=Model&format=SafeTensor"
+lora_strength = 1.0
+timeout = 120
+
+# VastAI configuration
+[vastai]
+model_name = "lightning"
+pre_warm = true
+create_if_none = true
+wait_for_ready = true
+control_guidance_end = 0.8
+
+# Fake image generator (fallback)
+[mock]
+use_existing_images = true
+existing_images_dir = "media/images/generated"

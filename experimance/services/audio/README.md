@@ -83,8 +83,17 @@ uv run -m experimance_audio.cli
 # Manual OSC test
 ./services/audio/scripts/test_osc.sh manual --message /spacetime --args forest ancient
 
+# Explicit send-only mode (same as default)
+./services/audio/scripts/test_osc.sh manual --send-only --message /spacetime --args forest ancient
+
+# Optional: verify reception locally with oscdump
+./services/audio/scripts/test_osc.sh manual --oscdump --message /spacetime --args forest ancient
+
 # Integrated OSC test (SuperCollider + test messages)
 ./services/audio/scripts/test_osc.sh integrated
+
+# Override the auto-detected config when needed
+./services/audio/scripts/test_osc.sh manual --config projects/experimance/nochat_demo/audio.toml --message /reload
 
 # Unit tests
 ./services/audio/scripts/test_osc.sh unittest
@@ -92,11 +101,19 @@ uv run -m experimance_audio.cli
 
 See `services/audio/docs/testing.md` for test details and troubleshooting tips.
 
+Recommended troubleshooting order:
+
+1. Start audio service with the intended config.
+2. Send manual OSC messages via `test_osc.sh manual` or `experimance_audio.cli`.
+3. Use integrated test only when validating standalone SuperCollider startup.
+
 ## Troubleshooting
 
 - If SuperCollider fails to start, verify `sclang` is in PATH and `services/audio/sc_scripts/experimance_audio.scd` exists.
-- If OSC messages do not arrive, confirm port 5570 is open and SuperCollider is listening (see `services/audio/docs/supercollider.md`).
+- OSC test tools now read the active audio config by default, including the configured OSC send port. If OSC messages do not arrive, confirm the active project/config is the one you expect and that SuperCollider is listening on that configured port (see `services/audio/docs/supercollider.md`).
 - If JACK does not start, check `jack_control status` and audio device access; see `services/audio/docs/surround_sound.md`.
+- If integrated testing boots SC on the wrong ALSA device (`hw:0`) and crashes, use service-managed startup with explicit `device` in project TOML (for example `hw:1,0` on this machine).
+- `WebEngineContext` warnings in headless mode are usually non-fatal; focus on `Cannot open PCM device` / JACK errors for root cause.
 
 ## Integrations
 

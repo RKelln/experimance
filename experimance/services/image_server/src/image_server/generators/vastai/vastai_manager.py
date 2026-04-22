@@ -137,7 +137,7 @@ class VastAIManager:
         except Exception as e:
             logger.error(f"Failed to save exclusion list to {self._exclusion_list_file}: {e}")
         
-    def _run_vastai_command(self, cmd: List[str], raw: bool = True) -> Any:
+    def _run_vastai_command(self, cmd: List[str], raw: bool = True, timeout: Optional[int] = None) -> Any:
         """Run a vastai CLI command and return parsed JSON result."""
         try:
             command_args = []
@@ -158,9 +158,14 @@ class VastAIManager:
                 command,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=timeout
             )
             if raw:
+                if not result.stdout.strip():
+                    # Some successful VastAI mutation commands (for example destroy)
+                    # return exit code 0 with empty stdout even when --raw is supplied.
+                    return {"success": True}
                 return json.loads(result.stdout)
             else:
                 return result.stdout.strip()
@@ -216,7 +221,7 @@ class VastAIManager:
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True  # Let the exception propagate after all retries
     )
-    def _run_vastai_command_with_retry(self, cmd: List[str], raw: bool = True) -> Any:
+    def _run_vastai_command_with_retry(self, cmd: List[str], raw: bool = True, timeout: Optional[int] = None) -> Any:
         """
         Run a vastai CLI command that will be retried on failure.
         
@@ -242,9 +247,14 @@ class VastAIManager:
                 command,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=timeout
             )
             if raw:
+                if not result.stdout.strip():
+                    # Some successful VastAI mutation commands (for example destroy)
+                    # return exit code 0 with empty stdout even when --raw is supplied.
+                    return {"success": True}
                 return json.loads(result.stdout)
             else:
                 return result.stdout.strip()
@@ -283,7 +293,7 @@ class VastAIManager:
     def show_instances(self, raw: bool = True):
         """List all instances for the current user with automatic retry on transient failures."""
         try:
-            result = self._run_vastai_command_with_retry(["show", "instances"], raw=raw)
+            result = self._run_vastai_command_with_retry(["show", "instances"], raw=raw, timeout=30)
             if raw:
                 # Ensure result is a list as expected for raw=True
                 if not isinstance(result, list):
@@ -303,7 +313,7 @@ class VastAIManager:
 
     def show_instance(self, instance_id: int, raw: bool = True) -> Dict[str, Any]:
         """Get detailed information about a specific instance."""
-        return self._run_vastai_command(["show", "instance", str(instance_id)], raw=raw)
+        return self._run_vastai_command(["show", "instance", str(instance_id)], raw=raw, timeout=30)
 
     def _is_instance_unrecoverably_broken(self, instance: Dict[str, Any]) -> tuple[bool, str]:
         """
@@ -1567,7 +1577,7 @@ class VastAIManager:
         ]
         
         try:
-            offers = self._run_vastai_command_with_retry(cmd)
+            offers = self._run_vastai_command_with_retry(cmd, timeout=60)
             
             # Ensure offers is a list as expected
             if not isinstance(offers, list):
@@ -1735,7 +1745,7 @@ class VastAIManager:
         ]
         
         try:
-            result = self._run_vastai_command_with_retry(cmd)
+            result = self._run_vastai_command_with_retry(cmd, timeout=120)
             return result
         except Exception as e:
             # If all retries failed, return error dict for consistent handling
@@ -1757,7 +1767,7 @@ class VastAIManager:
             Stop result
         """
         cmd = ["stop", "instance", str(instance_id)]
-        return self._run_vastai_command(cmd)
+        return self._run_vastai_command(cmd, timeout=60)
     
     def start_instance(self, instance_id: int) -> Dict[str, Any]:
         """
@@ -1770,7 +1780,7 @@ class VastAIManager:
             Start result
         """
         cmd = ["start", "instance", str(instance_id)]
-        return self._run_vastai_command(cmd)
+        return self._run_vastai_command(cmd, timeout=60)
     
     def restart_instance(self, instance_id: int) -> Dict[str, Any]:
         """
@@ -1809,8 +1819,10 @@ class VastAIManager:
         Returns:
             Destroy result
         """
-        cmd = ["destroy", "instance", str(instance_id)]
-        return self._run_vastai_command(cmd)
+        # VastAI destroy prompts for confirmation unless -y/--yes is provided.
+        # This wrapper runs in a captured subprocess, so without -y it appears to hang.
+        cmd = ["destroy", "instance", str(instance_id), "--yes"]
+        return self._run_vastai_command(cmd, timeout=60)
     
     def find_or_create_instance(self, 
                                create_if_none: bool = True,

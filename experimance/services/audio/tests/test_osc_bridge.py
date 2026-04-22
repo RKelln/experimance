@@ -24,6 +24,7 @@ import unittest
 sys.path.append(str(Path(__file__).parent.parent.joinpath('src')))
 
 from experimance_audio.osc_bridge import OscBridge
+from experimance_audio.config import load_audio_service_config, resolve_supercollider_script_path
 from experimance_common.constants import DEFAULT_PORTS
 
 # Configure logging
@@ -32,6 +33,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
+
+
+def load_runtime_audio_config(config_path: str | None):
+    """Load active audio config for test defaults, falling back gracefully."""
+    try:
+        return load_audio_service_config(config_path)
+    except Exception as exc:
+        logger.warning(f"Could not load audio config defaults: {exc}")
+        return None, None
 
 class OscDumpListener:
     """Wrapper for oscdump to listen for OSC messages."""
@@ -325,20 +335,32 @@ class TestOscBridge(unittest.TestCase):
 def run_manual_test():
     """Run manual test with command line arguments."""
     parser = argparse.ArgumentParser(description='Test OscBridge with oscdump')
-    parser.add_argument('--port', type=int, default=DEFAULT_PORTS["audio_osc_recv_port"],
-                      help='OSC port to use')
+    parser.add_argument('--config', type=str, default=None,
+                      help='Path to audio service TOML config (default: active project audio config)')
+    parser.add_argument('--port', type=int, default=None,
+                      help='OSC port to use (default: active config OSC send port)')
     parser.add_argument('--message', type=str, default='/spacetime',
                       help='OSC message to send')
     parser.add_argument('--args', type=str, nargs='*', default=['temperate_forest', 'wilderness'],
                       help='Arguments for the OSC message')
     parser.add_argument('--wait', type=float, default=1.0,
                       help='Time to wait for responses in seconds')
+    parser.add_argument('--send-only', action='store_true',
+                      help='Send message only (skip oscdump verification)')
     parser.add_argument('--no-oscdump', action='store_true',
-                      help="Don't use oscdump, just send the message")
+                      help='Deprecated alias for --send-only')
     parser.add_argument('--debug', action='store_true',
                       help='Show debug information')
     
     args = parser.parse_args()
+
+    # Backward-compatible alias.
+    if args.no_oscdump:
+        args.send_only = True
+
+    active_config, resolved_config_path = load_runtime_audio_config(args.config)
+    if args.port is None:
+        args.port = active_config.osc.send_port if active_config is not None else DEFAULT_PORTS["audio_osc_send_port"]
     
     # Configure logging level
     if args.debug:
@@ -349,6 +371,8 @@ def run_manual_test():
     print(f"OSC BRIDGE TEST: {args.message}")
     print("="*60)
     print(f"Port: {args.port}")
+    if resolved_config_path is not None:
+        print(f"Config: {resolved_config_path}")
     print(f"Arguments: {args.args}")
     print(f"Wait time: {args.wait}s")
     print("-"*60)
@@ -356,7 +380,7 @@ def run_manual_test():
     listener = None
     
     # If we're using oscdump, start the listener
-    if not args.no_oscdump:
+    if not args.send_only:
         try:
             # Check if oscdump is available
             subprocess.run(["which", "oscdump"], check=True, capture_output=True)
@@ -372,7 +396,7 @@ def run_manual_test():
         except subprocess.CalledProcessError:
             print("\033[93mWARNING: oscdump not found - can't verify message reception\033[0m")
             print("You may need to install liblo-tools: sudo apt install liblo-tools")
-            args.no_oscdump = True
+            args.send_only = True
     
     try:
         # Create OscBridge instance
@@ -453,7 +477,7 @@ def run_manual_test():
                 print("3. The network connection is blocked")
                 print("4. There's a typo in the message or arguments")
         else:
-            if not args.no_oscdump:
+            if not args.send_only:
                 print("\nCannot verify if the message was received (oscdump not started)")
     
         # Show help for next steps
@@ -476,16 +500,24 @@ def run_manual_test():
 def run_integrated_test():
     """Run an integrated test that starts SuperCollider and sends messages."""
     parser = argparse.ArgumentParser(description='Test OscBridge with SuperCollider')
-    parser.add_argument('--port', type=int, default=DEFAULT_PORTS["audio_osc_recv_port"],
-                      help='OSC port to use for sending')
+    parser.add_argument('--config', type=str, default=None,
+                      help='Path to audio service TOML config (default: active project audio config)')
+    parser.add_argument('--port', type=int, default=None,
+                      help='OSC port to use for sending (default: active config OSC send port)')
     parser.add_argument('--script', type=str, default=None,
                       help='Path to SuperCollider script (default: auto-detect test_osc.scd)')
-    parser.add_argument('--sclang', type=str, default="sclang",
-                      help='Path to sclang executable')
+    parser.add_argument('--sclang', type=str, default=None,
+                      help='Path to sclang executable (default: active config value)')
     parser.add_argument('--debug', action='store_true',
                       help='Show debug information')
     
     args = parser.parse_args()
+
+    active_config, resolved_config_path = load_runtime_audio_config(args.config)
+    if args.port is None:
+        args.port = active_config.osc.send_port if active_config is not None else DEFAULT_PORTS["audio_osc_send_port"]
+    if args.sclang is None:
+        args.sclang = active_config.supercollider.sclang_path if active_config is not None else "sclang"
     
     # Configure logging level
     if args.debug:
@@ -499,12 +531,17 @@ def run_integrated_test():
     # Detect script path if not provided
     sc_script_path = args.script
     if not sc_script_path:
+        if active_config is not None:
+            resolved_script = resolve_supercollider_script_path(active_config.supercollider.script_path)
+            if resolved_script is not None:
+                sc_script_path = str(resolved_script)
+
         # Try to find the test_osc.scd script
         script_dir = Path(__file__).parent.parent
         possible_paths = [
             script_dir / "sc_scripts" / "test_osc.scd",
             script_dir.parent / "services" / "audio" / "sc_scripts" / "test_osc.scd",
-            Path("/home/ryankelln/Documents/Projects/Art/experimance/installation/software/experimance/services/audio/sc_scripts/test_osc.scd")
+            script_dir / "sc_scripts" / "experimance_audio.scd",
         ]
         
         for path in possible_paths:
@@ -520,10 +557,12 @@ def run_integrated_test():
     print(f"SuperCollider Script: {sc_script_path}")
     print(f"SuperCollider Binary: {args.sclang}")
     print(f"OSC Port: {args.port}")
+    if resolved_config_path is not None:
+        print(f"Config: {resolved_config_path}")
     print("-"*60)
     
     # Create OscBridge
-    bridge = OscBridge(port=DEFAULT_PORTS["audio_osc_send_port"])
+    bridge = OscBridge(port=args.port)
     
     # Start SuperCollider
     print("\nStarting SuperCollider...")

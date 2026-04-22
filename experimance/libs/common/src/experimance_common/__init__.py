@@ -13,12 +13,9 @@ load_dotenv(find_dotenv(), override=False)
 from experimance_common.project_utils import ensure_project_env_set
 ensure_project_env_set()
 
-# 3. finally, if a second .env exists inside projects/<project>/, cascade it
-# Use PROJECT_ROOT for robust path resolution
-from experimance_common.constants_base import PROJECT_ROOT
-proj_env = PROJECT_ROOT / f"projects/{os.environ['PROJECT_ENV']}/.env"
-if proj_env.exists():
-    load_dotenv(proj_env, override=True)          # project values win
+# 3. Load project (and variant) .env — PROJECT_ENV is preserved across all loads
+from experimance_common.project_utils import load_project_dotenv
+load_project_dotenv()
 
 
 # Core constants
