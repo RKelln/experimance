@@ -258,8 +258,8 @@ class ControlNetGenerateResponse(BaseModel):
         save_start = time.time()
         if use_jpeg:
             # JPEG is much faster to encode and smaller file size
-            # Quality 95 provides excellent quality with good compression
-            image.save(buffered, format="JPEG", quality=95, optimize=False)
+            # Quality 85 is a good balance between size and quality
+            image.save(buffered, format="JPEG", quality=85, optimize=False)
         else:
             # PNG with fast settings (lossless but slower and larger)
             # compress_level=1 is much faster than default (6)
