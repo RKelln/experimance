@@ -31,6 +31,7 @@ from experimance_common.schemas import (
     Era, Biome, RequestBiome, ContentType, ImageReady, RenderRequest, SpaceTimeUpdate, MessageType, PresenceStatus, # type: ignore
     AudiencePresent, SpeechDetected 
 )
+from experimance_common.schemas_base import DisplayText, RemoveText
 from experimance_common.base_service import BaseService
 from experimance_common.zmq.services import ControllerService
 from experimance_common.zmq.config import MessageDataType
@@ -147,6 +148,11 @@ class ExperimanceCoreService(BaseService):
         self.last_render_request_time: float = 0.0
         self.render_request_cooldown: float = self.config.experimance_core.render_request_cooldown
         self.pending_render_request: bool = False  # Track if we need to send a request
+
+        # Attract loop / idle state
+        self._last_activity_time: float = time.monotonic()  # Updated on any significant interaction or era transition
+        self._attract_loop_active: bool = False
+        self._attract_loop_text_id: Optional[str] = None
         
         # Initialize prompt generation system
         self.prompt_generator: Optional[PromptGenerator] = None
@@ -202,6 +208,7 @@ class ExperimanceCoreService(BaseService):
         self.add_task(self._depth_processing_task())
         self.add_task(self._state_machine_task())
         self.add_task(self._presence_publishing_task())
+        self.add_task(self._attract_loop_task())
         
         # Initialize depth processing (non-blocking on failure)
         try:
@@ -405,6 +412,9 @@ class ExperimanceCoreService(BaseService):
 
                 # Update touch detection based on significant change (proxy for sand interaction)
                 self.presence_manager.touch = True
+
+                # Record activity for attract loop idle tracking
+                self._last_activity_time = time.monotonic()
 
                 # Update depth difference score for interaction calculations (use smoothed score)
                 self.depth_difference_score = smoothed_change_score
@@ -1462,6 +1472,59 @@ class ExperimanceCoreService(BaseService):
             except Exception as e:
                 self.record_error(e, is_fatal=False,
                                 custom_message="Error in state machine")
+
+    async def _attract_loop_task(self):
+        """Monitor idle time and show/hide attract loop text overlay on the display."""
+        logger.info("Attract loop task started")
+
+        idle_threshold = self.config.presence.idle_threshold
+        check_interval = max(1.0, idle_threshold / 10.0)
+
+        while self.running:
+            try:
+                idle_seconds = time.monotonic() - self._last_activity_time
+
+                if idle_seconds >= idle_threshold and not self._attract_loop_active:
+                    await self._start_attract_loop()
+                elif idle_seconds < idle_threshold and self._attract_loop_active:
+                    await self._stop_attract_loop()
+
+                if not await self._sleep_if_running(check_interval):
+                    break
+
+            except Exception as e:
+                self.record_error(e, is_fatal=False, custom_message="Error in attract loop task")
+
+    async def _start_attract_loop(self):
+        """Display the attract loop text on the display service."""
+        try:
+            self._attract_loop_text_id = f"attract_loop_{int(time.time() * 1000)}"
+            message = DisplayText(
+                text_id=self._attract_loop_text_id,
+                content="Please touch me",
+                speaker="marquee",
+                duration=None,  # Persist until explicitly removed
+            )
+            await self.zmq_service.publish(message, topic=MessageType.DISPLAY_TEXT)
+            self._attract_loop_active = True
+            logger.info("Attract loop started: idle threshold reached")
+        except Exception as e:
+            logger.error(f"Error starting attract loop: {e}")
+
+    async def _stop_attract_loop(self):
+        """Remove the attract loop text from the display service."""
+        try:
+            if self._attract_loop_text_id:
+                message = RemoveText(
+                    text_id=self._attract_loop_text_id,
+                    fade_out=1.0,
+                )
+                await self.zmq_service.publish(message, topic=MessageType.REMOVE_TEXT)
+                logger.info("Attract loop stopped: activity detected")
+            self._attract_loop_active = False
+            self._attract_loop_text_id = None
+        except Exception as e:
+            logger.error(f"Error stopping attract loop: {e}")
 
     async def stop(self):
         """Stop the service and clean up resources."""
