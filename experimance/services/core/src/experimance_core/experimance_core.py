@@ -593,6 +593,10 @@ class ExperimanceCoreService(BaseService):
                 # Get current presence status from manager
                 presence = self.presence_manager.get_current_status()
 
+            # Installation idle is based on interaction inactivity (attract-loop logic).
+            # This can be true even when a person is present but not interacting.
+            presence = presence.model_copy(update={"idle": self._is_attract_loop_idle()})
+
             if log:
                 logger.info(f"Published presence status: present={presence.present}, "
                             f"idle={presence.idle}, hand={presence.hand}, touch={presence.touch}, "
@@ -648,11 +652,8 @@ class ExperimanceCoreService(BaseService):
             self.user_interaction_score = 0.0
             if self.current_era == Era.WILDERNESS:
                 self.user_interaction_intensities.clear()
-                # at start of progression pick a seed
-                if self.seed < int(2**31 - 2):  # max int
-                    self.seed += 1
-                else:
-                    self.seed = 0
+                # Start each wilderness session with a fresh seed.
+                self.seed = random.randint(0, 2**31 - 1)
 
             # Update prompt manager
             if self.prompt_manager is not None:
@@ -708,15 +709,17 @@ class ExperimanceCoreService(BaseService):
 
     def should_reset_to_wilderness(self) -> bool:
         """Check if system should reset to wilderness due to idle timeout."""
-        # TODO: wait for longer past start of idle?
-        #idle_timeout = self.config.state_machine.idle_timeout
-        return self.current_era != Era.WILDERNESS and self.presence_manager.is_idle()
+        return self.current_era != Era.WILDERNESS and self._is_attract_loop_idle()
     
     async def reset_to_wilderness(self):
         """Reset the system to wilderness state."""
         # Use the advance_era and switch_biome methods for prompt manager consistency
         self.switch_biome(random.choice(self.AVAILABLE_BIOMES))
-        await self.transition_to_era(Era.WILDERNESS, force=True)
+        did_transition = await self.transition_to_era(Era.WILDERNESS, force=True)
+
+        # Ensure audio state updates even if image-ready processing is delayed or skipped.
+        if did_transition:
+            await self._publish_space_time_update_event()
         
         logger.info("System reset to wilderness due to idle timeout")
     
@@ -1426,6 +1429,12 @@ class ExperimanceCoreService(BaseService):
                 self.record_error(e, is_fatal=False, 
                                 custom_message="Error in presence publishing task")
 
+    def _is_attract_loop_idle(self) -> bool:
+        """Return True when interaction inactivity exceeds the configured idle threshold."""
+        idle_threshold = self.config.presence.idle_threshold
+        idle_seconds = time.monotonic() - self._last_activity_time
+        return idle_seconds >= idle_threshold
+
     async def _state_machine_task(self):
         """Handle era progression and state machine logic."""
         logger.info("State machine task started")
@@ -1482,11 +1491,9 @@ class ExperimanceCoreService(BaseService):
 
         while self.running:
             try:
-                idle_seconds = time.monotonic() - self._last_activity_time
-
-                if idle_seconds >= idle_threshold and not self._attract_loop_active:
+                if self._is_attract_loop_idle() and not self._attract_loop_active:
                     await self._start_attract_loop()
-                elif idle_seconds < idle_threshold and self._attract_loop_active:
+                elif not self._is_attract_loop_idle() and self._attract_loop_active:
                     await self._stop_attract_loop()
 
                 if not await self._sleep_if_running(check_interval):
@@ -1501,7 +1508,7 @@ class ExperimanceCoreService(BaseService):
             self._attract_loop_text_id = f"attract_loop_{int(time.time() * 1000)}"
             message = DisplayText(
                 text_id=self._attract_loop_text_id,
-                content="Please touch me",
+                content="   Please touch me!   It's loads of fun to play with the sand.   Move the sand and then let me look at what you've done.   ",
                 speaker="marquee",
                 duration=None,  # Persist until explicitly removed
             )
