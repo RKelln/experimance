@@ -55,13 +55,13 @@ background = false            # No background for title
 font_name = "Arial"           # Font family
 font_size = 28                # Character size in pixels
 color = [255, 255, 255, 200]  # White, slightly transparent
-write_speed = 8.0             # Characters written per second
+write_speed = 14.0             # Characters written per second
 loop = true                   # Repeat text continuously
-gap_slots = 6                 # Clear-space slots ahead of write head
+gap_slots = 70                 # Clear-space slots ahead of write head
 char_fade_in_duration = 0.05  # Seconds each new char fades in
 gap_fade_out_duration = 0.15  # Seconds chars fade out when entering gap zone
 item_fade_out_duration = 1.0  # Seconds for whole-item fade on expiry
-radius_scale = 0.97          # Keeps text just inside the mask edge (1.0 = exactly on edge)
+radius_scale = 0.9           # Keeps text just inside the mask edge (1.0 = exactly on edge)
 char_spacing = 1.0            # Slot width multiplier: >1.0 spreads apart, <1.0 packs tighter
 start_angle = 0.0             # Start position in degrees clockwise from 12 o'clock (0=top, 90=right, 180=bottom, 270=left)
 follow = true                 # New items start where the previous write head stopped
