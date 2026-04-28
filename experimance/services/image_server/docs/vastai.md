@@ -79,6 +79,21 @@ The maintained CLI is exposed as a console entry point.
 uv run vastai list
 uv run vastai provision
 uv run vastai health
+uv run vastai logs --follow
+```
+
+Useful commands during provisioning:
+
+```bash
+# Show the latest provisioning output from the remote instance
+uv run vastai logs --lines 50
+
+# Follow remote provisioning output (tail -f style)
+uv run vastai logs --follow
+
+# Health now streams provisioning logs while startup is incomplete,
+# then returns to health polling after log inactivity
+uv run vastai health
 ```
 
 ## Testing
@@ -114,6 +129,14 @@ uv run python services/image_server/src/image_server/generators/vastai/vastai_ma
 ### Provisioning issues
 
 If VastAI ignores `PROVISIONING_SCRIPT`, the manager can fallback to SCP provisioning when creating instances.
+
+When installation appears stuck, use provisioning logs first:
+
+```bash
+uv run vastai logs --follow
+```
+
+`uv run vastai health` also follows provisioning logs while the instance is not ready, and automatically resumes health checks after the log stream goes idle.
 
 ## Integrations
 

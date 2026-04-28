@@ -12,6 +12,7 @@ from typing import Optional
 
 PROJECT_FILE_NAME = ".project"
 
+
 def detect_project_name(projects_dir: Optional[Path] = None) -> str:
     """Detect the current project name using the standard precedence rules.
     

@@ -294,6 +294,7 @@ uv run timeline stream
 # Manage GPU instances
 uv run vastai list
 uv run vastai provision
+uv run vastai health
 ```
 
 See [DISTRIBUTED_TIMELINE_GUIDE.md](DISTRIBUTED_TIMELINE_GUIDE.md) for distributed deployment features.

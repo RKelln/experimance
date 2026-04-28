@@ -10,11 +10,6 @@ Prefer running:
 The maintained implementation now lives in `experimance/vastai_cli.py` and
 is exposed via the `vastai` entry point in `pyproject.toml`.
 
-This legacy script remains temporarily for backwards compatibility.
-
-Usage:
-    python scripts/vastai_manager_cli.py <command> [options]
-
 Commands:
     list           List all Vast.ai instances
     search         Search for suitable GPU offers
@@ -50,10 +45,7 @@ import requests
 import json
 from typing import Optional
 from image_server.generators.vastai.vastai_manager import VastAIManager
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+from experimance_common.constants_base import DATA_DIR, GENERATED_IMAGES_DIR, MOCK_IMAGES_DIR, PROJECT_ROOT
 
 
 def _run_local_check(command: list[str], description: str) -> tuple[bool, str]:
@@ -112,7 +104,7 @@ def _run_streaming_check(command: list[str], description: str, timeout: int) -> 
 
 
 def smoke_test(manager: VastAIManager, args: argparse.Namespace):
-    root = _project_root()
+    root = PROJECT_ROOT
     provisioning_script = root / "services" / "image_server" / "src" / "image_server" / "generators" / "vastai" / "server" / "vast_provisioning.sh"
     manager_file = root / "services" / "image_server" / "src" / "image_server" / "generators" / "vastai" / "vastai_manager.py"
     smoke_test_script = root / "scripts" / "test_vastai_pinned_stack.py"
@@ -488,6 +480,29 @@ def ssh_command(manager: VastAIManager, args: argparse.Namespace):
             print("SSH command not available for instance", instance_id)
 
 
+def provisioning_logs(manager: VastAIManager, args: argparse.Namespace):
+    """Show or follow the remote provisioning log for an instance."""
+    instance_id = getattr(args, 'instance_id', None)
+    if instance_id is None:
+        instance_id = get_active_instance_id(manager)
+        if instance_id is None:
+            return
+
+    lines = max(1, getattr(args, 'lines', 50))
+    if getattr(args, 'follow', False):
+        print(f"Following provisioning log for instance {instance_id}... (Ctrl+C to stop)")
+        success = manager.follow_remote_provisioning_log(instance_id, lines=lines)
+        if not success:
+            print(f"⚠️  Provisioning log not available yet for instance {instance_id}")
+        return
+
+    output = manager.get_remote_provisioning_log(instance_id, lines=lines)
+    if output:
+        print(output)
+    else:
+        print(f"⚠️  Provisioning log not available yet for instance {instance_id}")
+
+
 def _cleanup_ssh_host_keys(ssh_cmd: str):
     """
     Remove old SSH host keys for the host/port combination to prevent 
@@ -858,6 +873,7 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
     try:
         while True:
             success = False
+            should_show_provisioning_log = False
             
             # First, always check the VastAI instance status
             try:
@@ -879,14 +895,18 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
                         print(f"🚨 Instance is unrecoverably broken: {error_desc}")
                         print("💡 Consider destroying this instance and creating a new one")
                         return
+
+                    should_show_provisioning_log = actual_status in ["loading", "starting"] or cur_state in ["loading", "starting", "provisioning"]
                     
                     print()
                 else:
                     print(f"⚠️  Could not get instance status: {instance_data}")
                     print()
+                    should_show_provisioning_log = False
             except Exception as e:
                 print(f"⚠️  Error getting instance status: {e}")
                 print()
+                should_show_provisioning_log = False
             
             # Try to get endpoint and check health if available
             endpoint = manager.get_model_server_endpoint(instance_id)
@@ -905,6 +925,7 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
                                 return
                             elif resp_json.get("status") == "loading_models":
                                 print("⏳ Model server is loading models...")
+                                should_show_provisioning_log = True
                                 # Show download progress if available
                                 startup_status = resp_json.get('startup_status', {})
                                 download_progress = startup_status.get('download_progress', {})
@@ -916,12 +937,16 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
                                         print(f"   {filename}: {status_text} ({percent:.1f}%)")
                             else:
                                 print("⚠️ Model server healthcheck returned non-ready status")
+                                should_show_provisioning_log = True
                         except json.JSONDecodeError:
                             print(f"🌐 Model Server Response ({resp.status_code}): {resp.text}")
+                            should_show_provisioning_log = True
                     else:
                         print(f"🌐 Model Server Health Failed ({resp.status_code}): {resp.text}")
+                        should_show_provisioning_log = True
                 except requests.RequestException as e:
                     print(f"🌐 Model Server: Not reachable ({e})")
+                    should_show_provisioning_log = True
                     
                     # If endpoint exists but server isn't reachable, give more context
                     if actual_status == "running":
@@ -933,10 +958,17 @@ def health_check(manager: VastAIManager, args: argparse.Namespace):
                         print(f"💡 Instance status '{actual_status}' - server may not be ready yet")
             else:
                 print("🌐 Model Server: Endpoint not available yet")
+                should_show_provisioning_log = True
                 if actual_status == "running":
                     print("💡 Instance is running but port mappings not ready yet")
                 elif actual_status in ["loading", "starting"]:
                     print("💡 Instance is still starting up")
+
+            if should_show_provisioning_log:
+                print()
+                print("📜 Following provisioning log until it goes idle...")
+                if not manager.follow_remote_provisioning_log(instance_id, lines=20, inactivity_timeout=10):
+                    print("📜 Provisioning log not available yet")
                 
             print()
             
@@ -965,9 +997,6 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
         from pathlib import Path
         from PIL import Image
         import random
-        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'services', 'image_server', 'src'))
-        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'services', 'core', 'src'))
-        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'libs', 'common', 'src'))
         from image_server.generators.vastai.server.data_types import ControlNetGenerateData, LoraData
         from experimance_common.image_utils import base64url_to_png, png_to_base64url
         
@@ -996,7 +1025,7 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
     
     if schemas_loaded and PromptGenerator:
         try:
-            data_path = Path(os.path.dirname(__file__)) / '..' / 'data'
+            data_path = DATA_DIR
             # Get seed from args if provided
             prompt_seed = getattr(args, 'seed', None)
             prompt_gen = PromptGenerator(data_path, seed=prompt_seed)
@@ -1022,15 +1051,13 @@ def test_generation(manager: VastAIManager, args: argparse.Namespace):
             prompt_gen = None
     
     # Create output directory for generated images
-    script_dir = os.path.dirname(__file__)
-    project_root = os.path.join(script_dir, '..')
-    output_dir = os.path.join(project_root, 'media', 'images', 'generated')
+    output_dir = GENERATED_IMAGES_DIR
     os.makedirs(output_dir, exist_ok=True)
     print(f"💾 Generated images will be saved to: {output_dir}")
     
     # Load depth image from media/images/mocks/depth/
     depth_map_b64 = None
-    depth_dir = os.path.join(project_root, 'media', 'images', 'mocks', 'depth')
+    depth_dir = MOCK_IMAGES_DIR / 'depth'
     if os.path.exists(depth_dir):
         depth_files = [f for f in os.listdir(depth_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
         if depth_files:
@@ -1487,6 +1514,12 @@ def main():
     p_ssh.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
     p_ssh.add_argument('--debug', action='store_true', help='Show all available SSH methods (direct and proxy)')
 
+    # logs
+    p_logs = subparsers.add_parser('logs', aliases=['provisioning-log'], help='Show or follow the provisioning log on an instance')
+    p_logs.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
+    p_logs.add_argument('--lines', type=int, default=50, help='Number of log lines to show initially (default: 50)')
+    p_logs.add_argument('--follow', action='store_true', help='Follow the provisioning log like tail -f')
+
     # endpoint
     p_ep = subparsers.add_parser('endpoint', help='Get model server endpoint for an instance')
     p_ep.add_argument('instance_id', type=int, nargs='?', help='Instance ID (uses active instance if not provided)')
@@ -1562,6 +1595,8 @@ def main():
         update_instance(manager, args)
     elif args.command == 'ssh':
         ssh_command(manager, args)
+    elif args.command in ('logs', 'provisioning-log'):
+        provisioning_logs(manager, args)
     elif args.command == 'endpoint':
         endpoint_info(manager, args)
     elif args.command == 'stop':

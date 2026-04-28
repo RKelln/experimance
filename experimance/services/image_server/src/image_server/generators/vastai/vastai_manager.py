@@ -17,11 +17,13 @@ Usage:
 import json
 import os
 import re
+import select
+import shlex
 import time
 import subprocess
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, Tuple
 from dataclasses import dataclass
 from experimance_common.constants import PROJECT_ROOT, DEFAULT_TEMP_DIR
 import requests
@@ -37,6 +39,45 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+
+REMOTE_VASTAI_REPO_ROOT = "/workspace/experimance"
+REMOTE_VASTAI_PROJECT_ROOT = f"{REMOTE_VASTAI_REPO_ROOT}/experimance"
+REMOTE_VASTAI_PROVISIONING_LOG = "/var/log/portal/provisioning.log"
+_PROGRESS_LINE_TOKENS = ("eta ", "kB/s", "MB/s", "B/s", "━━", "╸", "╺")
+
+
+def _is_progress_line(line: str) -> bool:
+    """Return True for pip-style progress bar updates that should be collapsed."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+
+    has_progress_tokens = any(token in stripped for token in _PROGRESS_LINE_TOKENS)
+    has_size_token = any(unit in stripped for unit in ("kB", "MB", "GB", "%"))
+    return has_progress_tokens and has_size_token
+
+
+def _normalize_log_output(output: str) -> str:
+    """Collapse repeated progress-bar lines to the last update in each run."""
+    normalized_lines: List[str] = []
+    pending_progress_line: Optional[str] = None
+
+    for line in output.splitlines():
+        if _is_progress_line(line):
+            pending_progress_line = line
+            continue
+
+        if pending_progress_line is not None:
+            normalized_lines.append(pending_progress_line)
+            pending_progress_line = None
+
+        normalized_lines.append(line)
+
+    if pending_progress_line is not None:
+        normalized_lines.append(pending_progress_line)
+
+    return "\n".join(normalized_lines)
 
 
 @dataclass
@@ -725,6 +766,164 @@ class VastAIManager:
             logger.error(f"Failed to get SSH command for instance {instance_id}: {e}")
             return None
 
+    def _parse_ssh_command(self, ssh_command: str) -> Tuple[str, str, str]:
+        """Parse an SSH command string into host, port, and user components."""
+        parts = ssh_command.split()
+        port = parts[2]  # After -p
+        host_and_user = parts[3]  # root@HOST
+        host = host_and_user.split('@')[1]
+        user = host_and_user.split('@')[0]
+        return host, port, user
+
+    def _build_ssh_subprocess_command(
+        self,
+        instance_id: int,
+        remote_command: str,
+        connect_timeout: int = 30,
+        log_level: str = "ERROR",
+    ) -> Optional[List[str]]:
+        """Build an SSH subprocess command for running a remote shell command."""
+        ssh_command = self.get_ssh_command(instance_id)
+        if not ssh_command:
+            return None
+
+        try:
+            host, port, user = self._parse_ssh_command(ssh_command)
+        except (IndexError, ValueError) as e:
+            logger.error(f"Failed to parse SSH command '{ssh_command}': {e}")
+            return None
+
+        return [
+            "ssh", "-p", port,
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", f"LogLevel={log_level}",
+            "-o", f"ConnectTimeout={connect_timeout}",
+            "-o", "BatchMode=yes",
+            f"{user}@{host}",
+            remote_command,
+        ]
+
+    def get_remote_provisioning_log(
+        self,
+        instance_id: int,
+        lines: int = 40,
+        timeout: int = 15,
+    ) -> Optional[str]:
+        """Fetch the tail of the remote provisioning log if it exists."""
+        safe_lines = max(1, lines)
+        remote_command = (
+            f"if [ -f {shlex.quote(REMOTE_VASTAI_PROVISIONING_LOG)} ]; then "
+            f"tail -n {safe_lines} {shlex.quote(REMOTE_VASTAI_PROVISIONING_LOG)}; "
+            "else echo '__MISSING_PROVISIONING_LOG__'; fi"
+        )
+        ssh_cmd = self._build_ssh_subprocess_command(instance_id, remote_command, connect_timeout=10)
+        if not ssh_cmd:
+            return None
+
+        try:
+            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timed out fetching provisioning log for instance {instance_id}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to fetch provisioning log for instance {instance_id}: {e}")
+            return None
+
+        if result.returncode != 0:
+            logger.warning(f"Failed to fetch provisioning log for instance {instance_id}: {result.stderr.strip()}")
+            return None
+
+        output = result.stdout.strip()
+        if not output or output == "__MISSING_PROVISIONING_LOG__":
+            return None
+
+        return _normalize_log_output(output)
+
+    def follow_remote_provisioning_log(
+        self,
+        instance_id: int,
+        lines: int = 20,
+        inactivity_timeout: Optional[int] = None,
+    ) -> bool:
+        """Follow the provisioning log until it exits or goes idle."""
+        if not self.get_remote_provisioning_log(instance_id, lines=1):
+            return False
+
+        remote_command = f"tail -n {max(1, lines)} -f {shlex.quote(REMOTE_VASTAI_PROVISIONING_LOG)}"
+        return self.stream_remote_command(
+            instance_id,
+            remote_command,
+            inactivity_timeout=inactivity_timeout,
+        )
+
+    def stream_remote_command(
+        self,
+        instance_id: int,
+        remote_command: str,
+        inactivity_timeout: Optional[int] = None,
+    ) -> bool:
+        """Stream a remote command to stdout until it exits, goes idle, or the user interrupts."""
+        ssh_cmd = self._build_ssh_subprocess_command(instance_id, remote_command, connect_timeout=10, log_level="ERROR")
+        if not ssh_cmd:
+            return False
+
+        process = subprocess.Popen(
+            ssh_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+        try:
+            pending_progress_line: Optional[str] = None
+            if process.stdout:
+                while True:
+                    if inactivity_timeout is None:
+                        output = process.stdout.readline()
+                    else:
+                        ready, _, _ = select.select([process.stdout], [], [], inactivity_timeout)
+                        if not ready:
+                            logger.debug(
+                                "Stopping streamed remote command for instance %s after %ss of inactivity",
+                                instance_id,
+                                inactivity_timeout,
+                            )
+                            process.terminate()
+                            break
+                        output = process.stdout.readline()
+
+                    if output == "" and process.poll() is not None:
+                        break
+
+                    line = output.rstrip("\n")
+                    if _is_progress_line(line):
+                        pending_progress_line = line
+                        print(f"\r{line}", end="", flush=True)
+                        continue
+
+                    if pending_progress_line is not None:
+                        print()
+                        pending_progress_line = None
+
+                    print(output, end="")
+
+            if pending_progress_line is not None:
+                print()
+
+            return process.wait() == 0
+        except KeyboardInterrupt:
+            if pending_progress_line is not None:
+                print()
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            return True
+
     def get_ssh_methods(self, instance_id: int) -> Dict[str, Optional[str]]:
         """
         Get all available SSH connection methods for debugging.
@@ -909,11 +1108,7 @@ class VastAIManager:
                     continue
                 
                 # Parse SSH connection details
-                parts = ssh_cmd.split()
-                port = parts[2]  # After -p
-                host_and_user = parts[3]  # root@HOST
-                host = host_and_user.split('@')[1]
-                user = host_and_user.split('@')[0]
+                host, port, user = self._parse_ssh_command(ssh_cmd)
                 
                 # Test SSH connectivity with a simple command
                 test_cmd = [
@@ -979,11 +1174,7 @@ class VastAIManager:
         # Extract SSH connection details
         try:
             # Parse ssh command: "ssh -p PORT root@HOST"
-            parts = ssh_command.split()
-            port = parts[2]  # After -p
-            host_and_user = parts[3]  # root@HOST
-            host = host_and_user.split('@')[1]
-            user = host_and_user.split('@')[0]
+            host, port, user = self._parse_ssh_command(ssh_command)
         except (IndexError, ValueError) as e:
             logger.error(f"Failed to parse SSH command '{ssh_command}': {e}")
             return False
@@ -1454,7 +1645,7 @@ class VastAIManager:
         # need to remove the path before the root experimance directory and add to the remote path
         relative_server_dir = server_dir.relative_to(PROJECT_ROOT)
         logger.debug(f"Relative server directory: {relative_server_dir}")
-        remote_server_dir = f"/workspace/experimance/experimance/{relative_server_dir}"
+        remote_server_dir = f"{REMOTE_VASTAI_PROJECT_ROOT}/{relative_server_dir}"
 
         logger.info(f"Found server directory at {server_dir}")
 

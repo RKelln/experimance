@@ -18,6 +18,53 @@ echo "SHELL: $SHELL"
 echo "USER: $USER"
 echo "PWD: $PWD"
 
+REMOTE_REPO_ROOT="/workspace/experimance"
+REMOTE_PROJECT_ROOT="$REMOTE_REPO_ROOT/experimance"
+
+has_valid_project_checkout() {
+    [ -d "$REMOTE_PROJECT_ROOT/services/image_server" ] && [ -f "$REMOTE_PROJECT_ROOT/pyproject.toml" ]
+}
+
+clone_repo() {
+    local clone_url="https://github.com/RKelln/experimance.git"
+
+    echo "Cloning Experimance repository into $REMOTE_REPO_ROOT..."
+    rm -rf "$REMOTE_REPO_ROOT" 2>/dev/null || true
+    if [ -n "$GITHUB_TOKEN" ]; then
+        clone_url="https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git"
+    fi
+
+    git clone --depth 1 --branch main "$clone_url" "$REMOTE_REPO_ROOT" || {
+        if [ -n "$GITHUB_TOKEN" ]; then
+            echo "Authenticated clone failed, retrying without token..."
+            git clone --depth 1 --branch main https://github.com/RKelln/experimance.git "$REMOTE_REPO_ROOT"
+        else
+            return 1
+        fi
+    }
+}
+
+ensure_repo_checkout() {
+    if has_valid_project_checkout; then
+        echo "Using existing Experimance checkout at $REMOTE_PROJECT_ROOT"
+        return 0
+    fi
+
+    if [ -d "$REMOTE_REPO_ROOT/.git" ]; then
+        echo "Existing repository checkout is incomplete; attempting repair..."
+        if git -C "$REMOTE_REPO_ROOT" fetch --depth 1 origin main && git -C "$REMOTE_REPO_ROOT" checkout -q origin/main && has_valid_project_checkout; then
+            echo "Repository repair succeeded"
+            return 0
+        fi
+
+        echo "Repository repair failed; recloning..."
+    else
+        echo "Experimance repository checkout missing; cloning..."
+    fi
+
+    clone_repo && has_valid_project_checkout
+}
+
 # Check if we're in a virtual environment and activate if needed
 if [ -n "$VIRTUAL_ENV" ]; then
     echo "Already in virtual environment: $VIRTUAL_ENV"
@@ -64,33 +111,16 @@ fi
 
 # Ensure the repository exists so the provisioning script and smoke test can share stack metadata.
 GITHUB_TOKEN=${GITHUB_TOKEN:-$GITHUB_ACCESS_TOKEN}
-if [ ! -d "/workspace/experimance/.git" ]; then
-    echo "Ensuring Experimance repository is available for shared stack config..."
-    cd /workspace
-    rm -rf experimance 2>/dev/null || true
-    if [ -n "$GITHUB_TOKEN" ]; then
-        git clone https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git || git clone https://github.com/RKelln/experimance.git || {
-            echo "ERROR: Failed to clone experimance repository"
-            exit 1
-        }
-    else
-        git clone https://github.com/RKelln/experimance.git || {
-            echo "ERROR: Failed to clone experimance repository"
-            exit 1
-        }
-    fi
-fi
-
-if [ -d "experimance/experimance/services" ]; then
-    REPO_ROOT="experimance/experimance"
-elif [ -d "experimance/services" ]; then
-    REPO_ROOT="experimance"
-else
-    echo "ERROR: Could not detect repository root under /workspace"
+echo "Ensuring Experimance repository is available for shared stack config..."
+if ! ensure_repo_checkout; then
+    echo "ERROR: Could not prepare Experimance checkout at $REMOTE_PROJECT_ROOT"
+    echo "Contents of /workspace: $(ls -la /workspace)"
     exit 1
 fi
 
-STACK_CONFIG_PRIMARY="$REPO_ROOT/services/image_server/src/image_server/generators/vastai/server/pinned_stack.json"
+echo "Using project root: $REMOTE_PROJECT_ROOT"
+
+STACK_CONFIG_PRIMARY="$REMOTE_PROJECT_ROOT/services/image_server/src/image_server/generators/vastai/server/pinned_stack.json"
 STACK_CONFIG_FALLBACK="/workspace/pinned_stack.json"
 if [ -f "$STACK_CONFIG_PRIMARY" ]; then
     STACK_CONFIG_PATH="$STACK_CONFIG_PRIMARY"
@@ -363,7 +393,7 @@ fi
 mkdir -p /workspace/{models,logs} || echo "⚠️ Failed to create some directories"
 
 # Set up paths and directories
-PROJECT_ROOT="/workspace/$REPO_ROOT"
+PROJECT_ROOT="$REMOTE_PROJECT_ROOT"
 IMAGE_SERVER_PATH="$PROJECT_ROOT/services/image_server/src/image_server/generators/vastai"
 WORKER_DIR="$IMAGE_SERVER_PATH/server"
 MODELS_DIR="/workspace/models"
