@@ -1,0 +1,19 @@
+{
+  "pinned_packages": {
+    "diffusers": "0.30.0",
+    "transformers": "4.44.0",
+    "accelerate": "0.34.2",
+    "huggingface-hub": "0.34.4",
+    "tokenizers": "0.19.1",
+    "safetensors": "0.5.3",
+    "peft": "0.13.2",
+    "controlnet-aux": "0.0.10",
+    "fastapi": "0.116.1",
+    "uvicorn": "0.35.0",
+    "pydantic": "2.11.7",
+    "python-multipart": "0.0.20"
+  },
+  "post_install_no_deps": [
+    "DeepCache"
+  ]
+}

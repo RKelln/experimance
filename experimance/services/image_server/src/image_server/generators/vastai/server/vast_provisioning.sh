@@ -62,16 +62,84 @@ else
     exit 1
 fi
 
+# Ensure the repository exists so the provisioning script and smoke test can share stack metadata.
+GITHUB_TOKEN=${GITHUB_TOKEN:-$GITHUB_ACCESS_TOKEN}
+if [ ! -d "/workspace/experimance/.git" ]; then
+    echo "Ensuring Experimance repository is available for shared stack config..."
+    cd /workspace
+    rm -rf experimance 2>/dev/null || true
+    if [ -n "$GITHUB_TOKEN" ]; then
+        git clone https://${GITHUB_TOKEN}@github.com/RKelln/experimance.git || git clone https://github.com/RKelln/experimance.git || {
+            echo "ERROR: Failed to clone experimance repository"
+            exit 1
+        }
+    else
+        git clone https://github.com/RKelln/experimance.git || {
+            echo "ERROR: Failed to clone experimance repository"
+            exit 1
+        }
+    fi
+fi
+
+if [ -d "experimance/experimance/services" ]; then
+    REPO_ROOT="experimance/experimance"
+elif [ -d "experimance/services" ]; then
+    REPO_ROOT="experimance"
+else
+    echo "ERROR: Could not detect repository root under /workspace"
+    exit 1
+fi
+
+STACK_CONFIG_PRIMARY="$REPO_ROOT/services/image_server/src/image_server/generators/vastai/server/pinned_stack.json"
+STACK_CONFIG_FALLBACK="/workspace/pinned_stack.json"
+if [ -f "$STACK_CONFIG_PRIMARY" ]; then
+    STACK_CONFIG_PATH="$STACK_CONFIG_PRIMARY"
+elif [ -f "$STACK_CONFIG_FALLBACK" ]; then
+    STACK_CONFIG_PATH="$STACK_CONFIG_FALLBACK"
+    echo "Using fallback stack config at $STACK_CONFIG_PATH"
+else
+    echo "ERROR: Shared stack config not found at $STACK_CONFIG_PRIMARY or $STACK_CONFIG_FALLBACK"
+    exit 1
+fi
+
+mapfile -t PINNED_INSTALL_SPECS < <($PYTHON_CMD - "$STACK_CONFIG_PATH" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    config = json.load(handle)
+
+for name, version in config["pinned_packages"].items():
+    print(f"{name}=={version}")
+PY
+)
+
+mapfile -t POST_INSTALL_NO_DEPS < <($PYTHON_CMD - "$STACK_CONFIG_PATH" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    config = json.load(handle)
+
+for package in config.get("post_install_no_deps", []):
+    print(package)
+PY
+)
+
 # Install dependencies for image generation (preserving existing PyTorch)
 echo "Installing image generation dependencies..."
+echo "Pinned stack specs: ${PINNED_INSTALL_SPECS[*]}"
 $PIP_CMD install --root-user-action=ignore tokenizers regex pillow requests numpy importlib_metadata || echo "⚠️ Some basic packages failed to install"
-$PIP_CMD install --root-user-action=ignore diffusers transformers accelerate safetensors --no-deps || echo "⚠️ Some ML packages failed to install"
-$PIP_CMD install --root-user-action=ignore controlnet-aux peft || echo "⚠️ Some auxiliary packages failed to install"
-$PIP_CMD install --root-user-action=ignore fastapi uvicorn pydantic python-multipart || echo "⚠️ Some web server packages failed to install"
+$PIP_CMD install --root-user-action=ignore "${PINNED_INSTALL_SPECS[@]}" || echo "⚠️ Some pinned package installs failed"
+
+echo "Installed ML package versions:"
+$PYTHON_CMD -c "import accelerate, diffusers, fastapi, huggingface_hub, peft, pydantic, safetensors, tokenizers, transformers; print(f'diffusers={diffusers.__version__}, transformers={transformers.__version__}, accelerate={accelerate.__version__}, peft={peft.__version__}, safetensors={safetensors.__version__}, tokenizers={tokenizers.__version__}, huggingface_hub={huggingface_hub.__version__}, fastapi={fastapi.__version__}, pydantic={pydantic.__version__}')" || echo "⚠️ Failed to print installed ML versions"
 
 # Install DeepCache for acceleration (separate package)
 echo "Installing DeepCache for performance acceleration..."
-$PIP_CMD install --root-user-action=ignore DeepCache || echo "⚠️ DeepCache installation failed, acceleration will be disabled"
+for package in "${POST_INSTALL_NO_DEPS[@]}"; do
+    $PIP_CMD install --root-user-action=ignore --no-deps "$package" || echo "⚠️ $package installation failed, acceleration will be disabled"
+done
 
 # Install xformers for current PyTorch version
 PYTORCH_VERSION=$($PYTHON_CMD -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
@@ -295,7 +363,7 @@ fi
 mkdir -p /workspace/{models,logs} || echo "⚠️ Failed to create some directories"
 
 # Set up paths and directories
-PROJECT_ROOT="/workspace/experimance/experimance"
+PROJECT_ROOT="/workspace/$REPO_ROOT"
 IMAGE_SERVER_PATH="$PROJECT_ROOT/services/image_server/src/image_server/generators/vastai"
 WORKER_DIR="$IMAGE_SERVER_PATH/server"
 MODELS_DIR="/workspace/models"

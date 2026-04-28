@@ -821,11 +821,20 @@ class VastAIManager:
             True if instance is ready, False if timeout
         """
         start_time = time.time()
+        last_status_summary = None
         
         while time.time() - start_time < timeout:
             try:
                 instance = self.show_instance(instance_id, raw=True)
                 status = instance.get("actual_status", "unknown")
+                cur_state = instance.get("cur_state", "unknown")
+                intended_status = instance.get("intended_status", "unknown")
+                status_msg = instance.get("status_msg", "") or ""
+
+                is_broken, error_desc = self._is_instance_unrecoverably_broken(instance)
+                if is_broken:
+                    logger.error(f"Instance {instance_id} became unrecoverably broken while waiting: {error_desc}")
+                    return False
                 
                 # Check if instance is running
                 if status == "running":
@@ -837,7 +846,19 @@ class VastAIManager:
                     else:
                         logger.info(f"Instance {instance_id} is running but ports not yet mapped")
                 else:
-                    logger.info(f"Instance {instance_id} status: {status}")
+                    status_summary = (status, cur_state, intended_status, status_msg)
+                    if status_summary != last_status_summary:
+                        if status_msg:
+                            logger.info(
+                                f"Instance {instance_id} status: {status} "
+                                f"(cur_state={cur_state}, intended={intended_status}, status_msg={status_msg})"
+                            )
+                        else:
+                            logger.info(
+                                f"Instance {instance_id} status: {status} "
+                                f"(cur_state={cur_state}, intended={intended_status})"
+                            )
+                        last_status_summary = status_summary
                 
                 time.sleep(15)  # Check more frequently
                 
@@ -845,7 +866,24 @@ class VastAIManager:
                 logger.warning(f"Error checking instance {instance_id}: {e}")
                 time.sleep(15)
         
-        logger.error(f"Timeout waiting for instance {instance_id} to be ready")
+        try:
+            instance = self.show_instance(instance_id, raw=True)
+            status = instance.get("actual_status", "unknown")
+            cur_state = instance.get("cur_state", "unknown")
+            intended_status = instance.get("intended_status", "unknown")
+            status_msg = instance.get("status_msg", "") or ""
+            if status_msg:
+                logger.error(
+                    f"Timeout waiting for instance {instance_id} to be ready: "
+                    f"status={status}, cur_state={cur_state}, intended={intended_status}, status_msg={status_msg}"
+                )
+            else:
+                logger.error(
+                    f"Timeout waiting for instance {instance_id} to be ready: "
+                    f"status={status}, cur_state={cur_state}, intended={intended_status}"
+                )
+        except Exception as e:
+            logger.error(f"Timeout waiting for instance {instance_id} to be ready (final status check failed: {e})")
         return False
     
     def wait_for_ssh_ready(self, instance_id: int, timeout: int = 300) -> bool:
@@ -953,6 +991,7 @@ class VastAIManager:
         # Get the path to the provisioning script
         script_dir = os.path.dirname(os.path.abspath(__file__))
         provisioning_script_path = os.path.join(script_dir, "server", "vast_provisioning.sh")
+        stack_config_path = os.path.join(script_dir, "server", "pinned_stack.json")
         
         if not os.path.exists(provisioning_script_path):
             logger.error(f"Provisioning script not found at {provisioning_script_path}")
@@ -961,6 +1000,7 @@ class VastAIManager:
         logger.info(f"Found provisioning script at {provisioning_script_path}")
         
         remote_path = "/workspace/vast_provisioning.sh"
+        remote_stack_config_path = "/workspace/pinned_stack.json"
 
         try:
             # SCP the script to the instance
@@ -980,6 +1020,26 @@ class VastAIManager:
             if result.returncode != 0:
                 logger.error(f"SCP failed: {result.stderr}")
                 return False
+
+            if os.path.exists(stack_config_path):
+                logger.info(f"Copying pinned stack config to instance {instance_id}...")
+                stack_scp_cmd = [
+                    "scp", "-P", port,
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "LogLevel=ERROR",
+                    "-o", "ConnectTimeout=30",
+                    "-o", "BatchMode=yes",
+                    stack_config_path,
+                    f"{user}@{host}:{remote_stack_config_path}"
+                ]
+                stack_result = subprocess.run(stack_scp_cmd, capture_output=True, text=True, timeout=60)
+                if stack_result.returncode != 0:
+                    logger.warning(f"Pinned stack config SCP failed: {stack_result.stderr}")
+                else:
+                    logger.info("Successfully copied pinned stack config")
+            else:
+                logger.warning(f"Pinned stack config not found at {stack_config_path}; continuing without fallback config upload")
             
             logger.info("Successfully copied provisioning script")
             
@@ -1829,6 +1889,7 @@ class VastAIManager:
                                wait_for_ready: bool = True,
                                provision_existing: bool = False,
                                disable_scp_provisioning: bool = False,
+                               force_scp_provisioning: bool = False,
                                min_gpu_ram: int = 16,
                                max_price: float = 0.5,
                                dlperf: float = 32.0) -> Optional[InstanceEndpoint]:
@@ -1840,6 +1901,7 @@ class VastAIManager:
             wait_for_ready: Wait for the instance to be fully ready
             provision_existing: Whether to run SCP provisioning on existing instances
             disable_scp_provisioning: If True, skip SCP provisioning fallback (useful for testing PROVISIONING_SCRIPT env var)
+            force_scp_provisioning: If True, skip PROVISIONING_SCRIPT and use the local SCP provisioning script directly
             min_gpu_ram: Minimum GPU RAM in GB for new instances
             max_price: Maximum price per hour for new instances
             dlperf: Minimum DLPerf score for new instances
@@ -1884,7 +1946,16 @@ class VastAIManager:
             if wait_for_ready:
                 if self.wait_for_instance_ready(instance_id):
                     # Optionally provision existing instances
-                    if provision_existing:
+                    if force_scp_provisioning:
+                        logger.info(f"Force-SCP provisioning enabled for existing instance {instance_id}")
+                        if self.wait_for_ssh_ready(instance_id, timeout=180):  # 3 minutes for SSH
+                            if self.provision_instance_via_scp(instance_id):
+                                logger.info("Forced SCP provisioning of existing instance completed successfully")
+                            else:
+                                logger.warning("Forced SCP provisioning of existing instance failed, but continuing anyway")
+                        else:
+                            logger.warning(f"SSH not ready for existing instance {instance_id}, skipping forced SCP provisioning")
+                    elif provision_existing:
                         logger.info(f"Provisioning existing instance {instance_id}")
                         
                         # Wait for SSH to be ready before provisioning
@@ -1959,7 +2030,17 @@ class VastAIManager:
         
         if wait_for_ready:
             if self.wait_for_instance_ready(instance_id):
-                if disable_scp_provisioning:
+                if force_scp_provisioning:
+                    logger.info(f"Instance {instance_id} is ready. Force-SCP provisioning enabled - skipping PROVISIONING_SCRIPT wait")
+                    if self.wait_for_ssh_ready(instance_id, timeout=180):  # 3 minutes for SSH
+                        logger.info("SSH is ready, running forced local provisioning script via SCP...")
+                        if self.provision_instance_via_scp(instance_id):
+                            logger.info("Forced SCP provisioning completed successfully")
+                        else:
+                            logger.warning("Forced SCP provisioning failed, but continuing anyway")
+                    else:
+                        logger.error("SSH not ready, cannot run forced SCP provisioning")
+                elif disable_scp_provisioning:
                     logger.info(f"Instance {instance_id} is ready. SCP provisioning disabled - relying on PROVISIONING_SCRIPT environment variable")
                     # Wait for the provisioning script to complete and service to become healthy
                     logger.info("Waiting for PROVISIONING_SCRIPT to complete and service to become healthy...")

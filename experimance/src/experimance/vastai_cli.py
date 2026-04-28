@@ -41,6 +41,7 @@ import os
 import sys
 import subprocess
 import time
+from pathlib import Path
 from image_server.generators.vastai.server.data_types import era_to_loras
 import requests
 from typing import Optional
@@ -49,6 +50,147 @@ import requests
 import json
 from typing import Optional
 from image_server.generators.vastai.vastai_manager import VastAIManager
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _run_local_check(command: list[str], description: str) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except Exception as exc:
+        return False, f"{description} failed to start: {exc}"
+
+    if result.returncode == 0:
+        output = result.stdout.strip() or result.stderr.strip()
+        return True, output
+
+    output = result.stderr.strip() or result.stdout.strip()
+    return False, output
+
+
+def _run_streaming_check(command: list[str], description: str, timeout: int) -> tuple[bool, str]:
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+    except Exception as exc:
+        return False, f"{description} failed to start: {exc}"
+
+    captured_lines: list[str] = []
+    start_time = time.time()
+
+    try:
+        if process.stdout is not None:
+            while True:
+                line = process.stdout.readline()
+                if line == "" and process.poll() is not None:
+                    break
+                if line:
+                    print(line, end="")
+                    captured_lines.append(line.rstrip())
+
+                if time.time() - start_time > timeout:
+                    process.kill()
+                    return False, f"{description} timed out after {timeout}s"
+
+        return_code = process.wait(timeout=max(1, timeout - int(time.time() - start_time)))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return False, f"{description} timed out after {timeout}s"
+
+    output = "\n".join(captured_lines).strip()
+    if return_code == 0:
+        return True, output
+    return False, output or f"{description} failed with exit code {return_code}"
+
+
+def smoke_test(manager: VastAIManager, args: argparse.Namespace):
+    root = _project_root()
+    provisioning_script = root / "services" / "image_server" / "src" / "image_server" / "generators" / "vastai" / "server" / "vast_provisioning.sh"
+    manager_file = root / "services" / "image_server" / "src" / "image_server" / "generators" / "vastai" / "vastai_manager.py"
+    smoke_test_script = root / "scripts" / "test_vastai_pinned_stack.py"
+
+    print("🔍 VastAI deployment smoke test")
+    print(f"   Project root: {root}")
+    print(f"   Provisioning URL: {manager.provisioning_script_url}")
+    print()
+
+    required_files = [provisioning_script, manager_file, smoke_test_script]
+    missing_files = [path for path in required_files if not path.exists()]
+    if missing_files:
+        print("❌ Missing required files:")
+        for path in missing_files:
+            print(f"   {path}")
+        return 1
+
+    checks = [
+        (
+            "Provisioning script syntax",
+            ["bash", "-n", str(provisioning_script)],
+        ),
+        (
+            "Git deployment diff",
+            [
+                "git",
+                "status",
+                "--short",
+                "--",
+                str(provisioning_script),
+                str(manager_file),
+                str(smoke_test_script),
+            ],
+        ),
+    ]
+
+    all_ok = True
+    for label, command in checks:
+        ok, output = _run_local_check(command, label)
+        status = "✅" if ok else "❌"
+        print(f"{status} {label}")
+        if output:
+            if label == "Git deployment diff":
+                print(output if output else "working tree clean")
+                if output:
+                    print("ℹ️  Uncommitted changes will be used by SCP provisioning but not by the GitHub raw PROVISIONING_SCRIPT path.")
+            else:
+                print(output)
+        elif label == "Git deployment diff":
+            print("working tree clean")
+        print()
+        all_ok = all_ok and ok
+
+    if not args.skip_stack:
+        stack_command = [args.python, str(smoke_test_script)]
+        if args.keep_venv:
+            stack_command.append("--keep-venv")
+        print(f"⏳ Running pinned stack smoke test. This creates a temporary virtualenv and may take a few minutes...")
+        ok, output = _run_streaming_check(stack_command, "Pinned stack smoke test", args.stack_timeout)
+        status = "✅" if ok else "❌"
+        print(f"{status} Pinned stack smoke test")
+        if output:
+            print(output)
+        print()
+        all_ok = all_ok and ok
+    else:
+        print("⏭️  Skipped pinned stack smoke test")
+        print()
+
+    print("Preflight summary:")
+    if manager.provisioning_script_url.startswith("https://raw.githubusercontent.com/"):
+        print("- Fresh instances using PROVISIONING_SCRIPT need the script changes pushed to GitHub.")
+    else:
+        print("- Fresh instances are configured to use a custom provisioning URL.")
+    print("- SCP fallback provisioning uses the local workspace copy of vast_provisioning.sh.")
+    print("- Instance stalls in VastAI 'loading' happen before either provisioning path runs.")
+
+    return 0 if all_ok else 1
 
 from image_server.generators.vastai.vastai_manager import VastAIManager
 
@@ -197,6 +339,8 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
         # No existing instance - create and provision a new one
         print("No existing Experimance instances found, creating new one...")
         print(f"Search criteria: min GPU RAM: {args.min_gpu_ram}GB, max price: ${args.max_price}/hr, min DLPerf: {args.dlperf}")
+        if args.local_provisioning:
+            print("📦 Using local SCP provisioning script after instance startup")
         
         # Disable SCP provisioning if we have a custom provisioning script
         # to test if PROVISIONING_SCRIPT environment variable works
@@ -207,8 +351,9 @@ def provision_instance(manager: VastAIManager, args: argparse.Namespace):
         endpoint = manager.find_or_create_instance(
             create_if_none=True,  # Always create since we confirmed none exist
             wait_for_ready=not args.no_wait,
-            provision_existing=False,  # Not needed since it's a new instance
+            provision_existing=args.local_provisioning,
             disable_scp_provisioning=disable_scp,
+            force_scp_provisioning=args.local_provisioning,
             min_gpu_ram=args.min_gpu_ram,
             max_price=args.max_price,
             dlperf=args.dlperf
@@ -1318,6 +1463,7 @@ def main():
     p_prov.add_argument('--no-wait', action='store_true', dest='no_wait', help='Do not wait for instance ready')
     p_prov.add_argument('--show-output', action='store_true', help='Show provisioning script output in real-time')
     p_prov.add_argument('--provision-script', type=str, metavar='URL', help='Custom provisioning script URL to use')
+    p_prov.add_argument('--local-provisioning', action='store_true', help='Skip PROVISIONING_SCRIPT and use the local SCP provisioning script directly')
     p_prov.add_argument('--min-gpu-ram', type=int, default=16, help='Minimum GPU RAM (GB)')
     p_prov.add_argument('--max-price', type=float, default=0.5, help='Max price ($/hr)')
     p_prov.add_argument('--dlperf', '--dl-perf', dest='dlperf', type=float, default=32.0, help='Minimum DLPerf score')
@@ -1386,6 +1532,13 @@ def main():
     p_test.add_argument('--biome', type=str, help='Specific biome to test (tests all eras with this biome). Use "test --help" after running once to see available biomes.')
     p_test.add_argument('--all-combos', action='store_true', help='Test all era+biome combinations (overrides --count)')
 
+    # smoke-test - local deployment preflight and pinned dependency validation
+    p_smoke = subparsers.add_parser('smoke-test', help='Run local VastAI deployment smoke tests')
+    p_smoke.add_argument('--python', default=sys.executable, help='Python interpreter used for the pinned-stack smoke test')
+    p_smoke.add_argument('--skip-stack', action='store_true', help='Skip the isolated pinned dependency stack test')
+    p_smoke.add_argument('--keep-venv', action='store_true', help='Keep the temporary virtualenv created by the pinned-stack smoke test')
+    p_smoke.add_argument('--stack-timeout', type=int, default=900, help='Timeout in seconds for the pinned-stack smoke test (default: 900)')
+
     args = parser.parse_args()
     
     setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
@@ -1433,6 +1586,8 @@ def main():
         test_provisioning_markers(manager, args)
     elif args.command == 'test':
         test_generation(manager, args)
+    elif args.command == 'smoke-test':
+        raise SystemExit(smoke_test(manager, args))
     else:
         parser.print_help()
 
